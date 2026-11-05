@@ -48,6 +48,7 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
+import type { PresentMember } from "../state/presence";
 import type { TeamViewer } from "../state/team";
 
 export function shouldNavigateAfterThreadPark(input: {
@@ -1508,4 +1509,42 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export type ThreadViewers = ReadonlyMap<string, ReadonlyArray<PresentMember>>;
+
+const NO_THREAD_VIEWERS: ThreadViewers = new Map();
+
+const samePresentMembers = (
+  left: ReadonlyArray<PresentMember>,
+  right: ReadonlyArray<PresentMember>,
+) =>
+  left.length === right.length &&
+  left.every(
+    (member, index) =>
+      member.id === right[index]?.id &&
+      member.away === right[index]?.away &&
+      member.name === right[index]?.name &&
+      member.color === right[index]?.color,
+  );
+
+/** Keeps each thread's previous array while its viewers are unchanged, so memoized rows stay put. */
+export function reuseThreadViewers(
+  previous: ThreadViewers | undefined,
+  next: ReadonlyMap<string, ReadonlyArray<PresentMember>>,
+): ThreadViewers {
+  if (next.size === 0) return NO_THREAD_VIEWERS;
+  if (previous === undefined) return next;
+  let unchanged = previous.size === next.size;
+  const reused = new Map<string, ReadonlyArray<PresentMember>>();
+  for (const [threadKey, viewers] of next) {
+    const before = previous.get(threadKey);
+    if (before !== undefined && samePresentMembers(before, viewers)) {
+      reused.set(threadKey, before);
+    } else {
+      reused.set(threadKey, viewers);
+      unchanged = false;
+    }
+  }
+  return unchanged ? previous : reused;
 }

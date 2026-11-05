@@ -45,6 +45,8 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { useQuietThreadShell } from "../../state/entities";
 import { useSetThreadFollowed, useThreadFollowing } from "../../state/team";
+import { useThreadPresence } from "../../state/presence";
+import { MemberAvatarStack } from "../team/MemberAvatarStack";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -433,11 +435,28 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? <ThreadViewersStack threadRef={activeThreadRef} /> : null}
       {isServerThread ? <ThreadFollowToggle threadRef={activeThreadRef} /> : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });
+
+/** Other members viewing this thread; nothing while nobody else is here. */
+function ThreadViewersStack({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const { viewers } = useThreadPresence(threadRef);
+  if (viewers.length === 0) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span data-thread-viewers className="inline-flex shrink-0" />}>
+        <MemberAvatarStack members={viewers} max={3} size="sm" />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {viewers.map((viewer) => (viewer.away ? `${viewer.name} (away)` : viewer.name)).join(", ")}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Team threads the viewer does not own; filled while following. */
 function ThreadFollowToggle({ threadRef }: { readonly threadRef: ScopedThreadRef }) {

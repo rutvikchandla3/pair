@@ -248,9 +248,16 @@ describe("Grok launch permission mode", () => {
 
   const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
-      const launches: Array<ReadonlyArray<string>> = [];
+      const launches: Array<{ args: ReadonlyArray<string>; author: Array<string> }> = [];
       const childProcessSpawner = ChildProcessSpawner.make((command) => {
-        if (command._tag === "StandardCommand") launches.push(command.args.map(String));
+        if (command._tag === "StandardCommand") {
+          launches.push({
+            args: command.args.map(String),
+            author: Object.entries(command.options.env ?? {})
+              .filter(([name]) => name.startsWith("GIT_AUTHOR_"))
+              .map(([name, value]) => `${name}=${value}`),
+          });
+        }
         return Effect.fail(
           PlatformError.systemError({
             _tag: "NotFound",
@@ -299,7 +306,16 @@ describe("Grok launch permission mode", () => {
     ).map(([runtimeMode, args]) => [runtimeMode, args.join(" "), args] as const),
   )("launches %s threads with %s", ([runtimeMode, , args]) =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
+      assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [{ args, author: [] }]);
+    }),
+  );
+
+  it.effect("launches with the thread holder as git author", () =>
+    Effect.gen(function* () {
+      const [launch] = yield* launchArgs(
+        policy("full-access", { gitAuthor: { name: "Bob", email: "bob@example.com" } }),
+      );
+      assert.deepEqual(launch?.author, ["GIT_AUTHOR_NAME=Bob", "GIT_AUTHOR_EMAIL=bob@example.com"]);
     }),
   );
 
@@ -360,7 +376,7 @@ describe("Grok launch permission mode", () => {
       );
       assert.equal(resolved.runtimeMode, "approval-required");
       assert.deepEqual(yield* launchArgs(resolved), [
-        ["--permission-mode", "default", "agent", "stdio"],
+        { args: ["--permission-mode", "default", "agent", "stdio"], author: [] },
       ]);
     }),
   );

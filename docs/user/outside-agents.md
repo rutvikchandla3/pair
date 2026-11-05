@@ -1,10 +1,11 @@
-# Outside agents
+# Agents and automation
 
-Agents that Pair did not start can work with an environment through its MCP
-server. They can read projects and threads, start and message threads, and
-check which providers and models are available. This covers Claude Code or
-Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
-in once, and you choose what it may do.
+Agents that Pair did not start, and your own scripts, can work with an
+environment through its MCP server. They can read projects and threads, start
+and message threads, and check which providers and models are available. This
+covers Claude Code or Codex in your own terminal, ChatGPT, bots, scripts and CI
+jobs. An agent either signs in once, or uses an [API token](#api-tokens) you
+create. Either way you choose what it may do, and it acts as you.
 
 ## Get the MCP URL
 
@@ -42,8 +43,8 @@ The page names the agent and where its access goes:
 
 Only approve a sign-in you just started. To approve, enter a sign-in code from
 **Settings → Sharing & access** or from `t3 auth pairing create` on the host. A
-browser already signed in to the environment with permission to manage access
-can approve without a code.
+browser already signed in to the environment can approve without a code, up to
+the access that browser has. Only an admin can approve Full access.
 
 Then choose what the agent may do:
 
@@ -90,32 +91,98 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
 
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
-Agents without OAuth support cannot connect.
+An agent without OAuth support can connect with an
+[API token](#connect-with-a-token) instead.
 
-## Scripts on the host
+## API tokens
 
-On the machine that runs the environment, `t3 thread` uses the same tools
-without a sign-in:
+An API token lets a script, a CI job or an agent act as you without a browser
+sign-in. It works only for agents and scripts; it cannot open the app.
+
+Create one in **Settings → Sharing & access → Authorized clients → Create API
+token**. Name it, choose its access from the same levels as an agent sign-in,
+and choose when it expires: in 30, 90 or 365 days. A token never has more access
+than you do, so only an admin can create one with Full access.
+
+The token is shown once. Treat it like a password: anyone who has it can act as
+you. Send it only over `https` or to `localhost`, for the same reason as a
+sign-in. To replace a token, create a new one and revoke the old one.
+
+## Connect with a token
+
+Any MCP client that can send a header can use a token. Give it the MCP URL and
+the header `Authorization: Bearer <token>`. For Claude Code:
 
 ```sh
-id=$(t3 thread start . "Find why the tests are slow")
-t3 thread send "$id" "Now fix it" --wait
-t3 thread show "$id"
-t3 thread list
+claude mcp add --transport http t3 https://<environment-address>/mcp \
+  --header "Authorization: Bearer $T3CODE_TOKEN"
 ```
 
-`.` means the project that contains the current folder; a project id also
-works. A new thread uses the project's default model and permission mode, and
-runs in the project folder unless you pass `--worktree <base-branch>`. `send`
-never interrupts: a busy thread gets the message as its next turn. Pass `-` as
-the message to read it from stdin.
+Clients that support OAuth can still [sign in](#approve-a-sign-in) instead.
+
+## Scripts and CI
+
+`t3 thread` starts, messages and reads threads from a shell. Point it at an
+environment with `T3CODE_URL` (or `--url`) and a token in `T3CODE_TOKEN`:
+
+```sh
+export T3CODE_URL=https://<environment-address>
+export T3CODE_TOKEN=<token>
+id=$(npx t3 thread start <project> "Find why the tests are slow")
+npx t3 thread send "$id" "Now fix it" --wait
+npx t3 thread show "$id"
+npx t3 thread list --project <project>
+```
+
+`<project>` is a project id, the project's folder on that machine, or its title.
+The token is read only from the environment, so it stays out of your shell
+history. For unattended runs, create the token with **Auto** or **Auto-accept
+edits**: with Supervised, a run stops at its first approval and `--wait` exits 2.
+
+On the machine that runs the environment, leave out `T3CODE_URL`, and `.` means
+the project that contains the current folder. Without a token, `t3 thread` acts
+as the machine's owner; with `T3CODE_TOKEN` set, it acts as the token's member,
+so on a shared team machine each person sets their own.
+
+A new thread uses the project's default model and permission mode, and runs in
+the project folder unless you pass `--worktree <base-branch>`. `send` never
+interrupts: a busy thread gets the message as its next turn. Pass `-` as the
+message to read it from stdin.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a
-result that always includes the thread id.
+result that always includes the thread id. A revoked or expired token fails
+with "The token was rejected."
+
+## Agents working with agents
+
+A connected agent can start threads, message them, wait for them and read their
+results, so one agent can hand work to others and collect it. An agent Pair
+started can also move its own thread into a new worktree. A thread an agent
+starts belongs to whoever the agent acts for: you, for an agent you approved or
+a token you created, and the thread's owner, for an agent running in a Pair
+thread.
+
+## Webhooks
+
+To start work when another service calls a URL, use a project's
+[webhook automations](./project-settings.md#webhook-automations).
+
+## Provider accounts
+
+Agents and scripts run on the environment's providers. To route a provider
+through OpenRouter or another router, see
+[OpenRouter](./providers-claude.md#openrouter) and
+[other routers](./providers-claude.md#other-routers).
+
+Pair doesn't pool or rotate teammates' personal subscriptions. They are licensed
+per person, and sharing them can break the provider's terms. Each member can
+connect their own account, or the team can use API keys, directly or through
+[a proxy such as OpenRouter](./providers-claude.md#openrouter).
 
 ## Remove an agent
 
-Approved agents appear under **Settings → Sharing & access** like other clients.
-Revoke one there to cut off its access immediately. A sign-in lasts 30 days;
-after that the agent asks you to approve it again.
+Approved agents and API tokens appear under **Settings → Sharing & access →
+Authorized clients** like other clients. Revoke one there to cut off its access
+immediately. A sign-in lasts 30 days; after that the agent asks you to approve
+it again. Removing a member from a team also revokes their tokens.
