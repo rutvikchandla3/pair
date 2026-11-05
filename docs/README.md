@@ -71,4 +71,5 @@ source alone does not explain. Most code changes do not need an internal documen
 
 ### Product
 
+- [Pair features](./product/pair-features.md)
 - [Market signals](./product/market-signals.md)
