@@ -107,7 +107,6 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   pickableProjectGroups,
@@ -163,7 +162,7 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/older
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
-import { readCanDeleteThread, readThreadTeamMenu } from "../state/team";
+import { readCanDeleteThread, readThreadShareOrigin, readThreadTeamMenu } from "../state/team";
 import { MemberAvatar } from "./team/MemberAvatar";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
@@ -2928,7 +2927,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "copy-thread":
             void copyThreadReference(
-              threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+              threadChipCopyTarget(
+                threadRef,
+                thread.title,
+                readThreadShareOrigin(threadRef.environmentId),
+              ),
             );
             return;
           case "copy-thread-id":

@@ -1073,11 +1073,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
-    const threadLink = href ? parseThreadLinkHref(href) : null;
+    // Read on render like the media preview does: a team link is the environment's own origin.
+    const serverUrls = [
+      environmentId === null ? null : readPreparedConnection(environmentId)?.httpBaseUrl,
+    ];
+    const threadLink = href ? parseThreadLinkHref(href, serverUrls) : null;
     if (threadLink) {
       const written = hastPlainTextDeep(node);
       // An autolink's text is its own URL, which is no label.
-      const label = written && parseThreadLinkHref(written) === null ? written : null;
+      const label = written && parseThreadLinkHref(written, serverUrls) === null ? written : null;
       return environmentId ? (
         <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
