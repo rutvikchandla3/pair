@@ -79,9 +79,18 @@ it.layer(layerTeam)("TeamMembers", (it) => {
     Effect.gen(function* () {
       const team = yield* TeamMembers.TeamMembers;
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const invited = yield* team.invite({ name: "Alice", role: "member" });
+      const invited = yield* team.invite({
+        name: "Alice",
+        role: "member",
+        gitEmail: "alice@example.com",
+      });
 
-      expect(invited.member).toMatchObject({ name: "Alice", role: "member", isOwner: false });
+      expect(invited.member).toMatchObject({
+        name: "Alice",
+        role: "member",
+        isOwner: false,
+        gitEmail: "alice@example.com",
+      });
       expect(invited.member.color).toMatch(/^hsl\(/);
       const link = (yield* auth.listPairingLinks()).find(
         (candidate) => candidate.id === invited.credential.id,
@@ -94,6 +103,40 @@ it.layer(layerTeam)("TeamMembers", (it) => {
       expect(session.memberId).toBe(invited.member.id);
       expect(session.scopes).toEqual(MEMBER_SCOPES);
     }),
+  );
+
+  it.effect.each(["updateSelf", "update"] as const)(
+    "%s sets git fields that author commits and clears them with null",
+    (method) =>
+      Effect.gen(function* () {
+        const team = yield* TeamMembers.TeamMembers;
+        const { gitAuthorFor } = yield* TeamState.TeamState;
+        const { member } = yield* team.invite({
+          name: "Erin",
+          role: "member",
+          gitEmail: "erin@example.com",
+        });
+        const update = (input: { gitName?: string | null; gitEmail?: string | null }) =>
+          method === "update"
+            ? team.update({ memberId: member.id, ...input })
+            : team.updateSelf(member.id, input);
+        expect(yield* gitAuthorFor(member.id)).toEqual({ name: "Erin", email: "erin@example.com" });
+
+        expect(yield* update({ gitName: "Erin Git" })).toMatchObject({
+          gitName: "Erin Git",
+          gitEmail: "erin@example.com",
+        });
+        expect(yield* gitAuthorFor(member.id)).toEqual({
+          name: "Erin Git",
+          email: "erin@example.com",
+        });
+
+        const cleared = yield* update({ gitName: null, gitEmail: null });
+        expect(cleared).toMatchObject({ name: "Erin" });
+        expect(cleared).not.toHaveProperty("gitName");
+        expect(cleared).not.toHaveProperty("gitEmail");
+        expect(yield* gitAuthorFor(member.id)).toBeUndefined();
+      }),
   );
 
   it.effect("setRole widens only full-bundle sessions and narrows them back", () =>

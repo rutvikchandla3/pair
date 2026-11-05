@@ -3235,6 +3235,7 @@ export const layerWsRpc = (
             gitWorkflow
               .runStackedAction(input, {
                 actionId: input.actionId,
+                actorId: currentSession.memberId,
                 progressReporter: {
                   publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                 },

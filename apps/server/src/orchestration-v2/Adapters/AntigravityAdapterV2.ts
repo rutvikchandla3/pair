@@ -147,6 +147,9 @@ export function makeAntigravityAcpAdapterFlavor(
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
             additionalDirectories: [options.host.paths.attachmentsDir],
+            ...(input.runtimePolicy.gitAuthor === undefined
+              ? {}
+              : { gitAuthor: input.runtimePolicy.gitAuthor }),
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
