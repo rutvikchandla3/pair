@@ -251,6 +251,16 @@ function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List
   );
 }
 
+function ComboboxSeparator({ className, ...props }: ComboboxPrimitive.Separator.Props) {
+  return (
+    <ComboboxPrimitive.Separator
+      className={cn("mx-2 my-1 h-px bg-border", className)}
+      data-slot="combobox-separator"
+      {...props}
+    />
+  );
+}
+
 function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   return <ComboboxPrimitive.Clear className={className} data-slot="combobox-clear" {...props} />;
 }
@@ -280,6 +290,7 @@ export {
   ComboboxEmpty,
   ComboboxList,
   ComboboxListVirtualized,
+  ComboboxSeparator,
   ComboboxClear,
   ComboboxStatus,
   useComboboxFilter,

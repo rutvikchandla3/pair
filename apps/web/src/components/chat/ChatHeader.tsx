@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, EyeIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -21,6 +21,7 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -42,6 +43,8 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { useQuietThreadShell } from "../../state/entities";
+import { useSetThreadFollowed, useThreadFollowing } from "../../state/team";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -430,7 +433,36 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? <ThreadFollowToggle threadRef={activeThreadRef} /> : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });
+
+/** Team threads the viewer does not own; filled while following. */
+function ThreadFollowToggle({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const following = useThreadFollowing(useQuietThreadShell(threadRef));
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const setThreadFollowed = useSetThreadFollowed();
+  if (following === null) return null;
+  const label = following ? "Unfollow thread" : "Follow thread";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={label}
+            aria-pressed={following}
+            disabled={!canOperate}
+            onClick={() => void setThreadFollowed(threadRef, !following)}
+          />
+        }
+      >
+        <EyeIcon aria-hidden className={following ? "fill-current" : undefined} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}

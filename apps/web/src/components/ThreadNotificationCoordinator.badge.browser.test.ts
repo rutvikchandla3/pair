@@ -57,6 +57,13 @@ vi.mock(import("../state/threads"), async (original) => {
     },
   };
 });
+vi.mock(import("../state/team"), async (original) => ({
+  ...(await original()),
+  teamEnvironment: {
+    membersValueAtom: () => membersAtom,
+    currentMemberIdAtom: () => memberIdAtom,
+  } as never,
+}));
 vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
   subscribeClientSettings: ((listener: () => void) => {
@@ -82,6 +89,8 @@ const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 const noRequestsAtom = Atom.make(new Map());
 const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
+const membersAtom = Atom.make<ReadonlyMap<string, unknown>>(new Map()).pipe(Atom.keepAlive);
+const memberIdAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive);
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -108,6 +117,7 @@ const thread = {
   hasPendingUserInput: false,
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
+  latestRunAuthorId: undefined as string | undefined,
 };
 let focused = false;
 let visibility = "visible";
@@ -165,12 +175,14 @@ function toV2ThreadShell(input: typeof thread) {
     settledAt: null,
     lastVisitedAt: null,
     deletedAt: null,
+    ...(input.latestRunAuthorId === undefined ? {} : { latestRunAuthorId: input.latestRunAuthorId }),
   };
 }
 
 function shell(overrides: Partial<typeof thread> = {}, ...others: Partial<typeof thread>[]) {
   return {
     status: "live",
+    removedBy: new Map(),
     snapshot: Option.some({
       threads: [overrides, ...others].map((override) =>
         toV2ThreadShell({ ...thread, ...override }),
@@ -316,3 +328,34 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
+
+it("routes a team completion to the prompter and holder only, so others get no badge", async () => {
+  await using app = setup();
+  registry.set(
+    membersAtom,
+    new Map([
+      ["alice", { id: "alice", name: "Alice", isOwner: true, removedAt: null }],
+      ["bob", { id: "bob", name: "Bob", isOwner: false, removedAt: null }],
+    ]),
+  );
+  registry.set(memberIdAtom, "bob");
+  app.start();
+  const completedAt = (second: number) => `2026-09-13T07:00:0${second}.000Z`;
+  state.shells.set(
+    "one",
+    shell({ latestTurn: { turnId: "turn", state: "completed", completedAt: completedAt(1) } }),
+  );
+  expect(TestNotification.sent).toEqual([]);
+  expect(state.badge).not.toHaveBeenCalledWith(1);
+
+  state.shells.set("one", shell());
+  state.shells.set(
+    "one",
+    shell({
+      latestRunAuthorId: "bob",
+      latestTurn: { turnId: "turn-2", state: "completed", completedAt: completedAt(2) },
+    }),
+  );
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+});
