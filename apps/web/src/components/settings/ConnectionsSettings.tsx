@@ -584,12 +584,12 @@ function ConnectionsSettingsContent({
     const result = await revokePairingLink({ environmentId: accessEnvironmentId, input: { id } });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
+      const message = error instanceof Error ? error.message : "Couldn't revoke sign-in link.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke pairing link",
+          title: "Couldn't revoke sign-in link",
           description: message,
         }),
       );
@@ -636,7 +636,7 @@ function ConnectionsSettingsContent({
       toastManager.add({
         type: "success",
         title: result.value === 1 ? "Revoked 1 other client" : `Revoked ${result.value} clients`,
-        description: "Other paired clients will need a new pairing link before reconnecting.",
+        description: "Other signed-in clients will need a new sign-in link before reconnecting.",
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -703,7 +703,7 @@ function ConnectionsSettingsContent({
       return;
     }
     const confirmed = await requestConfirmDialog(
-      `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
+      `Remove ${environment.label} from this device?\nThis forgets its sign-in, credentials, and cached threads here. Switch it off instead to keep it saved.`,
       { variant: "destructive" },
     );
     if (confirmed === true) await removeSavedBackend(environment);
@@ -978,7 +978,7 @@ function ConnectionsSettingsContent({
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
-            description="Run only the WSL backend. T3 Code restarts when this changes."
+            description="Run only the WSL backend. Pair will restart when this changes."
             className="bg-muted/20 pl-7 sm:pl-8"
             control={
               <Switch
@@ -1072,7 +1072,7 @@ function ConnectionsSettingsContent({
               desktopServerExposureState?.endpointUrl
                 ? `Reachable at ${desktopServerExposureState.endpointUrl}`
                 : desktopServerExposureState?.advertisedHost
-                  ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
+                  ? `Exposed on all interfaces. Sign-in links use ${desktopServerExposureState.advertisedHost}.`
                   : "Exposed on all interfaces."
             }
           />
@@ -1100,7 +1100,7 @@ function ConnectionsSettingsContent({
           : currentAuthPolicy === "remote-reachable"
             ? "Remote access is already configured. Change network exposure where the server starts."
             : currentAuthPolicy === "loopback-browser"
-              ? "Only this machine can connect. Restart with a non-loopback host for remote pairing."
+              ? "Only this machine can connect. Restart with a non-loopback host for remote sign-in."
               : "Network exposure information is unavailable."
       }
       control={
@@ -1319,8 +1319,8 @@ function ConnectionsSettingsContent({
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
-                    ? "Let your other devices connect to T3 Code over the network. Pair devices to give them access. T3 Code will restart."
-                    : "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. T3 Code will restart."}
+                    ? "Let your other devices connect to Pair over the network. Give each device a sign-in link. Pair will restart."
+                    : "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. Pair will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1376,15 +1376,15 @@ function ConnectionsSettingsContent({
                 <AlertDialogDescription>
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
-                      ? "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
-                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
+                      ? "Pair will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
+                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in Pair until you re-enable WSL."
                     : pendingWslChange?.kind === "distro"
-                      ? "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                      ? "Pair will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
                       : pendingWslChange?.kind === "enable"
                         ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
                         : pendingWslChange?.nextValue
-                          ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                          : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
+                          ? "Pair will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
+                          : "Pair will restart and bring the Windows backend back up alongside WSL."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1470,7 +1470,7 @@ function ConnectionsSettingsContent({
               <AlertDialogHeader>
                 <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  T3 Code will restart the local backend without Tailscale Serve.
+                  Pair will restart the local backend without Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1508,8 +1508,8 @@ function ConnectionsSettingsContent({
               <DialogHeader>
                 <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
                 <DialogDescription>
-                  T3 Code will restart the local backend with Tailscale Serve enabled and ask
-                  Tailscale to proxy HTTPS traffic to this backend.
+                  Pair will restart the local backend with Tailscale Serve enabled and ask Tailscale
+                  to proxy HTTPS traffic to this backend.
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel>

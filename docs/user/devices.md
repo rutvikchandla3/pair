@@ -3,7 +3,7 @@
 The Device panel shows a live iOS Simulator or Android Emulator next to a
 thread, so you can watch an agent verify mobile work and tap the device
 yourself. Agents get the same device through `device_*` tools and the
-`agent-device` command line, which T3 Code sets up for them.
+`agent-device` command line, which Pair sets up for them.
 
 ## Open a device
 
@@ -29,7 +29,7 @@ off.
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
 and Command-line Tools (latest), plus a virtual device created in Android
-Studio's Device Manager. T3 Code detects standard SDK locations; set
+Studio's Device Manager. The Pair server detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing SDK tools, restart the environment server and refresh devices.
 
@@ -79,8 +79,8 @@ If the thread has several devices open, choose one in the viewer. Closing the
 viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.
 
-Agents drive the device through the `agent-device` command line. T3
-Code installs and starts it only after **Agents can use devices** is on. iOS
+Agents drive the device through the `agent-device` command line. The
+Pair server installs and starts it only after **Agents can use devices** is on. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
 receives the device CLI environment.
@@ -109,7 +109,7 @@ anything, with a result for each selected environment. Targets that resolve to
 the environment’s own machine are skipped, since its devices are already local.
 The first device listing installs pinned device tools on the host.
 SSH device hosts currently need macOS or Linux. To use devices on a Windows
-machine, run T3 Code on that machine and connect to its environment.
+machine, run Pair on that machine and connect to its environment.
 Node 22 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host. Android emulator video needs

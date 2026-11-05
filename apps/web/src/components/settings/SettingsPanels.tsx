@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
+import { PRIVACY_POLICY_URL, T3_CODE_REPOSITORY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -2072,10 +2072,23 @@ export function AboutSettingsPanel() {
 
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
+          title="Built on T3 Code"
+          description="Pair is a fork of T3 Code by T3 Tools, Inc., used under the MIT License."
+          control={
+            <Button
+              render={<a href={T3_CODE_REPOSITORY_URL} target="_blank" rel="noreferrer noopener" />}
+              size="sm"
+              variant="outline"
+            >
+              View T3 Code
+            </Button>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How we handle your data, including the anonymous usage data T3 Code collects."
+              ? "Pair sends anonymous usage data to T3 Code, the project Pair is built on."
               : `How we handle your data. ${telemetryOff}`
           }
           control={
@@ -2090,7 +2103,7 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description="Notices for dependencies, assets, and optional tools used by Pair."
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

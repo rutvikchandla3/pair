@@ -401,7 +401,7 @@ function LinkRequestDialog(props: {
                     {canMint ? null : (
                       <label className="block space-y-1.5">
                         <span className="block text-xs font-medium text-foreground">
-                          Pairing code
+                          Sign-in code
                         </span>
                         <Input
                           value={pairingCode}

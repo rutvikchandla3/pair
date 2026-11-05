@@ -20,7 +20,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
-const PEER_PAIRING_CODE_LABEL = "T3 Code link";
+const PEER_PAIRING_CODE_LABEL = "Pair link";
 
 /** Minting failed; the user can still paste a code from the other environment. */
 export class PeerPairingCodeError extends Schema.TaggedError<PeerPairingCodeError>()(
@@ -32,8 +32,8 @@ export class PeerPairingCodeError extends Schema.TaggedError<PeerPairingCodeErro
 ) {
   override get message(): string {
     return this.reason === "not_allowed"
-      ? "Your session there cannot create pairing codes. Paste a code from there instead."
-      : "Could not get a pairing code from there. Paste a code from there instead.";
+      ? "Your session there cannot create sign-in codes. Paste a code from there instead."
+      : "Couldn't get a sign-in code from there. Paste a code from there instead.";
   }
 }
 

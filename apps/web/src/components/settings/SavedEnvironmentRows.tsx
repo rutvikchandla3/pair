@@ -748,7 +748,7 @@ export function CloudLinkRow({
     return (
       <SettingsRow
         title="T3 Connect"
-        description="To edit these settings, pair this connection with both View relay and Manage relay permissions."
+        description="To edit these settings, sign in to this connection again with both View relay and Manage relay permissions."
       />
     );
   }
@@ -765,8 +765,8 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Click “Add environment” to connect another environment, or connect one from T3 Connect."
+            : "Click “Add environment” to connect another environment."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

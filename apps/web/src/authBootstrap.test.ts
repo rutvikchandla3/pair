@@ -284,7 +284,7 @@ describe("resolveInitialServerAuthGateState", () => {
         await expect(gateLoads[0]).resolves.toEqual(requiresAuth);
         const rejected = expect(submitServerAuthCredential(token!)).rejects.toMatchObject({
           _tag: "PrimaryEnvironmentPairingCredentialRejectedError",
-          message: "Invalid pairing token. Check the token and try again.",
+          message: "Invalid sign-in code. Check the code and try again.",
         });
         await exchangeStarted.promise;
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual(requiresAuth);
@@ -359,7 +359,7 @@ describe("resolveInitialServerAuthGateState", () => {
     const rejectedState = {
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
-      errorMessage: "Invalid pairing token. Check the token and try again.",
+      errorMessage: "Invalid sign-in code. Check the code and try again.",
     } as const;
     await expect(explicitPairing).resolves.toEqual(rejectedState);
     await expect(laterCaller).resolves.toEqual(rejectedState);
@@ -387,7 +387,7 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
-      errorMessage: "Invalid pairing token. Check the token and try again.",
+      errorMessage: "Invalid sign-in code. Check the code and try again.",
     });
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "requires-auth",

@@ -27,7 +27,7 @@ export class RemotePairingUrlInvalidError extends Schema.TaggedError<RemotePairi
   },
 ) {
   override get message(): string {
-    return "Pairing URL is invalid.";
+    return "Sign-in link is invalid.";
   }
 }
 
@@ -49,7 +49,7 @@ export class RemotePairingTokenMissingError extends Schema.TaggedError<RemotePai
   { host: Schema.String },
 ) {
   override get message(): string {
-    return "Pairing URL is missing its token.";
+    return "Sign-in link is missing its code.";
   }
 }
 
@@ -58,7 +58,7 @@ export class RemotePairingCodeMissingError extends Schema.TaggedError<RemotePair
   { host: Schema.String },
 ) {
   override get message(): string {
-    return "Enter a pairing code.";
+    return "Enter a sign-in code.";
   }
 }
 
