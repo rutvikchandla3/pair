@@ -7,7 +7,12 @@ import {
   isTeamModeMembers,
   type TeamMembers,
 } from "@t3tools/client-runtime/state/team";
-import { AuthAccessWriteScope, type EnvironmentId, type MemberId } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  type EnvironmentId,
+  type MemberId,
+  type TeamMember,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -66,6 +71,55 @@ export function useTeamAttribution(environmentId: EnvironmentId | null) {
     members,
     nameOf: (id: MemberId) => memberDisplayName(members, id),
   };
+}
+
+/** Who "me" and the server owner are in one team-mode environment. */
+export interface TeamViewer {
+  readonly memberId: MemberId;
+  readonly ownerId: MemberId | null;
+  readonly members: TeamMembers;
+}
+
+function teamViewerOf(members: TeamMembers, memberId: MemberId | null): TeamViewer | null {
+  if (memberId === null || !isTeamModeMembers(members)) return null;
+  let ownerId: MemberId | null = null;
+  for (const member of members.values()) if (member.isOwner) ownerId = member.id;
+  return { memberId, ownerId, members };
+}
+
+const FORMER_MEMBER = { name: FORMER_MEMBER_NAME, color: "#6b7280" } as const;
+
+/** The member who owns a thread when it is not the viewer; null for the viewer's own threads. */
+export function teamOwnerOf(
+  viewer: TeamViewer,
+  ownerId: MemberId | null | undefined,
+): Pick<TeamMember, "name" | "color"> | null {
+  const effectiveOwnerId = ownerId ?? viewer.ownerId;
+  if (effectiveOwnerId === null || effectiveOwnerId === viewer.memberId) return null;
+  return viewer.members.get(effectiveOwnerId) ?? FORMER_MEMBER;
+}
+
+/** Team mode, me and the owner are per environment; single-member environments are absent. */
+const teamViewersFamily = Atom.family((environmentIdsKey: string) =>
+  Atom.make((get) => {
+    const viewers = new Map<EnvironmentId, TeamViewer>();
+    for (const id of environmentIdsKey === ""
+      ? []
+      : (environmentIdsKey.split("\n") as EnvironmentId[])) {
+      const viewer = teamViewerOf(
+        get(teamEnvironment.membersValueAtom(id)),
+        get(teamEnvironment.currentMemberIdAtom(id)),
+      );
+      if (viewer !== null) viewers.set(id, viewer);
+    }
+    return viewers;
+  }).pipe(Atom.withLabel("team-viewers")),
+);
+
+export function useTeamViewers(
+  environmentIds: readonly EnvironmentId[],
+): ReadonlyMap<EnvironmentId, TeamViewer> {
+  return useAtomValue(teamViewersFamily(environmentIds.join("\n")));
 }
 
 /** For menus that read on demand. Team members are kept subscribed by TeamMembersWatch. */
