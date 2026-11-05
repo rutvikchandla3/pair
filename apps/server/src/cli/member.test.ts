@@ -128,7 +128,15 @@ describe("t3 member", () => {
 
       const invited = parse<{ member: TeamMember; credential: string; pairUrl?: string }>(
         yield* captureStdout(
-          runCli(["member", "invite", "Alice", "--git-email", "alice@example.com", ...at, "--json"]),
+          runCli([
+            "member",
+            "invite",
+            "Alice",
+            "--git-email",
+            "alice@example.com",
+            ...at,
+            "--json",
+          ]),
         ),
       );
       assert.equal(invited.member.role, "member");
