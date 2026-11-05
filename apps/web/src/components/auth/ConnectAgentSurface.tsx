@@ -246,6 +246,13 @@ export function ConnectAgentSurface() {
               Create one in Settings → Sharing & access, or run <code>t3 auth pairing create</code>{" "}
               on this machine.
             </p>
+            {access === "full-access" ? (
+              <p className="text-xs text-muted-foreground">
+                Full access includes changing settings, which only an admin can grant. A
+                member&apos;s code from Add a device cannot approve it, so pick a lower access or
+                ask an admin.
+              </p>
+            ) : null}
           </div>
         )}
 

@@ -348,6 +348,32 @@ export function toDesktopClientSessionRecord(
   };
 }
 
+/** The endpoints a pairing link can offer, and the one to default to. */
+export function resolvePairingShareEndpoints(
+  advertisedEndpoints: ReadonlyArray<AdvertisedEndpoint>,
+  isNetworkAccessible: boolean,
+  preferredKey: string | null,
+) {
+  const tailscaleHttpsEndpoint = advertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
+  const networkEndpoints = isNetworkAccessible
+    ? advertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
+    : [];
+  const endpoints = tailscaleHttpsEndpoint
+    ? [...networkEndpoints, tailscaleHttpsEndpoint]
+    : networkEndpoints;
+  const defaultNetworkEndpoint = selectPairingEndpoint(networkEndpoints, preferredKey);
+  const defaultEndpoint =
+    defaultNetworkEndpoint ??
+    selectPairingEndpoint(tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [], preferredKey);
+  return {
+    tailscaleHttpsEndpoint,
+    networkEndpoints,
+    endpoints,
+    defaultNetworkEndpoint,
+    defaultEndpointKey: defaultEndpoint ? endpointDefaultPreferenceKey(defaultEndpoint) : null,
+  };
+}
+
 export function selectPairingEndpoint(
   endpoints: ReadonlyArray<AdvertisedEndpoint>,
   defaultEndpointKey?: string | null,
