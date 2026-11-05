@@ -450,6 +450,28 @@ your login; `t3 connect logout` also clears that login. Background-service
 Treat pairing URLs and authorization codes as passwords. Do not include them in
 screenshots, logs, or bug reports.
 
+### Team members from the command line
+
+`t3 member` manages who can use a server, the same as **Settings → Team**:
+
+```sh
+npx t3 member invite "Ada Lovelace" --role admin
+npx t3 member list
+npx t3 member signin-link "ada lovelace"
+npx t3 member remove "ada lovelace"
+```
+
+Name a member by id or by name, in any case. `invite` and `signin-link` print a
+one-time link that signs the member in on one device. With T3 Code stopped they
+print only the token; pass `--base-url` for a full link. Members get every
+permission except settings, providers, access, T3 Connect, and environment
+maintenance; admins get all of them. Removing a member signs out all of their
+devices.
+
+`t3 pair` and `t3 auth session issue` take `--member` to issue the credential
+to that member instead of the owner. It gets the member's role permissions;
+`--scope` can narrow them but not add to them.
+
 ## T3 Connect troubleshooting
 
 When a T3 Connect connection fails, see

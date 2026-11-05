@@ -58,10 +58,13 @@ reconnects with the new grant. Removal revokes the member's sessions and
 unconsumed links, and authentication independently rejects a removed member.
 
 Authentication reads members from an in-memory snapshot
-([TeamState](../../apps/server/src/team/TeamState.ts)), but the CLI writes the
-database directly. The server rereads members when it meets an unknown id or
-lists the team, and team mutations read the database. A CLI removal is enforced
-through the revoked rows, not the snapshot.
+([TeamState](../../apps/server/src/team/TeamState.ts)), and only the server's own
+writes close sockets and update its Team stream. So `t3 member` sends changes
+through the `team.*` RPCs of a running server that answers, and writes the
+database itself only when none does ([member.ts](../../apps/server/src/cli/member.ts)).
+The server rereads members when it meets an unknown id or lists the team, which
+covers members written while it was unreachable; a removal written then is
+enforced through the revoked rows, while open sockets last until they reconnect.
 
 ### Guest links are not sessions
 

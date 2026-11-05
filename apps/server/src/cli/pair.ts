@@ -1,6 +1,5 @@
 import {
-  type AuthEnvironmentScope,
-  AuthStandardClientScopes,
+  type AuthGrantScope,
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_VERSION,
   PortSchema,
@@ -46,8 +45,9 @@ import {
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
-import { authScopesFlag } from "./authScopes.ts";
+import { memberScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import { memberFlag, resolveMemberGrant } from "./memberGrant.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -145,7 +145,7 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
@@ -425,14 +425,15 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
 
 const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly member: Option.Option<string>;
+  readonly scopes: ReadonlyArray<AuthGrantScope>;
   readonly ttl: Option.Option<Duration.Duration>;
   readonly label: Option.Option<string>;
 }) {
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     return yield* environmentAuth.createPairingLink({
-      scopes: input.scopes,
+      ...(yield* resolveMemberGrant(input.member, input.scopes)),
       subject: "one-time-token",
       label: Option.getOrElse(input.label, () => "t3 pair"),
       ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
@@ -475,7 +476,8 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
 
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  member: memberFlag,
+  scopes: memberScopesFlag,
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,
@@ -539,6 +541,7 @@ export const pairCommand = Command.make("pair", {
       const config = yield* makePairServerConfig({ target, logLevel });
       const issued = yield* mintPairingLink({
         config,
+        member: flags.member,
         scopes: flags.scopes,
         ttl: flags.ttl,
         label: flags.label,
