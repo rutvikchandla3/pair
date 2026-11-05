@@ -2,6 +2,7 @@ import type {
   AuthAccessSnapshot,
   AuthAccessStreamEvent,
   AuthAccessStreamSnapshotEvent,
+  AuthCreateApiTokenInput,
   AuthCreatePairingCredentialInput,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
@@ -97,6 +98,17 @@ export function createAuthEnvironmentAtoms<R, E>(
           url: (urls) => urls.pairingCredential(),
           timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
           request: ({ client, headers }) => client.pairingCredential({ headers, payload: input }),
+        }),
+    }),
+    createApiToken: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:auth-create-api-token",
+      execute: (input: AuthCreateApiTokenInput) =>
+        executeConnectedEnvironmentHttpRequest({
+          group: "auth",
+          method: "POST",
+          url: (urls) => urls.createApiToken(),
+          timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
+          request: ({ client, headers }) => client.createApiToken({ headers, payload: input }),
         }),
     }),
     revokePairingLink: createEnvironmentCommand(runtime, {
