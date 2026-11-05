@@ -134,6 +134,8 @@ describe("t3 member", () => {
             "Alice",
             "--git-email",
             "alice@example.com",
+            "--github",
+            "@alice-gh",
             ...at,
             "--json",
           ]),
@@ -141,6 +143,7 @@ describe("t3 member", () => {
       );
       assert.equal(invited.member.role, "member");
       assert.equal(invited.member.gitEmail, "alice@example.com");
+      assert.deepEqual(invited.member.github, { login: "alice-gh", connected: false });
       assert.isString(invited.credential);
       assert.isUndefined(invited.pairUrl);
 

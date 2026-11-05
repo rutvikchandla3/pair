@@ -50,6 +50,12 @@ export class MemberGitHub extends Context.Service<
       memberId: MemberId,
     ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
     readonly cancel: (memberId: MemberId) => Effect.Effect<void>;
+    /** Binds an account the member proved through the device flow and stores its session. */
+    readonly connect: (
+      memberId: MemberId,
+      viewer: GitHubDeviceFlow.GitHubViewer,
+      session: GitHubDeviceFlow.GitHubAppSession,
+    ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
     /** Drops the token and the binding. GitHub keeps the grant until the member revokes it. */
     readonly disconnect: (memberId: MemberId) => Effect.Effect<TeamMember, TeamError>;
     /** The member's token, refreshed when due; none when not connected or no longer usable. */
@@ -142,18 +148,11 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const link = Effect.fn("MemberGitHub.link")(function* (
-    memberId: MemberId,
-    session: GitHubDeviceFlow.GitHubAppSession,
+  const connect: MemberGitHub["Service"]["connect"] = Effect.fn("MemberGitHub.connect")(function* (
+    memberId,
+    viewer,
+    session,
   ) {
-    const viewer = yield* flow
-      .viewer(HOST, session.accessToken)
-      .pipe(
-        Effect.mapError((error) =>
-          linkError("The server could not read your GitHub account. Start again.", error.cause),
-        ),
-      );
-    if (viewer === null) return yield* linkError("GitHub refused the new connection. Start again.");
     // The CLI writes members directly, so check against fresh rows.
     yield* teamState.reload.pipe(Effect.ignore);
     for (const record of (yield* Ref.get(teamState.members)).values()) {
@@ -175,6 +174,21 @@ const make = Effect.gen(function* () {
         githubConnectedAt: yield* nowIso,
       })
       .pipe(Effect.tapError(() => secrets.remove(secretName(memberId)).pipe(Effect.ignore)));
+  });
+
+  const link = Effect.fn("MemberGitHub.link")(function* (
+    memberId: MemberId,
+    session: GitHubDeviceFlow.GitHubAppSession,
+  ) {
+    const viewer = yield* flow
+      .viewer(HOST, session.accessToken)
+      .pipe(
+        Effect.mapError((error) =>
+          linkError("The server could not read your GitHub account. Start again.", error.cause),
+        ),
+      );
+    if (viewer === null) return yield* linkError("GitHub refused the new connection. Start again.");
+    return yield* connect(memberId, viewer, session);
   });
 
   const start: MemberGitHub["Service"]["start"] = Effect.fn("MemberGitHub.start")(
@@ -325,7 +339,16 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return MemberGitHub.of({ enabled, start, wait, cancel, disconnect, credentialFor, check });
+  return MemberGitHub.of({
+    enabled,
+    start,
+    wait,
+    cancel,
+    connect,
+    disconnect,
+    credentialFor,
+    check,
+  });
 });
 
 export const layer = Layer.effect(MemberGitHub, make);

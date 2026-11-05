@@ -331,6 +331,19 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
   }
 }
 
+/** Rejects with the server's `AuthGitHubSignInError`, whose message is written for the person. */
+export const startGitHubSignIn = () =>
+  runPrimaryHttp(
+    PrimaryEnvironmentHttpClient.pipe(Effect.flatMap((client) => client.auth.githubSignInStart())),
+  );
+
+export const pollGitHubSignIn = (attemptId: string) =>
+  runPrimaryHttp(
+    PrimaryEnvironmentHttpClient.pipe(
+      Effect.flatMap((client) => client.auth.githubSignInPoll({ payload: { attemptId } })),
+    ),
+  );
+
 export async function submitServerAuthCredential(credential: string): Promise<void> {
   const trimmedCredential = credential.trim();
   if (!trimmedCredential) {

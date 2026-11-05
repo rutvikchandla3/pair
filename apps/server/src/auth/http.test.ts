@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthGitHubSignInError,
   AuthTokenExchangeGrantType,
   AuthEnvironmentBootstrapTokenType,
   AuthAccessTokenType,
@@ -26,6 +27,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as GitHubSignIn from "../team/GitHubSignIn.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -55,8 +57,24 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
+const layerGitHubSignIn = Layer.succeed(
+  GitHubSignIn.GitHubSignIn,
+  GitHubSignIn.GitHubSignIn.of({
+    start: () =>
+      Effect.succeed({
+        attemptId: "attempt",
+        userCode: "ABCD-1234",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: 0,
+        interval: 5,
+      }),
+    poll: () =>
+      Effect.fail(new AuthGitHubSignInError({ reason: "not-a-member", message: "Not on the team." })),
+  }),
+);
 const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
   Layer.provide(AuthHttp.layer),
+  Layer.provide(layerGitHubSignIn),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provideMerge(layerEnvironmentAuth),
   Layer.provide(layerConfig),
@@ -107,6 +125,24 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
             requestContext,
           );
           expect(devResponse.status).toBe(200);
+
+          // GitHub sign-in is how a signed-out browser gets in, and its answer carries a credential.
+          const githubStart = await environmentA.handler(
+            postJson("/api/auth/github/start", {}),
+            requestContext,
+          );
+          expect(githubStart.status).toBe(200);
+          expect(await githubStart.json()).toMatchObject({ userCode: "ABCD-1234" });
+          const githubPoll = await environmentA.handler(
+            postJson("/api/auth/github/poll", { attemptId: "attempt" }),
+            requestContext,
+          );
+          expect(githubPoll.status).toBe(400);
+          expect(await githubPoll.json()).toMatchObject({ reason: "not-a-member" });
+          for (const response of [githubStart, githubPoll]) {
+            expect(response.headers.get("cache-control")).toBe("no-store");
+            expect(response.headers.get("pragma")).toBe("no-cache");
+          }
           const retiredScopeResponse = await environmentA.handler(
             new Request("http://127.0.0.1/oauth/token", {
               method: "POST",

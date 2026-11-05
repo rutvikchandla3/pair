@@ -104,6 +104,9 @@ it.layer(layerTeam)("TeamMembers", (it) => {
       const { session } = yield* signIn(invited.credential.credential);
       expect(session.memberId).toBe(invited.member.id);
       expect(session.scopes).toEqual(MEMBER_SCOPES);
+
+      const withGitHub = yield* team.invite({ name: "Abe", role: "member", githubLogin: "abe-gh" });
+      expect(withGitHub.member.github).toEqual({ login: "abe-gh", connected: false });
     }),
   );
 
