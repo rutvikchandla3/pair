@@ -58,6 +58,22 @@ export function resolveGitActionResultToastTiming(
   };
 }
 
+/**
+ * The inline line under "Created PR". The toast description normally repeats the PR title, which
+ * the inline success leaves out; the server replaces it with a note when the PR opened as the server.
+ */
+export function resolveCreatedPullRequestNote(
+  result: Pick<GitRunStackedActionResult, "pr" | "toast">,
+): string | null {
+  const { description } = result.toast;
+  const title = result.pr.title;
+  if (description === undefined || title === undefined) return description ?? null;
+  const repeatsTitle =
+    description === title ||
+    (description.endsWith("...") && title.startsWith(description.slice(0, -3)));
+  return repeatsTitle ? null : description;
+}
+
 export function resolveGitActionProgressPresentation(input: {
   readonly isRunning: boolean;
   readonly operation: string | null;

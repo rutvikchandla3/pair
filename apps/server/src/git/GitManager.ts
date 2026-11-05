@@ -39,6 +39,7 @@ import {
   type OrchestrationV2TurnItem,
   type ProjectId,
   SourceControlProviderError,
+  type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -56,6 +57,11 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 import { PRODUCT_NAME } from "@t3tools/shared/productName";
+import {
+  type ActingCredential,
+  ActingSourceControlCredential,
+} from "@t3tools/source-control-core/server/ActingSourceControlCredential";
+import { APP_SIGN_IN } from "@t3tools/source-control-github/shared/definition";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
@@ -86,6 +92,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as MemberGitHub from "../team/MemberGitHub.ts";
 import * as TeamState from "../team/TeamState.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -461,6 +468,44 @@ function withDescription(title: string, description: string | undefined) {
   return description ? { title, description } : { title };
 }
 
+/** Why a PR meant to open as the member opened with the server's account instead. */
+type OpenedAsServer = "expired" | "unreachable" | "refused";
+
+const OPENED_AS_SERVER: Record<OpenedAsServer, string> = {
+  expired:
+    "Opened with the server's GitHub account. Your GitHub connection expired; reconnect it in Settings → Team.",
+  unreachable:
+    "Opened with the server's GitHub account: your GitHub connection can't reach this repository.",
+  refused: "Opened with the server's GitHub account.",
+};
+
+/** Reads the GitHub request error a provider failure carries as its cause. */
+function openedAsServerReason(error: SourceControlProviderError): OpenedAsServer {
+  const cause: unknown = error.cause;
+  if (typeof cause !== "object" || cause === null || !("_tag" in cause)) return "refused";
+  switch (cause._tag) {
+    case "GitHubApiAuthenticationError":
+      return "expired";
+    case "GitHubApiNotFoundError":
+      return "unreachable";
+    case "GitHubApiResponseError": {
+      const status = "status" in cause ? cause.status : undefined;
+      const messages =
+        "githubErrors" in cause && Array.isArray(cause.githubErrors) ? cause.githubErrors : [];
+      return status === 403 ||
+        status === 404 ||
+        messages.some(
+          (message) =>
+            typeof message === "string" && /not accessible by integration/i.test(message),
+        )
+        ? "unreachable"
+        : "refused";
+    }
+    default:
+      return "refused";
+  }
+}
+
 function summarizeGitActionResult(
   result: Pick<GitRunStackedActionResult, "commit" | "push" | "pr">,
   terms: ChangeRequestTerminology,
@@ -665,6 +710,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   // CLI and test runtimes have no team, so their commits and PRs keep the server identity.
   const teamState = yield* Effect.serviceOption(TeamState.TeamState);
+  const memberGitHub = yield* Effect.serviceOption(MemberGitHub.MemberGitHub);
 
   const resolveActor = Effect.fnUntraced(function* (actorId: MemberId | undefined) {
     if (Option.isNone(teamState) || actorId === undefined) {
@@ -675,6 +721,28 @@ export const make = Effect.gen(function* () {
       ? (yield* Ref.get(team.members)).get(actorId)?.name
       : undefined;
     return { author: yield* team.gitAuthorFor(actorId), requesterName };
+  });
+
+  /** The member's own GitHub token, for a PR on a host their GitHub App connection covers. */
+  const actingCredentialFor = Effect.fnUntraced(function* (
+    cwd: string,
+    kind: SourceControlProviderKind,
+    actorId: MemberId | undefined,
+  ) {
+    if (Option.isNone(memberGitHub) || actorId === undefined || kind !== "github") {
+      return Option.none<ActingCredential>();
+    }
+    const { context } = yield* sourceControlProviders.resolveHandle({ cwd });
+    const host =
+      context !== null && URL.canParse(context.provider.baseUrl)
+        ? new URL(context.provider.baseUrl).host
+        : null;
+    if (host === null || !APP_SIGN_IN.hosts.includes(host)) return Option.none<ActingCredential>();
+    const credential = yield* memberGitHub.value.credentialFor(actorId);
+    return credential.pipe(
+      Option.filter((held) => held.host === host),
+      Option.map((held): ActingCredential => ({ kind, host, token: held.token })),
+    );
   });
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
@@ -1945,9 +2013,16 @@ export const make = Effect.gen(function* () {
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
+    openedAsServer: OpenedAsServer | null,
   ) {
     const terms = yield* changeRequestTermsFor(cwd);
-    const summary = summarizeGitActionResult(result, terms);
+    const summary =
+      openedAsServer === null
+        ? summarizeGitActionResult(result, terms)
+        : {
+            ...summarizeGitActionResult(result, terms),
+            description: OPENED_AS_SERVER[openedAsServer],
+          };
     let latestOpenPr: PullRequestInfo | null = null;
     let currentBranchIsDefault = false;
     let finalBranchContext: {
@@ -2291,7 +2366,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
-    requesterName: string | undefined,
+    actor: { readonly actorId: MemberId | undefined; readonly requesterName: string | undefined },
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2320,12 +2395,15 @@ export const make = Effect.gen(function* () {
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
       return {
-        status: "opened_existing" as const,
-        url: existing.url,
-        number: existing.number,
-        baseBranch: existing.baseRefName,
-        headBranch: existing.headRefName,
-        title: existing.title,
+        pr: {
+          status: "opened_existing" as const,
+          url: existing.url,
+          number: existing.number,
+          baseBranch: existing.baseRefName,
+          headBranch: existing.headRefName,
+          title: existing.title,
+        },
+        openedAsServer: null,
       };
     }
 
@@ -2364,39 +2442,81 @@ export const make = Effect.gen(function* () {
       modelSelection: settings.modelSelection,
     });
 
-    const bodyFile = path.join(
-      tempDir,
-      `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
-    );
-    const body =
-      requesterName === undefined
+    const acting = yield* actingCredentialFor(cwd, provider.kind, actor.actorId);
+    const create = Effect.fn("runPrStep.create")(function* (
+      body: string,
+      credential: Option.Option<ActingCredential>,
+    ) {
+      const bodyFile = path.join(
+        tempDir,
+        `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
+      );
+      yield* fileSystem.writeFileString(bodyFile, body).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "runPrStep",
+              cwd,
+              detail: "Failed to write pull request body temp file.",
+              cause,
+            }),
+        ),
+      );
+      const request = provider
+        .createChangeRequest({
+          cwd,
+          baseRefName: baseBranch,
+          headSelector: headContext.preferredHeadSelector,
+          title: generated.title,
+          bodyFile,
+        })
+        .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
+      return yield* Option.isSome(credential)
+        ? request.pipe(Effect.provideService(ActingSourceControlCredential, credential.value))
+        : request;
+    });
+    // A PR opened as the member names them as its author, so only the server's PR carries a footer.
+    const serverBody =
+      actor.requesterName === undefined
         ? generated.body
-        : `${generated.body}\n\n---\nRequested by ${requesterName} via ${PRODUCT_NAME}`;
-    yield* fileSystem.writeFileString(bodyFile, body).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GitManagerError({
-            operation: "runPrStep",
-            cwd,
-            detail: "Failed to write pull request body temp file.",
-            cause,
-          }),
-      ),
-    );
+        : `${generated.body}\n\n---\nRequested by ${actor.requesterName} via ${PRODUCT_NAME}`;
     yield* emit({
       kind: "phase_started",
       phase: "pr",
       label: `Creating ${terms.singular}...`,
     });
-    yield* provider
-      .createChangeRequest({
-        cwd,
-        baseRefName: baseBranch,
-        headSelector: headContext.preferredHeadSelector,
-        title: generated.title,
-        bodyFile,
-      })
-      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
+    let openedAsServer: OpenedAsServer | null = null;
+    if (Option.isNone(acting) || actor.actorId === undefined || Option.isNone(memberGitHub)) {
+      yield* create(serverBody, Option.none());
+    } else {
+      const asMember = yield* create(generated.body, acting).pipe(
+        Effect.as(null),
+        Effect.catchTags({ SourceControlProviderError: (error) => Effect.succeed(error) }),
+      );
+      if (asMember !== null) {
+        // The POST may have succeeded with its answer lost; a retry would then fail as a duplicate.
+        const opened = yield* findOpenPr(cwd, headContext).pipe(Effect.orElseSucceed(() => null));
+        if (opened) {
+          return {
+            pr: {
+              status: "created" as const,
+              url: opened.url,
+              number: opened.number,
+              baseBranch: opened.baseRefName,
+              headBranch: opened.headRefName,
+              title: opened.title,
+            },
+            openedAsServer: null,
+          };
+        }
+        openedAsServer = openedAsServerReason(asMember);
+        yield* Effect.logInfo("GitManager.runPrStep opening the PR as the server", {
+          reason: openedAsServer,
+        });
+        yield* Effect.forkDetach(memberGitHub.value.check(actor.actorId));
+        yield* create(serverBody, Option.none());
+      }
+    }
 
     // The PR already exists at this point, so a failed lookup only loses its metadata.
     const created = yield* findOpenPr(cwd, headContext).pipe(
@@ -2409,20 +2529,26 @@ export const make = Effect.gen(function* () {
     );
     if (!created) {
       return {
-        status: "created" as const,
-        baseBranch,
-        headBranch: headContext.headBranch,
-        title: generated.title,
+        pr: {
+          status: "created" as const,
+          baseBranch,
+          headBranch: headContext.headBranch,
+          title: generated.title,
+        },
+        openedAsServer,
       };
     }
 
     return {
-      status: "created" as const,
-      url: created.url,
-      number: created.number,
-      baseBranch: created.baseRefName,
-      headBranch: created.headRefName,
-      title: created.title,
+      pr: {
+        status: "created" as const,
+        url: created.url,
+        number: created.number,
+        baseBranch: created.baseRefName,
+        headBranch: created.headRefName,
+        title: created.title,
+      },
+      openedAsServer,
     };
   });
 
@@ -3291,7 +3417,7 @@ export const make = Effect.gen(function* () {
               )
           : { status: "skipped_not_requested" as const };
 
-        const pr = wantsPr
+        const prStep = wantsPr
           ? yield* progress
               .emit({
                 kind: "phase_started",
@@ -3307,19 +3433,18 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
-                    actor.requesterName,
+                    { actorId: options?.actorId, requesterName: actor.requesterName },
                   ),
                 ),
               )
-          : { status: "skipped_not_requested" as const };
+          : { pr: { status: "skipped_not_requested" as const }, openedAsServer: null };
+        const pr = prStep.pr;
 
-        const toast = yield* buildCompletionToast(input.cwd, {
-          action: input.action,
-          branch: branchStep,
-          commit,
-          push,
-          pr,
-        });
+        const toast = yield* buildCompletionToast(
+          input.cwd,
+          { action: input.action, branch: branchStep, commit, push, pr },
+          prStep.openedAsServer,
+        );
 
         const result = {
           action: input.action,

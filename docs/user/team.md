@@ -39,7 +39,8 @@ still needs `user.name` and `user.email` configured.
 Agents commit as the thread's owner, from the next session after Assign. Cursor and OpenCode (v2 or
 an external server) commit as the server.
 
-In a team, pull requests Pair opens end with `Requested by <name> via Pair`.
+In a team, pull requests Pair opens with the server's GitHub account end with
+`Requested by <name> via Pair`.
 
 ## GitHub
 
@@ -71,6 +72,9 @@ Then give the client ID to the server as `T3CODE_GITHUB_APP_CLIENT_ID` and resta
 
 On your own row, choose **Connect GitHub**, copy the code, and approve it on GitHub. The row then
 shows **Connected as @you**. Each GitHub account can be connected to one member.
+
+PRs you create from Pair open as you. If GitHub refuses, they open with the server's account and
+say who requested them.
 
 Your GitHub connection is stored on this server. Anyone who can run commands here, including
 agents, could use it to act as you on GitHub.
