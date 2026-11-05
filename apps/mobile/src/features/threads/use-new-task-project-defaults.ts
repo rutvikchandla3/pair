@@ -62,6 +62,8 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
   const defaultWorkspaceMode = isScratch
     ? "local"
     : resolveNewThreadEnvMode({
+        // Mobile has no team state yet, so it keeps the single-member default.
+        teamDefault: false,
         projectSettings,
         workspaceRoot: project?.workspaceRoot ?? null,
         newProjectsRoot: serverConfig?.newProjectsRoot,

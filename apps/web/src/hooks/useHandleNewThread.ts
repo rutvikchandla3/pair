@@ -39,6 +39,7 @@ import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
+import { teamEnvironment } from "../state/team";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -188,6 +189,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
         : null;
       return resolveNewThreadEnvMode({
+        teamDefault: appAtomRegistry.get(teamEnvironment.isTeamModeAtom(projectRef.environmentId)),
         projectSettings: resolveProjectSettings(
           targetServerSettings,
           project?.id ?? null,

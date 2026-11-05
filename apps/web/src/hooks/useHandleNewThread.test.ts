@@ -134,7 +134,9 @@ vi.mock("../rpc/atomRegistry", () => ({
     get: (atom: unknown) =>
       atom === "connected-environment-ids"
         ? testState.connectedEnvironmentIds
-        : testServerConfigs(),
+        : atom === "team-mode"
+          ? false
+          : testServerConfigs(),
   },
 }));
 
@@ -238,6 +240,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
+vi.mock("../state/team", () => ({ teamEnvironment: { isTeamModeAtom: () => "team-mode" } }));
 vi.mock("../threadRoutes", () => ({
   resolveThreadRouteTarget: () => testState.openDraftRoute,
 }));

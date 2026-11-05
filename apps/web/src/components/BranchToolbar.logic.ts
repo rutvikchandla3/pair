@@ -93,6 +93,9 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
+/** The built-in workspace default once the environment has a second member. */
+export const TEAM_DEFAULT_ENV_MODE_LABEL = "New worktree (team default)";
+
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
   recursive: "Recursive",
   "top-level": "Top level only",
