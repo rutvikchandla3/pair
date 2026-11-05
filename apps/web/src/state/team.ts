@@ -1,13 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   EMPTY_TEAM_MEMBERS,
+  activeTeamMembers,
+  canMemberDeleteThread,
   createTeamEnvironmentAtoms,
+  isTeamModeMembers,
   type TeamMembers,
 } from "@t3tools/client-runtime/state/team";
 import { AuthAccessWriteScope, type EnvironmentId, type MemberId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "./environments";
 import { useEnvironmentScope } from "./session";
 
@@ -42,4 +46,46 @@ export function useTeamSettingsVisible(): boolean {
   const canWriteAccess = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const isTeamMode = useIsTeamMode(environmentId);
   return knowsTeams && (canWriteAccess || isTeamMode);
+}
+
+const FORMER_MEMBER_NAME = "Former member";
+
+/** A member the roster no longer lists (never known, or purged) reads as a former member. */
+export function memberDisplayName(members: TeamMembers, id: MemberId): string {
+  return members.get(id)?.name ?? FORMER_MEMBER_NAME;
+}
+
+/** What attribution labels need: nothing renders unless `isTeamMode`. */
+export function useTeamAttribution(environmentId: EnvironmentId | null) {
+  const members = useTeamMembers(environmentId);
+  const isTeamMode = useIsTeamMode(environmentId);
+  const currentMemberId = useCurrentMemberId(environmentId);
+  return {
+    isTeamMode,
+    currentMemberId,
+    members,
+    nameOf: (id: MemberId) => memberDisplayName(members, id),
+  };
+}
+
+/** For menus that read on demand. Team members are kept subscribed by TeamMembersWatch. */
+export function readThreadTeamMenu(
+  environmentId: EnvironmentId,
+  ownerId: MemberId | null | undefined,
+) {
+  const members = appAtomRegistry.get(teamEnvironment.membersValueAtom(environmentId));
+  if (!isTeamModeMembers(members)) return undefined;
+  const memberId = appAtomRegistry.get(teamEnvironment.currentMemberIdAtom(environmentId));
+  return {
+    members: activeTeamMembers(members).map(({ id, name }) => ({ id, name })),
+    ownerId: ownerId ?? null,
+    canDelete: canMemberDeleteThread({ members, memberId, ownerId }),
+  };
+}
+
+export function readCanDeleteThread(
+  environmentId: EnvironmentId,
+  ownerId: MemberId | null | undefined,
+): boolean {
+  return readThreadTeamMenu(environmentId, ownerId)?.canDelete ?? true;
 }

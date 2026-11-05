@@ -7,6 +7,7 @@ import {
   ContextHandoffId,
   ContextTransferId,
   GitCommandError,
+  MemberId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -19,6 +20,7 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  type OrchestrationV2SenderLabel,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -42,6 +44,7 @@ import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";
@@ -298,6 +301,8 @@ function makeLocalCommandHarness(input: {
    * the provider, or an earlier run that delivered it. `nativeForkFrom` plans a native fork of the
    * parent. `switchedProvider` puts the earlier run and its context on another provider thread.
    */
+  /** The message is labelled with its sender, Alice. */
+  readonly senderLabel?: OrchestrationV2SenderLabel;
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
@@ -362,6 +367,9 @@ function makeLocalCommandHarness(input: {
     streaming: false,
     createdBy: "user",
     creationSource: "web",
+    ...(input.senderLabel === undefined
+      ? {}
+      : { authorId: MemberId.make("member-alice"), senderLabel: input.senderLabel }),
     createdAt: now,
     updatedAt: now,
   };
@@ -914,6 +922,19 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        TeamState.layerTest([
+          {
+            id: MemberId.make("member-alice"),
+            name: "Alice",
+            role: "member",
+            gitName: null,
+            gitEmail: null,
+            isOwner: false,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: null,
+            removedAt: null,
+          },
+        ]),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
             input.sideChat?.nativeForkFrom === undefined
@@ -1270,12 +1291,20 @@ effectIt.effect.each([
     context: "SIDE_CHAT_CONTEXT",
   },
   { contextRun: "delivered", runtimeMode: "full-access", context: "" },
+  {
+    contextRun: "delivered",
+    runtimeMode: "full-access",
+    context: "",
+    senderLabel: "name",
+    sent: "Message from Alice:\n\nWhat is the main thread doing?",
+  },
 ] as const)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
-  ({ runtimeMode, context, ...sideChat }) =>
+  ({ runtimeMode, context, senderLabel, sent, ...sideChat }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "What is the main thread doing?",
+        ...(senderLabel === undefined ? {} : { senderLabel }),
         sideChat,
       });
 
@@ -1286,7 +1315,7 @@ effectIt.effect.each([
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
       expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(context, "What is the main thread doing?"),
+        withInlineContext(context, sent ?? "What is the main thread doing?"),
       ]);
       expect(harness.projection().contextHandoffs).toMatchObject([
         {

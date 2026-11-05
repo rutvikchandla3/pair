@@ -9,6 +9,7 @@ import {
   CommandId,
   EventId,
   GuestMessageId,
+  MemberId,
   MessageId,
   RuntimeRequestId,
   ThreadId,
@@ -28,6 +29,8 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type { MemberRecord } from "../persistence/Members.ts";
+import * as TeamState from "../team/TeamState.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
@@ -35,11 +38,34 @@ import {
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
+function member(id: string, overrides: Partial<MemberRecord> = {}): MemberRecord {
+  return {
+    id: MemberId.make(id),
+    name: id,
+    role: "member",
+    gitName: null,
+    gitEmail: null,
+    isOwner: false,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: null,
+    removedAt: null,
+    ...overrides,
+  };
+}
+
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
 }).pipe(
   Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provideMerge(
+    TeamState.layerTest([
+      member("member-owner", { role: "admin", isOwner: true }),
+      member("member-bob"),
+      member("member-carol"),
+      member("member-gone", { removedAt: "2026-09-01T00:00:00.000Z" }),
+    ]),
+  ),
 );
 
 const layerFailingDispatchHandler =
@@ -424,5 +450,54 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toHaveLength(1);
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("lets only the owner or an admin delete, and assigns only active members", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-owned");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const attempt = (command: OrchestrationV2Command) =>
+      dispatchCommand(command).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            getThreadShell: () =>
+              Effect.succeed({ ownerId: MemberId.make("member-bob") } as never),
+          }),
+        ),
+        Effect.flip,
+        Effect.map((error) =>
+          error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
+        ),
+      );
+    const deleteBy = (actorId: string | undefined) =>
+      attempt({
+        type: "thread.delete",
+        commandId: CommandId.make(`delete-${actorId}`),
+        threadId,
+        ...(actorId === undefined ? {} : { actorId: MemberId.make(actorId) }),
+      });
+    const assign = (ownerId: string) =>
+      attempt({
+        type: "thread.owner.set",
+        commandId: CommandId.make(`assign-${ownerId}`),
+        threadId,
+        ownerId: MemberId.make(ownerId),
+      });
+
+    expect(yield* deleteBy("member-carol")).toBe("not_owner_or_admin");
+    expect(yield* deleteBy("member-bob")).toBe("dispatched");
+    expect(yield* deleteBy("member-owner")).toBe("dispatched");
+    expect(yield* deleteBy(undefined)).toBe("dispatched");
+    expect(yield* assign("member-gone")).toBe("inactive_owner");
+    expect(yield* assign("member-unknown")).toBe("inactive_owner");
+    expect(yield* assign("member-carol")).toBe("dispatched");
+    expect(captured.map((command) => command.commandId)).toEqual([
+      "delete-member-bob",
+      "delete-member-owner",
+      "delete-undefined",
+      "assign-member-carol",
+    ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

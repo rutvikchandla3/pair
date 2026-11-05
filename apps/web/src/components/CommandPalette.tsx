@@ -245,6 +245,8 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openAssignThreadDialog } from "./team/AssignThreadDialog";
+import { useIsTeamMode } from "~/state/team";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -479,6 +481,11 @@ function OpenCommandPaletteDialog(props: {
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
+  );
+  const activeThreadIsTeamMode = useIsTeamMode(activeThread?.environmentId ?? null);
+  const canOperateActiveThread = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
   );
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
@@ -1398,6 +1405,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (activeThread !== null && activeThreadIsTeamMode && canOperateActiveThread) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:assign-thread",
+      searchTerms: ["assign", "owner", "reassign", "teammate", "member", "thread"],
+      title: "Assign thread to…",
+      icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.assign",
+      run: async () => {
+        openAssignThreadDialog(threadRef);
       },
     });
   }

@@ -8,6 +8,7 @@ import {
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
+  type MemberId,
   MessageId,
   type ModelSelection,
   type NodeId,
@@ -518,6 +519,20 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     enabled: input.enabled,
+  });
+});
+
+export interface SetThreadOwnerInput extends ThreadCommandInput {
+  readonly ownerId: MemberId;
+}
+export const setThreadOwner = Effect.fn("EnvironmentCommands.setThreadOwner")(function* (
+  input: SetThreadOwnerInput,
+) {
+  return yield* dispatch({
+    type: "thread.owner.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    ownerId: input.ownerId,
   });
 });
 

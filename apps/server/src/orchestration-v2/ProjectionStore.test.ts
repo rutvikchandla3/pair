@@ -7,6 +7,7 @@ import {
   ContextTransferId,
   CheckpointRef,
   CheckpointScopeId,
+  MemberId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -3801,6 +3802,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           id: threadId,
           projectId,
           title: "Provider history",
+          ownerId: MemberId.make("member-owner"),
+          humanAuthorIds: [MemberId.make("member-owner")],
           providerInstanceId,
           modelSelection,
           runtimeMode: "full-access",
@@ -3862,6 +3865,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (thread) => thread.id === threadId,
       );
       assert.deepEqual(shell?.providerInstanceHistory, [providerInstanceId, claudeInstanceId]);
+      assert.equal(shell?.ownerId, MemberId.make("member-owner"));
+      assert.notProperty(shell, "humanAuthorIds");
     }),
   );
 

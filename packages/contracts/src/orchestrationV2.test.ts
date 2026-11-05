@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
+  OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -484,6 +486,123 @@ describe("thread open stats", () => {
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
+  });
+});
+
+describe("member attribution", () => {
+  const thread = {
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Thread",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: "thread-1", parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    archivedAt: null,
+    deletedAt: null,
+  };
+  const itemBase = {
+    id: "item-1",
+    threadId: "thread-1",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  it("decodes attribution fields, and threads written without them", () => {
+    const decodeThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+    const encodeThread = Schema.encodeSync(OrchestrationV2AppThreadJson);
+    const attributed = decodeThread({
+      ...thread,
+      ownerId: "member-1",
+      ownerUpdatedBy: "member-2",
+      humanAuthorIds: ["member-1", "member-2"],
+      lastRollback: {
+        actorId: "member-2",
+        checkpointId: "checkpoint-1",
+        requestedAt: "2026-10-01T01:00:00.000Z",
+      },
+    });
+    expect(attributed).toMatchObject({
+      ownerId: "member-1",
+      humanAuthorIds: ["member-1", "member-2"],
+    });
+    expect(encodeThread(attributed).lastRollback?.requestedAt).toBe("2026-10-01T01:00:00.000Z");
+
+    const legacy = decodeThread(thread);
+    expect(legacy.ownerId).toBeUndefined();
+    expect(legacy.lastRollback).toBeUndefined();
+
+    expect(
+      decodeOrchestrationV2TurnItemJson({
+        ...itemBase,
+        type: "user_message",
+        messageId: "message-1",
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        text: "hi",
+        attachments: [],
+        authorId: "member-1",
+        senderLabel: "name_with_note",
+      }),
+    ).toMatchObject({ authorId: "member-1", senderLabel: "name_with_note" });
+    expect(
+      decodeOrchestrationV2TurnItemJson({
+        ...itemBase,
+        type: "approval_request",
+        requestId: "request-1",
+        requestKind: "command",
+        resolvedBy: "member-1",
+      }),
+    ).toMatchObject({ resolvedBy: "member-1" });
+
+    const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+    expect(
+      decodeCommand({
+        type: "thread.owner.set",
+        commandId: "command-1",
+        threadId: "thread-1",
+        ownerId: "member-1",
+        actorId: "member-2",
+      }),
+    ).toMatchObject({ ownerId: "member-1" });
+    expect(
+      decodeCommand({
+        type: "thread.create",
+        commandId: "command-2",
+        threadId: "thread-1",
+        projectId: "project-1",
+        title: "Thread",
+        modelSelection: thread.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        actorId: "member-2",
+        ownerId: "member-1",
+      }),
+    ).toMatchObject({ actorId: "member-2", ownerId: "member-1" });
   });
 });
 

@@ -62,6 +62,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -2193,7 +2194,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       assert.isNotNull(path);
       assert.deepEqual(yield* fs.readFile(path), new Uint8Array([1, 2, 3, 4]));
     }
-  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles, TeamState.layerTest())));
 });
 
 it.effect("cancels tracked setup before provider work is released", () =>

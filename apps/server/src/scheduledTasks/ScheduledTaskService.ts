@@ -1,4 +1,5 @@
 import {
+  MemberId,
   CommandId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -239,8 +240,10 @@ export class ScheduledTaskService extends Context.Service<
   {
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
+    /** `createdByMemberId` stamps a new task's owner; an existing task keeps its own. */
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      createdByMemberId?: MemberId,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -590,6 +593,19 @@ export const layer = Layer.effect(
       return task;
     });
 
+    // The creator is not part of the wire task, so only an unbound run reads it.
+    const readCreatedByMemberId = (taskId: ScheduledTask["id"]) =>
+      sql<{ created_by_member_id: string | null }>`
+        SELECT created_by_member_id FROM scheduled_tasks WHERE task_id = ${taskId}
+      `.pipe(
+        Effect.map(([row]) =>
+          row?.created_by_member_id === undefined || row.created_by_member_id === null
+            ? null
+            : MemberId.make(row.created_by_member_id),
+        ),
+        Effect.mapError((cause) => taskError("Could not read the task's creator.", { taskId, cause })),
+      );
+
     // Run transitions own run-state columns; settings saves must not overwrite them.
     // Check existence in the write so edits cannot undo concurrent deletion.
     const saveTask = (
@@ -602,6 +618,7 @@ export const layer = Layer.effect(
         readonly secret: string | null;
         readonly secretChanged: boolean;
       },
+      createdByMemberId: MemberId | null,
     ) =>
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
@@ -626,7 +643,8 @@ export const layer = Layer.effect(
           last_run_error,
           run_count,
           webhook_token,
-          webhook_secret
+          webhook_secret,
+          created_by_member_id
         )
         SELECT
           ${task.id},
@@ -650,7 +668,8 @@ export const layer = Layer.effect(
           ${task.lastRunError},
           ${task.runCount},
           ${webhook.token},
-          ${webhook.secret}
+          ${webhook.secret},
+          ${createdByMemberId}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -688,7 +707,11 @@ export const layer = Layer.effect(
           webhook_secret = CASE
             WHEN ${webhook.secretChanged ? 1 : 0} = 1 THEN excluded.webhook_secret
             ELSE scheduled_tasks.webhook_secret
-          END
+          END,
+          created_by_member_id = COALESCE(
+            scheduled_tasks.created_by_member_id,
+            excluded.created_by_member_id
+          )
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -926,8 +949,9 @@ export const layer = Layer.effect(
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
+                readCreatedByMemberId(active.id).pipe(
+                  Effect.flatMap((ownerId) =>
+                    threadLaunch.launch({
                     commandId,
                     projectId: active.projectId,
                     title: active.title,
@@ -943,8 +967,11 @@ export const layer = Layer.effect(
                     },
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId)),
+                    ...(ownerId === null ? {} : { ownerId }),
+                    }),
+                  ),
+                  Effect.map((launched) => launched.threadId),
+                ),
               )
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
@@ -1201,7 +1228,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, createdByMemberId) {
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1349,6 +1376,7 @@ export const layer = Layer.effect(
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
+        createdByMemberId ?? null,
       );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };

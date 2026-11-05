@@ -5,6 +5,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
+  type MemberId,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
@@ -99,6 +100,10 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The member who launched it by hand; agent and scheduled launches leave it unset. */
+  readonly actorId?: MemberId;
+  /** Who the thread belongs to when no human launched it, e.g. a scheduled task's creator. */
+  readonly ownerId?: MemberId;
   /** The linked environment this launch is for, if one asked for it. */
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
@@ -950,6 +955,8 @@ const make = Effect.gen(function* () {
                   : { delegatedFrom: input.delegatedFrom }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
+                ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+                ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
@@ -998,6 +1005,7 @@ const make = Effect.gen(function* () {
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
+              ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
             })
             .pipe(
               // An agent's launch can land on a thread that a replay, or a concurrent
