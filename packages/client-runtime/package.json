@@ -31,6 +31,10 @@
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
     },
+    "./presence-reporting": {
+      "types": "./src/presenceReporting.ts",
+      "default": "./src/presenceReporting.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"
@@ -294,6 +298,10 @@
     "./state/team": {
       "types": "./src/state/team.ts",
       "default": "./src/state/team.ts"
+    },
+    "./state/presence": {
+      "types": "./src/state/presence.ts",
+      "default": "./src/state/presence.ts"
     },
     "./state/usage-access": {
       "types": "./src/state/usageAccess.ts",
