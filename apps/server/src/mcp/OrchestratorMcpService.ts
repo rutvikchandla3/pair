@@ -101,7 +101,7 @@ import type {
 import { makeThreadViewers, overlayForViewer } from "../orchestration-v2/MemberThreadView.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
-import type * as TeamState from "../team/TeamState.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1026,6 +1026,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const threadViewers = yield* makeThreadViewers;
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
   // An outside client reads as the member who connected it; an agent's thread reads as the holder.
   const viewerOf = (scope: McpInvocationScope) =>
     threadViewers(scope.thread === undefined ? scope.client?.memberId : undefined);
@@ -3133,7 +3134,7 @@ const make = Effect.gen(function* () {
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
       const mode = input.mode ?? "auto";
-      const actorId = yield* sendActorId(threadManagement, scope);
+      const actorId = yield* sendActorId(threadManagement, scope, team);
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,

@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import { holderOf } from "../orchestration-v2/MemberThreadState.ts";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as TeamState from "../team/TeamState.ts";
+import type * as TeamState from "../team/TeamState.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -71,8 +71,8 @@ export const dispatchFailure = (
 export const sendActorId = Effect.fn("mcp.sendActorId")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadRecords">,
   scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "client">,
+  team: Option.Option<TeamState.TeamState["Service"]>,
 ) {
-  const team = yield* Effect.serviceOption(TeamState.TeamState);
   if (Option.isNone(team) || !(yield* team.value.isTeamMode)) return undefined;
   if (scope.thread === undefined) return scope.client?.memberId;
   const threadId = scope.thread.threadId;
