@@ -137,7 +137,14 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   const trimmed = (
     row: Pick<
       ProjectionStore.ActiveShellIndexEntry,
-      "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+      | "id"
+      | "projectId"
+      | "lineage"
+      | "settledOverride"
+      | "settledAt"
+      | "pinnedAt"
+      | "snoozedUntil"
+      | "ownerId"
     >,
   ) => ({
     id: row.id,
@@ -147,6 +154,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     settledAt: iso(row.settledAt),
     pinnedAt: iso(row.pinnedAt),
     snoozedUntil: iso(row.snoozedUntil),
+    ownerId: row.ownerId ?? null,
   });
   // The index also counts any member's pin or snooze; the shell shows only the holder's.
   const withMemberPinsAndSnoozes = yield* Effect.forEach(shells, (shell) =>
@@ -1950,6 +1958,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
 it.effect("SQL list older settled threads below a cursor", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
     const id = (name: string) => ThreadId.make(`thread:older:${name}`);
     const at = (day: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, day));
@@ -1960,6 +1969,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly subagent?: boolean;
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
+      readonly ownerId?: MemberId;
     }) =>
       store.apply({
         id: EventId.make(`event:older:${input.name}`),
@@ -1993,10 +2003,12 @@ it.effect("SQL list older settled threads below a cursor", () =>
           snoozedUntil: input.snoozedUntilDay === undefined ? null : at(input.snoozedUntilDay),
           lastVisitedAt: null,
           deletedAt: null,
+          ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
         },
       });
+    const alice = MemberId.make("member-alice");
     yield* createThread({ name: "a", settledDay: 5 });
-    yield* createThread({ name: "b", settledDay: 4 });
+    yield* createThread({ name: "b", settledDay: 4, ownerId: alice });
     yield* createThread({ name: "c", settledDay: 4 });
     yield* createThread({ name: "d", settledDay: 3, project: "project:b" });
     yield* createThread({ name: "snoozed", settledDay: 2, snoozedUntilDay: 30 });
@@ -2038,6 +2050,34 @@ it.effect("SQL list older settled threads below a cursor", () =>
       threadIds: [],
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
+
+    // A thread with no owner is the server owner's.
+    const [serverOwner] = yield* sql<{ readonly id: MemberId }>`
+      SELECT id FROM members WHERE is_owner = 1
+    `;
+    assert.deepEqual(
+      (yield* store.listOlderSettledThreads({ before, limit: 10, ownerId: alice })).threadIds,
+      [id("b")],
+    );
+    assert.deepEqual(
+      (yield* store.listOlderSettledThreads({ before, limit: 10, ownerId: serverOwner!.id }))
+        .threadIds,
+      [id("a"), id("c"), id("d"), id("snoozed")],
+    );
+    const ownCounts = (memberId: MemberId) =>
+      store
+        .listOlderSettledThreads({ before, limit: 0, ownCountsFor: memberId })
+        .pipe(Effect.map((listing) => listing.ownCounts));
+    assert.deepEqual(yield* ownCounts(alice), [
+      { projectId: ProjectId.make("project:a"), count: 1 },
+    ]);
+    assert.sameDeepMembers(
+      [...((yield* ownCounts(serverOwner!.id)) ?? [])],
+      [
+        { projectId: ProjectId.make("project:a"), count: 3 },
+        { projectId: ProjectId.make("project:b"), count: 1 },
+      ],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -510,7 +510,7 @@ function useSidebarThreads(input: {
   } = partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys, teamViewers),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -750,20 +750,34 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   };
 }
 
-/** The sidebar's scope per environment: the scoped projects there, or every project. */
+/**
+ * The sidebar's scope per environment: the scoped projects there, or every project. In team mode
+ * Settled lists only the viewer's threads, so pages and counts are the viewer's too.
+ */
 function olderSettledScopes(
   environmentIds: ReadonlyArray<EnvironmentId>,
   scopedProjectKeys: ReadonlySet<string> | null,
+  teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>,
 ): ReadonlyArray<OlderSettledScope> {
+  const ownerOf = (environmentId: EnvironmentId) => {
+    const viewer = teamViewers.get(environmentId);
+    return viewer === undefined ? {} : { ownerId: viewer.memberId, serverOwnerId: viewer.ownerId };
+  };
   if (scopedProjectKeys === null) {
-    return environmentIds.map((environmentId) => ({ environmentId, projectIds: null }));
+    return environmentIds.map((environmentId) => ({
+      environmentId,
+      projectIds: null,
+      ...ownerOf(environmentId),
+    }));
   }
   return environmentIds.flatMap((environmentId) => {
     const prefix = `${environmentId}:`;
     const projectIds = [...scopedProjectKeys].flatMap((key) =>
       key.startsWith(prefix) ? [ProjectId.make(key.slice(prefix.length))] : [],
     );
-    return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
+    return projectIds.length === 0
+      ? []
+      : [{ environmentId, projectIds, ...ownerOf(environmentId) }];
   });
 }
 
