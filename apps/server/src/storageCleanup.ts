@@ -226,6 +226,7 @@ function worktreeSettlementChain(
   byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
   now: number,
   settings: LimitRecoverySettings,
+  memberPinned: ReadonlySet<string>,
 ) {
   const chain = [thread];
   let current = thread;
@@ -233,7 +234,8 @@ function worktreeSettlementChain(
     if (
       current.lineage.relationshipToParent !== "subagent" ||
       current.settledOverride === "active" ||
-      current.pinnedAt != null
+      current.pinnedAt != null ||
+      memberPinned.has(current.id)
     )
       return [];
     const parent = byId.get(current.lineage.parentThreadId!);
@@ -404,6 +406,16 @@ const make = Effect.gen(function* () {
     },
     Effect.timeout("30 seconds"),
     Effect.orElseSucceed(() => null),
+  );
+
+  // The holder's pin is in the thread row; any other member's pin also keeps the worktree.
+  const readMemberPinnedThreadIds = Effect.fn("StorageCleanup.readMemberPinnedThreadIds")(
+    function* () {
+      const rows = yield* sql<{ thread_id: string }>`
+        SELECT DISTINCT thread_id FROM projection_thread_member_state WHERE pinned_at IS NOT NULL
+      `.pipe(NodeSqliteClient.readOnly);
+      return new Set(rows.map((row) => row.thread_id));
+    },
   );
 
   // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
@@ -813,6 +825,7 @@ const make = Effect.gen(function* () {
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
+    const memberPinned = yield* readMemberPinnedThreadIds();
     const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
@@ -849,7 +862,7 @@ const make = Effect.gen(function* () {
       const deleted = "workspaceRoot" in thread;
       const settlementChain = deleted
         ? []
-        : worktreeSettlementChain(thread, threadsById, now, serverSettings);
+        : worktreeSettlementChain(thread, threadsById, now, serverSettings, memberPinned);
       const settledThread = settlementChain.at(-1);
       const members = deleted ? [thread, ...group] : group;
       const project = deleted
@@ -1101,6 +1114,7 @@ const make = Effect.gen(function* () {
               ),
               now,
               serverSettings,
+              yield* readMemberPinnedThreadIds(),
             ).at(-1);
             if (
               latestSettlement?.id !== settledThread?.id ||

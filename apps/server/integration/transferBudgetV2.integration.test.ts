@@ -51,6 +51,7 @@ import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
+import * as TeamState from "../src/team/TeamState.ts";
 import * as ServerHttp from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
 import {
@@ -161,7 +162,7 @@ const layerAuth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("transfer-session"),
       subject: "transfer-test",
-      memberId: MemberId.make("member-test"),
+      memberId: MemberId.make("member-owner"),
       method: "browser-session-cookie",
       scopes: new Set([AuthOrchestrationReadScope]),
     }),
@@ -191,6 +192,7 @@ const layerRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(TransferApi).pipe(
     Layer.provide(OrchestrationHttp.layer),
     Layer.provide(layerAuth),
+    Layer.provide(TeamState.layerTest()),
   ),
   RpcServer.layerHttp({ group, path: "/ws", protocol: "websocket" }).pipe(
     Layer.provide(layerHandlers),

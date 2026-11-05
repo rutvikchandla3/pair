@@ -335,10 +335,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
+      const scope = yield* McpInvocationContext.McpInvocationContext;
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
+      // Personal state belongs to a member's own client; in-thread agents act for the holder.
+      const actorId = scope.thread === undefined ? scope.client?.memberId : undefined;
+      const personal = { ...common, ...(actorId === undefined ? {} : { actorId }) };
       if (input.action === "settle") {
         return yield* threads
-          .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
+          .settleThread({ ...personal, byOwnAgent: caller?.id === projection.thread.id })
           .pipe(Effect.mapError(dispatchFailure));
       }
       let command: OrchestrationV2Command;
@@ -350,14 +354,20 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               message: "snooze requires snoozedUntil.",
             });
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+          command = { ...personal, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
           break;
         case "unsnooze":
+          command = { ...personal, type: "thread.unsnooze", reason: "user" };
+          break;
         case "unsettle":
-          command = { ...common, type: `thread.${input.action}`, reason: "user" };
+          command = { ...common, type: "thread.unsettle", reason: "user" };
           break;
         case "mark_unread":
-          command = { ...common, type: "thread.mark-unread" };
+          command = { ...personal, type: "thread.mark-unread" };
+          break;
+        case "pin":
+        case "unpin":
+          command = { ...personal, type: `thread.${input.action}` };
           break;
         default:
           command = { ...common, type: `thread.${input.action}` };

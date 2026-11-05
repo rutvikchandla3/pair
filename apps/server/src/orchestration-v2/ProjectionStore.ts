@@ -76,6 +76,8 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  MemberId,
+  ThreadMemberState,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -85,6 +87,7 @@ import {
   deriveBlockedOnThreadWait,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -223,7 +226,16 @@ export type ProjectionSettlementCandidate = Pick<
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
+    /** Non-holder members' snoozes and wakes; the holder's live in the row. */
+    readonly memberSnoozes?: ReadonlyArray<MemberSnooze>;
+    /** Latest change to any non-holder member's state, part of the auto-settle snapshot. */
+    readonly memberStateUpdatedAt?: DateTime.Utc | null;
   };
+
+export type MemberSnooze = Pick<
+  ThreadMemberState,
+  "snoozedUntil" | "snoozedAt" | "lastSnoozeWakeAt"
+>;
 
 const ProjectionCheckpointContext = Schema.Struct({
   runs: Schema.Array(
@@ -439,6 +451,12 @@ export interface OlderSettledThreadsListing {
   readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
 }
 
+export interface ThreadMemberStateEntry {
+  readonly memberId: MemberId;
+  readonly state: ThreadMemberState;
+  readonly updatedAt: DateTime.Utc;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -544,6 +562,18 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /** A non-holder member's personal state; null when they have none (the holder never has a row). */
+  readonly getThreadMemberState: (
+    threadId: ThreadId,
+    memberId: MemberId,
+  ) => Effect.Effect<ThreadMemberState | null, ProjectionStoreV2Error>;
+  readonly listThreadMemberStates: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadMemberStateEntry>, ProjectionStoreV2Error>;
+  readonly getMemberStatesForThreads: (
+    memberId: MemberId,
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyMap<ThreadId, ThreadMemberState>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -1052,7 +1082,10 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
->;
+> & {
+  readonly member_snoozes_json: string;
+  readonly member_state_updated_at: string | null;
+};
 
 type ShellRunItemCountRow = {
   readonly thread_id: string;
@@ -1079,6 +1112,42 @@ const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undef
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
+);
+const ThreadMemberStateColumns = Schema.Struct({
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  pinOrderKey: ThreadMemberState.fields.pinOrderKey,
+  activeOrderKey: ThreadMemberState.fields.activeOrderKey,
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  opens: Schema.NullOr(Schema.fromJsonString(ThreadMemberState.fields.opens)),
+});
+const encodeThreadMemberStateColumns = Schema.encodeEffect(ThreadMemberStateColumns);
+const ThreadMemberStateRow = Schema.Struct({
+  ...ThreadMemberStateColumns.fields,
+  threadId: ThreadId,
+  memberId: MemberId,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+const decodeThreadMemberStateRows = Schema.decodeUnknownEffect(Schema.Array(ThreadMemberStateRow));
+const memberStateOfRow = ({
+  threadId: _threadId,
+  memberId: _memberId,
+  updatedAt: _updatedAt,
+  ...state
+}: typeof ThreadMemberStateRow.Type): ThreadMemberState => state;
+const MEMBER_STATE_THREAD_CHUNK = 500;
+const decodeMemberSnoozes = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        snoozedUntil: ThreadMemberStateColumns.fields.snoozedUntil,
+        snoozedAt: ThreadMemberStateColumns.fields.snoozedAt,
+        lastSnoozeWakeAt: ThreadMemberStateColumns.fields.lastSnoozeWakeAt,
+      }),
+    ),
+  ),
 );
 const encodeThreadUpdatedAt = Schema.encodeEffect(
   OrchestrationV2AppThreadJsonSchema.fields.updatedAt,
@@ -1976,6 +2045,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       END
     `;
 
+    // The owner row is created by migration 080 and can never be removed or demoted.
+    let cachedServerOwnerId: MemberId | null = null;
+    const serverOwnerId = Effect.gen(function* () {
+      if (cachedServerOwnerId !== null) return cachedServerOwnerId;
+      const rows = yield* sql<{ readonly id: string }>`SELECT id FROM members WHERE is_owner = 1`;
+      cachedServerOwnerId = rows[0] === undefined ? null : MemberId.make(rows[0].id);
+      return cachedServerOwnerId;
+    });
+
+    const deleteHolderMemberState = Effect.fn("ProjectionStore.deleteHolderMemberState")(function* (
+      threadId: ThreadId,
+      ownerId: MemberId | null | undefined,
+    ) {
+      const holder = ownerId ?? (yield* serverOwnerId);
+      if (holder === null) return;
+      yield* sql`
+          DELETE FROM projection_thread_member_state
+          WHERE thread_id = ${threadId} AND member_id = ${holder}
+        `;
+    });
+
+    const memberStateColumns = sql`
+      thread_id AS "threadId",
+      member_id AS "memberId",
+      pinned_at AS "pinnedAt",
+      pin_order_key AS "pinOrderKey",
+      active_order_key AS "activeOrderKey",
+      last_visited_at AS "lastVisitedAt",
+      snoozed_until AS "snoozedUntil",
+      snoozed_at AS "snoozedAt",
+      last_snooze_wake_at AS "lastSnoozeWakeAt",
+      opens_json AS "opens",
+      updated_at AS "updatedAt"
+    `;
+
     const apply: ProjectionStoreV2Shape["apply"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -2013,6 +2117,54 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.model-selection-updated":
             case "thread.provider-switched":
             case "thread.guest-share-updated": {
+              const member = "member" in event ? event.member : undefined;
+              if (member !== undefined) {
+                const holder = event.payload.ownerId ?? (yield* serverOwnerId);
+                if (member.memberId !== holder) {
+                  const columns = yield* encodeThreadMemberStateColumns(member.state);
+                  const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
+                  yield* sql`
+                    INSERT INTO projection_thread_member_state (
+                      thread_id,
+                      member_id,
+                      pinned_at,
+                      pin_order_key,
+                      active_order_key,
+                      last_visited_at,
+                      snoozed_until,
+                      snoozed_at,
+                      last_snooze_wake_at,
+                      opens_json,
+                      updated_at
+                    )
+                    VALUES (
+                      ${event.payload.id},
+                      ${member.memberId},
+                      ${columns.pinnedAt},
+                      ${columns.pinOrderKey},
+                      ${columns.activeOrderKey},
+                      ${columns.lastVisitedAt},
+                      ${columns.snoozedUntil},
+                      ${columns.snoozedAt},
+                      ${columns.lastSnoozeWakeAt},
+                      ${columns.opens},
+                      ${updatedAt}
+                    )
+                    ON CONFLICT(thread_id, member_id)
+                    DO UPDATE SET
+                      pinned_at = excluded.pinned_at,
+                      pin_order_key = excluded.pin_order_key,
+                      active_order_key = excluded.active_order_key,
+                      last_visited_at = excluded.last_visited_at,
+                      snoozed_until = excluded.snoozed_until,
+                      snoozed_at = excluded.snoozed_at,
+                      last_snooze_wake_at = excluded.last_snooze_wake_at,
+                      opens_json = excluded.opens_json,
+                      updated_at = excluded.updated_at
+                  `;
+                  break;
+                }
+              }
               const payloadJson = yield* encodeThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -2061,6 +2213,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
+              // The holder never has a member row; ownership moves arrive as thread.metadata-updated.
+              if (member !== undefined || event.type === "thread.metadata-updated") {
+                yield* deleteHolderMemberState(event.payload.id, event.payload.ownerId);
+              }
+              if (event.type === "thread.deleted") {
+                yield* sql`
+                  DELETE FROM projection_thread_member_state WHERE thread_id = ${event.payload.id}
+                `;
+              }
               break;
             }
             case "run.created":
@@ -6519,7 +6680,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND NOT ${isIdleCompactionMessage("message")}
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_authored_message_at
+              ) AS latest_user_authored_message_at,
+              (
+                SELECT json_group_array(json_object(
+                  'snoozedUntil', member.snoozed_until,
+                  'snoozedAt', member.snoozed_at,
+                  'lastSnoozeWakeAt', member.last_snooze_wake_at
+                ))
+                FROM projection_thread_member_state member
+                WHERE member.thread_id = t.thread_id
+                  AND (member.snoozed_until IS NOT NULL OR member.last_snooze_wake_at IS NOT NULL)
+              ) AS member_snoozes_json,
+              (
+                SELECT MAX(member.updated_at) FROM projection_thread_member_state member
+                WHERE member.thread_id = t.thread_id
+              ) AS member_state_updated_at
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -6532,6 +6707,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM projection_thread_member_state member
+                WHERE member.thread_id = t.thread_id AND member.pinned_at IS NOT NULL
+              )
               AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
@@ -6602,6 +6781,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_authored_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+                  memberSnoozes: yield* decodeMemberSnoozes(row.member_snoozes_json),
+                  memberStateUpdatedAt:
+                    row.member_state_updated_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.member_state_updated_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
@@ -7157,8 +7341,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
-          json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
-          json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
+          -- Pinned or snoozed by the holder or by any member.
+          (
+            SELECT MIN(pinned_at) FROM (
+              SELECT json_extract(t.payload_json, '$.pinnedAt') AS pinned_at
+              UNION ALL
+              SELECT member.pinned_at FROM projection_thread_member_state member
+              WHERE member.thread_id = t.thread_id
+            )
+          ) AS pinned_at,
+          (
+            SELECT MAX(snoozed_until) FROM (
+              SELECT json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until
+              UNION ALL
+              SELECT member.snoozed_until FROM projection_thread_member_state member
+              WHERE member.thread_id = t.thread_id
+            )
+          ) AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
           (
@@ -7366,6 +7565,59 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
+    const getThreadMemberState = Effect.fn("ProjectionStore.getThreadMemberState")(
+      function* (threadId: ThreadId, memberId: MemberId) {
+        const rows = yield* decodeThreadMemberStateRows(
+          yield* sql`
+            SELECT ${memberStateColumns} FROM projection_thread_member_state
+            WHERE thread_id = ${threadId} AND member_id = ${memberId}
+          `,
+        );
+        return rows[0] === undefined ? null : memberStateOfRow(rows[0]);
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
+    const listThreadMemberStates = Effect.fn("ProjectionStore.listThreadMemberStates")(
+      function* (threadId: ThreadId) {
+        const rows = yield* decodeThreadMemberStateRows(
+          yield* sql`
+            SELECT ${memberStateColumns} FROM projection_thread_member_state
+            WHERE thread_id = ${threadId}
+            ORDER BY member_id
+          `,
+        );
+        return rows.map((row): ThreadMemberStateEntry => ({
+          memberId: row.memberId,
+          state: memberStateOfRow(row),
+          updatedAt: row.updatedAt,
+        }));
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
+
+    const getMemberStatesForThreads = Effect.fn("ProjectionStore.getMemberStatesForThreads")(
+      function* (memberId: MemberId, threadIds: ReadonlyArray<ThreadId>) {
+        const states = new Map<ThreadId, ThreadMemberState>();
+        for (const chunk of Arr.chunksOf(threadIds, MEMBER_STATE_THREAD_CHUNK)) {
+          const rows = yield* decodeThreadMemberStateRows(
+            yield* sql`
+              SELECT ${memberStateColumns} FROM projection_thread_member_state
+              WHERE member_id = ${memberId} AND thread_id IN ${sql.in(chunk)}
+            `,
+          );
+          for (const row of rows) states.set(row.threadId, memberStateOfRow(row));
+        }
+        return states;
+      },
+      Effect.mapError(
+        (cause) =>
+          new ProjectionStoreReadError({ threadId: ThreadId.make("thread:member-state"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7386,6 +7638,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
+      getThreadMemberState: readOnReader(getThreadMemberState),
+      listThreadMemberStates: readOnReader(listThreadMemberStates),
+      getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),

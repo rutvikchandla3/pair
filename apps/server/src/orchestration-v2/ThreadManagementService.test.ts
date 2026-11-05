@@ -110,6 +110,21 @@ it("attributes client commands to the session's member, never to a member the cl
     ),
   ).toEqual({ type: "thread.delete", commandId, threadId, actorId: alice });
   expect(
+    ThreadManagementService.withActor(
+      { type: "thread.pin", commandId, threadId, actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.pin", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor({ type: "thread.settle", commandId, threadId }, alice),
+  ).toEqual({ type: "thread.settle", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.metadata.update", commandId, threadId, title: "T", actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.metadata.update", commandId, threadId, title: "T", actorId: alice });
+  expect(
     ThreadManagementService.withActor({ type: "thread.archive", commandId, threadId }, alice),
   ).not.toHaveProperty("actorId");
 });

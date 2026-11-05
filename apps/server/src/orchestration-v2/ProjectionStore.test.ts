@@ -148,7 +148,24 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     pinnedAt: iso(row.pinnedAt),
     snoozedUntil: iso(row.snoozedUntil),
   });
-  assert.deepEqual(index.map(trimmed), shells.map(trimmed));
+  // The index also counts any member's pin or snooze; the shell shows only the holder's.
+  const withMemberPinsAndSnoozes = yield* Effect.forEach(shells, (shell) =>
+    Effect.map(store.listThreadMemberStates(shell.id), (members) => {
+      const pins = [shell.pinnedAt ?? null, ...members.map((member) => member.state.pinnedAt)];
+      const snoozes = [
+        shell.snoozedUntil ?? null,
+        ...members.map((member) => member.state.snoozedUntil),
+      ];
+      const sorted = (values: ReadonlyArray<DateTime.Utc | null>) =>
+        values.filter((value) => value !== null).sort(DateTime.Order);
+      return {
+        ...shell,
+        pinnedAt: sorted(pins)[0] ?? null,
+        snoozedUntil: sorted(snoozes).at(-1) ?? null,
+      };
+    }),
+  );
+  assert.deepEqual(index.map(trimmed), withMemberPinsAndSnoozes.map(trimmed));
   shells.forEach((shell, position) => {
     if (isLiveSubagentShell(shell)) assert.isTrue(index[position]?.mayBeLive, shell.id);
   });
@@ -3867,6 +3884,147 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(shell?.providerInstanceHistory, [providerInstanceId, claudeInstanceId]);
       assert.equal(shell?.ownerId, MemberId.make("member-owner"));
       assert.notProperty(shell, "humanAuthorIds");
+    }),
+  );
+
+  const memberStateThread = (threadId: ThreadId, ownerId: MemberId | null) => {
+    const at = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+    return {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId: ProjectId.make("project:member-state"),
+      title: String(threadId),
+      ownerId,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: at,
+      updatedAt: at,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+  };
+  const pinnedState = {
+    pinnedAt: DateTime.makeUnsafe("2026-10-01T01:00:00.000Z"),
+    pinOrderKey: "a0",
+    activeOrderKey: null,
+    lastVisitedAt: DateTime.makeUnsafe("2026-10-01T00:30:00.000Z"),
+    snoozedUntil: null,
+    snoozedAt: null,
+    lastSnoozeWakeAt: null,
+    opens: { openedAt: 1, score: 1, picks: [{ query: "pin", at: 1 }] },
+  };
+  const applyMemberPin = (threadId: ThreadId, ownerId: MemberId | null, memberId: MemberId) =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${threadId}:pin:${memberId}`),
+        type: "thread.pinned",
+        threadId,
+        occurredAt: pinnedState.pinnedAt,
+        payload: { ...memberStateThread(threadId, ownerId), ...pinnedState },
+        member: { memberId, state: pinnedState },
+      });
+    });
+  const createMemberStateThread = (threadId: ThreadId, ownerId: MemberId | null) =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${threadId}:created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
+        payload: memberStateThread(threadId, ownerId),
+      });
+    });
+
+  it.effect("member event for non-holder upserts member state only", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:member-state:non-holder");
+      const alice = MemberId.make("member-alice");
+      yield* createMemberStateThread(threadId, null);
+      yield* applyMemberPin(threadId, null, alice);
+
+      const thread = yield* projectionStore.getThread(threadId);
+      assert.isUndefined(thread.pinnedAt);
+      assert.isNull(thread.lastVisitedAt);
+      assert.deepEqual(yield* projectionStore.getThreadMemberState(threadId, alice), pinnedState);
+      assert.deepEqual(yield* projectionStore.listThreadMemberStates(threadId), [
+        { memberId: alice, state: pinnedState, updatedAt: pinnedState.pinnedAt },
+      ]);
+      const states = yield* projectionStore.getMemberStatesForThreads(alice, [
+        threadId,
+        ThreadId.make("thread:member-state:missing"),
+      ]);
+      assert.deepEqual([...states.entries()], [[threadId, pinnedState]]);
+    }),
+  );
+
+  it.effect("member event for the holder writes the thread row", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:member-state:holder");
+      const alice = MemberId.make("member-alice");
+      yield* createMemberStateThread(threadId, alice);
+      yield* applyMemberPin(threadId, alice, alice);
+
+      const thread = yield* projectionStore.getThread(threadId);
+      assert.deepEqual(thread.pinnedAt, pinnedState.pinnedAt);
+      assert.equal(thread.pinOrderKey, "a0");
+      assert.isNull(yield* projectionStore.getThreadMemberState(threadId, alice));
+    }),
+  );
+
+  it.effect("holder write removes that member's stale member row", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:member-state:transfer");
+      const bob = MemberId.make("member-bob");
+      yield* createMemberStateThread(threadId, null);
+      yield* applyMemberPin(threadId, null, bob);
+      assert.isNotNull(yield* projectionStore.getThreadMemberState(threadId, bob));
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:member-state:transfer:owner"),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: DateTime.makeUnsafe("2026-10-01T02:00:00.000Z"),
+        payload: { ...memberStateThread(threadId, bob), ...pinnedState },
+      });
+      assert.isNull(yield* projectionStore.getThreadMemberState(threadId, bob));
+      assert.deepEqual((yield* projectionStore.getThread(threadId)).pinnedAt, pinnedState.pinnedAt);
+    }),
+  );
+
+  it.effect("thread delete purges member rows", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:member-state:deleted");
+      yield* createMemberStateThread(threadId, null);
+      yield* applyMemberPin(threadId, null, MemberId.make("member-alice"));
+      yield* applyMemberPin(threadId, null, MemberId.make("member-bob"));
+      assert.lengthOf(yield* projectionStore.listThreadMemberStates(threadId), 2);
+
+      const deletedAt = DateTime.makeUnsafe("2026-10-01T03:00:00.000Z");
+      yield* projectionStore.apply({
+        id: EventId.make("event:member-state:deleted"),
+        type: "thread.deleted",
+        threadId,
+        occurredAt: deletedAt,
+        payload: { ...memberStateThread(threadId, null), deletedAt },
+      });
+      assert.deepEqual(yield* projectionStore.listThreadMemberStates(threadId), []);
     }),
   );
 

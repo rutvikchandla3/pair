@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  MemberId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -622,6 +623,36 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         WHERE thread_id = ${picked}
       `;
       assert.deepEqual(yield* threadIds(), [picked]);
+
+      // Picks are personal: another member ranks by their own, not the holder's.
+      const alice = {
+        memberId: MemberId.make("member-alice"),
+        serverOwnerId: MemberId.make("member-owner"),
+      };
+      const aliceIds = () =>
+        search
+          .search({ query: "plover", limit: 1, viewer: alice })
+          .pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.deepEqual(yield* aliceIds(), [busy]);
+      yield* sql`
+        INSERT INTO projection_thread_member_state (thread_id, member_id, opens_json, updated_at)
+        VALUES (${picked}, ${alice.memberId}, ${JSON.stringify({
+          openedAt: at,
+          score: 1,
+          picks: [{ query: "plover", at }],
+        })}, '2026-01-01T00:00:00.000Z')
+      `;
+      assert.deepEqual(yield* aliceIds(), [picked]);
+      assert.deepEqual(
+        yield* search
+          .search({
+            query: "plover",
+            limit: 1,
+            viewer: { ...alice, memberId: MemberId.make("member-bob") },
+          })
+          .pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId))),
+        [busy],
+      );
     }),
   );
 
