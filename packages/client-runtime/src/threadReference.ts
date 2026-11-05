@@ -4,6 +4,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
@@ -19,6 +20,26 @@ export interface ThreadReferenceCopyTarget {
   readonly clipboardTarget: string;
   readonly successTitle: string;
   readonly failureTitle: string;
+}
+
+/**
+ * Where a copied thread link points. A team server's own origin lets a teammate open it and sign
+ * in; a loopback or non-http(s) base URL means nothing to anyone else, so those keep the hosted app.
+ */
+export function threadShareOrigin(input: {
+  readonly isTeamMode: boolean;
+  readonly httpBaseUrl: string | null | undefined;
+  readonly hostedAppUrl: string;
+}): string {
+  if (!input.isTeamMode || !input.httpBaseUrl || !URL.canParse(input.httpBaseUrl)) {
+    return input.hostedAppUrl;
+  }
+  const url = new URL(input.httpBaseUrl);
+  const publicHttp =
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    !isLoopbackHost(url.hostname) &&
+    !url.hostname.endsWith(".localhost");
+  return publicHttp ? url.origin : input.hostedAppUrl;
 }
 
 /**

@@ -519,6 +519,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   /** Absent on threads written before ownership existed; read as null. */
   ownerId: Schema.optional(Schema.NullOr(MemberId)),
   ownerUpdatedBy: Schema.optional(MemberId),
+  /** Who archived it, only when that was not the holder; cleared on unarchive. */
+  archivedBy: Schema.optional(MemberId),
   humanAuthorIds: Schema.optional(Schema.Array(MemberId)),
   lastRollback: Schema.optional(
     Schema.Struct({
@@ -2200,6 +2202,14 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
     ),
   ),
   ownerId: Schema.optional(Schema.NullOr(MemberId)),
+  /**
+   * Attribution for notification routing. Each is absent when unknown or when it is the holder,
+   * so single-member servers never send them.
+   */
+  latestRunAuthorId: Schema.optional(MemberId),
+  latestUserMessageAuthorId: Schema.optional(MemberId),
+  ownerUpdatedBy: Schema.optional(MemberId),
+  archivedBy: Schema.optional(MemberId),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2312,6 +2322,8 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     sequence: NonNegativeInt,
     location: Schema.Literals(["active", "archive"]),
     threadId: ThreadId,
+    /** Set when another member than the holder archived it. */
+    archivedBy: Schema.optionalKey(MemberId),
   }),
 ]);
 export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamItem.Type;
@@ -3024,6 +3036,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.archive"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),

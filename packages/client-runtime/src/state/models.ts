@@ -3,6 +3,7 @@ import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
+  MemberId,
   MessageId,
   OrchestrationProjectShell,
   OrchestrationV2ProviderGoal,
@@ -193,6 +194,11 @@ export interface EnvironmentThreadShell {
   readonly lastVisitedAt?: string | null;
   /** Set only in a non-holder's view; the holder follows implicitly. */
   readonly followedAt?: string | null;
+  /** Notification routing facts; each is absent when it is the holder. */
+  readonly latestRunAuthorId?: MemberId;
+  readonly latestUserMessageAuthorId?: MemberId;
+  readonly ownerUpdatedBy?: MemberId;
+  readonly archivedBy?: MemberId;
   /** Server-tracked open history for search ranking. */
   readonly opens?: import("@t3tools/contracts").OrchestrationV2ThreadOpens | null;
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
@@ -339,6 +345,14 @@ export function presentThreadShell(
       ? {}
       : { lastVisitedAt: nullableIso(thread.lastVisitedAt) }),
     ...(thread.followedAt == null ? {} : { followedAt: iso(thread.followedAt) }),
+    ...(thread.latestRunAuthorId === undefined
+      ? {}
+      : { latestRunAuthorId: thread.latestRunAuthorId }),
+    ...(thread.latestUserMessageAuthorId === undefined
+      ? {}
+      : { latestUserMessageAuthorId: thread.latestUserMessageAuthorId }),
+    ...(thread.ownerUpdatedBy === undefined ? {} : { ownerUpdatedBy: thread.ownerUpdatedBy }),
+    ...(thread.archivedBy === undefined ? {} : { archivedBy: thread.archivedBy }),
     opens: thread.opens ?? null,
     titleRegeneration:
       thread.titleRegeneration == null

@@ -365,6 +365,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...personal, type: "thread.mark-unread" };
           break;
+        case "archive":
+          command = { ...personal, type: "thread.archive" };
+          break;
         case "pin":
         case "unpin":
           command = { ...personal, type: `thread.${input.action}` };
