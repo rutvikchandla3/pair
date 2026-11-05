@@ -13,6 +13,7 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
@@ -95,7 +96,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { type HandoffTimelineRun } from "./V2LifecycleRow";
+import { RollbackDivider, type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
@@ -277,6 +278,8 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
+  /** Set only where attribution shows, so "Reverted by" never appears for a solo user. */
+  lastRollback?: OrchestrationV2AppThread["lastRollback"];
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
@@ -376,6 +379,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   supportsConversationRollback,
   threadStartCheckpointReady = false,
   availableRevertTurnCounts,
+  lastRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onSendAppMessage,
@@ -679,6 +683,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     threadStartCheckpointReady,
     availableRevertTurnCounts,
     worktreeSetup,
+    lastRollback,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
@@ -1446,6 +1451,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                     !row.showAssistantMeta) ||
                   row.kind === "worktree-setup" ||
                   row.kind === "event" ||
+                  row.kind === "rollback" ||
                   row.kind === "attempt-fold" ||
                   row.kind === "html-render" ||
                   row.kind === "mcp-app"
@@ -1501,9 +1507,15 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
+      {row.kind === "rollback" ? <RollbackTimelineRow row={row} /> : null}
     </div>
   );
 });
+
+function RollbackTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "rollback" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return <RollbackDivider environmentId={ctx.activeThreadEnvironmentId} actorId={row.actorId} />;
+}
 
 function WorktreeSetupTimelineRow({
   row,

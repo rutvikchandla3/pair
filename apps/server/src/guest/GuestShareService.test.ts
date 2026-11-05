@@ -6,6 +6,7 @@ import {
   CommandId,
   EventId,
   GuestShareId,
+  MemberId,
   type GuestStreamEvent,
   MessageId,
   type OrchestrationV2ThreadHistoryPage,
@@ -54,6 +55,7 @@ import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderRepl
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -74,7 +76,7 @@ const layerOrchestration = Layer.mergeAll(
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
-);
+).pipe(Layer.provideMerge(TeamState.layerTest()));
 
 // The Connect hostname the fake tunnel reports. Tests set it to null to simulate an unlink.
 const hostname = Ref.makeUnsafe<string | null>("env.t3.test");
@@ -249,6 +251,36 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
     assert.deepEqual(
       turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : [])),
       ["Fix the login bug"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("never streams another member's personal thread state to a guest", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const events = yield* guestShares.stream(session);
+    const bob = MemberId.make("member-bob");
+    yield* orchestrator.dispatch({
+      type: "thread.pin",
+      commandId: CommandId.make("bob-pins"),
+      threadId,
+      actorId: bob,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-pin"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    assert.equal(received.at(-1)?.type, "ended");
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    assert.isNotNull((yield* projections.getThreadMemberState(threadId, bob))?.pinnedAt ?? null);
+    assert.deepEqual(
+      received.flatMap((event) =>
+        event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
+      ),
+      [],
     );
   }).pipe(Effect.provide(layerTest)),
 );

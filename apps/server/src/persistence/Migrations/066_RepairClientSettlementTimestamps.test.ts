@@ -363,6 +363,8 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
       yield* Migration0066;
       assert.deepEqual(yield* snapshot, repaired);
 
+      // A rebuild runs today's projection code, which needs today's schema.
+      yield* runMigrations();
       const maintenance = yield* ProjectionReplay.ProjectionReplay;
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* imported, expectedImported);

@@ -10,6 +10,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  MemberId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ import {
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { readThreadTeamMenu } from "../state/team";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
@@ -83,6 +85,7 @@ export function useThreadActionMenu(input: {
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadOwner,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -133,6 +136,7 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+      const team = readThreadTeamMenu(threadRef.environmentId, thread.source.ownerId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -149,6 +153,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        ...(team ? { team } : {}),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -189,6 +194,12 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      if (action.startsWith("assign:")) {
+        await reportFailure("Could not assign the thread", () =>
+          setThreadOwner(threadRef, MemberId.make(action.slice("assign:".length))),
+        );
+        return;
+      }
       switch (action) {
         case "find":
           onFind?.(threadRef);

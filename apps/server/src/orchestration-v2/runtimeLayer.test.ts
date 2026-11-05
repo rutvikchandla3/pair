@@ -14,6 +14,7 @@ import {
   CommandId,
   ContextTransferId,
   EventId,
+  MemberId,
   MessageId,
   NodeId,
   RuntimeRequestId,
@@ -1050,6 +1051,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           threadId,
           checkpointId,
           scopeId: scope.id,
+          actorId: MemberId.make("member:alice"),
         });
 
         if (status === "ready") {
@@ -1057,6 +1059,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           assert.deepEqual(
             accepted.storedEvents.map((stored) => stored.event.type),
             ["thread.metadata-updated", "checkpoint.rollback-requested"],
+          );
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.lastRollback,
+            { actorId: MemberId.make("member:alice"), checkpointId, requestedAt: now },
           );
           assert.deepEqual(
             (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),

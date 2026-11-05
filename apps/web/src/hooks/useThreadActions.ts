@@ -12,6 +12,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  type MemberId,
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
@@ -296,6 +297,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const setThreadOwnerMutation = useOrchestrationCommand(threadEnvironment.setOwner, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useOrchestrationCommand(threadEnvironment.reorderPin, {
@@ -687,6 +691,12 @@ export function useThreadActions() {
     });
   };
 
+  const setThreadOwner = (target: ScopedThreadRef, ownerId: MemberId) =>
+    setThreadOwnerMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, ownerId },
+    });
+
   const pinThread = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -965,6 +975,7 @@ export function useThreadActions() {
     reorderActiveThread,
     markThreadUnread,
     setThreadAutoSettle,
+    setThreadOwner,
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

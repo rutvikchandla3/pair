@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -42,6 +43,7 @@ import {
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -135,6 +137,7 @@ import {
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
   composeShellStreamWithEnrichment,
+  isOtherMembersShellEvent,
   dedupeShellEnrichment,
   loadOlderSettledThreadsPage,
   loadShellSnapshotParts,
@@ -148,7 +151,17 @@ import {
   toShellApplicationEvent,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
-import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
+import {
+  makeThreadEventView,
+  makeThreadViewers,
+  olderSettledReaderOf,
+  overlayForViewer,
+  type ThreadViewer,
+} from "./orchestration-v2/MemberThreadView.ts";
+import {
+  ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+  ProjectionStoreV2,
+} from "./orchestration-v2/ProjectionStore.ts";
 import {
   coalesceLiveUpdatedEvents,
   coalesceThreadLiveStream,
@@ -873,8 +886,14 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly acceptCompactTurnItems?: boolean;
     readonly acceptDedupedBodies?: boolean;
     readonly acceptCompactIds?: boolean;
+    readonly viewer?: ThreadViewer | null;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const view = makeThreadEventView(input.viewer ?? null, input.threadId);
+    const viewItem = <I extends { readonly event: OrchestrationV2DomainEvent }>(item: I) =>
+      view
+        .event(item.event)
+        .pipe(Effect.map((event) => (event === null ? null : { ...item, event })));
     const dedupeBodies = input.acceptDedupedBodies === true;
     // Replay, snapshot, and live tail share one deduper: it must see every delivered record.
     const withLiveDedupe = <E, R>(stream: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>) =>
@@ -907,6 +926,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             sequence: stored.sequence,
             event: stored.event,
           })),
+          Stream.mapEffect(viewItem),
+          Stream.filter(Predicate.isNotNull),
           coalesceThreadLiveStream,
           Stream.mapError(
             (cause) =>
@@ -934,6 +955,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             sequence: stored.sequence,
             event: projectDomainEventForWire(stored.event),
           })),
+          Stream.mapEffect(viewItem),
+          Stream.filter(Predicate.isNotNull),
           Stream.runCollect,
           Effect.map((items) => Array.from(items)),
           Effect.mapError(
@@ -953,7 +976,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
 
     const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
-      const snapshot = yield* (
+      const { snapshotSequence, projection: viewed } = yield* (
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
               rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
@@ -962,6 +985,14 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             })
           : threadManagement.getThreadSnapshot(input.threadId)
       ).pipe(
+        Effect.flatMap((snapshot) =>
+          view.thread(snapshot.projection.thread).pipe(
+            Effect.map((thread) => ({
+              snapshotSequence: snapshot.snapshotSequence,
+              projection: { ...snapshot.projection, thread },
+            })),
+          ),
+        ),
         Effect.mapError(
           (cause) =>
             new OrchestrationV2GetThreadProjectionError({
@@ -971,16 +1002,16 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             }),
         ),
       );
-      const { snapshotSequence } = snapshot;
       const snapshotItem = useBoundedSnapshot
         ? buildBoundedThreadStreamSnapshot({
-            ...snapshot,
+            snapshotSequence,
+            projection: viewed,
             compactTurnItems: input.acceptCompactTurnItems === true,
             dedupeBodies,
             compactIds: input.acceptCompactIds === true,
           })
         : (() => {
-            const projection = projectThreadProjectionForWire(snapshot.projection);
+            const projection = projectThreadProjectionForWire(viewed);
             return {
               kind: "snapshot" as const,
               snapshotSequence,
@@ -1106,7 +1137,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     readonly requestCompletionMarker?: boolean;
     readonly omitIdleSubagents?: boolean;
     readonly omitOlderSettled?: boolean;
+    readonly viewer?: ThreadViewer | null;
   }) {
+    const viewer = input.viewer ?? null;
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -1115,6 +1148,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
     let subagentThreadIds = new Set<string>();
     const filterSubagentTranscript = (stored: ApplicationStoredEvent) =>
+      !isOtherMembersShellEvent(stored, viewer?.memberId ?? null) &&
       shouldPublishShellApplicationEvent(stored, subagentThreadIds);
 
     const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
@@ -1147,6 +1181,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         options: {
           omitIdleSubagents: input.omitIdleSubagents === true,
           omitOlderSettled: input.omitOlderSettled === true,
+          olderSettledReader: yield* olderSettledReaderOf(viewer),
         },
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;
@@ -1154,6 +1189,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       return {
         snapshot: {
           ...forSubscriber.snapshot,
+          threads: yield* overlayForViewer(viewer, forSubscriber.snapshot.threads),
           projects: enriched.projects,
         } as OrchestrationV2ShellSnapshot,
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
@@ -1206,7 +1242,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
                 (shell) => [shell.id, shell] as const,
               ),
             );
-      return yield* Effect.forEach(
+      const items = yield* Effect.forEach(
         coalesced,
         (stored) =>
           Effect.gen(function* () {
@@ -1221,6 +1257,13 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             return shellStreamItemFromThreadShell({ stored, shell });
           }),
         { concurrency: 8 },
+      );
+      const shells = items.flatMap((item) => (item.kind === "thread.updated" ? [item.thread] : []));
+      const viewed = yield* overlayForViewer(viewer, shells);
+      if (viewed === shells) return items;
+      const byId = new Map(viewed.map((thread) => [thread.id, thread] as const));
+      return items.map((item) =>
+        item.kind === "thread.updated" ? { ...item, thread: byId.get(item.thread.id)! } : item,
       );
     });
 
@@ -1392,6 +1435,7 @@ export const layerWsRpc = (
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
         | DocumentText.DocumentText
+        | TeamState.TeamState
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -1430,6 +1474,7 @@ export const layerWsRpc = (
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
       const teamState = yield* TeamState.TeamState;
+      const threadViewer = (yield* makeThreadViewers)(currentSession.memberId);
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1704,6 +1749,7 @@ export const layerWsRpc = (
                   },
                   createdBy: "user",
                   creationSource: "web",
+                  actorId: currentSession.memberId,
                 }),
               ),
             );
@@ -1965,6 +2011,7 @@ export const layerWsRpc = (
           threadSnapshotPagination: true,
           threadFind: true,
           threadFindProgressive: true,
+          threadMemberState: true,
           secretProviderSettings: true,
           secretReferences: true,
           ...Option.match(scratchWorkspaceRoot, {
@@ -1992,7 +2039,7 @@ export const layerWsRpc = (
           schemaVersion: threads.schemaVersion,
           snapshotSequence,
           projects,
-          threads: threads.archivedThreads,
+          threads: yield* overlayForViewer(threadViewer, threads.archivedThreads),
         } as const;
       }).pipe(
         Effect.flatMap((snapshot) =>
@@ -2028,6 +2075,24 @@ export const layerWsRpc = (
           return { snapshotSequence, threads: threads.threads };
         },
       );
+      const readThreadFamily = Effect.fn("ws.orchestrationV2.readThreadFamily")(function* (
+        threadId: ThreadId,
+      ) {
+        const family = yield* readOmittableShellRows(
+          { familyOf: threadId },
+          "Failed to load the thread family",
+        );
+        const threads = yield* overlayForViewer(threadViewer, family.threads).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed to load the thread family",
+                cause,
+              }),
+          ),
+        );
+        return { ...family, threads };
+      });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
         return yield* mutateProjectWithClone(projectService, projectCloneTracker, mutation);
@@ -2058,11 +2123,14 @@ export const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                        ThreadManagementService.withActor(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                          currentSession.memberId,
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -2086,7 +2154,7 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          threadManagement.forceStopThread(input),
+          threadManagement.forceStopThread({ ...input, actorId: currentSession.memberId }),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
@@ -2133,6 +2201,7 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
           ThreadSearch.searchThreadsWithOlderSettledRows({
             request: input,
+            viewer: threadViewer,
             search: threadSearch.search,
             searchOlderSettled: threadSearch.searchOlderSettled,
             sql,
@@ -2140,6 +2209,13 @@ export const layerWsRpc = (
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.flatMap(({ threads, ...result }) =>
+              overlayForViewer(threadViewer, threads ?? []).pipe(
+                Effect.map((viewed) =>
+                  threads === undefined ? result : { ...result, threads: viewed },
+                ),
+              ),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationSearchThreadsError({
@@ -2150,8 +2226,7 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
-        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) =>
-          readOmittableShellRows({ familyOf: input.threadId }, "Failed to load the thread family"),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) => readThreadFamily(input.threadId),
         [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: (input) =>
           threadManagement.getThreadTitles(input.threadIds).pipe(
             Effect.mapError(
@@ -2162,14 +2237,32 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: ({ ownerId, ...input }) =>
           loadOlderSettledThreadsPage({
             sql,
-            listThreads: threadManagement.listOlderSettledThreads(input),
+            listThreads: olderSettledReaderOf(threadViewer).pipe(
+              Effect.flatMap((reader) =>
+                threadManagement.listOlderSettledThreads({
+                  ...input,
+                  // One member owns everything, so the filter and own counts add nothing.
+                  ...(reader === null
+                    ? {}
+                    : {
+                        ownerId,
+                        ownCountsFor: input.limit === 0 ? reader.memberId : undefined,
+                      }),
+                }),
+              ),
+            ),
             readThreads: (threadIds) =>
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
+            Effect.flatMap((page) =>
+              overlayForViewer(threadViewer, page.threads).pipe(
+                Effect.map((threads) => ({ ...page, threads })),
+              ),
+            ),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -2192,12 +2285,21 @@ export const layerWsRpc = (
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                 })
                 .pipe(
-                  Effect.map(
-                    (snapshot) =>
-                      buildBoundedThreadProjection({
-                        projection: projectThreadProjectionForWire(snapshot.projection),
-                        snapshotSequence: snapshot.snapshotSequence,
-                      }).projection,
+                  Effect.flatMap((snapshot) =>
+                    makeThreadEventView(threadViewer, input.threadId)
+                      .thread(snapshot.projection.thread)
+                      .pipe(
+                        Effect.map(
+                          (thread) =>
+                            buildBoundedThreadProjection({
+                              projection: projectThreadProjectionForWire({
+                                ...snapshot.projection,
+                                thread,
+                              }),
+                              snapshotSequence: snapshot.snapshotSequence,
+                            }).projection,
+                        ),
+                      ),
                   ),
                   Effect.mapError(
                     (cause) =>
@@ -2249,6 +2351,7 @@ export const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
+                    actorId: currentSession.memberId,
                   }).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
@@ -2308,11 +2411,11 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
+          Stream.unwrap(subscribeOrchestrationV2Shell({ ...input, viewer: threadViewer })),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(subscribeOrchestrationV2Thread(input)),
+              Effect.andThen(subscribeOrchestrationV2Thread({ ...input, viewer: threadViewer })),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
@@ -2323,7 +2426,8 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          scheduledTasks.upsert(input, currentSession.memberId),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
@@ -3482,6 +3586,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3571,6 +3676,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(ProjectionStoreV2, projections)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

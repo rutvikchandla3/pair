@@ -1343,6 +1343,8 @@ describe("EnvironmentRegistry", () => {
           replacementCredential.token,
         ]);
         expect(yield* Ref.get(followedSupervisors)).toBe(2);
+        // A new credential may be another member: their cached shell and threads must not show.
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

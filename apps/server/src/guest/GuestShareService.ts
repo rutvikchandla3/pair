@@ -47,6 +47,7 @@ import * as ServerConfig from "../config.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import { GUEST_FAILURE } from "../orchestration-v2/GuestShareDecider.ts";
+import { isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
@@ -550,6 +551,8 @@ const make = Effect.gen(function* () {
     const live = orchestrator
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
+        // Guests see the holder's view; another member's personal state is not theirs to see.
+        Stream.filter((stored) => !isMemberThreadEvent(stored.event)),
         Stream.map((stored) => ({
           kind: "event" as const,
           sequence: stored.sequence,

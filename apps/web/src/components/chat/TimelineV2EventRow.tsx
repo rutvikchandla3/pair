@@ -45,6 +45,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       environmentId={ctx.activeThreadEnvironmentId}
       item={item}
       resourceSummary={row.resourceSummary}
+      stoppedBy={row.stoppedBy}
       runs={ctx.runs}
       onOpenThread={ctx.onOpenThread}
     />

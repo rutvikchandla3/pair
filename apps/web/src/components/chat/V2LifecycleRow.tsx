@@ -4,6 +4,7 @@ import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subag
 import type { ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
+import { useTeamAttribution } from "../../state/team";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useNavigate } from "@tanstack/react-router";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
@@ -33,6 +34,7 @@ import {
   type ServerProvider,
   type ThreadId,
   type EnvironmentId,
+  type MemberId,
   type NodeId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -45,6 +47,7 @@ import {
   ArrowRightIcon,
   GitForkIcon,
   MessageSquareIcon,
+  Undo2Icon,
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -66,21 +69,51 @@ import { T3Wordmark } from "../T3Wordmark";
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
+function InterruptResultDivider(props: {
+  readonly environmentId: EnvironmentId;
+  readonly message: string;
+  readonly stoppedBy: MemberId | undefined;
+}) {
+  const team = useTeamAttribution(props.environmentId);
+  const stoppedBy = team.isTeamMode ? props.stoppedBy : undefined;
+  return (
+    <TimelineSystemDivider
+      label={stoppedBy === undefined ? "Run interrupted" : `Stopped by ${team.nameOf(stoppedBy)}`}
+      // The server's generic "Stopped by user" reason only repeats the attributed label.
+      detail={stoppedBy !== undefined && props.message === "Stopped by user" ? null : props.message}
+      icon={CircleStopIcon}
+      wrapDetail
+    />
+  );
+}
+
+/** "Reverted by X", shown where the thread was rolled back. */
+export function RollbackDivider(props: {
+  readonly environmentId: EnvironmentId;
+  readonly actorId: MemberId;
+}) {
+  const team = useTeamAttribution(props.environmentId);
+  if (!team.isTeamMode) return null;
+  return (
+    <TimelineSystemDivider label={`Reverted by ${team.nameOf(props.actorId)}`} icon={Undo2Icon} />
+  );
+}
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly environmentId: EnvironmentId;
   readonly resourceSummary?: boolean | undefined;
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly stoppedBy?: MemberId | undefined;
 }) {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
     return (
-      <TimelineSystemDivider
-        label="Run interrupted"
-        detail={item.message}
-        icon={CircleStopIcon}
-        wrapDetail
+      <InterruptResultDivider
+        environmentId={props.environmentId}
+        message={item.message}
+        stoppedBy={props.stoppedBy}
       />
     );
   }

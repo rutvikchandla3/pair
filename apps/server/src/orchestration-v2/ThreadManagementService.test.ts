@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  MemberId,
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
@@ -74,6 +75,58 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+});
+
+it("attributes client commands to the session's member, never to a member the client names", () => {
+  const alice = MemberId.make("member-alice");
+  const forged = MemberId.make("member-forged");
+  const commandId = CommandId.make("command:thread-management:actor");
+  const threadId = ThreadId.make("thread:thread-management:actor");
+  const create = ThreadManagementService.withActor(
+    {
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId,
+      threadId,
+      projectId: ProjectId.make("project:thread-management"),
+      title: "Actor",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      actorId: forged,
+      ownerId: forged,
+    },
+    alice,
+  );
+  expect(create).toMatchObject({ actorId: alice });
+  expect(create).not.toHaveProperty("ownerId");
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.delete", commandId, threadId, actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.delete", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.pin", commandId, threadId, actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.pin", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor({ type: "thread.settle", commandId, threadId }, alice),
+  ).toEqual({ type: "thread.settle", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.metadata.update", commandId, threadId, title: "T", actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.metadata.update", commandId, threadId, title: "T", actorId: alice });
+  expect(
+    ThreadManagementService.withActor({ type: "thread.archive", commandId, threadId }, alice),
+  ).not.toHaveProperty("actorId");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
@@ -714,7 +767,9 @@ it.effect.each([
     );
     yield* Effect.gen(function* () {
       const service = yield* ThreadManagementService.ThreadManagementService;
-      const stopping = yield* service.forceStopThread({ threadId, runId }).pipe(Effect.forkChild);
+      const stopping = yield* service
+        .forceStopThread({ threadId, runId, actorId: MemberId.make("member-alice") })
+        .pipe(Effect.forkChild);
       yield* TestClock.adjust("10 seconds");
       expect(yield* Fiber.join(stopping)).toEqual(expected);
       expect(dispatched).toMatchObject([
@@ -722,6 +777,7 @@ it.effect.each([
           type: "thread.background-work.settle",
           providerThreadId,
           reason: "Force stopped by user",
+          actorId: "member-alice",
         },
       ]);
       if (teardown.at(-1) === "detach") yield* Deferred.await(tornDown);

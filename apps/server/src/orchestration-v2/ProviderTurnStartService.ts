@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -57,6 +58,8 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { labelUserMessageForProvider } from "./SenderLabel.ts";
+import * as TeamState from "../team/TeamState.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -162,6 +165,8 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    // CLI and test runtimes have no team; their messages are never labelled.
+    const teamState = yield* Effect.serviceOption(TeamState.TeamState);
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
       function* (cwd: string) {
@@ -843,13 +848,21 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
+      const composedText = projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      });
+      const userText =
+        goalCommand || message.senderLabel === undefined || Option.isNone(teamState)
+          ? composedText
+          : labelUserMessageForProvider(
+              composedText,
+              message,
+              yield* Ref.get(teamState.value.members),
+            );
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,

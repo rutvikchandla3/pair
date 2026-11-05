@@ -2,6 +2,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MemberId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -87,6 +88,7 @@ const clientLaunchHarness = (input: {
       thread: undefined,
       client: {
         sessionId: "session-1",
+        memberId: MemberId.make("member-alice"),
         label: "Claude Code",
         access: input.runtimeModeCeiling,
         hostedAppUrl: input.hostedAppUrl,
@@ -225,6 +227,9 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      // The thread belongs to the member who connected the client, though no one sent it.
+      expect(belowCeiling.launched[0]).toMatchObject({ ownerId: "member-alice" });
+      expect(belowCeiling.launched[0]).not.toHaveProperty("actorId");
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",

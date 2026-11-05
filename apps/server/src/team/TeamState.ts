@@ -1,4 +1,4 @@
-import type { MemberId } from "@t3tools/contracts";
+import { MemberId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,6 +25,15 @@ export class TeamState extends Context.Service<
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));
 
+const isTeamMode = (members: Ref.Ref<ReadonlyMap<MemberId, Members.MemberRecord>>) =>
+  Ref.get(members).pipe(
+    Effect.map((current) => {
+      let active = 0;
+      for (const member of current.values()) if (member.removedAt === null) active += 1;
+      return active > 1;
+    }),
+  );
+
 const makeTeamState = Effect.gen(function* () {
   const repository = yield* Members.MemberRepository;
   const owner = yield* repository.getOwner();
@@ -47,16 +56,41 @@ const makeTeamState = Effect.gen(function* () {
   return TeamState.of({
     ownerId: owner.id,
     members,
-    isTeamMode: Ref.get(members).pipe(
-      Effect.map((current) => {
-        let active = 0;
-        for (const member of current.values()) if (member.removedAt === null) active += 1;
-        return active > 1;
-      }),
-    ),
+    isTeamMode: isTeamMode(members),
     isActive,
     reload,
   });
 });
 
 export const layer = Layer.effect(TeamState, makeTeamState).pipe(Layer.provideMerge(Members.layer));
+
+const TEST_OWNER: Members.MemberRecord = {
+  id: MemberId.make("member-owner"),
+  name: "Owner",
+  role: "admin",
+  gitName: null,
+  gitEmail: null,
+  isOwner: true,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: null,
+  removedAt: null,
+};
+
+/** A fixed member set with no repository behind it; the first owner record is the owner. */
+export const layerTest = (records: ReadonlyArray<Members.MemberRecord> = [TEST_OWNER]) =>
+  Layer.effect(
+    TeamState,
+    Effect.gen(function* () {
+      const members = yield* Ref.make<ReadonlyMap<MemberId, Members.MemberRecord>>(byId(records));
+      const owner = records.find((record) => record.isOwner) ?? TEST_OWNER;
+      return TeamState.of({
+        ownerId: owner.id,
+        members,
+        isTeamMode: isTeamMode(members),
+        isActive: Effect.fnUntraced(function* (memberId: MemberId) {
+          return (yield* Ref.get(members)).get(memberId)?.removedAt === null;
+        }),
+        reload: Effect.void,
+      });
+    }),
+  );

@@ -1,7 +1,7 @@
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { Spinner } from "~/components/ui/spinner";
 import { ArchiveIcon, ArchiveX } from "lucide-react";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { type MemberId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { readCanDeleteThread } from "../../state/team";
 import { readLocalApi } from "../../localApi";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { RelativeTime } from "../RelativeTime";
@@ -125,13 +126,20 @@ export function ArchivedThreadsPanel() {
   const handleArchivedThreadContextMenu = async (
     threadRef: ScopedThreadRef,
     position: { x: number; y: number },
+    ownerId: MemberId | null | undefined,
   ) => {
     const api = readLocalApi();
     if (!api) return;
+    const canDelete = readCanDeleteThread(threadRef.environmentId, ownerId);
     const clicked = await api.contextMenu.show(
       [
         { id: "unarchive", label: "Unarchive" },
-        { id: "delete", label: "Delete", destructive: true },
+        {
+          id: "delete",
+          label: canDelete ? "Delete" : "Delete (owner or admin only)",
+          destructive: true,
+          disabled: !canDelete,
+        },
       ],
       position,
     );
@@ -220,6 +228,7 @@ export function ArchivedThreadsPanel() {
                           x: event.clientX,
                           y: event.clientY,
                         },
+                        thread.source.ownerId,
                       ),
                     );
                     if (result._tag === "Failure") {

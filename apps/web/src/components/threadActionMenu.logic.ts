@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, MemberId } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
@@ -17,6 +17,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "assign"
+  | `assign:${MemberId}`
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -95,6 +97,13 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Set only on a server with a team; without it the menu is the single-user menu. */
+  readonly team?: {
+    readonly members: ReadonlyArray<{ readonly id: MemberId; readonly name: string }>;
+    readonly ownerId: MemberId | null;
+    /** Only the thread's owner or an admin may delete it. */
+    readonly canDelete: boolean;
+  };
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -164,6 +173,20 @@ export function buildThreadActionMenuItems(
                   },
                 ],
               },
+        ]
+      : []),
+    ...(state.team
+      ? [
+          {
+            id: "assign" as const,
+            label: "Assign to…",
+            icon: "user-plus",
+            children: state.team.members.map((member) => ({
+              id: `assign:${member.id}` as const,
+              label: member.name,
+              checked: member.id === state.team?.ownerId,
+            })),
+          },
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
@@ -247,9 +270,10 @@ export function buildThreadActionMenuItems(
     },
     {
       id: "delete",
-      label: "Delete",
+      label: state.team?.canDelete === false ? "Delete (owner or admin only)" : "Delete",
       destructive: true,
       icon: "trash",
+      ...(state.team?.canDelete === false ? { disabled: true } : {}),
     },
   ];
   return state.canOperate

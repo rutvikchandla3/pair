@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   CommandId,
+  MemberId,
   MessageId,
   EventId,
   NodeId,
@@ -929,7 +930,7 @@ it.effect(
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           const threadId = yield* startFirstTurn;
-          const steer = (id: string, selection: ModelSelection) =>
+          const steer = (id: string, selection: ModelSelection, actorId?: MemberId) =>
             orchestrator
               .dispatch({
                 type: "message.dispatch",
@@ -942,10 +943,11 @@ it.effect(
                 dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
                 createdBy: "user",
                 creationSource: "web",
+                ...(actorId === undefined ? {} : { actorId }),
               })
               .pipe(Effect.andThen(worker.drain()));
 
-          yield* steer("steer-changed", composerSelection);
+          yield* steer("steer-changed", composerSelection, MemberId.make("member:alice"));
           const changed = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(steered, ["steer-changed"]);
           assert.equal(started.length, 1);
@@ -954,8 +956,19 @@ it.effect(
           assert.deepEqual(changed.runs[0]?.modelSelection, runSelection);
           assert.deepEqual(changed.thread.modelSelection, composerSelection);
 
-          yield* steer("steer-reverted", runSelection);
+          yield* steer("steer-reverted", runSelection, MemberId.make("member:bob"));
           const reverted = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            reverted.turnItems.flatMap((item) =>
+              item.type === "user_message" && item.inputIntent === "steer"
+                ? [[item.authorId, item.senderLabel]]
+                : [],
+            ),
+            [
+              ["member:alice", undefined],
+              ["member:bob", "name_with_note"],
+            ],
+          );
           assert.deepEqual(steered, ["steer-changed", "steer-reverted"]);
           assert.lengthOf(reverted.attempts, 1);
           assert.deepEqual(reverted.thread.modelSelection, runSelection);

@@ -3,6 +3,7 @@ import {
   isOlderSettledThreadShell,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
+  type MemberId,
   type OrchestrationV2OlderSettledCursor,
   type OrchestrationV2OlderSettledThreadsPage,
   type OrchestrationV2SearchThreadsInput,
@@ -32,12 +33,17 @@ export interface OlderSettled {
   readonly before: string;
   readonly beforeMs: number;
   readonly counts: ReadonlyMap<ProjectId, number>;
+  /** The reading member's share of `counts`; only team-mode servers send it. */
+  readonly ownCounts?: ReadonlyMap<ProjectId, number>;
 }
 
 /** The scope's projects in one environment, or null for all of them. */
 export interface OlderSettledScope {
   readonly environmentId: EnvironmentId;
   readonly projectIds: ReadonlyArray<ProjectId> | null;
+  /** Team mode: only this member's threads. A thread with no owner is `serverOwnerId`'s. */
+  readonly ownerId?: MemberId;
+  readonly serverOwnerId?: MemberId | null;
 }
 
 /**
@@ -55,7 +61,7 @@ const NO_PAGES: OlderSettledPages = { reads: [], frontier: null, status: "ready"
 
 type OlderSettledRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "ownerId"
 >;
 
 export interface OlderSettledShelfEnvironment {
@@ -72,7 +78,7 @@ export function sortOlderSettledScopes(
 ): ReadonlyArray<OlderSettledScope> {
   return scopes
     .map((scope) => ({
-      environmentId: scope.environmentId,
+      ...scope,
       projectIds: scope.projectIds === null ? null : [...scope.projectIds].sort(),
     }))
     .sort((left, right) => left.environmentId.localeCompare(right.environmentId));
@@ -157,6 +163,7 @@ export function isListedSettledThread(
 /**
  * Older settled threads in scope that this client does not hold: the server's counts minus the
  * older rows it has. Add it to the local rows for the Settled label or a project's thread count.
+ * A scope with an owner counts only that member's threads when the server sent `ownCounts`.
  */
 export function unloadedOlderSettledCount(input: {
   readonly olderSettled: (environmentId: EnvironmentId) => OlderSettled | null;
@@ -171,15 +178,20 @@ export function unloadedOlderSettledCount(input: {
   for (const scope of input.scopes) {
     const older = input.olderSettled(scope.environmentId);
     if (older === null) continue;
+    const ownCounts = scope.ownerId === undefined ? undefined : older.ownCounts;
+    const ownerId = ownCounts === undefined ? undefined : scope.ownerId;
+    const counts = ownCounts ?? older.counts;
     if (scope.projectIds === null) {
-      for (const count of older.counts.values()) unloaded += count;
+      for (const count of counts.values()) unloaded += count;
     } else {
-      for (const projectId of scope.projectIds) unloaded += older.counts.get(projectId) ?? 0;
+      for (const projectId of scope.projectIds) unloaded += counts.get(projectId) ?? 0;
     }
     for (const thread of input.threads) {
       if (
         thread.environmentId === scope.environmentId &&
         (scope.projectIds === null || scope.projectIds.includes(thread.source.projectId)) &&
+        (ownerId === undefined ||
+          (thread.source.ownerId ?? scope.serverOwnerId ?? null) === ownerId) &&
         isOlderSettledThreadShell(thread.source, older.beforeMs)
       ) {
         unloaded -= 1;
@@ -258,19 +270,26 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     execute: Effect.fn("OlderSettledThreads.readPage")(function* (input: {
       readonly generation: number;
       readonly projectIds: ReadonlyArray<ProjectId> | null;
+      readonly ownerId: MemberId | null;
       readonly before: OrchestrationV2OlderSettledCursor;
     }) {
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads, {
         before: input.before,
         ...(input.projectIds === null ? {} : { projectIds: input.projectIds }),
+        ...(input.ownerId === null ? {} : { ownerId: input.ownerId }),
         limit: OLDER_SETTLED_PAGE_SIZE,
       });
     }),
   });
 
-  const countsOf = (source: {
-    readonly counts: OrchestrationV2OlderSettledThreadsPage["counts"];
-  }) => new Map(source.counts.map(({ projectId, count }) => [projectId, count] as const));
+  const countMap = (counts: OrchestrationV2OlderSettledThreadsPage["counts"]) =>
+    new Map(counts.map(({ projectId, count }) => [projectId, count] as const));
+  const countsOf = (
+    source: Pick<OrchestrationV2OlderSettledThreadsPage, "counts" | "ownCounts">,
+  ): Pick<OlderSettled, "counts" | "ownCounts"> => ({
+    counts: countMap(source.counts),
+    ...(source.ownCounts === undefined ? {} : { ownCounts: countMap(source.ownCounts) }),
+  });
 
   const olderSettledAtom = Atom.family((environmentId: EnvironmentId) => {
     let generation = -1;
@@ -290,7 +309,7 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         fromSnapshot = {
           before: cut.before,
           beforeMs: DateTime.toEpochMillis(DateTime.makeUnsafe(cut.before)),
-          counts: countsOf(cut),
+          ...countsOf(cut),
         };
       }
       // Most shell updates move only the cursor; the key needs new rows or removals.
@@ -315,7 +334,11 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       );
       if (read !== null && read !== lastReadPage) {
         lastReadPage = read;
-        lastRead = { ...fromSnapshot, counts: countsOf(read) };
+        lastRead = {
+          before: fromSnapshot.before,
+          beforeMs: fromSnapshot.beforeMs,
+          ...countsOf(read),
+        };
       }
       return lastRead ?? fromSnapshot;
     }).pipe(Atom.withLabel(`environment-older-settled:${environmentId}`));
@@ -325,13 +348,15 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     JSON.stringify([
       scope.environmentId,
       scope.projectIds === null ? null : [...scope.projectIds].sort(),
+      scope.ownerId ?? null,
       pages,
     ]);
 
   const pagesAtom = Atom.family((key: string) => {
-    const [environmentId, projectIds, pages] = JSON.parse(key) as [
+    const [environmentId, projectIds, ownerId, pages] = JSON.parse(key) as [
       EnvironmentId,
       ReadonlyArray<ProjectId> | null,
+      MemberId | null,
       number,
     ];
     let previous = NO_PAGES;
@@ -359,7 +384,7 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         const result = get(
           pageReadAtom({
             environmentId,
-            input: { generation: state.generation, projectIds, before: frontier },
+            input: { generation: state.generation, projectIds, ownerId, before: frontier },
           }),
         );
         const page = selectEnvironmentQueryData(result);
@@ -455,6 +480,7 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         input: {
           generation: state.generation,
           projectIds: scope.projectIds === null ? null : [...scope.projectIds].sort(),
+          ownerId: scope.ownerId ?? null,
           before: result.frontier,
         },
       }),

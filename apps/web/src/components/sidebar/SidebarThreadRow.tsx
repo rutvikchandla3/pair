@@ -25,6 +25,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  type TeamMember,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -112,6 +113,7 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MemberAvatar } from "../team/MemberAvatar";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
@@ -543,6 +545,8 @@ type SidebarThreadRowProps = {
   snoozeSupported: boolean;
   pinningSupported: boolean;
   isPinned: boolean;
+  /** Team mode only: the member who owns a thread that is not the viewer's. */
+  owner?: Pick<TeamMember, "name" | "color"> | null | undefined;
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
@@ -1184,6 +1188,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     </div>
   );
+  const ownerAvatar =
+    props.owner == null ? null : (
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+          <MemberAvatar member={props.owner} size="sm" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{props.owner.name}</TooltipPopup>
+      </Tooltip>
+    );
   const titleLineIcons = metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
@@ -1262,6 +1275,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {ownerAvatar}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1449,6 +1463,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
+              {ownerAvatar}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (

@@ -37,7 +37,11 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import {
+  idleThreadProjection,
+  layerSingleMemberViews,
+  liveThreadShell,
+} from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -462,7 +466,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
   });
   return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit,
+    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(layerSingleMemberViews)),
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -565,6 +569,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(layerSingleMemberViews),
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(

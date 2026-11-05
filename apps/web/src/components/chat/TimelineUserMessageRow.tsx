@@ -75,6 +75,8 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
+import { useTeamAttribution } from "~/state/team";
+import { MessageAuthorChip } from "../team/MessageAuthorChip";
 import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
@@ -450,6 +452,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
+  const team = useTeamAttribution(ctx.activeThreadEnvironmentId);
+  const otherAuthorId =
+    team.isTeamMode &&
+    userMessage.attribution === null &&
+    row.message.authorId !== undefined &&
+    row.message.authorId !== team.currentMemberId
+      ? row.message.authorId
+      : undefined;
+  const authorName = otherAuthorId === undefined ? "You" : team.nameOf(otherAuthorId);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
@@ -841,6 +852,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
+      {otherAuthorId !== undefined ? (
+        <MessageAuthorChip member={team.members.get(otherAuthorId) ?? null} name={authorName} />
+      ) : null}
       {(row.message.inputIntent === "steer" ||
         row.message.inputIntent === "promoted_queued_to_steer") &&
       !row.continuesSteer ? (
@@ -849,7 +863,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">
           {/* The heading leads the media so screen readers reach it before the images. */}
-          <MessageAuthorHeading>You</MessageAuthorHeading>
+          <MessageAuthorHeading>{authorName}</MessageAuthorHeading>
           {mediaBlock}
         </div>
       ) : null}
@@ -872,7 +886,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {folded
               ? senderLabel
               : userMessage.guestName === undefined
-                ? "You"
+                ? authorName
                 : `${userMessage.guestName} (guest)`}
           </MessageAuthorHeading>
         )}

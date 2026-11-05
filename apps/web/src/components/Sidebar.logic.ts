@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -20,6 +23,7 @@ import {
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
+  type MemberId,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -42,6 +46,7 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
+import type { TeamViewer } from "../state/team";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -171,17 +176,62 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+// Team rows belong to someone else, so they are neither a drop target nor a drag source.
 
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled" | "team";
+
+/** A thread with no recorded owner belongs to the server owner. */
+export function isSidebarThreadMine(
+  thread: {
+    readonly source: { readonly ownerId?: MemberId | null | undefined };
+    readonly pinnedAt?: string | null | undefined;
+  },
+  team: TeamViewer,
+): boolean {
+  return (
+    (thread.source.ownerId ?? team.ownerId) === team.memberId ||
+    // Pins are per member, so a pin on someone else's thread is mine.
+    thread.pinnedAt != null
+  );
+}
+
+/** Null means the thread is not listed: another member's settled thread in team mode. */
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
-}): SidebarSection {
+  readonly teamMode?: boolean;
+  readonly mine?: boolean;
+}): SidebarSection | null {
+  const { teamMode = false, mine = true } = input;
   if (input.snoozed) return "snoozed";
-  if (input.settled) return "settled";
+  if (input.settled) return teamMode && !mine ? null : "settled";
   if (input.pinned) return "pinned";
+  if (teamMode && !mine) return "team";
   return "active";
+}
+
+/** Newest activity first: the latest message, run, or update. */
+export function sortTeamThreadsByActivity<
+  T extends Pick<
+    EnvironmentThreadShell,
+    "id" | "environmentId" | "latestUserMessageAt" | "latestRun" | "updatedAt"
+  >,
+>(threads: readonly T[]): T[] {
+  const activityAt = (thread: T) =>
+    Math.max(
+      firstValidTimestampMs(thread.latestUserMessageAt),
+      firstValidTimestampMs(thread.latestRun?.completedAt),
+      firstValidTimestampMs(thread.latestRun?.startedAt),
+      firstValidTimestampMs(thread.updatedAt),
+    );
+  const timestamps = new Map(threads.map((thread) => [thread, activityAt(thread)]));
+  return threads.toSorted(
+    (left, right) =>
+      timestamps.get(right)! - timestamps.get(left)! ||
+      left.id.localeCompare(right.id) ||
+      left.environmentId.localeCompare(right.environmentId),
+  );
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -192,6 +242,7 @@ export type SidebarListMarker =
   | "settled-placeholder"
   | "pinned-divider"
   | "working-header"
+  | "team-header"
   | "snoozed-header"
   | "settled-header";
 
@@ -214,6 +265,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     if (item.kind !== "marker") continue;
     if (item.marker === "pinned-divider") section = "active";
     else if (item.marker === "working-header") section = "working";
+    else if (item.marker === "team-header") section = "team";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
@@ -237,7 +289,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "working" || section === "snoozed" || section === "team") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -246,6 +298,7 @@ export function resolveSidebarDropTarget(
       if (item.marker === "pinned-divider") currentSection = "active";
       else if (
         item.marker === "working-header" ||
+        item.marker === "team-header" ||
         item.marker === "snoozed-header" ||
         item.marker === "settled-header"
       )
@@ -285,7 +338,8 @@ export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (from === "team" || to === null || to === from) return null;
+  if (to === "working" || to === "snoozed" || to === "team") return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -370,7 +424,7 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working") return { kind: "none" };
+  if (activeSection === "working" || activeSection === "team") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }

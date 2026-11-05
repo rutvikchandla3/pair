@@ -156,6 +156,8 @@ layer("064_CanonicalizeThreadPullRequestLinks", (it) => {
       `;
       assert.equal(v1?.payload_json, v1Payload);
 
+      // A rebuild runs today's projection code, which needs today's schema.
+      yield* runMigrations();
       const maintenance = yield* ProjectionReplay.ProjectionReplay;
       assert.isTrue((yield* maintenance.rebuild).valid);
       for (const [host, repository, id] of [
