@@ -3,6 +3,7 @@ import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   ChatUnknownAttachment as ContractChatUnknownAttachment,
+  MemberId,
   MessageId,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -80,6 +81,7 @@ export interface ChatMessage {
   readonly runId: RunId | null;
   readonly streaming: boolean;
   readonly createdBy?: OrchestrationV2Actor;
+  readonly authorId?: MemberId;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;

@@ -651,6 +651,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         ...(item.type === "user_message"
           ? {
               createdBy: item.createdBy,
+              ...(item.authorId !== undefined ? { authorId: item.authorId } : {}),
               creationSource: item.creationSource,
               ...(item.senderThreadId !== undefined ? { senderThreadId: item.senderThreadId } : {}),
               ...(item.idleCompaction !== undefined ? { idleCompaction: item.idleCompaction } : {}),

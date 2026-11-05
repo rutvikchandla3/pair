@@ -24,12 +24,25 @@ export function applyTeamStreamEvent(current: TeamMembers, event: TeamStreamEven
   }
 }
 
-function activeTeamMembers(members: TeamMembers): ReadonlyArray<TeamMember> {
+export function activeTeamMembers(members: TeamMembers): ReadonlyArray<TeamMember> {
   return [...members.values()].filter((member) => member.removedAt === null);
 }
 
 export function isTeamModeMembers(members: TeamMembers): boolean {
   return activeTeamMembers(members).length > 1;
+}
+
+/** The server's delete rule, so clients can disable Delete up front: owner or admin, in team mode. */
+export function canMemberDeleteThread(input: {
+  readonly members: TeamMembers;
+  readonly memberId: MemberId | null;
+  readonly ownerId: MemberId | null | undefined;
+}): boolean {
+  if (input.memberId === null || !isTeamModeMembers(input.members)) return true;
+  return (
+    input.members.get(input.memberId)?.role === "admin" ||
+    (input.ownerId != null && input.ownerId === input.memberId)
+  );
 }
 
 export function createTeamEnvironmentAtoms<R, E>(

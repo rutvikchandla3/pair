@@ -51,7 +51,9 @@ import {
 import {
   idleCompactionOf,
   isCompactionCommandMessage,
+  type MemberId,
   type MessageId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2IdleCompaction,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
@@ -618,6 +620,14 @@ type MessagesTimelineRowContent =
       projectedItem: OrchestrationV2ProjectedTurnItem;
       subagents?: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
       resourceSummary?: boolean;
+      /** The member who asked for a run_interrupt_result's stop. */
+      stoppedBy?: MemberId;
+    }
+  | {
+      kind: "rollback";
+      id: string;
+      createdAt: string;
+      actorId: MemberId;
     }
   | {
       kind: "proposed-plan";
@@ -1407,8 +1417,18 @@ export function deriveMessagesTimelineRows(input: {
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** Passed only where attribution shows, and by reference so the rows input stays comparable. */
+  lastRollback?: OrchestrationV2AppThread["lastRollback"];
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const interruptActorByRunId = new Map<RunId, MemberId>();
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "event") continue;
+    const item = entry.projectedItem.item;
+    if (item.type === "run_interrupt_request" && item.runId !== null && item.actorId) {
+      interruptActorByRunId.set(item.runId, item.actorId);
+    }
+  }
   const isPendingApproval = (entry: WorkLogEntry) => {
     const item = entry.projectedItem?.item;
     return (
@@ -1991,11 +2011,18 @@ export function deriveMessagesTimelineRows(input: {
         };
         continue;
       }
+      const interruptedRunId =
+        timelineEntry.projectedItem.item.type === "run_interrupt_result"
+          ? timelineEntry.projectedItem.item.runId
+          : null;
+      const stoppedBy =
+        interruptedRunId === null ? undefined : interruptActorByRunId.get(interruptedRunId);
       nextRows.push({
         kind: "event",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         projectedItem: timelineEntry.projectedItem,
+        ...(stoppedBy === undefined ? {} : { stoppedBy }),
       });
       continue;
     }
@@ -2138,8 +2165,11 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  const result = attachTrailingToolGroupsToAssistant(
-    attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+  const result = withRollbackDivider(
+    attachTrailingToolGroupsToAssistant(
+      attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+    ),
+    input.lastRollback,
   );
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
@@ -2153,6 +2183,29 @@ export function deriveMessagesTimelineRows(input: {
       groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message);
     if (!groupedWithNext && !groupedWithPrevious) return row;
     return { ...row, groupedWithNext, groupedWithPrevious, continuesSteer };
+  });
+}
+
+/** Sits after the last row that existed when the revert was requested. */
+function withRollbackDivider(
+  rows: MessagesTimelineRow[],
+  rollback: OrchestrationV2AppThread["lastRollback"],
+): MessagesTimelineRow[] {
+  if (rollback?.actorId === undefined) return rows;
+  const requestedAt = DateTime.toEpochMillis(rollback.requestedAt);
+  let after = -1;
+  for (const [index, row] of rows.entries()) {
+    if (row.kind === "working" || row.kind === "worktree-setup" || row.kind === "thinking") {
+      continue;
+    }
+    if (Date.parse(row.createdAt) <= requestedAt) after = index;
+  }
+  if (after < 0) return rows;
+  return rows.toSpliced(after + 1, 0, {
+    kind: "rollback",
+    id: `rollback:${rollback.checkpointId}`,
+    createdAt: DateTime.formatIso(rollback.requestedAt),
+    actorId: rollback.actorId,
   });
 }
 
@@ -2458,8 +2511,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.projectedItem === (b as typeof a).projectedItem &&
         a.resourceSummary === (b as typeof a).resourceSummary &&
+        a.stoppedBy === (b as typeof a).stoppedBy &&
         Equal.equals(a.subagents, (b as typeof a).subagents)
       );
+
+    case "rollback":
+      return a.createdAt === (b as typeof a).createdAt && a.actorId === (b as typeof a).actorId;
 
     case "work": {
       const bw = b as typeof a;
