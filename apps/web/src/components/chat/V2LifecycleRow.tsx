@@ -75,14 +75,12 @@ function InterruptResultDivider(props: {
   readonly stoppedBy: MemberId | undefined;
 }) {
   const team = useTeamAttribution(props.environmentId);
+  const stoppedBy = team.isTeamMode ? props.stoppedBy : undefined;
   return (
     <TimelineSystemDivider
-      label={
-        team.isTeamMode && props.stoppedBy !== undefined
-          ? `Stopped by ${team.nameOf(props.stoppedBy)}`
-          : "Run interrupted"
-      }
-      detail={props.message}
+      label={stoppedBy === undefined ? "Run interrupted" : `Stopped by ${team.nameOf(stoppedBy)}`}
+      // The server's generic "Stopped by user" reason only repeats the attributed label.
+      detail={stoppedBy !== undefined && props.message === "Stopped by user" ? null : props.message}
       icon={CircleStopIcon}
       wrapDetail
     />
