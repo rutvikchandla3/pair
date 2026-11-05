@@ -60,6 +60,16 @@ T3 Code throughout.
 - **Viewers in the sidebar** on each thread's row, and **Online** or **Away** in **Settings → Team**.
   Away means no input for 10 minutes.
 
+### Team API · [#19](https://github.com/rutvikchandla3/t3code/pull/19) [#20](https://github.com/rutvikchandla3/t3code/pull/20)
+
+- **API tokens.** Members create their own tokens in **Settings → Sharing & access → Authorized
+  clients**, for the MCP endpoint, so scripts, CI and other agents can start, message and read
+  threads as them. A token is shown once, expires after 30, 90 or 365 days, and is capped at the
+  member's own access.
+- Members revoke their own clients and approve an agent's sign-in with one click.
+- **`t3 thread` from anywhere** with a token, acting as its member, and one guide to agents and
+  automation: [Agents and automation](../user/outside-agents.md).
+
 ## Built
 
 ### Collaborative control
@@ -71,15 +81,6 @@ T3 Code throughout.
 - **Queued messages belong to their author.** Only the author or the thread owner can send, remove
   or reorder one, and only the author can edit its text.
 - **Revert warns** when it would discard a teammate's turns: "Discards 2 turns by Alice".
-
-### Team API
-
-- **API tokens.** Members create their own tokens in **Settings → Sharing & access → Authorized
-  clients**, for the MCP endpoint, so scripts, CI and other agents can start, message and read
-  threads as them. A token is shown once, expires after 30, 90 or 365 days, and is capped at the
-  member's own access.
-- Members revoke their own clients and approve an agent's sign-in with one click.
-- **`t3 thread` from anywhere** with a token, and one guide to agents and automation.
 
 ## Planned
 
