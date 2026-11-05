@@ -472,7 +472,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        environment: {
+          ...options.environment,
+          ...ProviderAdapter.gitAuthorEnvironment(input.runtimePolicy),
+        },
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
