@@ -315,7 +315,7 @@ export default function ProjectScriptsControl({
             <TooltipPopup side="top">
               {onRunScript
                 ? `Run ${primaryScript.name}`
-                : "Pair this client again with permission to run terminal commands."}
+                : "Sign in again on this client with permission to run terminal commands."}
             </TooltipPopup>
           </Tooltip>
           {isPanel ? (

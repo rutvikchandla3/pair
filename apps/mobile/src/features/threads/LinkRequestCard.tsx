@@ -403,7 +403,7 @@ function LinkRequestSheet(props: {
             {canMint ? null : (
               <View className="gap-2">
                 <TextInput
-                  accessibilityLabel="Pairing code"
+                  accessibilityLabel="Sign-in code"
                   placeholder="Paste the code"
                   value={pairingCode}
                   onChangeText={setPairingCode}

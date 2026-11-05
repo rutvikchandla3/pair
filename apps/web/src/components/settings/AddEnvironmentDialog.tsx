@@ -403,11 +403,11 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
+          <span className="mb-1.5 block text-xs font-medium text-foreground">Sign-in code</span>
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
-            placeholder="PAIRCODE"
+            placeholder="CODE"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -415,7 +415,7 @@ export function AddEnvironmentDialog({
       </div>
       <div>
         <span className="mt-1 block text-2xs text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
+          Paste a full sign-in link here to fill both fields.
         </span>
       </div>
     </div>
@@ -629,8 +629,8 @@ export function AddEnvironmentDialog({
           </DialogTitle>
           <DialogDescription>
             {routeTarget
-              ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              ? "Sign in to this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
+              : "Connect another environment to this client."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -639,7 +639,7 @@ export function AddEnvironmentDialog({
               {renderConnectionModeCard({
                 mode: "remote",
                 title: "Remote link",
-                description: "Enter a backend host and pairing code.",
+                description: "Enter a server address and sign-in code.",
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge
