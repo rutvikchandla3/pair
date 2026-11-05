@@ -127,9 +127,20 @@ describe("t3 member", () => {
       const at = ["--base-dir", baseDir];
 
       const invited = parse<{ member: TeamMember; credential: string; pairUrl?: string }>(
-        yield* captureStdout(runCli(["member", "invite", "Alice", ...at, "--json"])),
+        yield* captureStdout(
+          runCli([
+            "member",
+            "invite",
+            "Alice",
+            "--git-email",
+            "alice@example.com",
+            ...at,
+            "--json",
+          ]),
+        ),
       );
       assert.equal(invited.member.role, "member");
+      assert.equal(invited.member.gitEmail, "alice@example.com");
       assert.isString(invited.credential);
       assert.isUndefined(invited.pairUrl);
 

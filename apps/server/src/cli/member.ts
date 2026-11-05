@@ -263,6 +263,10 @@ const inviteCommand = Command.make("invite", {
     Flag.withDescription("The member's role. Members cannot manage settings, access or providers."),
     Flag.withDefault("member" as const),
   ),
+  gitEmail: Flag.String("git-email").pipe(
+    Flag.withDescription("The email that authors the member's commits."),
+    Flag.optional,
+  ),
   ttl: ttlFlag,
   baseUrl: baseUrlFlag,
   json: jsonFlag,
@@ -271,9 +275,11 @@ const inviteCommand = Command.make("invite", {
   Command.withHandler((flags) =>
     runWithTeam(flags, (team, livePairingBaseUrl) =>
       Effect.gen(function* () {
+        const gitEmail = Option.getOrUndefined(flags.gitEmail)?.trim();
         const result = yield* team.invite({
           name: flags.name.trim(),
           role: flags.role,
+          ...(gitEmail ? { gitEmail } : {}),
           ...(Option.isSome(flags.ttl)
             ? { ttlMs: Math.max(1, Math.round(Duration.toMillis(flags.ttl.value))) }
             : {}),

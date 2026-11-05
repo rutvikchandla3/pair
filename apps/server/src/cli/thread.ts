@@ -13,12 +13,14 @@ import {
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
@@ -28,7 +30,11 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import {
+  AcpMcpBridgeError,
+  mcpToolSession,
+  type McpToolSession,
+} from "../mcp/AcpMcpStdioBridge.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -61,6 +67,16 @@ export class ThreadServerUnreachableError extends Schema.TaggedError<ThreadServe
   }
 }
 
+export class ThreadUnauthorizedError extends Schema.TaggedError<ThreadUnauthorizedError>()(
+  "ThreadUnauthorizedError",
+  {},
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return "The token was rejected. It may be revoked or expired.";
+  }
+}
+
 export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
   "ThreadToolFailedError",
   { tool: Schema.String, detail: Schema.String },
@@ -82,11 +98,13 @@ export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("Th
 
 export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
   "ThreadProjectNotFoundError",
-  { identifier: Schema.String },
+  { identifier: Schema.String, remote: Schema.optional(Schema.Boolean) },
 ) {
   override readonly [Runtime.errorReported] = false;
   override get message(): string {
-    return `No Pair project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
+    return this.remote === true
+      ? `No Pair project matches '${this.identifier}'. Pass a project id, the project's folder on the server, or its title.`
+      : `No Pair project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
   }
 }
 
@@ -117,6 +135,7 @@ export class ThreadRunEndedError extends Schema.TaggedError<ThreadRunEndedError>
 const ThreadCliError = Schema.Union([
   ThreadServerNotRunningError,
   ThreadServerUnreachableError,
+  ThreadUnauthorizedError,
   ThreadToolFailedError,
   ThreadUsageError,
   ThreadProjectNotFoundError,
@@ -171,7 +190,15 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
-const makeThreadTools = (session: McpToolSession, origin: string) => {
+const isBridgeError = Schema.is(AcpMcpBridgeError);
+
+/** A 401 means the server refused the caller's own token, not that it is down. */
+const connectionError = (origin: string, rejectsToken: boolean) => (cause: unknown) =>
+  rejectsToken && isBridgeError(cause) && cause.status === 401
+    ? new ThreadUnauthorizedError()
+    : new ThreadServerUnreachableError({ origin, cause });
+
+const makeThreadTools = (session: McpToolSession, origin: string, rejectsToken: boolean) => {
   const unexpected = (tool: string) =>
     new ThreadToolFailedError({
       tool,
@@ -182,10 +209,13 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
       tool: string,
       args: Readonly<Record<string, unknown>>,
       schema: S,
-    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
+    ): Effect.fn.Return<
+      S["Type"],
+      ThreadServerUnreachableError | ThreadUnauthorizedError | ThreadToolFailedError
+    > {
       const raw = yield* session
         .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+        .pipe(Effect.mapError(connectionError(origin, rejectsToken)));
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });
@@ -198,22 +228,75 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
 };
 export type ThreadTools = ReturnType<typeof makeThreadTools>;
 
+export interface ThreadConnection {
+  /** Project paths name folders on another machine, so they are not resolved here. */
+  readonly remote: boolean;
+}
+
+const ThreadEnvironment = Config.all({
+  url: Config.option(Config.String("T3CODE_URL")),
+  token: Config.option(Config.Redacted("T3CODE_TOKEN")),
+});
+
+const isPresent = (value: string) => value.trim().length > 0;
+
+const parseEnvironmentUrl = (value: string) =>
+  Effect.try({
+    try: () => new URL(value),
+    catch: () =>
+      new ThreadUsageError({
+        detail: `'${value}' is not an environment address, such as https://host.`,
+      }),
+  });
+
+const withTokenSession = Effect.fn("cli.thread.withTokenSession")(function* <A, E, R>(
+  origin: string,
+  token: Redacted.Redacted<string>,
+  connection: ThreadConnection,
+  run: (tools: ThreadTools, connection: ThreadConnection) => Effect.Effect<A, E, R>,
+) {
+  const session = yield* mcpToolSession({
+    endpoint: new URL("/mcp", origin).href,
+    authorization: `Bearer ${Redacted.value(token)}`,
+    clientName: "t3-thread-cli",
+  }).pipe(Effect.mapError(connectionError(origin, true)));
+  return yield* run(makeThreadTools(session, origin, true), connection);
+}, Effect.scoped);
+
 /**
- * Signs in as a short-lived MCP client of the running server, the same way an
- * outside agent does, and revokes that session when the command ends.
+ * With `T3CODE_TOKEN`, acts as the token's member: on `--url`'s server, or on
+ * this machine's. Without it, signs in as a short-lived MCP client of the
+ * running server, the same way an outside agent does, and revokes that
+ * session when the command ends.
  */
 const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
-  run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
+  flags: { readonly baseDir: Option.Option<string>; readonly url: Option.Option<string> },
+  run: (tools: ThreadTools, connection: ThreadConnection) => Effect.Effect<A, E, R>,
 ) {
+  const environment = yield* ThreadEnvironment;
+  const url = Option.filter(
+    Option.orElse(flags.url, () => environment.url),
+    isPresent,
+  );
+  const token = Option.filter(environment.token, (value) => isPresent(Redacted.value(value)));
+  if (Option.isSome(url)) {
+    if (Option.isNone(token)) {
+      return yield* new ThreadUsageError({ detail: "Set T3CODE_TOKEN to an API token." });
+    }
+    const origin = (yield* parseEnvironmentUrl(url.value)).origin;
+    return yield* withTokenSession(origin, token.value, { remote: true }, run);
+  }
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isNone(runtimeState)) {
+    return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
+  }
+  const origin = runtimeState.value.origin;
+  if (Option.isSome(token)) {
+    return yield* withTokenSession(origin, token.value, { remote: false }, run);
+  }
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
-      return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
-    }
-    const origin = runtimeState.value.origin;
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* Effect.acquireRelease(
       environmentAuth.issueMcpClientSession({
@@ -232,7 +315,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
       authorization: `Bearer ${issued.token}`,
       clientName: "t3-thread-cli",
     }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
-    return yield* run(makeThreadTools(session, origin));
+    return yield* run(makeThreadTools(session, origin, false), { remote: false });
   }).pipe(
     Effect.scoped,
     Effect.provide(
@@ -272,14 +355,34 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
-const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
+/**
+ * A project id, or a path inside a project's folder (deepest project wins).
+ * Remotely, the folder is the server's exact path, or the project's title.
+ */
+export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
+  connection: ThreadConnection,
 ) {
   const projects = yield* listAllProjects(tools);
   const byId = projects.find((project) => project.id === identifier);
   if (byId !== undefined) return byId;
+
+  if (connection.remote) {
+    const byRoot = projects.find((project) => project.workspaceRoot === identifier);
+    if (byRoot !== undefined) return byRoot;
+    const title = identifier.toLowerCase();
+    const byTitle = projects.filter((project) => project.title.toLowerCase() === title);
+    if (byTitle.length > 1) {
+      return yield* new ThreadUsageError({
+        detail: `More than one project is titled '${identifier}'. Pass its id instead.`,
+      });
+    }
+    if (byTitle[0] === undefined) {
+      return yield* new ThreadProjectNotFoundError({ identifier, remote: true });
+    }
+    return byTitle[0];
+  }
 
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -547,6 +650,12 @@ const waitFlag = Flag.Boolean("wait").pipe(
   ),
   Flag.withDefault(false),
 );
+const urlFlag = Flag.String("url").pipe(
+  Flag.withDescription(
+    "Environment address, such as https://host, instead of this machine's server. Defaults to T3CODE_URL. Uses the API token in T3CODE_TOKEN.",
+  ),
+  Flag.optional,
+);
 const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message for the agent, or - to read it from stdin."),
 );
@@ -561,9 +670,12 @@ const decodeThreadId = (value: string) =>
 
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
+  url: urlFlag,
   project: Flag.String("project").pipe(
-    Flag.withDescription("Project id or a path inside the project. Defaults to this directory."),
-    Flag.withDefault("."),
+    Flag.withDescription(
+      "Project id or a path inside the project. Defaults to this directory. Required with --url, where it can also be the project's title.",
+    ),
+    Flag.optional,
   ),
   json: jsonFlag,
 }).pipe(
@@ -571,8 +683,17 @@ const threadListCommand = Command.make("list", {
   Command.withHandler((flags) =>
     withThreadTools(
       flags,
-      Effect.fn("cli.thread.list")(function* (tools) {
-        const project = yield* resolveProject(tools, flags.project);
+      Effect.fn("cli.thread.list")(function* (tools, connection) {
+        if (connection.remote && Option.isNone(flags.project)) {
+          return yield* new ThreadUsageError({
+            detail: "Pass --project with a project id, folder or title on the server.",
+          });
+        }
+        const project = yield* resolveProject(
+          tools,
+          Option.getOrElse(flags.project, () => "."),
+          connection,
+        );
         const threads: Array<OrchestratorMcpThreadListItem> = [];
         let cursor: number | null = 0;
         while (cursor !== null) {
@@ -597,8 +718,11 @@ const threadListCommand = Command.make("list", {
 
 const threadStartCommand = Command.make("start", {
   ...projectLocationFlags,
+  url: urlFlag,
   project: Argument.String("project").pipe(
-    Argument.withDescription("Project id or a path inside the project, such as ."),
+    Argument.withDescription(
+      "Project id or a path inside the project, such as . With --url, the project's id, folder on the server, or title.",
+    ),
   ),
   message: messageArgument,
   title: Flag.String("title").pipe(
@@ -639,8 +763,8 @@ const threadStartCommand = Command.make("start", {
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
       yield* withThreadTools(
         flags,
-        Effect.fn("cli.thread.start")(function* (tools) {
-          const project = yield* resolveProject(tools, flags.project);
+        Effect.fn("cli.thread.start")(function* (tools, connection) {
+          const project = yield* resolveProject(tools, flags.project, connection);
           const launched = yield* tools.call(
             "t3_thread_launch",
             {
@@ -676,6 +800,7 @@ const threadStartCommand = Command.make("start", {
 
 const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
+  url: urlFlag,
   thread: threadArgument,
   message: messageArgument,
   wait: waitFlag,
@@ -710,6 +835,7 @@ const threadSendCommand = Command.make("send", {
 
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
+  url: urlFlag,
   thread: threadArgument,
   messages: Flag.Int("messages").pipe(
     Flag.withDescription("How many of the latest messages to print."),

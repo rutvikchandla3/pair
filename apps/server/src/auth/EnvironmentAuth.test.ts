@@ -11,6 +11,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -388,6 +389,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         } as never);
 
         expect(verified.sessionId).toBe(bearer.sessionId);
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
+    it.effect("issues MCP client sessions for 30 days unless a ttl is given", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const now = yield* DateTime.now;
+        const issue = (ttl?: Duration.Duration) =>
+          serverAuth.issueMcpClientSession({
+            label: "CI",
+            access: "auto",
+            peerLink: false,
+            client: { deviceType: "bot" },
+            ...(ttl ? { ttl } : {}),
+          });
+
+        const lifetime = (issued: { readonly expiresAt: DateTime.DateTime }) =>
+          issued.expiresAt.epochMilliseconds - now.epochMilliseconds;
+
+        expect(lifetime(yield* issue())).toBe(Duration.toMillis(Duration.days(30)));
+        expect(lifetime(yield* issue(Duration.days(365)))).toBe(
+          Duration.toMillis(Duration.days(365)),
+        );
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 

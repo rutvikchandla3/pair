@@ -20,6 +20,7 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -254,6 +255,49 @@ it.live("limits access management without access:write to the caller's own membe
           for (const spared of [owner, aliceDevice, bobDevice]) {
             expect(active.has(spared.sessionId)).toBe(true);
           }
+
+          const tokenResponse = yield* call("/api/auth/api-token", bobDevice.token, {
+            label: "CI",
+            access: "auto",
+            expiresInDays: 365,
+          });
+          expect(tokenResponse.status).toBe(200);
+          expect(tokenResponse.headers.get("cache-control")).toBe("no-store");
+          const apiToken = (yield* Effect.promise(() => tokenResponse.json())) as {
+            sessionId: string;
+            token: string;
+          };
+          const bobClients = yield* auth.listClientSessions(bobDevice.sessionId, bob);
+          const listed = bobClients.find((client) => client.sessionId === apiToken.sessionId);
+          expect(listed).toMatchObject({ memberId: bob, subject: "mcp-client" });
+          expect(listed!.client).toMatchObject({ label: "CI", deviceType: "bot" });
+          expect(listed!.expiresAt.epochMilliseconds - listed!.issuedAt.epochMilliseconds).toBe(
+            365 * 24 * 60 * 60 * 1000,
+          );
+          expect(
+            (yield* call("/api/auth/api-token", bobDevice.token, {
+              label: "Admin",
+              access: "full-access",
+            })).status,
+          ).toBe(403);
+          expect(
+            (yield* call("/api/auth/api-token", apiToken.token, { label: "Again", access: "auto" }))
+              .status,
+          ).toBe(401);
+
+          const mcpRequest = HttpServerRequest.fromWeb(
+            new Request("http://127.0.0.1/mcp", {
+              headers: { authorization: `Bearer ${apiToken.token}` },
+            }),
+          );
+          expect((yield* auth.authenticateMcpClient(mcpRequest)).memberId).toBe(bob);
+          const tokenRevoke = yield* call("/api/auth/clients/revoke", bobDevice.token, {
+            sessionId: apiToken.sessionId,
+          });
+          expect(yield* Effect.promise(() => tokenRevoke.json())).toEqual({ revoked: true });
+          expect(yield* Effect.exit(auth.authenticateMcpClient(mcpRequest))).toMatchObject({
+            _tag: "Failure",
+          });
         }),
       (web) => Effect.promise(() => web.dispose()),
     );

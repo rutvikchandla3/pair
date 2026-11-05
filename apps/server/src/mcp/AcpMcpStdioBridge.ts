@@ -15,7 +15,12 @@ import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpRespon
 
 export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
   "AcpMcpBridgeError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    message: Schema.String,
+    /** The HTTP status when the endpoint answered with an error. */
+    status: Schema.optional(Schema.Int),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {}
 
 const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
@@ -112,6 +117,7 @@ export const mcpToolSession = (
       yield* discardResponseBody(response);
       return yield* new AcpMcpBridgeError({
         message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
+        status: response.status,
       });
     }
     const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));

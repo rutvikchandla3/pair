@@ -950,7 +950,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ...(options.settings.serverPassword
             ? { serverPassword: options.settings.serverPassword }
             : {}),
-          environment: options.environment,
+          // An external serverUrl ignores this: its agents commit as that server's identity.
+          environment: {
+            ...options.environment,
+            ...ProviderAdapter.gitAuthorEnvironment(input.runtimePolicy),
+          },
         });
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
