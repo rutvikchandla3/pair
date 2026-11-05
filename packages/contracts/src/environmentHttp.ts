@@ -11,8 +11,10 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   AuthAccessTokenResult,
+  AuthApiTokenResult,
   AuthBrowserSessionRequest,
   AuthBrowserSessionResult,
+  AuthCreateApiTokenInput,
   AuthCreatePairingCredentialInput,
   AuthMcpApprovalDecisionRequest,
   AuthMcpApprovalDetails,
@@ -578,6 +580,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       payload: AuthCreatePairingCredentialInput,
       success: AuthPairingCredentialResult,
+      error: EnvironmentPairingCredentialErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createApiToken", "/api/auth/api-token", {
+      headers: OptionalBearerHeaders,
+      payload: AuthCreateApiTokenInput,
+      success: AuthApiTokenResult,
       error: EnvironmentPairingCredentialErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

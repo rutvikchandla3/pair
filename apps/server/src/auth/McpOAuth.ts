@@ -1,5 +1,5 @@
 import {
-  AuthAccessWriteScope,
+  AuthAccessReadScope,
   type AuthMcpApprovalDecision,
   type AuthMcpAuthorizationRequest,
   type AuthMcpAuthorizationServerMetadata,
@@ -419,7 +419,7 @@ const make = Effect.gen(function* () {
     environmentAuth.authenticateBrowserSession(request).pipe(
       Effect.flatMap((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
-        session.scopes.includes(AuthAccessWriteScope) &&
+        session.scopes.includes(AuthAccessReadScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
           ? csrfToken(session.sessionId, authorization).pipe(
               Effect.map((token) => ({

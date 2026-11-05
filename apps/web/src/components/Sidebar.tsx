@@ -1,3 +1,4 @@
+import { useThreadViewers } from "../state/presence";
 import { teamOwnerOf, useTeamViewers, type TeamViewer } from "../state/team";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -1413,6 +1414,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+  const threadViewers = useThreadViewers([...serverConfigs.keys()]);
   const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   const setOwnerFilters = useUiStateStore((store) => store.setSidebarOwnerFilters);
   const ownerScopeItems = buildSidebarOwnerScopeItems({
@@ -3541,6 +3543,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             pinningSupported={serverConfigs.has(thread.environmentId)}
                             isPinned={thread.pinnedAt != null}
                             owner={ownerOfThread(thread)}
+                            viewers={threadViewers.get(threadKey)}
                             dropVerb={
                               dragState?.activeKey === threadKey
                                 ? resolveSidebarDropVerb(dragState.activeSection, dragTargetSection)

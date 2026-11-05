@@ -22,6 +22,7 @@ import { cn } from "~/lib/utils";
 import { authEnvironment } from "~/state/auth";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { usePresence } from "~/state/presence";
 import { teamEnvironment, useCurrentMemberId, useTeamMembers } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatAccessTimestamp } from "../settings/ConnectionsSettings.logic";
@@ -59,6 +60,7 @@ import {
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
+const STATUS_LABELS = { online: "Online", away: "Away" } as const;
 
 function sortMembers(members: ReadonlyArray<TeamMember>): ReadonlyArray<TeamMember> {
   return members.toSorted(
@@ -150,6 +152,9 @@ function MemberRow({
   readonly isSelf: boolean;
 }) {
   const isRemoved = member.removedAt !== null;
+  // Other members only, so your own row and offline members have no status.
+  const presenceStatus = usePresence(environmentId).members.get(member.id);
+  const status = isRemoved ? undefined : presenceStatus;
   const canSignIn = useAtomValue(teamEnvironment.createSignInLink.permissionAtom(environmentId));
   const canEdit = useAtomValue(
     (isSelf ? teamEnvironment.updateSelf : teamEnvironment.updateMember).permissionAtom(
@@ -217,7 +222,7 @@ function MemberRow({
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
         <div className={cn("flex min-w-0 flex-1 items-center gap-3", isRemoved && "opacity-60")}>
-          <MemberAvatar member={member} size="md" />
+          <MemberAvatar member={member} size="md" away={status === "away"} />
           <div className="min-w-0 space-y-0.5">
             <div className="flex min-h-5 items-center gap-1.5">
               <h3 className="truncate text-sm font-medium text-foreground">{member.name}</h3>
@@ -236,6 +241,7 @@ function MemberRow({
               {isRemoved && member.removedAt !== null
                 ? `Removed ${formatAccessTimestamp(member.removedAt)}`
                 : [
+                    status === undefined ? null : STATUS_LABELS[status],
                     ROLE_LABELS[member.role],
                     member.gitEmail,
                     !isSelf && member.github ? `@${member.github.login}` : null,

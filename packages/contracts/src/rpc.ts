@@ -182,6 +182,7 @@ import {
   TeamUpdateInput,
   TeamUpdateSelfInput,
 } from "./team.ts";
+import { PresenceReportInput, PresenceUpdate } from "./presence.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -570,6 +571,8 @@ export const WS_METHODS = {
   teamGitHubLinkWait: "team.githubLinkWait",
   teamGitHubLinkCancel: "team.githubLinkCancel",
   teamGitHubDisconnect: "team.githubDisconnect",
+  presenceSubscribe: "presence.subscribe",
+  presenceReport: "presence.report",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2043,6 +2046,18 @@ const WsTeamGitHubDisconnectRpc = Rpc.make(WS_METHODS.teamGitHubDisconnect, {
   error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
 });
 
+const WsPresenceSubscribeRpc = Rpc.make(WS_METHODS.presenceSubscribe, {
+  payload: Schema.Struct({}),
+  success: PresenceUpdate,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsPresenceReportRpc = Rpc.make(WS_METHODS.presenceReport, {
+  payload: PresenceReportInput,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2098,6 +2113,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamGitHubLinkWaitRpc,
   WsTeamGitHubLinkCancelRpc,
   WsTeamGitHubDisconnectRpc,
+  WsPresenceSubscribeRpc,
+  WsPresenceReportRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
