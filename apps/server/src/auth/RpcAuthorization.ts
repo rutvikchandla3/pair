@@ -216,6 +216,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.teamGitHubLinkWait]: AuthOrchestrationReadScope,
   [WS_METHODS.teamGitHubLinkCancel]: AuthOrchestrationReadScope,
   [WS_METHODS.teamGitHubDisconnect]: AuthOrchestrationReadScope,
+  [WS_METHODS.presenceSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.presenceReport]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

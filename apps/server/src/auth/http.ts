@@ -17,12 +17,14 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
@@ -484,6 +486,37 @@ export const layer = HttpApiBuilder.group(
             ManagedPolicyRefusedError: (error) =>
               Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
           }),
+        ),
+      )
+      .handle(
+        "createApiToken",
+        Effect.fn("environment.auth.createApiToken")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const { session } = yield* requireAccessManagement();
+            for (const scope of mcpClientScopes(args.payload.access)) {
+              if (!session.scopes.has(scope)) {
+                return yield* failEnvironmentScopeRequired(scope);
+              }
+            }
+            yield* appendCredentialResponseHeaders;
+            const issued = yield* serverAuth.issueMcpClientSession({
+              memberId: session.memberId,
+              label: args.payload.label,
+              access: args.payload.access,
+              peerLink: false,
+              client: { deviceType: "bot" },
+              ttl: Duration.days(args.payload.expiresInDays ?? 90),
+            });
+            return {
+              sessionId: issued.sessionId,
+              token: issued.token,
+              expiresAt: DateTime.toUtc(issued.expiresAt),
+            };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("access_token_issuance_failed", error),
+          ),
         ),
       )
       .handle(

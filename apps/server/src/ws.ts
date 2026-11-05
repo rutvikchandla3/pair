@@ -132,6 +132,7 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as MemberGitHub from "./team/MemberGitHub.ts";
+import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
 import {
@@ -1475,6 +1476,7 @@ export const layerWsRpc = (
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
       const memberGitHub = yield* MemberGitHub.MemberGitHub;
+      const presence = yield* Presence.Presence;
       const teamState = yield* TeamState.TeamState;
       const threadViewer = (yield* makeThreadViewers)(currentSession.memberId);
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -1485,10 +1487,10 @@ export const layerWsRpc = (
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
       const random = yield* SecureRandom.SecureRandom;
-      // RPC client ids are only unique within one socket; terminals share viewers across sockets.
-      const terminalViewerPrefix = yield* random.uuidV4();
-      const terminalViewerId = (metadata: { readonly client: { readonly id: number } }) =>
-        `${terminalViewerPrefix}:${metadata.client.id}`;
+      // RPC client ids are only unique within one socket; terminals and presence span sockets.
+      const socketPrefix = yield* random.uuidV4();
+      const rpcClientKey = (metadata: { readonly client: { readonly id: number } }) =>
+        `${socketPrefix}:${metadata.client.id}`;
       const serverCommandId = (tag: string) =>
         random.uuidV4().pipe(
           Effect.orDie,
@@ -2016,6 +2018,8 @@ export const layerWsRpc = (
           threadMemberState: true,
           threadFollow: true,
           ...(memberGitHub.enabled ? { teamGitHub: true } : {}),
+          apiTokens: true,
+          presence: true,
           secretProviderSettings: true,
           secretReferences: true,
           ...Option.match(scratchWorkspaceRoot, {
@@ -2464,6 +2468,15 @@ export const layerWsRpc = (
         [WS_METHODS.teamGitHubLinkWait]: () => memberGitHub.wait(currentSession.memberId),
         [WS_METHODS.teamGitHubLinkCancel]: () => memberGitHub.cancel(currentSession.memberId),
         [WS_METHODS.teamGitHubDisconnect]: () => memberGitHub.disconnect(currentSession.memberId),
+        [WS_METHODS.presenceSubscribe]: (_input, metadata) =>
+          Stream.unwrap(
+            presence.subscribe({
+              connectionId: rpcClientKey(metadata),
+              memberId: currentSession.memberId,
+            }),
+          ),
+        [WS_METHODS.presenceReport]: (input, metadata) =>
+          presence.report(rpcClientKey(metadata), input),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
@@ -3298,10 +3311,10 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
-          terminalManager.attachOutputStream(input, terminalViewerId(metadata)),
+          terminalManager.attachOutputStream(input, rpcClientKey(metadata)),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input, metadata) =>
-          terminalManager.resize(input, terminalViewerId(metadata)),
+          terminalManager.resize(input, rpcClientKey(metadata)),
         [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
         [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
         [WS_METHODS.terminalObserve]: (input) =>

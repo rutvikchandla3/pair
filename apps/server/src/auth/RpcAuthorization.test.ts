@@ -88,6 +88,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.teamGitHubLinkWait,
       WS_METHODS.teamGitHubLinkCancel,
       WS_METHODS.teamGitHubDisconnect,
+      WS_METHODS.presenceSubscribe,
+      WS_METHODS.presenceReport,
     ]) {
       expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
     }

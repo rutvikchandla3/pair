@@ -1151,6 +1151,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "authorized-clients",
+    title: "Authorized clients",
+    to: "/settings/access",
+    searchTerms: ["create api token tokens scripts ci agents mcp sessions devices revoke"],
+  },
+  {
     id: "linked-environments",
     peerLinksOnly: true,
     title: "Linked environments",
@@ -1267,7 +1273,6 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
 ]);
 // Section anchors that moved but are not search results themselves.
 const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
-  "authorized-clients": "/settings/access",
   "legacy-features": "/settings/labs",
   "text-generation": "/settings/threads",
   about: "/settings/about",
