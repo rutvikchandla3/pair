@@ -32,6 +32,7 @@ export function canChangeQueuedRun(input: {
 }): boolean {
   if (!input.teamMode || input.actorId === undefined) return true;
   return (
-    input.actorId === input.starterId || (input.action === "control" && input.actorId === input.holderId)
+    input.actorId === input.starterId ||
+    (input.action === "control" && input.actorId === input.holderId)
   );
 }

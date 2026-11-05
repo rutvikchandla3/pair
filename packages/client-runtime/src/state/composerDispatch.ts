@@ -84,7 +84,11 @@ export function queuedRunLock(input: {
   readonly run: Pick<OrchestrationV2Run, "userMessageId">;
   readonly members: TeamMembers;
   readonly me: MemberId | null;
-}): { readonly starterId: MemberId; readonly canEdit: boolean; readonly canControl: boolean } | null {
+}): {
+  readonly starterId: MemberId;
+  readonly canEdit: boolean;
+  readonly canControl: boolean;
+} | null {
   if (input.me === null || !isTeamModeMembers(input.members)) return null;
   const holderId = holderIdOf(input.projection.thread, input.members);
   if (holderId === null) return null;

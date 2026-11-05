@@ -32,15 +32,58 @@ describe("runStarterId", () => {
 
 describe("canChangeQueuedRun", () => {
   it.each([
-    { row: "Bob controls Alice's queued run", action: "control", actorId: bob, starterId: alice, allowed: false },
-    { row: "Bob edits Alice's queued text", action: "edit", actorId: bob, starterId: alice, allowed: false },
-    { row: "owner Alice controls Bob's queued run", action: "control", actorId: alice, starterId: bob, allowed: true },
-    { row: "owner Alice edits Bob's queued text", action: "edit", actorId: alice, starterId: bob, allowed: false },
+    {
+      row: "Bob controls Alice's queued run",
+      action: "control",
+      actorId: bob,
+      starterId: alice,
+      allowed: false,
+    },
+    {
+      row: "Bob edits Alice's queued text",
+      action: "edit",
+      actorId: bob,
+      starterId: alice,
+      allowed: false,
+    },
+    {
+      row: "owner Alice controls Bob's queued run",
+      action: "control",
+      actorId: alice,
+      starterId: bob,
+      allowed: true,
+    },
+    {
+      row: "owner Alice edits Bob's queued text",
+      action: "edit",
+      actorId: alice,
+      starterId: bob,
+      allowed: false,
+    },
     { row: "Bob controls his own", action: "control", actorId: bob, starterId: bob, allowed: true },
     { row: "Bob edits his own", action: "edit", actorId: bob, starterId: bob, allowed: true },
-    { row: "Carol controls Bob's queued run", action: "control", actorId: carol, starterId: bob, allowed: false },
-    { row: "a command with no actor", action: "edit", actorId: undefined, starterId: bob, allowed: true },
-    { row: "a solo server", action: "edit", actorId: alice, starterId: bob, teamMode: false, allowed: true },
+    {
+      row: "Carol controls Bob's queued run",
+      action: "control",
+      actorId: carol,
+      starterId: bob,
+      allowed: false,
+    },
+    {
+      row: "a command with no actor",
+      action: "edit",
+      actorId: undefined,
+      starterId: bob,
+      allowed: true,
+    },
+    {
+      row: "a solo server",
+      action: "edit",
+      actorId: alice,
+      starterId: bob,
+      teamMode: false,
+      allowed: true,
+    },
   ] as const)("$row", ({ action, actorId, starterId, allowed, ...row }) => {
     expect(
       canChangeQueuedRun({

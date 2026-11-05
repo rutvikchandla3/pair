@@ -741,12 +741,31 @@ it.effect.each([
   { row: "Bob starts Alice's queued run", action: "start", actor: bob, target: alice, idle: true },
   { row: "owner Alice edits Bob's queued text", action: "edit", actor: alice, target: bob },
   { row: "owner Alice cancels Bob's", action: "cancel", actor: alice, target: bob, allowed: true },
-  { row: "owner Alice sends Bob's now", action: "promote", actor: alice, target: bob, allowed: true },
-  { row: "owner Alice reorders Bob's", action: "reorder", actor: alice, target: bob, allowed: true },
+  {
+    row: "owner Alice sends Bob's now",
+    action: "promote",
+    actor: alice,
+    target: bob,
+    allowed: true,
+  },
+  {
+    row: "owner Alice reorders Bob's",
+    action: "reorder",
+    actor: alice,
+    target: bob,
+    allowed: true,
+  },
   { row: "Bob edits his own", action: "edit", actor: bob, target: bob, allowed: true },
   { row: "Bob cancels his own", action: "cancel", actor: bob, target: bob, allowed: true },
   { row: "Bob sends his own now", action: "promote", actor: bob, target: bob, allowed: true },
-  { row: "Bob starts his own", action: "start", actor: bob, target: bob, idle: true, allowed: true },
+  {
+    row: "Bob starts his own",
+    action: "start",
+    actor: bob,
+    target: bob,
+    idle: true,
+    allowed: true,
+  },
   { row: "no actor edits Alice's", action: "edit", actor: null, target: alice, allowed: true },
   { row: "a solo server", action: "edit", actor: bob, target: alice, solo: true, allowed: true },
 ] as const)("queue control: $row", (testCase) =>
@@ -794,12 +813,12 @@ it.effect.each([
       testCase.actor,
     );
     const outcome = yield* orchestrator.dispatch(command).pipe(
-        Effect.as("allowed"),
-        Effect.catchTags({
-          OrchestratorDispatchError: (error) => Effect.succeed(String(error.cause)),
-          OrchestratorCommandRejectedError: (error) => Effect.succeed(String(error.cause)),
-        }),
-      );
+      Effect.as("allowed"),
+      Effect.catchTags({
+        OrchestratorDispatchError: (error) => Effect.succeed(String(error.cause)),
+        OrchestratorCommandRejectedError: (error) => Effect.succeed(String(error.cause)),
+      }),
+    );
     const starter = testCase.target.slice("member:".length);
     assert.equal(
       outcome,

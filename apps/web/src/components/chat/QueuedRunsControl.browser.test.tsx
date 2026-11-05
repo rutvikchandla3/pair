@@ -237,7 +237,10 @@ it.each([
 ] as const)("on a team, $viewer changes only the queued messages the rules allow", async (row) => {
   setup();
   const member = (id: string, isOwner: boolean) =>
-    [MemberId.make(id), { id, name: id === "alice" ? "Alice" : "Bob", isOwner, removedAt: null }] as const;
+    [
+      MemberId.make(id),
+      { id, name: id === "alice" ? "Alice" : "Bob", isOwner, removedAt: null },
+    ] as const;
   const members = new Map([member("alice", true), member("bob", false)]);
   state.team = {
     isTeamMode: true,
@@ -273,10 +276,16 @@ it.each([
       ["Remove queued message", enabled.remove],
     ] as const) {
       const button = item.getByRole("button", { name, exact: true });
-      await (control ? expect.element(button).toBeEnabled() : expect.element(button).toBeDisabled());
+      await (control
+        ? expect.element(button).toBeEnabled()
+        : expect.element(button).toBeDisabled());
     }
   }
-  const lockedRow = page.getByRole("listitem").filter({ hasText: row.me === "alice" ? "From Bob" : "From Alice" });
-  await lockedRow.getByRole("button", { name: "Edit queued message", exact: true }).hover({ force: true });
+  const lockedRow = page
+    .getByRole("listitem")
+    .filter({ hasText: row.me === "alice" ? "From Bob" : "From Alice" });
+  await lockedRow
+    .getByRole("button", { name: "Edit queued message", exact: true })
+    .hover({ force: true });
   await expect.element(page.getByText(row.reason, { exact: true })).toBeVisible();
 });
