@@ -109,7 +109,6 @@ import {
 import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -249,7 +248,12 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openAssignThreadDialog } from "./team/AssignThreadDialog";
-import { useIsTeamMode, useSetThreadFollowed, useThreadFollowing } from "~/state/team";
+import {
+  useIsTeamMode,
+  useSetThreadFollowed,
+  useThreadFollowing,
+  useThreadShareOrigin,
+} from "~/state/team";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -492,6 +496,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const threadShareOrigin = useThreadShareOrigin(referenceThreadRef?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -502,7 +507,7 @@ function OpenCommandPaletteDialog(props: {
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
-          hostedAppUrl: configuredHostedAppUrl(),
+          hostedAppUrl: threadShareOrigin,
         });
   const copyActiveThreadReference = async () => {
     if (activeThreadReferenceCopyTarget === null) return;

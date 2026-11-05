@@ -199,6 +199,21 @@ describe("hosted thread links", () => {
     expect(parseThreadLinkHref("https://evil.test/threads/env-1/thread-1")).toBeNull();
   });
 
+  it("also reads a thread path on an environment's own origin", () => {
+    const servers = ["https://team.example.com/some/base"];
+    expect(parseThreadLinkHref("https://team.example.com/threads/env-1/thread-1", servers)).toEqual(
+      ref("env-1", "thread-1"),
+    );
+    expect(parseThreadLinkHref("https://team.example.com/threads/env-1/thread-1")).toBeNull();
+    expect(parseThreadLinkHref("https://evil.test/threads/env-1/thread-1", servers)).toBeNull();
+    expect(
+      parseThreadLinkHref("https://team.example.com/threads/env-1/thread-1/extra", servers),
+    ).toBeNull();
+    expect(
+      parseThreadLinkHref("https://team.example.com/threads/e/t", [null, "not a url"]),
+    ).toBeNull();
+  });
+
   it("writes a copied link a reader can follow, labeled when it has a title", () => {
     expect(formatHostedThreadLink(ref("e", "t1"), "Fix [ci]")).toBe(
       "[Fix ci](https://app.t3.codes/threads/e/t1)",

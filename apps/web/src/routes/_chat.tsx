@@ -2,6 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { safeReturnPath } from "../authReturnPath";
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -51,7 +52,12 @@ export const Route = createFileRoute("/_chat")({
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"
     ) {
-      throw redirect({ to: "/pair", replace: true });
+      const next = safeReturnPath(location.href);
+      throw redirect({
+        to: "/pair",
+        ...(next === null || next === "/" ? {} : { search: { next } }),
+        replace: true,
+      });
     }
     return { appModalPage: isAppModalPage(location.pathname) };
   },

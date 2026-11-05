@@ -6,7 +6,7 @@ import {
 import { threadLinkContextReferences } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadReferenceCopyTarget } from "./threadReference.ts";
+import { resolveThreadReferenceCopyTarget, threadShareOrigin } from "./threadReference.ts";
 
 const thread = {
   threadRef: { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread-1") },
@@ -111,5 +111,40 @@ describe("resolveThreadReferenceCopyTarget", () => {
       resolveThreadReferenceCopyTarget({ ...thread, hostedAppUrl: "https://preview.t3.codes" })
         ?.value,
     ).toBe("https://preview.t3.codes/threads/env-1/thread-1");
+  });
+});
+
+describe("threadShareOrigin", () => {
+  const hostedAppUrl = "https://app.t3.codes";
+  it.each([
+    [
+      "a team server's own origin",
+      true,
+      "https://team.example.com/api/",
+      "https://team.example.com",
+    ],
+    ["a LAN address", true, "http://192.168.1.5:3773", "http://192.168.1.5:3773"],
+    ["solo keeps the hosted link", false, "https://team.example.com", hostedAppUrl],
+    ["loopback means nothing to a teammate", true, "http://127.0.0.1:3773", hostedAppUrl],
+    ["localhost", true, "http://localhost:3773", hostedAppUrl],
+    ["IPv6 loopback", true, "http://[::1]:3773", hostedAppUrl],
+    ["a non-http origin", true, "ws://team.example.com", hostedAppUrl],
+    ["no base URL", true, null, hostedAppUrl],
+    ["an unparsable base URL", true, "not a url", hostedAppUrl],
+  ])("%s", (_name, isTeamMode, httpBaseUrl, expected) => {
+    expect(threadShareOrigin({ isTeamMode, httpBaseUrl, hostedAppUrl })).toBe(expected);
+  });
+
+  it("links the copied thread through that origin", () => {
+    expect(
+      resolveThreadReferenceCopyTarget({
+        ...thread,
+        hostedAppUrl: threadShareOrigin({
+          isTeamMode: true,
+          httpBaseUrl: "https://team.example.com",
+          hostedAppUrl,
+        }),
+      })?.value,
+    ).toBe("https://team.example.com/threads/env-1/thread-1");
   });
 });

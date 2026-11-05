@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { threadShareOrigin } from "@t3tools/client-runtime/thread-reference";
 import {
   EMPTY_TEAM_MEMBERS,
   activeTeamMembers,
@@ -19,11 +20,12 @@ import { Atom } from "effect/reactivity";
 import { resolveThreadFollowing } from "../components/Sidebar.logic";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { usePrimaryEnvironmentId } from "./environments";
+import { configuredHostedAppUrl } from "../hostedPairing";
+import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "./environments";
 import { serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
 import { useOrchestrationCommand } from "./use-orchestration-command";
-import { useEnvironmentScope } from "./session";
+import { readPreparedConnection, useEnvironmentScope } from "./session";
 
 export const teamEnvironment = createTeamEnvironmentAtoms(connectionAtomRuntime);
 
@@ -47,6 +49,24 @@ export function useIsTeamMode(environmentId: EnvironmentId | null): boolean {
   return useAtomValue(
     environmentId === null ? NOT_TEAM_ATOM : teamEnvironment.isTeamModeAtom(environmentId),
   );
+}
+
+/** The origin a copied thread link opens on: the team server itself, else the hosted app. */
+export function useThreadShareOrigin(environmentId: EnvironmentId | null): string {
+  return threadShareOrigin({
+    isTeamMode: useIsTeamMode(environmentId),
+    httpBaseUrl: useEnvironmentHttpBaseUrl(environmentId),
+    hostedAppUrl: configuredHostedAppUrl(),
+  });
+}
+
+/** For menus that read on demand. Team members are kept subscribed by TeamMembersWatch. */
+export function readThreadShareOrigin(environmentId: EnvironmentId): string {
+  return threadShareOrigin({
+    isTeamMode: appAtomRegistry.get(teamEnvironment.isTeamModeAtom(environmentId)),
+    httpBaseUrl: readPreparedConnection(environmentId)?.httpBaseUrl,
+    hostedAppUrl: configuredHostedAppUrl(),
+  });
 }
 
 /** Settings → Team is for admins, and for anyone once the server has a second member. */

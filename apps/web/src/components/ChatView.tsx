@@ -5,7 +5,6 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
 import {
   deriveAvailableRevertTurnCounts,
@@ -228,7 +227,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { useIsTeamMode } from "~/state/team";
+import { useIsTeamMode, useThreadShareOrigin } from "~/state/team";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -2314,6 +2313,7 @@ export default function ChatView(props: ChatViewProps) {
     showScrollToBottom,
   ]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
+  const threadShareOrigin = useThreadShareOrigin(activeThreadRef?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     activeThreadRef === null || !isServerThread
       ? null
@@ -2323,7 +2323,7 @@ export default function ChatView(props: ChatViewProps) {
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
-          hostedAppUrl: configuredHostedAppUrl(),
+          hostedAppUrl: threadShareOrigin,
         });
   const copyActiveThreadReference = () => {
     if (activeThreadReferenceCopyTarget === null) return;

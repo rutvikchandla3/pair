@@ -175,7 +175,9 @@ function toV2ThreadShell(input: typeof thread) {
     settledAt: null,
     lastVisitedAt: null,
     deletedAt: null,
-    ...(input.latestRunAuthorId === undefined ? {} : { latestRunAuthorId: input.latestRunAuthorId }),
+    ...(input.latestRunAuthorId === undefined
+      ? {}
+      : { latestRunAuthorId: input.latestRunAuthorId }),
   };
 }
 
