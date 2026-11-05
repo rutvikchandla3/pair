@@ -39,6 +39,7 @@ import {
   buildSidebarOwnerScopeItems,
   resolveSidebarThreadSection,
   sortTeamThreadsByActivity,
+  reuseThreadViewers,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1865,5 +1866,37 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("reuseThreadViewers", () => {
+  it("keeps the previous arrays while ids and away flags are unchanged", () => {
+    const bob = { id: MemberId.make("bob"), name: "Bob", color: "#111111", away: false };
+    const carol = { id: MemberId.make("carol"), name: "Carol", color: "#222222", away: false };
+    const previous = new Map([
+      ["env:a", [bob]],
+      ["env:b", [carol]],
+    ]);
+    const unchanged = reuseThreadViewers(
+      previous,
+      new Map([
+        ["env:a", [{ ...bob }]],
+        ["env:b", [{ ...carol }]],
+      ]),
+    );
+    expect(unchanged).toBe(previous);
+
+    const awayBob = { ...bob, away: true };
+    const next = reuseThreadViewers(
+      previous,
+      new Map([
+        ["env:a", [awayBob]],
+        ["env:b", [{ ...carol }]],
+      ]),
+    );
+    expect(next).not.toBe(previous);
+    expect(next.get("env:a")).toEqual([awayBob]);
+    expect(next.get("env:b")).toBe(previous.get("env:b"));
+    expect(reuseThreadViewers(previous, new Map())).toBe(reuseThreadViewers(undefined, new Map()));
   });
 });

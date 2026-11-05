@@ -9,6 +9,7 @@ import {
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { reportComposerSent, reportComposerTyping } from "../../state/presence";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
@@ -1602,6 +1603,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     contextIds: string[],
   ) => {
     refreshWorkspaceSnapshotOnTyping();
+    // Cursor moves also land here; only a changed, non-empty text counts as typing.
+    if (
+      nextPrompt.length > 0 &&
+      nextPrompt !==
+        (activePendingProgress ? activePendingProgress.customAnswer : promptRef.current)
+    ) {
+      reportComposerTyping(routeThreadRef);
+    }
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
@@ -2125,6 +2134,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return;
     onTypingGuardSend();
+    reportComposerSent(routeThreadRef);
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
     }
