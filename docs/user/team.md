@@ -106,7 +106,8 @@ Nobody else sees them change.
 
 Everything else is shared. Settling a thread settles it for everyone and removes everyone's pin
 and snooze. A thread that anyone has pinned or snoozed doesn't settle automatically. Sending a
-message to a snoozed thread wakes it only for you.
+message to a snoozed thread wakes it only for you. Anyone can choose **Edit from here**, and it
+warns first when that would discard someone else's turns.
 
 ## New threads use a worktree
 

@@ -1,7 +1,11 @@
-import { MemberId, MessageId, type TeamMember } from "@t3tools/contracts";
+import { MemberId, MessageId, RunId, type TeamMember } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { othersTurnStarterId, resolveComposerDispatchMode } from "./composerDispatch.ts";
+import {
+  discardedTurnAuthors,
+  othersTurnStarterId,
+  resolveComposerDispatchMode,
+} from "./composerDispatch.ts";
 
 const alice = MemberId.make("alice");
 const bob = MemberId.make("bob");
@@ -76,5 +80,81 @@ describe("othersTurnStarterId", () => {
         me,
       }),
     ).toBe(starter);
+  });
+});
+
+describe("discardedTurnAuthors", () => {
+  const carol = MemberId.make("carol");
+  const trio = new Map([...team, [carol, member(carol, false)]]);
+  type Turn = { readonly ordinal: number; readonly author: MemberId; readonly status?: string };
+  const turnsOf = (turns: ReadonlyArray<Turn>) => ({
+    runs: turns.map((turn) => ({
+      id: RunId.make(`run-${turn.ordinal}`),
+      ordinal: turn.ordinal,
+      status: (turn.status ?? "completed") as "completed",
+      userMessageId: MessageId.make(`message-${turn.ordinal}`),
+    })),
+    messages: turns.map((turn) => ({
+      id: MessageId.make(`message-${turn.ordinal}`),
+      role: "user",
+      runId: RunId.make(`run-${turn.ordinal}`),
+      authorId: turn.author,
+    })),
+  });
+
+  it.each([
+    { row: "only my turns", turns: [{ ordinal: 2, author: alice }], expected: [] },
+    {
+      row: "mixed turns count per member",
+      turns: [
+        { ordinal: 2, author: bob },
+        { ordinal: 3, author: alice },
+        { ordinal: 4, author: carol },
+        { ordinal: 5, author: bob },
+      ],
+      expected: [
+        { memberId: bob, count: 2 },
+        { memberId: carol, count: 1 },
+      ],
+    },
+    {
+      row: "rolled-back and cancelled runs are ignored",
+      turns: [
+        { ordinal: 2, author: bob, status: "rolled_back" },
+        { ordinal: 3, author: bob, status: "cancelled" },
+        { ordinal: 4, author: carol },
+      ],
+      expected: [{ memberId: carol, count: 1 }],
+    },
+    {
+      row: "a single-member server",
+      members: solo,
+      turns: [{ ordinal: 2, author: bob }],
+      expected: [],
+    },
+    {
+      row: "turns the projection no longer holds come from messages",
+      held: 1,
+      turns: [
+        { ordinal: 2, author: bob },
+        { ordinal: 3, author: carol },
+        { ordinal: 4, author: bob },
+      ],
+      expected: [
+        { memberId: bob, count: 2 },
+        { memberId: carol, count: 1 },
+      ],
+    },
+  ])("$row", ({ turns, expected, members = trio, held = turns.length }) => {
+    const { runs, messages } = turnsOf(turns);
+    expect(
+      discardedTurnAuthors({
+        projection: { thread: { ownerId: null }, runs: runs.slice(runs.length - held) },
+        messages,
+        targetTurnCount: 1,
+        members,
+        me: alice,
+      }),
+    ).toEqual(expected);
   });
 });

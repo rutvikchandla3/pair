@@ -224,6 +224,8 @@ it.each([
       "From Bob": { send: true, edit: false, remove: true },
     },
     reason: "Only Bob can edit this message",
+    author: { row: "From Bob", name: "Bob" },
+    own: { row: "From Alice", name: "Alice" },
   },
   {
     viewer: "Bob",
@@ -233,6 +235,8 @@ it.each([
       "From Bob": { send: true, edit: true, remove: true },
     },
     reason: "Only Alice or the owner can change this",
+    author: { row: "From Alice", name: "Alice" },
+    own: { row: "From Bob", name: "Bob" },
   },
 ] as const)("on a team, $viewer changes only the queued messages the rules allow", async (row) => {
   setup();
@@ -288,4 +292,13 @@ it.each([
     .getByRole("button", { name: "Edit queued message", exact: true })
     .hover({ force: true });
   await expect.element(page.getByText(row.reason, { exact: true })).toBeVisible();
+  // Like a sent message: a teammate's queued row names its author, the viewer's own does not.
+  const authorRow = page.getByRole("listitem").filter({ hasText: row.author.row });
+  await expect
+    .element(authorRow.getByRole("img", { name: row.author.name, includeHidden: true }))
+    .toBeVisible();
+  const ownRow = page.getByRole("listitem").filter({ hasText: row.own.row });
+  await expect
+    .element(ownRow.getByRole("img", { name: row.own.name, includeHidden: true }))
+    .not.toBeInTheDocument();
 });
