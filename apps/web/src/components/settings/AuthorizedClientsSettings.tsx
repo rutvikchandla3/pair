@@ -152,7 +152,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
 
   const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
 
-  const primaryLabel = pairingLink.label ?? "Pairing link";
+  const primaryLabel = pairingLink.label ?? "Sign-in link";
   if (expiresAtMs <= nowMs) {
     return null;
   }
@@ -177,7 +177,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
             </Tooltip>
             <span aria-hidden> · </span>
-            <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
+            <AccessScopeSummary scopes={pairingLink.scopes} label="Sign-in link scopes" />
           </p>
           {!credential ? (
             <p className="text-2xs text-muted-foreground/70">
@@ -225,15 +225,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 <DialogTitle>
                   {share.isRevealValueUrl
                     ? share.isRevealValueHostedAppPairingUrl
-                      ? "Hosted app pairing link"
-                      : "Pairing link"
-                    : "Pairing code"}
+                      ? "app.t3.codes sign-in link"
+                      : "Sign-in link"
+                    : "Sign-in code"}
                 </DialogTitle>
                 <DialogDescription>
                   {share.isRevealValueUrl
                     ? share.isRevealValueHostedAppPairingUrl
                       ? "Clipboard copy is unavailable here. Open or manually copy this hosted app link on the device you want to connect."
-                      : "Clipboard copy is unavailable here. Open or manually copy this full pairing URL on the device you want to connect."
+                      : "Clipboard copy is unavailable here. Open or manually copy this full sign-in link on the device you want to sign in."
                     : "Clipboard copy is unavailable here. Manually copy this code into another client."}
                 </DialogDescription>
               </DialogHeader>
@@ -252,7 +252,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       size={132}
                       level="M"
                       marginSize={2}
-                      title="Pairing link. Scan to open on another device"
+                      title="Sign-in link. Scan to open on another device"
                     />
                   </div>
                 ) : null}
@@ -424,11 +424,11 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       setDialogOpen(false);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
+      const message = error instanceof Error ? error.message : "Couldn't create sign-in link.";
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not create pairing URL",
+          title: "Couldn't create sign-in link",
           description: message,
         }),
       );
@@ -482,10 +482,9 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         ) : null}
         <DialogPopup className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Create pairing link</DialogTitle>
+            <DialogTitle>Create sign-in link</DialogTitle>
             <DialogDescription>
-              Generate a one-time link that another device can use to pair with this backend as an
-              authorized client.
+              Create a one-time link that another device can use to sign in to this server.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -506,7 +505,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                 <div>
                   <h3 className="text-xs font-medium text-foreground">Permissions</h3>
                   <p className="text-xs text-muted-foreground">
-                    Limit what the paired client can do.
+                    Limit what the signed-in client can do.
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -668,7 +667,7 @@ export const PairingClientsList = memo(function PairingClientsList({
 
       {pairingLinks.length === 0 && clientSessions.length === 0 && !isLoading ? (
         <div className={ITEM_ROW_CLASSNAME}>
-          <p className="text-xs text-muted-foreground/60">No pairing links or client sessions.</p>
+          <p className="text-xs text-muted-foreground/60">No sign-in links or client sessions.</p>
         </div>
       ) : null}
     </>

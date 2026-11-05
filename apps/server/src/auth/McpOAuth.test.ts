@@ -575,7 +575,7 @@ it.live("one-click approves only access the browser session holds the scopes for
         accessOnly,
       );
       expect(forged.status).toBe(400);
-      expect(forged.message).toContain("Enter a pairing code instead");
+      expect(forged.message).toContain("Enter a sign-in code instead");
 
       const reader = yield* browserCookie(["access:write", "orchestration:read"]);
       const readerDetails = yield* details(reader);

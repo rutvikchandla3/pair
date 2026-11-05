@@ -486,7 +486,7 @@ const make = Effect.gen(function* () {
         !mcpClientScopes(decision.access).every((scope) => session.scopes.includes(scope))
       ) {
         return yield* new McpOAuthPageError({
-          description: "Your session cannot approve this request. Enter a pairing code instead.",
+          description: "Your session cannot approve this request. Enter a sign-in code instead.",
         });
       }
       approverMemberId = session.memberId;

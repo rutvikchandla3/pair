@@ -107,14 +107,14 @@ export function usePairingLinkShare(
           kind === "hosted-link"
             ? "Hosted app link copied"
             : kind === "link"
-              ? "Pairing URL copied"
-              : "Pairing code copied",
+              ? "Sign-in link copied"
+              : "Sign-in code copied",
         description:
           kind === "hosted-link"
             ? "Open it in the browser on the device you want to connect."
             : kind === "link"
-              ? "Open it in the client you want to pair to this environment."
-              : "Paste it into another client to finish pairing.",
+              ? "Open it on the device you want to sign in."
+              : "Paste it into another client to finish signing in.",
       });
     },
     onError: (error, { value, kind }) => {
@@ -129,8 +129,8 @@ export function usePairingLinkShare(
             ? kind === "hosted-link"
               ? "Could not copy hosted app link"
               : kind === "link"
-                ? "Could not copy pairing URL"
-                : "Could not copy pairing code"
+                ? "Couldn't copy sign-in link"
+                : "Couldn't copy sign-in code"
             : "Clipboard copy unavailable",
           description: canCopyToClipboard ? error.message : "Showing the full value instead.",
         }),
@@ -191,7 +191,7 @@ export function PairingLinkShare({
           <div
             className="space-y-1.5"
             role="radiogroup"
-            aria-label="Endpoint the pairing QR code and URL use"
+            aria-label="Endpoint the sign-in QR code and link use"
           >
             <p className="text-2xs text-muted-foreground/70">Reach this machine via</p>
             {endpointCopyOptions.map((option) => {
@@ -255,7 +255,7 @@ export function PairingLinkShare({
         ) : (
           <Textarea
             readOnly
-            aria-label="Pairing link"
+            aria-label="Sign-in link"
             value={qrPairingUrl}
             rows={4}
             onFocus={(event) => event.currentTarget.select()}
@@ -270,7 +270,7 @@ export function PairingLinkShare({
             size={168}
             level="M"
             marginSize={1}
-            title="Pairing link. Scan to open on another device"
+            title="Sign-in link. Scan to open on another device"
           />
         </div>
       ) : (
