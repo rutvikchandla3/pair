@@ -1,6 +1,6 @@
 # Team
 
-Several people can share one T3 Code server, for example one running on a team VM. Everyone
+Several people can share one Pair server, for example one running on a team VM. Everyone
 signs in as a member, works in the same projects and threads, and sees who did what. A server
 with one member looks and behaves exactly as it did before.
 
@@ -14,7 +14,7 @@ server's user, so invite only people you would give SSH access to.
 - **Members** can do everything else: start and prompt threads, approve requests, use
   terminals and source control.
 
-To use T3 Code on another device, choose **Add a device** on your own row. An admin can create a
+To use Pair on another device, choose **Add a device** on your own row. An admin can create a
 **Sign-in link** for any member. Removing a member signs out all of their devices at once; their
 threads stay and can be assigned to someone else. The same actions are available from the
 command line: see [Team members from the command line](./remote-access.md#team-members-from-the-command-line).
@@ -40,6 +40,28 @@ the owner of the thread they came from.
 - To hand a thread over, choose **Assign to…** from the thread's menu or the command palette. You
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
+
+## Follow threads and notifications
+
+**Follow** a teammate's thread to keep it in your own sections and count its unread state; choose
+it from the thread's menu, the command palette, or the eye button in the thread header.
+**Unfollow** sends it back to the Team shelf. You follow a thread automatically when you own it,
+send it a message, or answer one of its requests.
+
+Notifications go only to the people a thread concerns:
+
+- A finished or failed turn, or a request for approval or input, notifies the member who started
+  that turn and the thread's owner.
+- The owner hears when someone else messages, archives or sends a guest request to their thread,
+  and you hear when a thread is assigned to you.
+- Following a thread marks it unread for you, without notifications.
+
+You are never notified about your own actions, or about a thread you're looking at.
+
+## Share a thread
+
+On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
+opens it while signed out is asked to sign in, and lands on the thread afterwards.
 
 ## What is yours and what is shared
 

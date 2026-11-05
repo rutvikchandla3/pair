@@ -96,7 +96,7 @@ const pairingCreateCommand = Command.make("create", {
   baseUrl: baseUrlFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Issue a new client pairing token."),
+  Command.withDescription("Create a one-time sign-in code for a client."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(
       flags,
@@ -125,7 +125,7 @@ const pairingListCommand = Command.make("list", {
   ...authLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List active client pairing tokens without revealing their secrets."),
+  Command.withDescription("List active sign-in codes without revealing them."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(
       flags,
@@ -145,17 +145,17 @@ const pairingListCommand = Command.make("list", {
 
 const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
+  id: Argument.String("id").pipe(Argument.withDescription("Sign-in code id to revoke.")),
 }).pipe(
-  Command.withDescription("Revoke an active client pairing token."),
+  Command.withDescription("Revoke an active sign-in code."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
         const revoked = yield* environmentAuth.revokePairingLink(flags.id);
         yield* Console.log(
           revoked
-            ? `Revoked pairing credential ${flags.id}.\n`
-            : `No active pairing credential found for ${flags.id}.\n`,
+            ? `Revoked sign-in code ${flags.id}.\n`
+            : `No active sign-in code found for ${flags.id}.\n`,
         );
       }),
     ),
@@ -163,7 +163,7 @@ const pairingRevokeCommand = Command.make("revoke", {
 );
 
 const pairingCommand = Command.make("pairing").pipe(
-  Command.withDescription("Manage one-time client pairing tokens."),
+  Command.withDescription("Manage one-time sign-in codes."),
   Command.withSubcommands([pairingCreateCommand, pairingListCommand, pairingRevokeCommand]),
 );
 

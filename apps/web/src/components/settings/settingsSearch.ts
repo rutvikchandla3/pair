@@ -944,7 +944,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pull-request-links-open-in-app",
-    title: "Open pull requests in T3 Code",
+    title: "Open pull requests in Pair",
     to: "/settings/diffs",
     searchTerms: [
       `pr commit links ${SOURCE_CONTROL_HOST_LABELS} browser external click default pull request view panel`,
@@ -1085,7 +1085,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Network access",
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
+    searchTerms: [
+      "expose backend remote pairing sign-in sign in local machine interfaces host restart",
+    ],
     localBackendManagementOnly: true,
   },
   {
@@ -1143,7 +1145,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "This machine",
     to: "/settings/access",
     searchTerms: [
-      "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
+      "connections server backend local remote access administrative permissions scope pairing links sign-in sign in links qr code authorized clients sessions revoke endpoint",
     ],
   },
   {
@@ -1152,13 +1154,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Linked environments",
     to: "/settings/connections",
     targetId: "linked-environments",
-    searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
+    searchTerms: [
+      "link peer another machine vps agents work there handoff pairing code sign-in sign in",
+    ],
   },
   {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "add pair sign-in sign in backend host code ssh config agent tunnel saved t3 connect",
+    ],
   },
   {
     id: "load-balancing",
