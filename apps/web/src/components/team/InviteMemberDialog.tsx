@@ -39,6 +39,36 @@ const ROLE_HINTS: Record<MemberRole, string> = {
   member: "Works in every project. Cannot change server settings or manage members.",
 };
 
+/** Git takes any email, but forges only link commits to an address that looks real. */
+export const isGitEmailPlausible = (trimmed: string) => trimmed === "" || trimmed.includes("@");
+
+export function GitEmailField({
+  value,
+  onChange,
+  disabled,
+}: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly disabled: boolean;
+}) {
+  const plausible = isGitEmailPlausible(value.trim());
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-medium text-foreground">Git email (optional)</span>
+      <Input
+        type="email"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        aria-invalid={!plausible}
+      />
+      {plausible ? null : (
+        <p className="mt-1.5 text-xs text-destructive">Enter an email address with an @.</p>
+      )}
+    </label>
+  );
+}
+
 function LinkResult({ credential }: { readonly credential: AuthPairingCredentialResult }) {
   const nowMs = useNowSecond();
   const source = usePairingShareEndpoints();
@@ -103,6 +133,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [role, setRole] = useState<MemberRole>("member");
+  const [gitEmail, setGitEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{
     readonly name: string;
@@ -110,20 +141,27 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
   } | null>(null);
   const invite = useAtomCommand(teamEnvironment.inviteMember, { label: "invite member" });
   const trimmedName = name.trim();
+  const trimmedGitEmail = gitEmail.trim();
+  const canSubmit = trimmedName.length > 0 && isGitEmailPlausible(trimmedGitEmail);
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
       setName("");
       setRole("member");
+      setGitEmail("");
       setCreated(null);
     }
   };
 
   const submit = async () => {
-    if (busy || trimmedName.length === 0) return;
+    if (busy || !canSubmit) return;
     setBusy(true);
-    const input = { name: trimmedName, role } satisfies TeamInviteInput;
+    const input = {
+      name: trimmedName,
+      role,
+      ...(trimmedGitEmail === "" ? {} : { gitEmail: trimmedGitEmail }),
+    } satisfies TeamInviteInput;
     const result = await invite({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
@@ -189,6 +227,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
                   </Select>
                   <p className="mt-1.5 text-xs text-muted-foreground">{ROLE_HINTS[role]}</p>
                 </div>
+                <GitEmailField value={gitEmail} onChange={setGitEmail} disabled={busy} />
                 <Alert variant="warning">
                   <AlertDescription>{TRUST_WARNING}</AlertDescription>
                 </Alert>
@@ -198,7 +237,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
               <Button variant="outline" disabled={busy} onClick={() => handleOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || trimmedName.length === 0}>
+              <Button type="submit" disabled={busy || !canSubmit}>
                 {busy ? "Creating…" : "Create invite"}
               </Button>
             </DialogFooter>

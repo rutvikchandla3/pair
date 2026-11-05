@@ -163,6 +163,8 @@ export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
   readonly stage?: { readonly filePaths?: readonly string[] };
+  /** Only the author: the committer stays the server's own git identity. */
+  readonly author?: { readonly name: string; readonly email: string };
 }
 
 export interface GitDeleteLocalBranchInput {

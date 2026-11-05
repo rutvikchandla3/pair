@@ -2596,6 +2596,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* stageCommitChanges(cwd, options.stage.filePaths);
     }
     const args = ["commit", "-m", subject];
+    if (options?.author !== undefined) {
+      args.push(`--author=${options.author.name} <${options.author.email}>`);
+    }
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);

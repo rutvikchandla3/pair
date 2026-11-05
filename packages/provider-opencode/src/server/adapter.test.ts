@@ -2920,6 +2920,7 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
             if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
             assert.include(command.args, "serve");
             assert.equal(command.options.env?.OPENCODE_SERVER_PASSWORD, password);
+            assert.equal(command.options.env?.GIT_AUTHOR_EMAIL, "bob@example.com");
             managedStarts += 1;
             return spawner.spawn(
               ChildProcess.make(
@@ -2951,7 +2952,12 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
       threadId: ThreadId.make("thread-opencode-auth"),
       providerSessionId: ProviderSessionId.make("session-opencode-auth"),
       modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
-      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+      runtimePolicy: {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: null,
+        gitAuthor: { name: "Bob", email: "bob@example.com" },
+      },
     });
     yield* session.ensureThread({
       threadId: ThreadId.make("thread-opencode-auth"),

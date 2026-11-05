@@ -3446,6 +3446,12 @@ it.effect(
         });
         yield* resumeSecondThread;
         yield* resumeSecondThread;
+        yield* secondRuntime.resumeThread({
+          providerThread: secondProviderThread,
+          threadId: secondThreadId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, gitAuthor: { name: "Bob", email: "bob@example.com" } },
+        });
         assert.equal((yield* Ref.get(state)).resumeCount, 1);
         yield* secondRuntime.resumeThread({
           providerThread: secondProviderThread,
