@@ -81,6 +81,7 @@ const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
+  readonly memberId: MemberId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
@@ -1399,11 +1400,14 @@ export const make = Effect.gen(function* () {
     if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
-      Effect.tap((session) => resolveMember(session.memberId)),
       Effect.flatMap((session) =>
+        resolveMember(session.memberId).pipe(Effect.map((memberId) => ({ session, memberId }))),
+      ),
+      Effect.flatMap(({ session, memberId }) =>
         session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
           ? Effect.succeed({
               sessionId: session.sessionId,
+              memberId,
               label: session.client.label ?? "MCP client",
               access: session.scopes.includes(AuthOrchestrationOperateScope)
                 ? (session.runtimeModeCeiling ?? "approval-required")

@@ -4,6 +4,7 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  MemberId,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
@@ -553,14 +554,14 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
 
 it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
   Effect.gen(function* () {
-    const launches = yield* Ref.make(0);
+    const launches = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: () =>
-              Ref.update(launches, (n) => n + 1).pipe(
+            launch: (input) =>
+              Ref.update(launches, (owners) => [...owners, input.ownerId]).pipe(
                 Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
               ),
           }),
@@ -577,7 +578,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const { task } = yield* service.upsert({
+      const input = {
         id: ScheduledTaskId.make("task:interrupted-reservation"),
         title: "Check in",
         prompt: "Check progress",
@@ -588,7 +589,10 @@ it.effect("a run interrupted right after it reserves the task does not block the
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      } as const;
+      const { task } = yield* service.upsert(input, MemberId.make("member-alice"));
+      // An edit by someone else keeps the task's creator, who owns the threads it starts.
+      yield* service.upsert(input, MemberId.make("member-bob"));
 
       // The reservation is the first Set.add of the task id; interrupt the run right there.
       const add = Set.prototype.add;
@@ -614,7 +618,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
 
       const second = yield* service.runNow({ id: task.id });
       assert.equal(second.threadId, ThreadId.make("thread:launched"));
-      assert.equal(yield* Ref.get(launches), 1);
+      assert.deepEqual(yield* Ref.get(launches), ["member-alice"]);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

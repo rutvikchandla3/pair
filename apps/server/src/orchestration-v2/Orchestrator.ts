@@ -174,6 +174,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { authorshipFields, decideHumanAuthorship } from "./HumanAuthorship.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -567,6 +568,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.owner.set":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
@@ -2135,6 +2137,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
           createdBy: queuedMessage.createdBy,
           creationSource: queuedMessage.creationSource,
+          ...authorshipFields(queuedMessage),
           ...(queuedMessage.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: queuedMessage.scheduledTaskId }),
@@ -2836,6 +2839,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
       pullRequests: [],
+      ownerId: command.ownerId ?? command.actorId ?? null,
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
       // Only stamped work names a remote parent, so a client cannot claim one.
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
@@ -3123,6 +3127,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.owner.set"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
@@ -3155,6 +3160,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    if (command.type === "thread.owner.set" && thread.ownerId === command.ownerId) return;
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
@@ -3982,6 +3988,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 updatedAt: now,
               }
             : thread;
+        case "thread.owner.set": {
+          const { ownerUpdatedBy: _previous, ...rest } = thread;
+          return {
+            ...rest,
+            ownerId: command.ownerId,
+            ...(command.actorId === undefined ? {} : { ownerUpdatedBy: command.actorId }),
+            updatedAt: now,
+          };
+        }
         case "thread.runtime-mode.set":
           return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
         case "thread.interaction-mode.set":
@@ -4046,6 +4061,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.owner.set":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
@@ -4521,7 +4537,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "fork",
       }),
     );
-    const { targetThread, transfer } = yield* threadForkService
+    const { targetThread: plannedThread, transfer } = yield* threadForkService
       .plan({
         sourceProjection,
         sourceRun,
@@ -4543,6 +4559,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
       })
       .pipe(mapDispatchError(command));
+    const {
+      ownerUpdatedBy: _ownerUpdatedBy,
+      humanAuthorIds: _humanAuthorIds,
+      lastRollback: _lastRollback,
+      ...forkedThread
+    } = plannedThread;
+    const sourceOwnerId = sourceProjection.thread.ownerId ?? null;
+    const targetThread: OrchestrationV2AppThread = {
+      ...forkedThread,
+      ownerId: command.sideChat === true ? sourceOwnerId : (command.actorId ?? sourceOwnerId),
+    };
 
     yield* emitEvent({
       type: "thread.created",
@@ -4757,6 +4784,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
+    readonly authorId?: OrchestrationV2ConversationMessage["authorId"];
+    readonly senderLabel?: OrchestrationV2ConversationMessage["senderLabel"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
@@ -4912,6 +4941,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const message: OrchestrationV2ConversationMessage = {
           createdBy: input.createdBy,
           creationSource: input.creationSource,
+          ...authorshipFields(input),
           ...(input.delegatedCompletion === undefined
             ? {}
             : { delegatedCompletion: input.delegatedCompletion }),
@@ -4936,6 +4966,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const turnItem: OrchestrationV2TurnItem = {
           createdBy: input.createdBy,
           creationSource: input.creationSource,
+          ...authorshipFields(input),
           ...(input.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
@@ -5903,8 +5934,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             payload: { ...sourcePlan, status: "completed" },
           });
 
+    const authorship = decideHumanAuthorship(projection.thread, command);
+    const authorFields = authorshipFields(authorship);
+    if (authorship.humanAuthorIds !== undefined) {
+      const event = yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: { ...projection.thread, humanAuthorIds: authorship.humanAuthorIds },
+      });
+      projection = applyToProjection(projection, event);
+    }
+
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       yield* dispatchSteerIntoRun({
+        ...authorFields,
         command,
         events,
         effects,
@@ -6157,6 +6205,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const message: OrchestrationV2ConversationMessage = {
         createdBy: command.createdBy,
+        ...authorFields,
         creationSource: command.creationSource,
         ...(command.scheduledTaskId === undefined
           ? {}
@@ -6523,6 +6572,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const message: OrchestrationV2ConversationMessage = {
         createdBy: command.createdBy,
+        ...authorFields,
         creationSource: command.creationSource,
         ...(command.scheduledTaskId === undefined
           ? {}
@@ -6545,6 +6595,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
+        ...authorFields,
         creationSource: command.creationSource,
         ...(command.scheduledTaskId === undefined
           ? {}
@@ -7275,6 +7326,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
     const message: OrchestrationV2ConversationMessage = {
       createdBy: command.createdBy,
+      ...authorFields,
       creationSource: command.creationSource,
       ...(command.scheduledTaskId === undefined
         ? {}
@@ -7297,6 +7349,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
     const turnItem: OrchestrationV2TurnItem = {
       createdBy: command.createdBy,
+      ...authorFields,
       creationSource: command.creationSource,
       ...(command.scheduledTaskId === undefined
         ? {}
@@ -9182,7 +9235,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.decision === undefined ? {} : { decision: command.decision }),
         ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
         ...(answers === undefined ? {} : { answers }),
+        ...(command.actorId === undefined ? {} : { resolvedBy: command.actorId }),
       };
+      const responderFields = command.actorId === undefined ? {} : { authorId: command.actorId };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
       if (command.feedback !== undefined) {
@@ -9205,6 +9260,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             streaming: false,
             createdBy: "user",
             creationSource: "server",
+            ...responderFields,
             createdAt: now,
             updatedAt: now,
           },
@@ -9244,6 +9300,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             attachments: [],
             createdBy: "user",
             creationSource: "server",
+            ...responderFields,
           },
         });
       }
@@ -9312,6 +9369,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   },
                 }
               : {}),
+            ...((approvalTurnItem.type === "approval_request" ||
+              approvalTurnItem.type === "user_input_request") &&
+            command.actorId !== undefined
+              ? { resolvedBy: command.actorId }
+              : {}),
             status: resolvedNodeStatus,
             completedAt: now,
             updatedAt: now,
@@ -9362,6 +9424,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           attachments: [],
           createdBy: "user" as const,
           creationSource: "server" as const,
+          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);
@@ -9480,6 +9543,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           requestId: command.requestId,
           decision: "cancel",
+          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
         },
         events,
         effects,
@@ -9687,6 +9751,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedMessage.context ? { context: queuedMessage.context } : {}),
       createdBy: queuedMessage.createdBy,
       creationSource: queuedMessage.creationSource,
+      ...authorshipFields(queuedMessage),
       ...(queuedMessage.scheduledTaskId === undefined
         ? {}
         : { scheduledTaskId: queuedMessage.scheduledTaskId }),
@@ -10827,6 +10892,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         type: "run_interrupt_request",
         message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+        ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
       },
     });
   });
@@ -11405,6 +11471,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       updatedAt: now,
       type: "run_interrupt_request",
       message: command.reason ?? RunExecutionService.USER_STOP_REASON,
+      ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
     };
 
     const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
@@ -11957,6 +12024,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: target.id,
             holdQueue: true,
             ...(command.reason === undefined ? {} : { reason: command.reason }),
+            ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
           },
           interruptEvents,
           interruptEffects,
@@ -12136,6 +12204,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           rollbackRequestId: command.commandId,
           rollbackFailure: null,
+          lastRollback: {
+            ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
+            checkpointId: targetCheckpoint.id,
+            requestedAt: now,
+          },
           updatedAt: now,
         },
       });
@@ -13220,6 +13293,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.tag.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.owner.set":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
@@ -13586,7 +13660,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
-          (command.type === "thread.delete" && command.onlyIfUnused === true),
+          (command.type === "thread.delete" && command.onlyIfUnused === true) ||
+          command.type === "thread.owner.set",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

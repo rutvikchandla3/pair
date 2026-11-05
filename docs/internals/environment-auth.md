@@ -66,6 +66,16 @@ The server rereads members when it meets an unknown id or lists the team, which
 covers members written while it was unreachable; a removal written then is
 enforced through the revoked rows, while open sockets last until they reconnect.
 
+Commands carry an `actorId` only from the session that sent them
+(`withActor` in [ThreadManagementService](../../apps/server/src/orchestration-v2/ThreadManagementService.ts));
+agent, MCP and scheduled commands carry none and never count as human authors.
+The orchestrator decides at dispatch whether a user message names its sender to
+the provider: only once a thread has two or more distinct human authors. The
+stored text never changes; the name is added where provider input is built
+([SenderLabel](../../apps/server/src/orchestration-v2/SenderLabel.ts)). Solo
+threads therefore send byte-identical input, which keeps provider prompt caches
+warm.
+
 ### Guest links are not sessions
 
 A [guest link](../user/guest-links.md) gives one browser read access to one

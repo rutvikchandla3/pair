@@ -1,7 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MemberId,
+  MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   ProjectId,
@@ -27,6 +30,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as TeamState from "../team/TeamState.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -163,6 +167,23 @@ it.effect(
         makeProjection({ now, threadId, providerThread, providerTurnId, attemptId }),
       );
       const interruptedThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
+      const steered = yield* Ref.make<ReadonlyArray<string>>([]);
+      const steeringMessage: OrchestrationV2ConversationMessage = {
+        id: MessageId.make("message:steer"),
+        threadId,
+        runId: RunId.make("run:restart-session"),
+        nodeId: null,
+        role: "user",
+        text: "Ship it",
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        authorId: MemberId.make("member-alice"),
+        senderLabel: "name_with_note",
+        createdAt: now,
+        updatedAt: now,
+      };
       const providerSession = {
         id: oldSessionId,
         driver,
@@ -258,8 +279,11 @@ it.effect(
                   (turn) => turn.id === target.providerTurnId,
                 ),
                 attempt: current.attempts.find((attempt) => attempt.id === target.attemptId),
-                message: undefined,
-                run: undefined,
+                message: target.messageId === undefined ? undefined : steeringMessage,
+                run:
+                  target.messageId === undefined
+                    ? undefined
+                    : ({ id: RunId.make("run:restart-session") } as never),
               })),
             ),
           getCheckpointContext: () => Effect.die("not used"),
@@ -283,7 +307,15 @@ it.effect(
           open: () => Effect.die("unused open"),
           get: (providerSessionId) =>
             Effect.succeed(
-              providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
+              providerSessionId === oldSessionId
+                ? Option.some(runtime)
+                : providerSessionId === replacementSessionId
+                  ? Option.some({
+                      ...runtime,
+                      steerTurn: ({ message }) =>
+                        Ref.update(steered, (texts) => [...texts, message.text]),
+                    })
+                  : Option.none(),
             ),
           isLive: (providerSessionId) => Effect.succeed(providerSessionId === oldSessionId),
           close: () => Effect.void,
@@ -295,8 +327,43 @@ it.effect(
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
+        Layer.provide(
+          Layer.mergeAll(
+            layerProjection,
+            layerSessionManager,
+            TeamState.layerTest([
+              {
+                id: MemberId.make("member-alice"),
+                name: "Alice",
+                role: "member",
+                gitName: null,
+                gitEmail: null,
+                isOwner: false,
+                createdAt: "2026-09-01T00:00:00.000Z",
+                updatedAt: null,
+                removedAt: null,
+              },
+            ]),
+          ),
+        ),
       );
+
+      // A steer to the live replacement session names its sender.
+      yield* ProviderTurnControlService.ProviderTurnControlServiceV2.pipe(
+        Effect.flatMap((control) =>
+          control.steer({
+            threadId,
+            providerSessionId: replacementSessionId,
+            providerThreadId,
+            providerTurnId,
+            messageId: steeringMessage.id,
+          }),
+        ),
+        Effect.provide(layerControl),
+      );
+      assert.deepEqual(yield* Ref.get(steered), [
+        "Several people are prompting this thread; each message names its sender.\n\nMessage from Alice:\n\nShip it",
+      ]);
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;

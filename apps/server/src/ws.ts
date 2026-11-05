@@ -1383,6 +1383,7 @@ export const layerWsRpc = (
         | ServerConfig.ServerConfig
         | ServerSettings.ServerSettingsService
         | DocumentText.DocumentText
+        | TeamState.TeamState
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -1695,6 +1696,7 @@ export const layerWsRpc = (
                   },
                   createdBy: "user",
                   creationSource: "web",
+                  actorId: currentSession.memberId,
                 }),
               ),
             );
@@ -2049,11 +2051,14 @@ export const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                        ThreadManagementService.withActor(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                          currentSession.memberId,
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -2077,7 +2082,7 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
-          threadManagement.forceStopThread(input),
+          threadManagement.forceStopThread({ ...input, actorId: currentSession.memberId }),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: (input) =>
@@ -2230,6 +2235,7 @@ export const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
+                    actorId: currentSession.memberId,
                   }).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
@@ -2304,7 +2310,8 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          scheduledTasks.upsert(input, currentSession.memberId),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
