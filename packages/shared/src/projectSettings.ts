@@ -26,6 +26,8 @@ export interface ResolvedProjectSettings<Settings extends ServerSettings = Serve
   readonly settings: Settings;
   readonly sources: ProjectSettingSources;
   readonly overrides: ProjectSettingsOverrides;
+  /** File-backed settings that no layer set, so they hold the built-in value. */
+  readonly builtInKeys?: ReadonlySet<ProjectFileBackedSettingKey>;
 }
 
 const EMPTY_OVERRIDES: ProjectSettingsOverrides = {};
@@ -77,6 +79,7 @@ function applyProjectFile(
 ): ResolvedProjectSettings {
   let effective: Record<string, unknown> | null = null;
   let sources: Record<ProjectScopedServerSettingKey, ProjectSettingSource> | null = null;
+  const builtInKeys = new Set<ProjectFileBackedSettingKey>();
   for (const key of Object.keys(PROJECT_FILE_BACKED_SETTINGS) as ProjectFileBackedSettingKey[]) {
     if (resolved.settings[key] !== null) continue;
     const { value, source } = resolveProjectFileBackedSetting(key, null, projectFile);
@@ -84,10 +87,11 @@ function applyProjectFile(
     sources ??= { ...resolved.sources };
     effective[key] = value;
     sources[key] = source;
+    if (source === "environment") builtInKeys.add(key);
   }
   return effective === null || sources === null
     ? resolved
-    : { ...resolved, settings: effective as ServerSettings, sources };
+    : { ...resolved, settings: effective as ServerSettings, sources, builtInKeys };
 }
 
 export function resolveProjectFileBackedSetting<K extends ProjectFileBackedSettingKey>(
@@ -165,14 +169,24 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
-/** New name-only projects use their checkout until the first thread, even when the default is worktree. */
+/**
+ * New name-only projects use their checkout until the first thread, even when the default is worktree.
+ * With `teamDefault`, an environment nobody configured starts new threads in a worktree.
+ */
 export function resolveNewThreadEnvMode(input: {
+  readonly teamDefault: boolean;
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;
   readonly newProjectsRoot: string | null | undefined;
   readonly projectHasThreads: boolean;
 }): ThreadEnvMode {
-  const configured = input.projectSettings.settings.defaultThreadEnvMode;
+  const { settings, sources, builtInKeys } = input.projectSettings;
+  const configured =
+    input.teamDefault &&
+    sources.defaultThreadEnvMode === "environment" &&
+    builtInKeys?.has("defaultThreadEnvMode") === true
+      ? "worktree"
+      : settings.defaultThreadEnvMode;
   if (
     configured === "local" ||
     input.projectHasThreads ||

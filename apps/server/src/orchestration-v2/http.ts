@@ -30,7 +30,12 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
-import { makeThreadEventView, makeThreadViewers, overlayForViewer } from "./MemberThreadView.ts";
+import {
+  makeThreadEventView,
+  makeThreadViewers,
+  olderSettledReaderOf,
+  overlayForViewer,
+} from "./MemberThreadView.ts";
 import type { ThreadViewer } from "./MemberThreadView.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -97,7 +102,7 @@ export const layer = HttpApiBuilder.group(
           }),
         listProjects: projectStore.listShells(),
         latestSequence: applicationEvents.latestApplicationSequence,
-        options,
+        options: { ...options, olderSettledReader: yield* olderSettledReaderOf(viewer) },
       });
       const projects = yield* enrichProjectShells(snapshot.projects);
       const threads = yield* overlayForViewer(viewer, snapshot.threads);

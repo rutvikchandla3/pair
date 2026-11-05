@@ -13,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import {
   appendClientConnectionParams,
   type ClientOwnerParams,
+  fetchRemoteSessionState,
   readClientOwnerParams,
 } from "../authorization/remote.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -92,12 +93,27 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   const auth = yield* ClientCapabilities.PrimaryEnvironmentAuth;
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const httpClient = yield* HttpClient.HttpClient;
 
   return Effect.fn("clientRuntime.connection.broker.primary")(function* (
     target: PrimaryConnectionTarget,
   ) {
     const bearerToken = yield* auth.bearerToken;
     if (Option.isNone(bearerToken)) {
+      // A browser cannot see why a cookie socket's upgrade failed, so a
+      // revoked session would read as a host that never answers.
+      const session = yield* fetchRemoteSessionState({ httpBaseUrl: target.httpBaseUrl }).pipe(
+        Effect.mapError((error) => mapRemoteEnvironmentError(error)),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      if (!session.authenticated) {
+        return yield* new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "This browser's session is no longer valid.",
+          hop: "server",
+          via: "direct",
+        });
+      }
       return {
         environmentId: target.environmentId,
         label: target.label,

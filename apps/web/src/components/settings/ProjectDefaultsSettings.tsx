@@ -22,7 +22,12 @@ import {
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
+import { useIsTeamMode } from "../../state/team";
+import {
+  resolveEnvModeLabel,
+  TEAM_DEFAULT_ENV_MODE_LABEL,
+  WORKTREE_SUBMODULES_LABELS,
+} from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
@@ -114,6 +119,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
+  const isTeamMode = useIsTeamMode(target?.environmentId ?? null);
+  // Nobody chose a workspace, so a team's built-in default applies.
+  const teamWorkspaceDefault =
+    isTeamMode &&
+    target?.sources.defaultThreadEnvMode === "environment" &&
+    representative?.serverConfig?.settings.defaultThreadEnvMode === null;
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
@@ -224,7 +235,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
       control={
         <Select
-          value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
+          value={
+            mixedWorkspace
+              ? null
+              : teamWorkspaceDefault
+                ? "worktree"
+                : (effective?.defaultThreadEnvMode ?? null)
+          }
           onValueChange={(value) => {
             if (value === "local" || value === "worktree")
               updateSettings({ defaultThreadEnvMode: value });
@@ -234,7 +251,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             <SelectValue>
               {(value: string | null) =>
                 value === "local" || value === "worktree"
-                  ? resolveEnvModeLabel(value)
+                  ? teamWorkspaceDefault
+                    ? TEAM_DEFAULT_ENV_MODE_LABEL
+                    : resolveEnvModeLabel(value)
                   : unavailable
                     ? "Unavailable"
                     : "Mixed"

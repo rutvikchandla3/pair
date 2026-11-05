@@ -174,7 +174,7 @@ function layerPairingOnboarding(
       register: () => Effect.void,
       setEnabled: () => Effect.void,
     }),
-    Layer.mock(Persistence.EnvironmentCacheStore)({}),
+    Layer.mock(Persistence.EnvironmentCacheStore)({ clear: () => Effect.void }),
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
       get: () => Effect.succeedNone,
