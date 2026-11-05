@@ -1,8 +1,10 @@
 import type {
   GuestShareId,
+  MemberId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
+  ThreadMemberState,
 } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -175,6 +177,17 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { authorshipFields, decideHumanAuthorship } from "./HumanAuthorship.ts";
+import {
+  clearedForSettle,
+  EMPTY_MEMBER_STATE,
+  hasPersonalState,
+  holderOf,
+  isNonHolderMemberEvent,
+  PERSONAL_FIELDS,
+  personalStateOf,
+  transferHolder,
+  withPersonalState,
+} from "./MemberThreadState.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -192,6 +205,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -545,6 +559,41 @@ export function threadHasUnfinishedWork(records: {
         run.status !== "rolled_back",
     ) || records.runtimeRequests.some((request) => request.status === "pending")
   );
+}
+
+type MetadataUpdateCommand = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "thread.metadata.update" }
+>;
+
+/** A non-holder's limit snooze is their own, so the shared recovery keeps only the rest. */
+function sharedLimitRecoveryUpdate(
+  command: MetadataUpdateCommand,
+  memberSnooze: boolean,
+): MetadataUpdateCommand["limitRecovery"] {
+  if (!memberSnooze || command.limitRecovery == null) return command.limitRecovery;
+  const { snooze: _snooze, ...rest } = command.limitRecovery;
+  // A recovery with nothing chosen would still block the owner's settings-based arming.
+  return rest.autoResume === undefined ? undefined : rest;
+}
+
+/** The member a personal command acts for; shared commands such as settle have none. */
+function personalCommandActorId(command: OrchestrationV2ServerCommand): MemberId | undefined {
+  switch (command.type) {
+    case "thread.snooze":
+    case "thread.unsnooze":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.pin.reorder":
+    case "thread.active.reorder":
+    case "thread.visit":
+    case "thread.mark-unread":
+      return command.actorId;
+    case "thread.metadata.update":
+      return command.limitRecovery?.snooze === undefined ? undefined : command.actorId;
+    default:
+      return undefined;
+  }
 }
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
@@ -1071,6 +1120,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // CLI and test runtimes have no team: every actor is the holder and events carry no member.
+  const serverOwnerId = Option.map(
+    yield* Effect.serviceOption(TeamState.TeamState),
+    (team) => team.ownerId,
+  );
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -1293,6 +1347,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
     );
 
+  type PersonalActor = { readonly memberId: MemberId; readonly isHolder: boolean };
+
+  /** Null keeps the solo behavior: the row changes and the event carries no member. */
+  const personalActor = (
+    thread: OrchestrationV2AppThread,
+    actorId: MemberId | undefined,
+  ): PersonalActor | null =>
+    Option.isNone(serverOwnerId) || actorId === undefined
+      ? null
+      : { memberId: actorId, isHolder: actorId === holderOf(thread, serverOwnerId.value) };
+
+  /** The thread as `actor` sees it: the row for the holder, else the row with their member state. */
+  const personalView = Effect.fn("Orchestrator.personalView")(function* (
+    row: OrchestrationV2AppThread,
+    actor: PersonalActor | null,
+  ) {
+    if (actor === null || actor.isHolder) return row;
+    const state = yield* projectionStore
+      .getThreadMemberState(row.id, actor.memberId)
+      .pipe(
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: row.id, cause })),
+      );
+    return withPersonalState(row, state ?? EMPTY_MEMBER_STATE);
+  });
+
+  /** A non-holder's event leaves the shared row as it is; the holder's writes `next` to the row. */
+  const memberEventFields = (
+    actor: PersonalActor,
+    sharedRow: OrchestrationV2AppThread,
+    next: OrchestrationV2AppThread,
+  ) => {
+    const state = personalStateOf(next);
+    return actor.isHolder
+      ? { payload: next, member: { memberId: actor.memberId, state } }
+      : nonHolderEventFields(sharedRow, actor.memberId, state);
+  };
+  const nonHolderEventFields = (
+    sharedRow: OrchestrationV2AppThread,
+    memberId: MemberId,
+    state: ThreadMemberState,
+  ) => ({ payload: withPersonalState(sharedRow, state), member: { memberId, state } });
+
+  // Another member's state never reaches the row, so folds of decided events skip it.
+  const foldsIntoRow = (event: OrchestrationV2DomainEvent) =>
+    Option.isNone(serverOwnerId) || !isNonHolderMemberEvent(event, serverOwnerId.value);
+
   /** Side chats live inside their parent, so deleting the parent deletes them too. */
   const liveSideChatIds = Effect.fn("Orchestrator.liveSideChatIds")(
     function* (threadId: ThreadId) {
@@ -1346,6 +1446,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       for (const event of pending) {
+        if (!foldsIntoRow(event)) continue;
         if (event.type === "thread.created" && projection.thread.id === event.payload.id) {
           projection = { ...projection, thread: event.payload, updatedAt: event.occurredAt };
           continue;
@@ -2939,20 +3040,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "thread.visit" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    const thread = yield* projectionStore
+    const row = yield* projectionStore
       .getThread(command.threadId)
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
         ),
       );
-    if (thread.deletedAt !== null) {
+    if (row.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    const actor = personalActor(row, command.actorId);
+    const thread = yield* personalView(row, actor);
     const visitedAt = DateTime.make(command.visitedAt);
     if (Option.isNone(visitedAt)) {
       return yield* new OrchestratorDispatchError({
@@ -2973,6 +3076,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.searchQuery,
         )
       : null;
+    const visited: OrchestrationV2AppThread = {
+      ...thread,
+      ...(movesForward ? { lastVisitedAt: visitedAt.value } : {}),
+      ...(opens ? { opens } : {}),
+    };
     // Viewing a thread changes read state only. Loading its transcript (or
     // bumping updatedAt) makes a routine read receipt scale with its history.
     yield* emit(
@@ -2983,11 +3091,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       providerInstanceId: thread.providerInstanceId,
       occurredAt,
-      payload: {
-        ...thread,
-        ...(movesForward ? { lastVisitedAt: visitedAt.value } : {}),
-        ...(opens ? { opens } : {}),
-      },
+      ...(actor === null ? { payload: visited } : memberEventFields(actor, row, visited)),
     });
   });
 
@@ -3176,7 +3280,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
-    const thread = yield* projectionStore.getThread(command.threadId).pipe(
+    const row = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
         (cause) =>
           new OrchestratorProjectionError({
@@ -3185,14 +3289,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
-    if (thread.deletedAt !== null) {
+    if (row.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
-    if (command.type === "thread.owner.set" && thread.ownerId === command.ownerId) return;
+    if (command.type === "thread.owner.set" && row.ownerId === command.ownerId) return;
+    // A limit-recovery update also changes shared state, so only a non-holder's snooze splits off.
+    const limitSnoozeActor =
+      command.type === "thread.metadata.update"
+        ? personalActor(row, personalCommandActorId(command))
+        : null;
+    const memberLimitSnoozeActor = limitSnoozeActor?.isHolder === false ? limitSnoozeActor : null;
+    const actor =
+      command.type === "thread.metadata.update"
+        ? null
+        : personalActor(row, personalCommandActorId(command));
+    const thread = yield* personalView(row, actor ?? memberLimitSnoozeActor);
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
@@ -3722,28 +3837,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.metadata.update": {
+          const update = sharedLimitRecoveryUpdate(command, memberLimitSnoozeActor !== null);
           const previousRecovery =
-            thread.limitRecovery?.runId === command.limitRecovery?.runId &&
-            thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
+            thread.limitRecovery?.runId === update?.runId &&
+            thread.limitRecovery?.resetAt === update?.resetAt
               ? thread.limitRecovery
               : null;
           const limitRecovery =
-            command.limitRecovery === undefined
+            update === undefined
               ? thread.limitRecovery
-              : command.limitRecovery === null
+              : update === null
                 ? null
                 : {
-                    ...command.limitRecovery,
-                    autoResume:
-                      command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
-                    snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
+                    ...update,
+                    autoResume: update.autoResume ?? previousRecovery?.autoResume ?? false,
+                    snooze: update.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
-            ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
-            ...(command.limitRecovery !== undefined &&
+            ...(update === undefined ? {} : { limitRecovery }),
+            ...(update !== undefined &&
             limitRecovery?.snooze === true &&
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
@@ -3751,7 +3866,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
                 }
-              : command.limitRecovery !== undefined &&
+              : update !== undefined &&
                   thread.limitRecovery?.snooze &&
                   thread.snoozedUntil != null &&
                   DateTime.toEpochMillis(thread.snoozedUntil) ===
@@ -4113,16 +4228,100 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.provider-switched" as const;
       }
     })();
-    yield* emit(
-      events,
-      command,
-    )({
-      type: eventType,
+    const emitThreadEvent = emit(events, command);
+    const eventBase = {
       threadId: command.threadId,
       providerInstanceId: updatedThread.providerInstanceId,
       occurredAt: now,
-      payload: updatedThread,
-    });
+    };
+    // Shared changes go out without `member`, so every member's view sees them.
+    const sharedPayload = withPersonalState(updatedThread, personalStateOf(row));
+    if (memberLimitSnoozeActor !== null && command.type === "thread.metadata.update") {
+      const sharedChanged =
+        sharedLimitRecoveryUpdate(command, true) !== undefined ||
+        command.title !== undefined ||
+        command.regenerateTitle !== undefined ||
+        command.branch !== undefined ||
+        command.worktreePath !== undefined ||
+        command.linkedPullRequest !== undefined;
+      if (sharedChanged) {
+        yield* emitThreadEvent({ ...eventBase, type: eventType, payload: sharedPayload });
+      }
+      const sharedRow = sharedChanged ? sharedPayload : row;
+      const resetAt = command.limitRecovery?.resetAt;
+      const snoozedUntil = thread.snoozedUntil;
+      if (command.limitRecovery?.snooze === true && resetAt !== undefined) {
+        const next = { ...thread, snoozedUntil: DateTime.makeUnsafe(resetAt), snoozedAt: now };
+        yield* emitThreadEvent({
+          ...eventBase,
+          type: "thread.snoozed",
+          ...memberEventFields(memberLimitSnoozeActor, sharedRow, next),
+        });
+      } else if (
+        resetAt !== undefined &&
+        snoozedUntil != null &&
+        DateTime.toEpochMillis(snoozedUntil) === Date.parse(resetAt)
+      ) {
+        const next = { ...thread, snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now };
+        yield* emitThreadEvent({
+          ...eventBase,
+          type: "thread.unsnoozed",
+          ...memberEventFields(memberLimitSnoozeActor, sharedRow, next),
+        });
+      }
+    } else if (actor !== null) {
+      const splitType =
+        command.type === "thread.pin" && row.settledOverride === "settled"
+          ? ("thread.unsettled" as const)
+          : command.type === "thread.snooze" && actor.isHolder && row.limitRecovery?.snooze === true
+            ? ("thread.metadata-updated" as const)
+            : null;
+      if (splitType !== null) {
+        yield* emitThreadEvent({ ...eventBase, type: splitType, payload: sharedPayload });
+      }
+      yield* emitThreadEvent({
+        ...eventBase,
+        type: eventType,
+        ...memberEventFields(actor, splitType === null ? row : sharedPayload, updatedThread),
+      });
+    } else if (
+      command.type === "thread.owner.set" &&
+      Option.isSome(serverOwnerId) &&
+      holderOf(row, serverOwnerId.value) !== command.ownerId
+    ) {
+      const newHolderState = yield* projectionStore
+        .getThreadMemberState(row.id, command.ownerId)
+        .pipe(mapDispatchError(command));
+      const { row: transferred, demoted } = transferHolder(
+        updatedThread,
+        holderOf(row, serverOwnerId.value),
+        newHolderState,
+      );
+      yield* emitThreadEvent({ ...eventBase, type: eventType, payload: transferred });
+      if (PERSONAL_FIELDS.some((field) => demoted.state[field] !== null)) {
+        yield* emitThreadEvent({
+          ...eventBase,
+          type: "thread.metadata-updated",
+          ...nonHolderEventFields(transferred, demoted.memberId, demoted.state),
+        });
+      }
+    } else {
+      yield* emitThreadEvent({ ...eventBase, type: eventType, payload: updatedThread });
+    }
+    if (command.type === "thread.settle") {
+      const memberStates = yield* projectionStore
+        .listThreadMemberStates(row.id)
+        .pipe(mapDispatchError(command));
+      for (const entry of memberStates) {
+        if (!hasPersonalState(entry.state)) continue;
+        const state = clearedForSettle(entry.state);
+        yield* emitThreadEvent({
+          ...eventBase,
+          type: "thread.settled",
+          ...nonHolderEventFields(updatedThread, entry.memberId, state),
+        });
+      }
+    }
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
@@ -5684,7 +5883,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // only a message someone actually sent ends the snooze.
     const automaticWake =
       command.notification !== undefined || command.delegatedCompletion !== undefined;
-    if (projection.thread.snoozedUntil != null && !automaticWake) {
+    // Sending ends only the sender's own snooze.
+    const sender = personalActor(
+      projection.thread,
+      decideHumanAuthorship(projection.thread, command).authorId,
+    );
+    if (sender !== null && !sender.isHolder) {
+      const senderView = yield* personalView(projection.thread, sender);
+      if (senderView.snoozedUntil != null && !automaticWake) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: senderView.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          ...memberEventFields(sender, projection.thread, {
+            ...senderView,
+            snoozedUntil: null,
+            snoozedAt: null,
+          }),
+        });
+      }
+    } else if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
@@ -13233,9 +13455,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        const memberStates = yield* projectionStore
+          .listThreadMemberStates(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const snapshotMs = DateTime.toEpochMillis(command.snapshotAt);
         if (
           thread.settledOverride !== null ||
-          DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
+          DateTime.toEpochMillis(thread.updatedAt) > snapshotMs ||
+          memberStates.some((entry) => DateTime.toEpochMillis(entry.updatedAt) > snapshotMs)
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,

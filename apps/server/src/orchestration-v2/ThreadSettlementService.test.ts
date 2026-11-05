@@ -52,7 +52,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "memberSnoozes"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -196,6 +199,23 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+    const memberSnooze = {
+      snoozedUntil: snoozed.snoozedUntil ?? null,
+      snoozedAt: snoozed.snoozedAt ?? null,
+      lastSnoozeWakeAt: null,
+    };
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ memberSnoozes: [memberSnooze] }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ memberSnoozes: [{ ...memberSnooze, snoozedUntil: at(-1) }] }),
+        NOW_MS,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -323,25 +343,29 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
-  it.each(["manual", "timer"])("restarts inactivity on a %s snooze wake", (wake) => {
-    const thread = {
-      ...shell({ latestRunCompletedAt: at(-4 * DAY_MS) }),
-      ...(wake === "manual"
-        ? { lastSnoozeWakeAt: at(-1_000) }
-        : { snoozedAt: at(-3 * DAY_MS), snoozedUntil: at(-1_000) }),
-    };
-    const input = {
-      thread,
-      pullRequest: null,
-      nowMs: NOW_MS,
-      autoSettleAfterDays: 1,
-      autoSettleOnMerge: false,
-    };
-    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
-    expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
-    ).toEqual(at(-1_000));
-  });
+  it.each(["manual", "timer", "member manual", "member timer"])(
+    "restarts inactivity on a %s snooze wake",
+    (wake) => {
+      const snooze = wake.endsWith("manual")
+        ? { lastSnoozeWakeAt: at(-1_000), snoozedAt: null, snoozedUntil: null }
+        : { lastSnoozeWakeAt: null, snoozedAt: at(-3 * DAY_MS), snoozedUntil: at(-1_000) };
+      const base = shell({ latestRunCompletedAt: at(-4 * DAY_MS) });
+      const thread = wake.startsWith("member")
+        ? { ...base, memberSnoozes: [snooze] }
+        : { ...base, ...snooze };
+      const input = {
+        thread,
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 1,
+        autoSettleOnMerge: false,
+      };
+      expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
+      ).toEqual(at(-1_000));
+    },
+  );
 
   it("settles on merge only after the user's last action and preserves the activity time", () => {
     const thread = shell({

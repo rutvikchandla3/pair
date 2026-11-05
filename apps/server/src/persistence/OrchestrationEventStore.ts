@@ -216,6 +216,7 @@ const rowToV2StoredEvent = Effect.fn("OrchestrationEventStore.rowToV2StoredEvent
       ? {}
       : { providerInstanceId: values.providerInstanceId }),
     ...(values.rawEventId === undefined ? {} : { rawEventId: values.rawEventId }),
+    ...(values.member === undefined ? {} : { member: values.member }),
   });
   return yield* decodeV2StoredEvent({
     sequence: row.sequence,
@@ -506,7 +507,13 @@ const makeEventStore = Effect.gen(function* () {
               ${input.commandId ?? null},
               ${event.rawEventId === undefined ? "server" : "provider"},
               ${storedPayload},
-              ${yield* encodeJson(metadataForV2Event(event))},
+              ${yield* encodeJson({
+                ...metadataForV2Event(event),
+                // A member event's personal state rides in metadata so replays keep it.
+                ...("member" in encoded && encoded.member !== undefined
+                  ? { member: encoded.member }
+                  : {}),
+              })},
               2
             )
             RETURNING sequence${

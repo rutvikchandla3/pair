@@ -92,6 +92,7 @@ import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as Members from "./persistence/Members.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -720,6 +721,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
     ownerId: MemberId.make("member-test"),
     members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(new Map()),
   }),
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
   Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),

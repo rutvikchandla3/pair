@@ -1,5 +1,6 @@
 import type {
   ApplicationStoredEvent,
+  MemberId,
   OrchestrationProjectShell,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledThreads,
@@ -32,6 +33,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+import { isMemberThreadEvent } from "./MemberThreadState.ts";
 import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 
 type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
@@ -434,6 +436,18 @@ export function shouldPublishShellApplicationEvent(
       event.type === "turn-item.updated" ||
       event.type === "provider-turn.updated" ||
       event.type === "message.updated")
+  );
+}
+
+/** Another member's personal change: refetching the shell would show this viewer nothing new. */
+export function isOtherMembersShellEvent(
+  stored: ApplicationStoredEvent,
+  viewer: MemberId | null,
+): boolean {
+  return (
+    !("aggregateKind" in stored) &&
+    isMemberThreadEvent(stored.event) &&
+    stored.event.member.memberId !== viewer
   );
 }
 

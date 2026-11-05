@@ -1873,6 +1873,27 @@ export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
 });
 export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
 
+/** One member's personal view of a thread; the holder's lives in the thread row instead. */
+export const ThreadMemberState = Schema.Struct({
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtc),
+  pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtc),
+  snoozedAt: Schema.NullOr(Schema.DateTimeUtc),
+  lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtc),
+  opens: LenientThreadOpens,
+});
+export type ThreadMemberState = typeof ThreadMemberState.Type;
+
+/** Server-internal: marks a personal event as one member's change. Transports strip it. */
+export const OrchestrationV2ThreadMemberEventField = Schema.Struct({
+  memberId: MemberId,
+  state: ThreadMemberState,
+});
+export type OrchestrationV2ThreadMemberEventField =
+  typeof OrchestrationV2ThreadMemberEventField.Type;
+
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
   threadId: ThreadId,
@@ -1917,6 +1938,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThread,
+    member: Schema.optional(OrchestrationV2ThreadMemberEventField),
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2327,6 +2349,20 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
+
+const ThreadMemberStateJson = ThreadMemberState.mapFields((fields) => ({
+  ...fields,
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+
+const OrchestrationV2ThreadMemberEventFieldJson = Schema.Struct({
+  memberId: MemberId,
+  state: ThreadMemberStateJson,
+});
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
@@ -2814,6 +2850,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
+    member: Schema.optional(OrchestrationV2ThreadMemberEventFieldJson),
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3002,6 +3039,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     settledAt: Schema.optional(Schema.DateTimeUtc),
@@ -3022,12 +3060,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.snooze"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
@@ -3040,12 +3080,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unpin"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),
@@ -3058,18 +3100,21 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.active.reorder"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     visitedAt: IsoDateTime,
@@ -3080,6 +3125,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.mark-unread"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),
@@ -3092,6 +3138,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
+    /** Only a limit-recovery snooze reads it: a non-holder's snooze is their own. */
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
