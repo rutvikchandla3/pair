@@ -69,10 +69,10 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
 ) {
   override get message(): string {
     return [
-      "No running T3 Code server found.",
+      "No running Pair server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
       ...(this.inLinkedWorktree
-        ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
+        ? ["In a linked worktree, pass --base-dir to sign in to a server outside it."]
         : []),
       "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
     ].join("\n");
@@ -85,8 +85,8 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
 ) {
   override get message(): string {
     return [
-      `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `The running Pair server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
+      `Use the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
     ].join("\n");
   }
 }
@@ -123,7 +123,7 @@ export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherE
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different Pair server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -141,7 +141,7 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a Pair server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -156,7 +156,7 @@ export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotP
   { devUrl: Schema.String },
 ) {
   override get message(): string {
-    return `Tailscale Serve can only proxy plain-HTTP local targets, and this dev server runs at ${this.devUrl}. Pair without --tailscale instead.`;
+    return `Tailscale Serve can only proxy plain-HTTP local targets, and this dev server runs at ${this.devUrl}. Run \`t3 pair\` without --tailscale instead.`;
   }
 }
 
@@ -191,13 +191,13 @@ const formatPairOutput = (input: {
   readonly notes: ReadonlyArray<string>;
 }): string =>
   [
-    `Pairing with ${input.serverLabel} (${input.origin}).`,
+    `Sign-in link for ${input.serverLabel} (${input.origin}).`,
     "",
     renderTerminalQrCode(input.pairingUrl),
     "",
-    `Pairing URL: ${input.pairingUrl}`,
+    `Sign-in link: ${input.pairingUrl}`,
     `App link: ${buildPairingAppLink(input.pairingUrl)}`,
-    `Token: ${input.token}`,
+    `Sign-in code: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
@@ -463,7 +463,7 @@ const labelFlag = Flag.String("label").pipe(
 
 const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDescription(
-    "Publish the server over Tailscale Serve HTTPS and pair through the tailnet URL.",
+    "Publish the server over Tailscale Serve HTTPS and sign in through the tailnet URL.",
   ),
   Flag.withDefault(false),
 );
@@ -484,7 +484,7 @@ export const pairCommand = Command.make("pair", {
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a pairing token for a running T3 Code server and print it as a QR code.",
+    "Create a one-time sign-in link for a running Pair server and print it as a QR code.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -533,7 +533,7 @@ export const pairCommand = Command.make("pair", {
         }
         if (target.variant === "dev" && target.state.devUrl === undefined) {
           notes.push(
-            "This dev server did not record its web URL; restart it so pairing can go through the web origin.",
+            "This dev server did not record its web URL; restart it so sign-in links can go through the web origin.",
           );
         }
       }

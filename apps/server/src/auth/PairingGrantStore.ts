@@ -96,7 +96,7 @@ export class ActivePairingLinksLoadError extends Schema.TaggedError<ActivePairin
   },
 ) {
   override get message(): string {
-    return "Failed to load active pairing links.";
+    return "Failed to load active sign-in links.";
   }
 }
 
@@ -108,7 +108,7 @@ export class PairingLinkRevokeError extends Schema.TaggedError<PairingLinkRevoke
   },
 ) {
   override get message(): string {
-    return `Failed to revoke pairing link '${this.pairingLinkId}'.`;
+    return `Failed to revoke sign-in link '${this.pairingLinkId}'.`;
   }
 }
 
@@ -122,7 +122,7 @@ export class PairingCredentialIssueError extends Schema.TaggedError<PairingCrede
   },
 ) {
   override get message(): string {
-    return `Failed to issue pairing credential '${this.pairingLinkId}' for '${this.subject}'.`;
+    return `Failed to issue sign-in code '${this.pairingLinkId}' for '${this.subject}'.`;
   }
 }
 
@@ -134,7 +134,7 @@ export class PairingCredentialRandomGenerationError extends Schema.TaggedError<P
   },
 ) {
   override get message(): string {
-    return `Failed to generate pairing credential data during '${this.operation}'.`;
+    return `Failed to generate sign-in code data during '${this.operation}'.`;
   }
 }
 
@@ -179,7 +179,7 @@ export class MemberPairingLinksRevokeError extends Schema.TaggedError<MemberPair
   },
 ) {
   override get message(): string {
-    return "Failed to revoke the member's pairing links.";
+    return "Failed to revoke the member's sign-in links.";
   }
 }
 

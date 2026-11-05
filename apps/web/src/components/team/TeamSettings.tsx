@@ -102,7 +102,7 @@ function TeamMembersSection({ environmentId }: { readonly environmentId: Environ
       {selfId === null ? (
         <SettingsRow
           title="Teams are not available on this server"
-          description="Update T3 Code on this environment to invite members."
+          description="Update Pair on this server to invite members."
         />
       ) : members.size === 0 ? (
         <SettingsRow title="Loading members…" role="status" />
