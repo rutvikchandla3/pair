@@ -125,6 +125,8 @@ export function withActor(
     case "thread.active.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.follow":
+    case "thread.unfollow":
     case "thread.metadata.update":
       return { ...command, actorId: memberId };
     default:

@@ -496,6 +496,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** A non-holder's follow, present only in their view; the holder follows implicitly. */
+  followedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   opens: Schema.optional(LenientThreadOpens),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -1883,6 +1885,10 @@ export const ThreadMemberState = Schema.Struct({
   snoozedAt: Schema.NullOr(Schema.DateTimeUtc),
   lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtc),
   opens: LenientThreadOpens,
+  /** Absent from member events stored before follows existed. */
+  followedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ThreadMemberState = typeof ThreadMemberState.Type;
 
@@ -2183,6 +2189,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  followedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   opens: Schema.optional(LenientThreadOpens),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -2249,8 +2256,8 @@ export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettle
 /**
  * Snapshots that leave out older settled threads (`omitOlderSettled`) name the cut and count, per
  * project, every thread `isOlderSettledThreadShell` matches, sent or not. `asOfSequence` is the
- * snapshot's own sequence: the counts are exact until a later change. On a server with more than
- * one member, `ownCounts` counts only the reading member's threads (no owner means the server owner).
+ * snapshot's own sequence: the counts are exact until a later change. With several members,
+ * `ownCounts` counts the reader's threads, held (no owner means the server owner's) or followed.
  */
 export const OrchestrationV2OlderSettledThreads = Schema.Struct({
   before: IsoDateTime,
@@ -2333,6 +2340,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  followedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -2359,6 +2367,9 @@ const ThreadMemberStateJson = ThreadMemberState.mapFields((fields) => ({
   snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
   snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  followedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 }));
 
 const OrchestrationV2ThreadMemberEventFieldJson = Schema.Struct({
@@ -2793,6 +2804,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  followedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -3089,6 +3101,18 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unpin"),
+    actorId: Schema.optional(MemberId),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.follow"),
+    actorId: Schema.optional(MemberId),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unfollow"),
     actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3861,7 +3885,7 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
-  /** Only this member's threads (no owner means the server owner); ignored with one member. */
+  /** Only this member's threads, held or followed (no owner means the server owner); ignored with one member. */
   ownerId: Schema.optionalKey(MemberId),
 });
 export type OrchestrationV2GetOlderSettledThreadsInput =

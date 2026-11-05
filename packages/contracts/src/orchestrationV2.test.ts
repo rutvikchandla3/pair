@@ -606,7 +606,7 @@ describe("member attribution", () => {
     ).toMatchObject({ actorId: "member-2", ownerId: "member-1" });
   });
 
-  it("round-trips a personal event's member state, and decodes actorId on personal commands", () => {
+  it("round-trips a personal event's member state stored before follows, and decodes actorId on personal commands", () => {
     const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
     const encodeEvent = Schema.encodeSync(OrchestrationV2DomainEventJson);
     const stored = {
@@ -630,7 +630,9 @@ describe("member attribution", () => {
       },
     };
     const event = decodeEvent(stored);
-    expect(event).toMatchObject({ member: { memberId: "member-2", state: { pinOrderKey: "a0" } } });
+    expect(event).toMatchObject({
+      member: { memberId: "member-2", state: { pinOrderKey: "a0", followedAt: null } },
+    });
     expect(encodeEvent(event)).toMatchObject({ member: stored.member });
 
     const decodeCommand = Schema.decodeSync(OrchestrationV2Command);

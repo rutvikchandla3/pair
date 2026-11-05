@@ -450,9 +450,9 @@ export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
   readonly limit: number;
-  /** Only this member's threads; a thread with no owner is the server owner's. */
+  /** Only this member's threads, held or followed; a thread with no owner is the server owner's. */
   readonly ownerId?: MemberId | undefined;
-  /** For `limit: 0`, also count this member's threads into `ownCounts`. */
+  /** For `limit: 0`, also count this member's threads (held or followed) into `ownCounts`. */
   readonly ownCountsFor?: MemberId | undefined;
 }
 
@@ -587,6 +587,9 @@ export interface ProjectionStoreV2Shape {
     memberId: MemberId,
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyMap<ThreadId, ThreadMemberState>, ProjectionStoreV2Error>;
+  readonly listFollowedThreadIds: (
+    memberId: MemberId,
+  ) => Effect.Effect<ReadonlySet<ThreadId>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -1139,6 +1142,7 @@ const ThreadMemberStateColumns = Schema.Struct({
   snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   opens: Schema.NullOr(Schema.fromJsonString(ThreadMemberState.fields.opens)),
+  followedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 const encodeThreadMemberStateColumns = Schema.encodeEffect(ThreadMemberStateColumns);
 const ThreadMemberStateRow = Schema.Struct({
@@ -2094,6 +2098,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       snoozed_at AS "snoozedAt",
       last_snooze_wake_at AS "lastSnoozeWakeAt",
       opens_json AS "opens",
+      followed_at AS "followedAt",
       updated_at AS "updatedAt"
     `;
 
@@ -2152,6 +2157,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       snoozed_at,
                       last_snooze_wake_at,
                       opens_json,
+                      followed_at,
                       updated_at
                     )
                     VALUES (
@@ -2165,6 +2171,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ${columns.snoozedAt},
                       ${columns.lastSnoozeWakeAt},
                       ${columns.opens},
+                      ${columns.followedAt},
                       ${updatedAt}
                     )
                     ON CONFLICT(thread_id, member_id)
@@ -2177,6 +2184,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       snoozed_at = excluded.snoozed_at,
                       last_snooze_wake_at = excluded.last_snooze_wake_at,
                       opens_json = excluded.opens_json,
+                      followed_at = excluded.followed_at,
                       updated_at = excluded.updated_at
                   `;
                   break;
@@ -7480,15 +7488,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit, ownerId, ownCountsFor }) {
-      const holder =
-        ownerId === undefined && ownCountsFor === undefined
-          ? sql`NULL`
-          : sql`COALESCE(json_extract(t.payload_json, '$.ownerId'), ${yield* serverOwnerId})`;
+      const serverOwner =
+        ownerId === undefined && ownCountsFor === undefined ? null : yield* serverOwnerId;
+      // A member's threads are those they hold and those they follow.
+      const isMine = (memberId: MemberId) => sql`(
+        COALESCE(json_extract(t.payload_json, '$.ownerId'), ${serverOwner}) = ${memberId}
+        OR EXISTS (
+          SELECT 1 FROM projection_thread_member_state member
+          WHERE member.thread_id = t.thread_id AND member.member_id = ${memberId}
+            AND member.followed_at IS NOT NULL
+        )
+      )`;
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
-          ${holder} AS holder_id
+          ${ownCountsFor === undefined ? sql`0` : isMine(ownCountsFor)} AS own
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
@@ -7497,7 +7512,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
-          }${ownerId === undefined ? sql`` : sql` AND ${holder} = ${ownerId}`}
+          }${ownerId === undefined ? sql`` : sql` AND ${isMine(ownerId)}`}
       `;
       const belowCursor =
         before.threadId === undefined
@@ -7524,7 +7539,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }>`
               WITH older AS (${older})
               SELECT older.project_id, COUNT(*) AS count,
-                COALESCE(SUM(older.holder_id = ${ownCountsFor ?? null}), 0) AS own_count
+                COALESCE(SUM(older.own), 0) AS own_count
               FROM older
               WHERE ${belowCursor}
               GROUP BY older.project_id
@@ -7682,6 +7697,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ),
     );
 
+    const listFollowedThreadIds = Effect.fn("ProjectionStore.listFollowedThreadIds")(
+      function* (memberId: MemberId) {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM projection_thread_member_state
+          WHERE member_id = ${memberId} AND followed_at IS NOT NULL
+        `;
+        return new Set(rows.map((row) => ThreadId.make(row.thread_id)));
+      },
+      Effect.mapError(
+        (cause) =>
+          new ProjectionStoreReadError({ threadId: ThreadId.make("thread:member-state"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7705,6 +7734,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadMemberState: readOnReader(getThreadMemberState),
       listThreadMemberStates: readOnReader(listThreadMemberStates),
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
+      listFollowedThreadIds: readOnReader(listFollowedThreadIds),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),

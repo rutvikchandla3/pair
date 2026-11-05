@@ -15,10 +15,12 @@ import * as Schema from "effect/Schema";
 import {
   clearedForSettle,
   EMPTY_MEMBER_STATE,
+  followedView,
   hasPersonalState,
   personalStateOf,
   transferHolder,
   viewFor,
+  withPersonalState,
   viewThreadEvent,
 } from "./MemberThreadState.ts";
 
@@ -109,6 +111,23 @@ describe("MemberThreadState", () => {
     assert.strictEqual(overlaid.title, shell.title);
   });
 
+  it("withPersonalState writes followedAt only when set", () => {
+    const followedAt = at("2026-10-01T07:00:00.000Z");
+    assert.isFalse("followedAt" in viewFor(thread, alice, aliceState, owner));
+    const following = viewFor(shell, alice, { ...aliceState, followedAt }, owner);
+    assert.deepStrictEqual(following.followedAt, followedAt);
+    assert.isFalse("followedAt" in withPersonalState(following, aliceState));
+  });
+
+  it("followedView baselines an unset visit and keeps an existing follow", () => {
+    const now = at("2026-10-01T07:00:00.000Z");
+    const fresh = followedView(viewFor(thread, bob, null, owner), now);
+    assert.deepStrictEqual([fresh.followedAt, fresh.lastVisitedAt], [now, now]);
+    const visited = followedView(viewFor(thread, alice, aliceState, owner), now);
+    assert.deepStrictEqual(visited.lastVisitedAt, aliceState.lastVisitedAt);
+    assert.strictEqual(followedView(visited, at("2026-10-01T08:00:00.000Z")), visited);
+  });
+
   it("viewThreadEvent drops other members' events and strips the viewer's own", () => {
     const pinned = event("thread.pinned", { memberId: alice, state: aliceState });
     assert.deepStrictEqual(viewThreadEvent(pinned, bob, owner, null), { event: null, cache: null });
@@ -156,18 +175,27 @@ describe("MemberThreadState", () => {
     assert.strictEqual(viewThreadEvent(linkUpdated, alice, owner, aliceState).event, linkUpdated);
   });
 
-  it("transferHolder swaps row and member state", () => {
-    const { row, demoted } = transferHolder(thread, owner, aliceState);
+  it("transferHolder swaps row and member state, leaving the old holder following", () => {
+    const now = at("2026-10-01T07:00:00.000Z");
+    const aliceFollowing = { ...aliceState, followedAt: at("2026-10-01T06:30:00.000Z") };
+    const { row, demoted } = transferHolder(thread, owner, aliceFollowing, now);
     assert.deepStrictEqual(personalStateOf(row), aliceState);
-    assert.deepStrictEqual(demoted, { memberId: owner, state: personalStateOf(thread) });
+    assert.isFalse("followedAt" in row);
+    assert.deepStrictEqual(demoted, {
+      memberId: owner,
+      state: { ...personalStateOf(thread), followedAt: now },
+    });
     assert.deepStrictEqual(
-      personalStateOf(transferHolder(thread, owner, null).row),
+      personalStateOf(transferHolder(thread, owner, null, now).row),
       EMPTY_MEMBER_STATE,
     );
   });
 
-  it("hasPersonalState counts pins, orders and snoozes but not visits or opens", () => {
+  it("hasPersonalState counts pins, orders and snoozes but not visits, opens or follows", () => {
     assert.isFalse(hasPersonalState(EMPTY_MEMBER_STATE));
+    const followOnly = { ...EMPTY_MEMBER_STATE, followedAt: at("2026-10-01T07:00:00.000Z") };
+    assert.isFalse(hasPersonalState(followOnly));
+    assert.deepStrictEqual(clearedForSettle(followOnly), followOnly);
     assert.isTrue(hasPersonalState(aliceState));
     const cleared = clearedForSettle(personalStateOf(thread));
     assert.isFalse(hasPersonalState(cleared));

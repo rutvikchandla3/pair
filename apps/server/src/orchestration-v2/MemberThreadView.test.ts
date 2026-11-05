@@ -86,6 +86,7 @@ const viewerWith = (
       reads.push(threadIds);
       return states;
     }),
+  readFollowedThreadIds: Effect.succeed(new Set()),
 });
 
 const pinned = (memberId?: MemberId, pinnedAt = alicesPin): OrchestrationV2DomainEvent =>
