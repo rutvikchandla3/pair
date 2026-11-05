@@ -42,7 +42,12 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { InviteMemberDialog, MemberLinkDialog } from "./InviteMemberDialog";
+import {
+  GitEmailField,
+  InviteMemberDialog,
+  isGitEmailPlausible,
+  MemberLinkDialog,
+} from "./InviteMemberDialog";
 import { MemberAvatar } from "./MemberAvatar";
 import { toastCommandFailure } from "./toastCommandFailure";
 
@@ -370,19 +375,22 @@ function EditMemberDialog({
   const [gitEmail, setGitEmail] = useState(member.gitEmail ?? "");
   const [busy, setBusy] = useState(false);
 
+  const trimmedGitName = gitName.trim();
+  const trimmedGitEmail = gitEmail.trim();
+  // An emptied git field is sent as null, which clears it.
   const changes = {
     ...(name.trim() !== "" && name.trim() !== member.name ? { name: name.trim() } : {}),
-    ...(gitName.trim() !== "" && gitName.trim() !== (member.gitName ?? "")
-      ? { gitName: gitName.trim() }
+    ...(trimmedGitName !== (member.gitName ?? "")
+      ? { gitName: trimmedGitName === "" ? null : trimmedGitName }
       : {}),
-    ...(gitEmail.trim() !== "" && gitEmail.trim() !== (member.gitEmail ?? "")
-      ? { gitEmail: gitEmail.trim() }
+    ...(trimmedGitEmail !== (member.gitEmail ?? "")
+      ? { gitEmail: trimmedGitEmail === "" ? null : trimmedGitEmail }
       : {}),
   } satisfies TeamUpdateSelfInput;
-  const hasChanges = Object.keys(changes).length > 0;
+  const canSave = Object.keys(changes).length > 0 && isGitEmailPlausible(trimmedGitEmail);
 
   const submit = async () => {
-    if (busy || !hasChanges) return;
+    if (busy || !canSave) return;
     setBusy(true);
     const result = isSelf
       ? await updateSelf({ environmentId, input: changes })
@@ -429,24 +437,14 @@ function EditMemberDialog({
                   disabled={busy}
                 />
               </label>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-foreground">
-                  Git email (optional)
-                </span>
-                <Input
-                  type="email"
-                  value={gitEmail}
-                  onChange={(event) => setGitEmail(event.target.value)}
-                  disabled={busy}
-                />
-              </label>
+              <GitEmailField value={gitEmail} onChange={setGitEmail} disabled={busy} />
             </div>
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button variant="outline" disabled={busy} onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy || !hasChanges}>
+            <Button type="submit" disabled={busy || !canSave}>
               {busy ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

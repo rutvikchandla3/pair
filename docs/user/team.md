@@ -28,6 +28,16 @@ Once two or more people have prompted the same thread, the agent sees each new m
 `Message from <name>:` so it knows who is asking. Threads only one person has prompted are sent
 to the agent unchanged.
 
+## Commits and pull requests
+
+Commits you make with the commit and pull request buttons are authored with your git email and
+git name, falling back to your member name. Set them under **Edit profile** in **Settings →
+Team**; an admin can set your email when inviting you, and clearing it makes your commits use the
+server's git identity again. The committer is always the server's own git identity, so the server
+still needs `user.name` and `user.email` configured.
+
+In a team, pull requests T3 Code opens end with `Requested by <name> via Pair`.
+
 ## Your threads and the Team shelf
 
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to

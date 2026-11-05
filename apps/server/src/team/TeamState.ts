@@ -19,8 +19,27 @@ export class TeamState extends Context.Service<
     /** Rereads the members first when the id is unknown, since the CLI writes them directly. */
     readonly isActive: (memberId: MemberId) => Effect.Effect<boolean, MemberRepositoryError>;
     readonly reload: Effect.Effect<void, MemberRepositoryError>;
+    /** Undefined, meaning the server's own identity, unless an active member set a git email. */
+    readonly gitAuthorFor: (memberId: MemberId) => Effect.Effect<GitAuthor | undefined>;
   }
 >()("t3/team/TeamState") {}
+
+export interface GitAuthor {
+  readonly name: string;
+  readonly email: string;
+}
+
+const gitAuthorFor =
+  (members: Ref.Ref<ReadonlyMap<MemberId, Members.MemberRecord>>) => (memberId: MemberId) =>
+    Ref.get(members).pipe(
+      Effect.map((current): GitAuthor | undefined => {
+        const member = current.get(memberId);
+        if (member === undefined || member.removedAt !== null || member.gitEmail === null) {
+          return undefined;
+        }
+        return { name: member.gitName ?? member.name, email: member.gitEmail };
+      }),
+    );
 
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));
@@ -59,6 +78,7 @@ const makeTeamState = Effect.gen(function* () {
     isTeamMode: isTeamMode(members),
     isActive,
     reload,
+    gitAuthorFor: gitAuthorFor(members),
   });
 });
 
@@ -91,6 +111,7 @@ export const layerTest = (records: ReadonlyArray<Members.MemberRecord> = [TEST_O
           return (yield* Ref.get(members)).get(memberId)?.removedAt === null;
         }),
         reload: Effect.void,
+        gitAuthorFor: gitAuthorFor(members),
       });
     }),
   );
