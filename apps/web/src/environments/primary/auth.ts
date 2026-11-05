@@ -7,6 +7,7 @@ import type {
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
+  MemberId,
 } from "@t3tools/contracts";
 import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
@@ -109,6 +110,7 @@ export interface ServerPairingLinkRecord {
   readonly id: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
+  readonly memberId?: MemberId;
   readonly label?: string;
   readonly createdAt: string;
   readonly expiresAt: string;
@@ -117,6 +119,7 @@ export interface ServerPairingLinkRecord {
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
+  readonly memberId?: MemberId;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
