@@ -109,9 +109,11 @@ approval page names the host access goes to and approving stays the user's
 call. Every client is public and proves itself with PKCE; a client that asks
 for a secret is registered without one. Client registration is stateless, so an unauthenticated caller cannot grow server
 state. Approval spends a one-time pairing code, or uses a browser session with
-`access:write`; proof-bound T3 Connect codes are refused without being spent.
-The client session belongs to the approving member: the pairing code's member,
-or the browser session's. Members approve with their own add-device code.
+`access:read`, never granting a scope that session lacks; proof-bound T3
+Connect codes are refused without being spent. The client session belongs to
+the approving member: the pairing code's member, or the browser session's.
+API tokens are `mcp-client` sessions a member issues for themselves; they reach
+only `/mcp`.
 
 The user grants either read-only access or a runtime-mode ceiling, not a
 scope list: MCP tools are all orchestration, and `orchestration:operate`

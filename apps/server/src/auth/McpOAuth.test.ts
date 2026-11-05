@@ -577,24 +577,36 @@ it.live("one-click approves only access the browser session holds the scopes for
       expect(forged.status).toBe(400);
       expect(forged.message).toContain("Enter a sign-in code instead");
 
-      const reader = yield* browserCookie(["access:write", "orchestration:read"]);
-      const readerDetails = yield* details(reader);
-      expect(readerDetails.csrfToken).toEqual(expect.any(String));
-      expect(readerDetails.oneClickAccess).toEqual(["read-only"]);
+      const noAccessRead = yield* browserCookie(["orchestration:read", "orchestration:operate"]);
+      expect((yield* details(noAccessRead)).csrfToken).toBeUndefined();
+
+      const member = yield* browserCookie([
+        "access:read",
+        "orchestration:read",
+        "orchestration:operate",
+      ]);
+      const memberDetails = yield* details(member);
+      expect(memberDetails.csrfToken).toEqual(expect.any(String));
+      expect(memberDetails.oneClickAccess).toEqual([
+        "read-only",
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+      ]);
       const tooBroad = yield* decide(
         handler,
         params,
-        { _tag: "browser-session", access: "auto", csrfToken: readerDetails.csrfToken! },
-        reader,
+        { _tag: "browser-session", access: "full-access", csrfToken: memberDetails.csrfToken! },
+        member,
       );
       expect(tooBroad.status).toBe(400);
-      const readOnly = yield* decide(
+      const memberAuto = yield* decide(
         handler,
         params,
-        { _tag: "browser-session", access: "read-only", csrfToken: readerDetails.csrfToken! },
-        reader,
+        { _tag: "browser-session", access: "auto", csrfToken: memberDetails.csrfToken! },
+        member,
       );
-      expect(new URL(readOnly.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+      expect(new URL(memberAuto.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
     }),
   ),
 );
@@ -658,7 +670,7 @@ it.live("issues each MCP client session to the member who approved it", () =>
       const bob = yield* addMember("bob");
       const bobPairing = yield* auth.issuePairingCredential({
         memberId: bob,
-        scopes: ["access:write", "orchestration:read"],
+        scopes: ["access:read", "orchestration:read"],
       });
       const browser = yield* handler(
         postJson("/api/auth/browser-session", { credential: bobPairing.credential }),
