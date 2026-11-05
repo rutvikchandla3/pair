@@ -39,7 +39,7 @@ still needs `user.name` and `user.email` configured.
 Agents commit as the thread's owner, from the next session after Assign. Cursor and OpenCode (v2 or
 an external server) commit as the server.
 
-In a team, pull requests T3 Code opens end with `Requested by <name> via Pair`.
+In a team, pull requests Pair opens end with `Requested by <name> via Pair`.
 
 ## Your threads and the Team shelf
 
