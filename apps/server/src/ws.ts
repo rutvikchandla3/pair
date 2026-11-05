@@ -132,6 +132,7 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
+import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
@@ -1478,6 +1479,7 @@ export const layerWsRpc = (
       const presence = yield* Presence.Presence;
       const teamState = yield* TeamState.TeamState;
       const memberProviderAccounts = yield* MemberProviderAccounts.MemberProviderAccounts;
+      const teamUsage = yield* TeamUsage.TeamUsage;
       const threadViewer = (yield* makeThreadViewers)(currentSession.memberId);
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2465,6 +2467,7 @@ export const layerWsRpc = (
           teamMembers.updateSelf(currentSession.memberId, input),
         [WS_METHODS.teamProviderAccountsMutate]: (input) =>
           memberProviderAccounts.mutate(currentSession.memberId, input),
+        [WS_METHODS.teamUsage]: (input) => teamUsage.summary(input),
         [WS_METHODS.presenceSubscribe]: (_input, metadata) =>
           Stream.unwrap(
             presence.subscribe({
@@ -3703,6 +3706,7 @@ export const layer = Layer.unwrap(
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),
+              Layer.provide(TeamUsage.layer),
               Layer.provide(
                 Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,

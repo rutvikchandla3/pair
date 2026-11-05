@@ -9,7 +9,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { useTeamSettingsVisible } from "~/state/team";
+import { useIsTeamMode, useTeamSettingsVisible } from "~/state/team";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import type { SettingsScopeSearch } from "./settingsScope";
@@ -46,6 +46,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
   const hasTeamSettings = useTeamSettingsVisible();
+  const isTeamMode = useIsTeamMode(primaryEnvironmentId);
   const cloudLinkState = usePrimaryCloudLinkState().data;
   // Same fallback as the Connections row: older servers imply a tunnel from `linked`.
   const managedTunnelActive =
@@ -72,5 +73,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     managedTunnelActive,
     hasPeerLinkHost,
     hasTeamSettings,
+    isTeamMode,
   });
 }

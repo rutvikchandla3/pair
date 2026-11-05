@@ -50,6 +50,7 @@ import {
   MemberLinkDialog,
 } from "./InviteMemberDialog";
 import { MemberAvatar } from "./MemberAvatar";
+import { MemberUsage } from "./MemberUsage";
 import { ProviderAccountsSection } from "./ProviderAccountsSection";
 import { toastCommandFailure } from "./toastCommandFailure";
 
@@ -242,6 +243,7 @@ function MemberRow({
                     .filter(Boolean)
                     .join(" · ")}
             </p>
+            <MemberUsage environmentId={environmentId} memberId={member.id} />
           </div>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">

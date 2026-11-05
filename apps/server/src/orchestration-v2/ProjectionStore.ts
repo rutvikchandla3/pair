@@ -45,6 +45,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  TeamUsageRow,
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
@@ -587,6 +588,10 @@ export interface ProjectionStoreV2Shape {
     memberId: MemberId,
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyMap<ThreadId, ThreadMemberState>, ProjectionStoreV2Error>;
+  /** Provider turns completed since `since`, per prompter and instance; agent runs are the holder's. */
+  readonly memberUsageSince: (
+    since: DateTime.Utc,
+  ) => Effect.Effect<ReadonlyArray<TeamUsageRow>, ProjectionStoreV2Error>;
   readonly listFollowedThreadIds: (
     memberId: MemberId,
   ) => Effect.Effect<ReadonlySet<ThreadId>, ProjectionStoreV2Error>;
@@ -7775,6 +7780,67 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ),
     );
 
+    const memberUsageSince = Effect.fn("ProjectionStore.memberUsageSince")(
+      function* (since: DateTime.Utc) {
+        const serverOwner = yield* serverOwnerId;
+        const usage = sql.literal("json_extract(turn.payload_json, '$.turnTokenUsage')");
+        const rows = yield* sql<{
+          readonly member_id: string;
+          readonly provider_instance_id: string;
+          readonly turns: number;
+          readonly input_tokens: number;
+          readonly output_tokens: number;
+          readonly unmeasured_turns: number;
+        }>`
+          WITH turns_since AS (
+            SELECT
+              COALESCE(
+                run.author_id,
+                json_extract(prompt.payload_json, '$.authorId'),
+                json_extract(thread.payload_json, '$.ownerId'),
+                ${serverOwner}
+              ) AS member_id,
+              run.provider_instance_id,
+              json_extract(${usage}, '$.inputTokens') AS input_tokens,
+              json_extract(${usage}, '$.cachedInputTokens') AS cached_input_tokens,
+              json_extract(${usage}, '$.outputTokens') AS output_tokens
+            FROM orchestration_v2_projection_provider_turns turn
+            JOIN orchestration_v2_projection_run_attempts attempt
+              ON attempt.attempt_id = turn.run_attempt_id
+            JOIN orchestration_v2_projection_runs run ON run.run_id = attempt.run_id
+            LEFT JOIN orchestration_v2_projection_messages prompt
+              ON prompt.message_id = json_extract(run.payload_json, '$.userMessageId')
+            LEFT JOIN orchestration_v2_projection_threads thread
+              ON thread.thread_id = run.thread_id
+            WHERE turn.completed_at >= ${DateTime.formatIso(since)}
+          )
+          SELECT
+            member_id,
+            provider_instance_id,
+            COUNT(*) AS turns,
+            TOTAL(MAX(0, COALESCE(input_tokens, 0) - COALESCE(cached_input_tokens, 0))) AS input_tokens,
+            TOTAL(COALESCE(output_tokens, 0)) AS output_tokens,
+            SUM(input_tokens IS NULL AND output_tokens IS NULL) AS unmeasured_turns
+          FROM turns_since
+          WHERE member_id IS NOT NULL AND provider_instance_id IS NOT NULL
+          GROUP BY member_id, provider_instance_id
+          ORDER BY member_id, provider_instance_id
+        `;
+        return rows.map((row): TeamUsageRow => ({
+          memberId: MemberId.make(row.member_id),
+          providerInstanceId: ProviderInstanceId.make(row.provider_instance_id),
+          turns: row.turns,
+          inputTokens: row.input_tokens,
+          outputTokens: row.output_tokens,
+          unmeasuredTurns: row.unmeasured_turns,
+        }));
+      },
+      Effect.mapError(
+        (cause) =>
+          new ProjectionStoreReadError({ threadId: ThreadId.make("thread:member-usage"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7799,6 +7865,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listThreadMemberStates: readOnReader(listThreadMemberStates),
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
+      memberUsageSince: readOnReader(memberUsageSince),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),

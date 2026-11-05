@@ -181,6 +181,8 @@ import {
   TeamStreamEvent,
   TeamUpdateInput,
   TeamUpdateSelfInput,
+  TeamUsageInput,
+  TeamUsageResult,
 } from "./team.ts";
 import {
   MemberProviderAccountMutation,
@@ -572,6 +574,7 @@ export const WS_METHODS = {
   teamRemove: "team.remove",
   teamUpdateSelf: "team.updateSelf",
   teamProviderAccountsMutate: "team.providerAccounts.mutate",
+  teamUsage: "team.usage",
   presenceSubscribe: "presence.subscribe",
   presenceReport: "presence.report",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
@@ -2028,6 +2031,12 @@ const WsTeamProviderAccountsMutateRpc = Rpc.make(WS_METHODS.teamProviderAccounts
   error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
 });
 
+const WsTeamUsageRpc = Rpc.make(WS_METHODS.teamUsage, {
+  payload: TeamUsageInput,
+  success: TeamUsageResult,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsPresenceSubscribeRpc = Rpc.make(WS_METHODS.presenceSubscribe, {
   payload: Schema.Struct({}),
   success: PresenceUpdate,
@@ -2092,6 +2101,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamRemoveRpc,
   WsTeamUpdateSelfRpc,
   WsTeamProviderAccountsMutateRpc,
+  WsTeamUsageRpc,
   WsPresenceSubscribeRpc,
   WsPresenceReportRpc,
   WsServerProbeRpc,

@@ -87,6 +87,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.teamSubscribe,
       WS_METHODS.teamUpdateSelf,
+      WS_METHODS.teamUsage,
       WS_METHODS.presenceSubscribe,
       WS_METHODS.presenceReport,
     ]) {

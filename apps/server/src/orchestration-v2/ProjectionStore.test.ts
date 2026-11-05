@@ -2424,6 +2424,238 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("counts member usage against each turn's prompter and instance", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const alice = MemberId.make("member-alice");
+    const bob = MemberId.make("member-bob");
+    const [owner] = yield* sql<{ readonly id: string }>`SELECT id FROM members WHERE is_owner = 1`;
+    const teamClaude = ProviderInstanceId.make("claudeAgent");
+    const bobsClaude = ProviderInstanceId.make("claudeAgent-bob");
+    const since = DateTime.makeUnsafe("2026-10-08T00:00:00.000Z");
+    const at = DateTime.makeUnsafe("2026-10-10T00:00:00.000Z");
+    const createThread = (threadId: ThreadId, ownerId: MemberId | null) =>
+      store.apply({
+        id: EventId.make(`event:${threadId}:created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:usage"),
+          title: String(threadId),
+          ownerId,
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: at,
+          updatedAt: at,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+    const turn = Effect.fnUntraced(function* (input: {
+      readonly key: string;
+      readonly ordinal: number;
+      readonly threadId: ThreadId;
+      readonly instanceId: ProviderInstanceId;
+      readonly authorId: MemberId | null;
+      readonly completedAt?: DateTime.Utc;
+      readonly usage?: { readonly input: number; readonly cached: number; readonly output: number };
+    }) {
+      const { key, threadId, instanceId } = input;
+      const runId = RunId.make(`run:${key}`);
+      const messageId = MessageId.make(`message:${key}`);
+      const nodeId = NodeId.make(`node:${key}`);
+      const attemptId = RunAttemptId.make(`attempt:${key}`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:${key}`);
+      const completedAt = input.completedAt ?? at;
+      yield* store.apply({
+        id: EventId.make(`event:${key}:message`),
+        type: "message.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          createdBy: input.authorId === null ? "agent" : "user",
+          creationSource: input.authorId === null ? "mcp" : "web",
+          ...(input.authorId === null ? {} : { authorId: input.authorId }),
+          id: messageId,
+          threadId,
+          runId,
+          nodeId: null,
+          role: "user",
+          text: "hello",
+          attachments: [],
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:${key}:run`),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: at,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: input.ordinal,
+          providerInstanceId: instanceId,
+          modelSelection: { ...modelSelection, instanceId },
+          providerThreadId,
+          userMessageId: messageId,
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId,
+          status: "completed",
+          requestedAt: at,
+          startedAt: at,
+          completedAt,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:${key}:attempt`),
+        type: "run-attempt.created",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: at,
+        payload: {
+          id: attemptId,
+          runId,
+          attemptOrdinal: 1,
+          rootNodeId: nodeId,
+          providerInstanceId: instanceId,
+          providerThreadId,
+          providerTurnId: ProviderTurnId.make(`provider-turn:${key}`),
+          reason: "initial",
+          status: "completed",
+          startedAt: at,
+          completedAt,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:${key}:provider-turn`),
+        type: "provider-turn.updated",
+        threadId,
+        nodeId,
+        driver,
+        occurredAt: completedAt,
+        payload: {
+          id: ProviderTurnId.make(`provider-turn:${key}`),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed",
+          startedAt: at,
+          completedAt,
+          ...(input.usage === undefined
+            ? {}
+            : {
+                turnTokenUsage: {
+                  usageScope: "main_agent",
+                  usageStatus: "complete",
+                  hasSubagents: false,
+                  inputTokens: input.usage.input,
+                  cachedInputTokens: input.usage.cached,
+                  outputTokens: input.usage.output,
+                },
+              }),
+        },
+      });
+    });
+
+    const alicesThread = ThreadId.make("thread:usage:alice");
+    const unownedThread = ThreadId.make("thread:usage:unowned");
+    yield* createThread(alicesThread, alice);
+    yield* createThread(unownedThread, null);
+    const usage = { input: 1_000, cached: 800, output: 50 };
+    yield* turn({
+      key: "bob-prompts",
+      ordinal: 1,
+      threadId: alicesThread,
+      instanceId: bobsClaude,
+      authorId: bob,
+      usage,
+    });
+    yield* turn({
+      key: "agent",
+      ordinal: 2,
+      threadId: alicesThread,
+      instanceId: teamClaude,
+      authorId: null,
+      usage,
+    });
+    yield* turn({
+      key: "old-row",
+      ordinal: 3,
+      threadId: alicesThread,
+      instanceId: teamClaude,
+      authorId: bob,
+      usage,
+    });
+    yield* sql`UPDATE orchestration_v2_projection_runs SET author_id = NULL WHERE run_id = 'run:old-row'`;
+    yield* turn({
+      key: "unmeasured",
+      ordinal: 1,
+      threadId: unownedThread,
+      instanceId: teamClaude,
+      authorId: null,
+    });
+    yield* turn({
+      key: "before-window",
+      ordinal: 4,
+      threadId: alicesThread,
+      instanceId: teamClaude,
+      authorId: alice,
+      completedAt: DateTime.makeUnsafe("2026-10-07T23:59:59.000Z"),
+      usage,
+    });
+
+    const row = (
+      memberId: string,
+      instanceId: ProviderInstanceId,
+      turns: number,
+      unmeasured = 0,
+    ) => ({
+      memberId,
+      providerInstanceId: instanceId,
+      turns,
+      inputTokens: (turns - unmeasured) * 200,
+      outputTokens: (turns - unmeasured) * 50,
+      unmeasuredTurns: unmeasured,
+    });
+    assert.sameDeepMembers(
+      [...(yield* store.memberUsageSince(since))],
+      [
+        row(bob, bobsClaude, 1),
+        row(alice, teamClaude, 1),
+        row(bob, teamClaude, 1),
+        row(owner!.id, teamClaude, 1, 1),
+      ],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
