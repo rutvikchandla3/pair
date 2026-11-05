@@ -4005,6 +4005,7 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+      assert.notProperty(runtimeInputs[1], "processEnvironment");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -4335,7 +4336,7 @@ describe("AcpAdapterV2", () => {
         threadId: sourceThreadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-native-fork"),
         modelSelection,
-        runtimePolicy,
+        runtimePolicy: { ...runtimePolicy, gitAuthor: { name: "Bob", email: "bob@example.com" } },
       });
 
       assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
@@ -4431,7 +4432,10 @@ describe("AcpAdapterV2", () => {
         {
           sessionId: "mock-session-1-fork",
           command: process.execPath,
-          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+          args: [
+            "-e",
+            "process.stdout.write(`${process.env.T3_ACP_MCP_AUTHORIZATION} ${process.env.GIT_AUTHOR_EMAIL}`)",
+          ],
         },
         { requestId: "test-terminal-create", method: "terminal/create" },
       );
@@ -4449,7 +4453,7 @@ describe("AcpAdapterV2", () => {
         },
         { requestId: "test-terminal-output", method: "terminal/output" },
       );
-      assert.equal(terminalOutput.output, "Bearer target-thread-token");
+      assert.equal(terminalOutput.output, "Bearer target-thread-token bob@example.com");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -5018,7 +5022,7 @@ describe("AcpAdapterV2", () => {
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-rollback-session"),
         modelSelection,
-        runtimePolicy,
+        runtimePolicy: { ...runtimePolicy, gitAuthor: { name: "Bob", email: "bob@example.com" } },
       });
       assert.isTrue(runtime.providerSession.capabilities.threads.canRollbackThread);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -5081,6 +5085,10 @@ describe("AcpAdapterV2", () => {
         runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION,
         "Bearer rollback-target-token",
       );
+      assert.deepEqual(
+        runtimeInputs.map((input) => input.processEnvironment?.GIT_AUTHOR_EMAIL),
+        ["bob@example.com", "bob@example.com"],
+      );
       const replacementMcpServer = runtimeInputs[1]?.mcpServers[0];
       const replacementMcpEnvironment =
         replacementMcpServer !== undefined &&
@@ -5105,7 +5113,10 @@ describe("AcpAdapterV2", () => {
           threadId: rollbackThreadId,
           providerThread: rolledBack.providerThread,
           instanceId,
-          runtimePolicy,
+          runtimePolicy: {
+            ...runtimePolicy,
+            gitAuthor: { name: "Alice", email: "alice@example.com" },
+          },
           now: yield* DateTime.now,
           ordinal: 2,
         }),
@@ -5125,6 +5136,7 @@ describe("AcpAdapterV2", () => {
         }
       }
       assert.equal(secondStatus, "completed");
+      assert.lengthOf(runtimeInputs, 2);
       yield* nativeRuntimes[1]!.drainEvents;
       assert.isAbove(sessionEventCount, sessionEventsBeforeSecondTurn);
     }).pipe(Effect.provide(layerTest), Effect.scoped),

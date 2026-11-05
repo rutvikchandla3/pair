@@ -5600,10 +5600,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const commit = yield* driver.commit(cwd, "Add a", "", { stage: { filePaths: ["a.txt"] } });
         assert.match(commit.commitSha, /^[a-f0-9]{40}$/);
         assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
+        const identity = ["log", "-1", "--format=%an|%ae|%cn|%ce"];
+        assert.equal(yield* git(cwd, identity), "Test|test@test.com|Test|test@test.com");
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? b.txt");
         assert.notInclude(status, "a.txt");
+
+        yield* driver.commit(cwd, "Add b", "", {
+          stage: { filePaths: ["b.txt"] },
+          author: { name: "Bob O'Hara", email: "bob@example.com" },
+        });
+        assert.equal(yield* git(cwd, identity), "Bob O'Hara|bob@example.com|Test|test@test.com");
       }),
     );
 

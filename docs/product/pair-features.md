@@ -43,6 +43,33 @@ T3 Code throughout.
 - Pair's name, mark and icons across web, desktop, mobile, the CLI and the user guides.
 - Install identifiers, `t3` commands and upstream services are unchanged.
 
+### Git identity · [#12](https://github.com/rutvikchandla3/t3code/pull/12) [#13](https://github.com/rutvikchandla3/t3code/pull/13)
+
+- **Commits from the git button** are authored by the member who clicked, using the git email from
+  their invite or **Edit profile**. The server stays the committer.
+- **Agents commit as the thread's owner,** from the next session after an Assign. Cursor and
+  OpenCode v2 still commit as the server.
+- **Pull requests Pair opens** end with `Requested by <name> via Pair`.
+- Clearing your git email makes your commits the server's again.
+
+### Presence · [#15](https://github.com/rutvikchandla3/t3code/pull/15) [#16](https://github.com/rutvikchandla3/t3code/pull/16) [#17](https://github.com/rutvikchandla3/t3code/pull/17)
+
+- **Who is here.** The server tracks who is viewing and typing, and sends nothing while you're
+  alone. The thread header shows who else is viewing, with away members drawn hollow.
+- **"Bob is typing"** above the composer.
+- **Viewers in the sidebar** on each thread's row, and **Online** or **Away** in **Settings → Team**.
+  Away means no input for 10 minutes.
+
+### Team API · [#19](https://github.com/rutvikchandla3/t3code/pull/19) [#20](https://github.com/rutvikchandla3/t3code/pull/20)
+
+- **API tokens.** Members create their own tokens in **Settings → Sharing & access → Authorized
+  clients**, for the MCP endpoint, so scripts, CI and other agents can start, message and read
+  threads as them. A token is shown once, expires after 30, 90 or 365 days, and is capped at the
+  member's own access.
+- Members revoke their own clients and approve an agent's sign-in with one click.
+- **`t3 thread` from anywhere** with a token, acting as its member, and one guide to agents and
+  automation: [Agents and automation](../user/outside-agents.md).
+
 ## Built
 
 ### Collaborative control
@@ -52,33 +79,15 @@ T3 Code throughout.
 - **The timeline records who changed what:** renames, archive, settle, permission changes,
   assignments and pull request links, each naming the member.
 - **Queued messages belong to their author.** Only the author or the thread owner can send, remove
-  or reorder one, and only the author can edit its text. _(In progress.)_
-- **Revert warns** when it would discard a teammate's turns. _(In progress.)_
-
-### Git identity
-
-- **Commits from the git button** are authored by the member who clicked, using the git email from
-  their invite or **Edit profile**. The server stays the committer.
-- **Agents commit as the thread's owner.** Cursor and OpenCode v2 still commit as the server.
-- **Pull requests Pair opens** end with `Requested by <name> via Pair`.
-
-### Presence
-
-- **Who is here.** The server tracks who is viewing and typing, and sends nothing while you're
-  alone. The thread header shows who else is viewing, with away members drawn hollow.
-  _(Header in progress.)_
-- **"Bob is typing"** above the composer. _(In progress.)_
-- **Online and away** in the sidebar and **Settings → Team**. _(In progress.)_
+  or reorder one, and only the author can edit its text.
+- **Revert warns** when it would discard a teammate's turns: "Discards 2 turns by Alice".
 
 ## Planned
 
-- **Team API.** Members create their own revocable API tokens for the MCP endpoint and the `t3
-  thread` command line, so scripts, CI and other agents can start, message and read threads as
-  them. Includes one guide to agents and automation.
 - **Bring your own subscription.** Members connect their own Claude or ChatGPT account. A new
-  thread uses its creator's account, and usage is shown per member.
+  thread uses its creator's account, and usage is shown per member. _(In progress.)_
 - **GitHub sign-in.** Members connect GitHub with the device flow, so pull requests open as the
-  person. GitHub sign-in can replace sign-in links.
+  person. GitHub sign-in can replace sign-in links. _(In progress.)_
 - **Mobile parity.** Names, avatars, the Team shelf, Follow, presence and per-member push
   notifications in the iOS and Android apps.
 

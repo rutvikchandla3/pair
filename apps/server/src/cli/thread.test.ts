@@ -1,8 +1,57 @@
-import { assert, it } from "@effect/vitest";
-import { RunId, ThreadId } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
+// @effect-diagnostics nodeBuiltinImport:off - the fixture serves /mcp on a real port.
+import * as NodeHttp from "node:http";
+import * as NodePath from "node:path";
 
-import { readLatestMessages, type ThreadTools, titleFromMessage, waitForRun } from "./thread.ts";
+import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  MemberId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as NetService from "@t3tools/shared/Net";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { Tool, Toolkit } from "effect/ai";
+import { Command } from "effect/cli";
+import { HttpRouter, HttpServer } from "effect/http";
+
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as McpOAuth from "../auth/McpOAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { cli } from "../binCli.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as Members from "../persistence/Members.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import {
+  makePersistedServerRuntimeState,
+  persistServerRuntimeState,
+} from "../serverRuntimeState.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
+import {
+  readLatestMessages,
+  resolveProject,
+  ThreadUnauthorizedError,
+  ThreadUsageError,
+  type ThreadTools,
+  titleFromMessage,
+  waitForRun,
+} from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -165,3 +214,180 @@ it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
   assert.strictEqual(title, `${"a".repeat(78)}…`);
 });
+
+const projects = [
+  { id: "project-api", title: "API", workspaceRoot: "/srv/api" },
+  { id: "project-web", title: "Web", workspaceRoot: "/srv/web" },
+  { id: "project-web-2", title: "web", workspaceRoot: "/srv/web-2" },
+];
+
+it.effect("resolves a remote project by id, server folder, or unique title", () =>
+  Effect.gen(function* () {
+    const { tools } = scriptedTools({
+      t3_project_list: Array.from({ length: 5 }, () => ({ projects, nextCursor: null })),
+    });
+    const resolve = (identifier: string) =>
+      resolveProject(tools, identifier, { remote: true }).pipe(
+        Effect.map((project) => project.id),
+        Effect.catch((error) => Effect.succeed(error._tag)),
+      );
+
+    assert.strictEqual(yield* resolve("project-web"), "project-web");
+    assert.strictEqual(yield* resolve("/srv/web-2"), "project-web-2");
+    assert.strictEqual(yield* resolve("api"), "project-api");
+    assert.strictEqual(yield* resolve("WEB"), "ThreadUsageError");
+    assert.strictEqual(yield* resolve("."), "ThreadProjectNotFoundError");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const ProbeToolkit = Toolkit.make(
+  Tool.make("t3_project_list", {
+    description: "Lists projects.",
+    parameters: Schema.Struct({ cursor: Schema.optional(Schema.Int) }),
+    success: Schema.Struct({
+      projects: Schema.Array(
+        Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
+      ),
+      nextCursor: Schema.NullOr(Schema.Int),
+    }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+  }),
+  Tool.make("t3_thread_launch", {
+    description: "Records who launched.",
+    parameters: Schema.Struct({ projectId: ProjectId, title: Schema.String }),
+    success: Schema.Struct({
+      threadId: ThreadId,
+      projectId: ProjectId,
+      runId: Schema.NullOr(RunId),
+    }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: [McpInvocationContext.McpInvocationContext],
+  }),
+);
+
+const layerMcpAuth = Layer.mergeAll(EnvironmentAuth.layer, McpSessionRegistry.layer).pipe(
+  Layer.provideMerge(
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-thread-cli-test")),
+    }),
+  ),
+  Layer.provideMerge(Sqlite.layerMemory),
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(ManagedPolicy.layerTest()),
+  Layer.provideMerge(ServerEnvironment.layerIdentity),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-thread-cli-test-" })),
+  Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { port: 0, host: "127.0.0.1" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+/**
+ * Serves /mcp with the real API-token check. A launched thread belongs to
+ * the client's member, as `t3_thread_launch` assigns it.
+ */
+const serveMcp = Effect.gen(function* () {
+  const owners: Array<MemberId | undefined> = [];
+  yield* HttpRouter.serve(
+    McpHttpServer.layerMcpTransport(
+      McpHttpServer.toolkitRegistration(
+        ProbeToolkit,
+        McpToolAccess.toLayer(ProbeToolkit, {
+          t3_project_list: McpToolAccess.reads(() =>
+            Effect.succeed({
+              projects: projects.map((p) => ({ ...p, id: ProjectId.make(p.id) })),
+              nextCursor: null,
+            }),
+          ),
+          t3_thread_launch: McpToolAccess.reads(({ projectId }) =>
+            McpInvocationContext.McpInvocationContext.pipe(
+              Effect.map((scope) => {
+                owners.push(scope.client?.memberId);
+                return { threadId: ThreadId.make("thread-ci"), projectId, runId: null };
+              }),
+            ),
+          ),
+        }),
+      ),
+    ).pipe(
+      Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+      Layer.provide(ServerSettings.layerTest()),
+    ),
+    { disableListenLog: true, disableLogger: true },
+  ).pipe(Layer.build);
+  const origin = HttpServer.formatAddress((yield* HttpServer.HttpServer).address);
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const members = yield* Members.MemberRepository;
+  const teamState = yield* TeamState.TeamState;
+  const bob = MemberId.make("member-bob");
+  yield* members.insert({
+    id: bob,
+    name: "bob",
+    role: "member",
+    gitName: null,
+    gitEmail: null,
+    createdAt: "2026-09-01T00:00:00.000Z",
+  });
+  yield* teamState.reload;
+  const token = yield* auth.issueMcpClientSession({
+    memberId: bob,
+    label: "CI",
+    access: "auto",
+    peerLink: false,
+    client: { deviceType: "bot" },
+  });
+  return { owners, bob, token, auth, origin };
+});
+
+const runCli = (args: ReadonlyArray<string>, env: Record<string, string>) =>
+  Command.runWith(cli, { version: "0.0.0" })(args).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromUnknown(env)),
+      ),
+    ),
+  );
+
+it.effect("--url needs T3CODE_TOKEN", () =>
+  Effect.gen(function* () {
+    const error = yield* runCli(
+      ["thread", "list", "--url", "http://127.0.0.1:9", "--project", "API"],
+      {},
+    ).pipe(Effect.flip);
+    assert.instanceOf(error, ThreadUsageError);
+  }),
+);
+
+it.effect.each(["--url", "this machine's server"] as const)(
+  "a token acts as its member through %s, until it is revoked",
+  (route) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { owners, bob, token, auth, origin } = yield* serveMcp;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-cli-" });
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        }),
+      });
+      const env = {
+        T3CODE_TOKEN: token.token,
+        ...(route === "--url" ? { T3CODE_URL: origin } : {}),
+      };
+      // Remotely a path is the server's; locally it is this machine's folder.
+      const project = route === "--url" ? "/srv/api" : "project-api";
+      const start = runCli(["thread", "start", project, "Ship it", "--base-dir", baseDir], env);
+
+      yield* start;
+      assert.deepStrictEqual(owners, [bob]);
+
+      yield* auth.revokeSession(token.sessionId);
+      const error = yield* start.pipe(Effect.flip);
+      assert.instanceOf(error, ThreadUnauthorizedError);
+    }).pipe(Effect.provide(layerMcpAuth), Effect.scoped),
+);

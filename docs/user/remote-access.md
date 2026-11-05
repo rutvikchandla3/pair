@@ -317,7 +317,7 @@ environment of an already running T3 server.
 
 Claude Code, Codex, ChatGPT and other agents Pair did not start can drive
 threads on an environment through its MCP server. See
-[outside agents](./outside-agents.md) for setup.
+[agents and automation](./outside-agents.md) for setup.
 
 ## Link another environment
 
@@ -455,7 +455,7 @@ screenshots, logs, or bug reports.
 `t3 member` manages who can use a server, the same as **Settings → Team**:
 
 ```sh
-npx t3 member invite "Ada Lovelace" --role admin
+npx t3 member invite "Ada Lovelace" --role admin --git-email ada@example.com
 npx t3 member list
 npx t3 member signin-link "ada lovelace"
 npx t3 member remove "ada lovelace"
@@ -470,7 +470,9 @@ devices.
 
 `t3 pair` and `t3 auth session issue` take `--member` to issue the credential
 to that member instead of the owner. It gets the member's role permissions;
-`--scope` can narrow them but not add to them.
+`--scope` can narrow them but not add to them. These credentials sign in to the
+app; for agents and scripts, the member creates an
+[API token](./outside-agents.md#api-tokens).
 
 ## T3 Connect troubleshooting
 

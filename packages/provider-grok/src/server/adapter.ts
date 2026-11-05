@@ -296,7 +296,11 @@ export function makeGrokAcpAdapterFlavor(
           ...input,
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
-          environment: options.environment,
+          // Only the author keys: Grok's MCP env stays as it was.
+          environment: {
+            ...options.environment,
+            ...ProviderAdapter.gitAuthorEnvironment(runtimePolicy),
+          },
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
     // Auto prompts represent classifier refusals and must reach the user.

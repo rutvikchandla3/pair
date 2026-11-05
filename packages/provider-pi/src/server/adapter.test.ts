@@ -1578,7 +1578,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
+  it.effect("injects the T3 MCP extension, bearer and git author when a session exists", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-pi-mcp"),
@@ -1590,8 +1590,14 @@ describe("PiAdapterV2", () => {
         browserToolsAvailable: true,
       });
       const fake = yield* makeFakePi;
-      yield* openRuntime(fake);
+      yield* (yield* makeAdapter(fake, "")).openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: { ...runtimePolicy, gitAuthor: { name: "Bob", email: "bob@example.com" } },
+      });
       const spawn = fake.lastSpawn();
+      assert.equal(spawn.env.GIT_AUTHOR_EMAIL, "bob@example.com");
       assert.isTrue(spawn.args.includes("--extension"));
       const extensions = spawn.args.flatMap((arg, index) =>
         arg === "--extension" ? [spawn.args[index + 1]] : [],

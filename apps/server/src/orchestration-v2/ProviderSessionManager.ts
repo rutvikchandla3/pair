@@ -308,10 +308,12 @@ function providerThreadLoadKey(input: {
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): string {
+  // A new holder's git author waits for the next launch, so it must not reload a loaded thread.
+  const { gitAuthor: _gitAuthor, ...runtimePolicy } = input.runtimePolicy ?? {};
   return JSON.stringify({
     providerThread: providerThreadRuntimeKey(input.providerThread),
     modelSelection: input.modelSelection ?? null,
-    runtimePolicy: input.runtimePolicy ?? null,
+    runtimePolicy: input.runtimePolicy === undefined ? null : runtimePolicy,
   });
 }
 
