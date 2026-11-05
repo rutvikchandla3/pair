@@ -12,6 +12,7 @@ import {
   type ChatAttachment,
   CommandId,
   isListedThreadLineage,
+  type MemberId,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -89,6 +90,33 @@ export function withCreationProvenance(
     case "thread.merge_back":
     case "delegated_task.request":
       return { ...command, ...provenance };
+    default:
+      return command;
+  }
+}
+
+/** Attribution comes only from the session that sent the command; a client cannot claim it. */
+export function withActor(
+  command: OrchestrationV2Command,
+  memberId: MemberId,
+): OrchestrationV2Command {
+  switch (command.type) {
+    case "thread.create": {
+      // A client's `ownerId` is dropped too: only the server creates on another member's behalf.
+      const { ownerId: _ownerId, ...create } = command;
+      return { ...create, actorId: memberId };
+    }
+    case "thread.stop":
+    case "thread.delete":
+    case "message.dispatch":
+    case "run.interrupt":
+    case "queued-run.edit":
+    case "runtime-request.respond":
+    case "thread.user-input.dismiss":
+    case "checkpoint.rollback":
+    case "thread.fork":
+    case "thread.owner.set":
+      return { ...command, actorId: memberId };
     default:
       return command;
   }
@@ -470,7 +498,7 @@ export interface ThreadManagementServiceShape {
    * its turn as interrupted. Never kills a process other working threads share.
    */
   readonly forceStopThread: (
-    input: OrchestrationV2ForceStopThreadInput,
+    input: OrchestrationV2ForceStopThreadInput & { readonly actorId?: MemberId },
   ) => Effect.Effect<OrchestrationV2ForceStopThreadResult, OrchestrationV2ForceStopThreadError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
@@ -1165,6 +1193,7 @@ const make = Effect.gen(function* () {
         const commandId = CommandId.make(
           `server:force-stop:${run.id}:${yield* Clock.currentTimeMillis}`,
         );
+        const actor = input.actorId === undefined ? {} : { actorId: input.actorId };
         yield* providerTurn === undefined && !active
           ? Effect.void
           : providerTurn === undefined
@@ -1174,6 +1203,7 @@ const make = Effect.gen(function* () {
                 threadId: input.threadId,
                 runId: run.id,
                 reason: FORCE_STOP_REASON,
+                ...actor,
               })
             : orchestrator.dispatch({
                 type: "thread.background-work.settle",
@@ -1182,6 +1212,7 @@ const make = Effect.gen(function* () {
                 providerThreadId: providerTurn.providerThreadId,
                 providerTurnId: providerTurn.id,
                 reason: FORCE_STOP_REASON,
+                ...actor,
               });
       }
       const ownProviderThreadIds = records.providerThreads.flatMap((providerThread) =>

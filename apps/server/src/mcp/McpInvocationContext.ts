@@ -1,6 +1,7 @@
 import {
   type AuthMcpClientAccess,
   type EnvironmentId,
+  type MemberId,
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
   PreviewAutomationUnavailableError,
@@ -33,6 +34,8 @@ export interface McpThreadCaller {
 
 export interface McpClientCaller {
   readonly sessionId: string;
+  /** The member who connected the client; threads it starts are theirs. */
+  readonly memberId?: MemberId | undefined;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
   /**

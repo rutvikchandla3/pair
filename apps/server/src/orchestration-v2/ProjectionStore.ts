@@ -1595,6 +1595,7 @@ export function threadShellFromProjection(
     pullRequests: projection.thread.pullRequests,
   });
   return {
+    ...(projection.thread.ownerId === undefined ? {} : { ownerId: projection.thread.ownerId }),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
     id: projection.thread.id,
@@ -1909,6 +1910,7 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.ownerId === undefined ? {} : { ownerId: input.state.thread.ownerId }),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,

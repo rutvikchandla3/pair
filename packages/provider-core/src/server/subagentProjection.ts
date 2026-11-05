@@ -61,8 +61,15 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // The child keeps the parent's owner; who prompted the parent and its rollbacks stay with the parent.
+  const {
+    ownerUpdatedBy: _ownerUpdatedBy,
+    humanAuthorIds: _humanAuthorIds,
+    lastRollback: _lastRollback,
+    ...parentThread
+  } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...parentThread,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

@@ -18,6 +18,7 @@ import {
   GuestMessageId,
   GuestShareId,
   IsoDateTime,
+  MemberId,
   MessageId,
   EnvironmentId,
   NodeId,
@@ -512,6 +513,17 @@ export const OrchestrationV2AppThread = Schema.Struct({
         message: TrimmedNonEmptyString,
       }),
     ),
+  ),
+  /** Absent on threads written before ownership existed; read as null. */
+  ownerId: Schema.optional(Schema.NullOr(MemberId)),
+  ownerUpdatedBy: Schema.optional(MemberId),
+  humanAuthorIds: Schema.optional(Schema.Array(MemberId)),
+  lastRollback: Schema.optional(
+    Schema.Struct({
+      actorId: Schema.optional(MemberId),
+      checkpointId: CheckpointId,
+      requestedAt: Schema.DateTimeUtc,
+    }),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
@@ -1226,6 +1238,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   decision: Schema.optional(ProviderApprovalDecision),
   feedback: Schema.optional(Schema.String),
   answers: Schema.optional(ProviderUserInputAnswers),
+  resolvedBy: Schema.optional(MemberId),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
@@ -1285,7 +1298,12 @@ export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Typ
 export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpires", "onReturn"]);
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
+export const OrchestrationV2SenderLabel = Schema.Literals(["name", "name_with_note"]);
+export type OrchestrationV2SenderLabel = typeof OrchestrationV2SenderLabel.Type;
+
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  authorId: Schema.optional(MemberId),
+  senderLabel: Schema.optional(OrchestrationV2SenderLabel),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1607,6 +1625,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    authorId: OrchestrationV2ConversationMessage.fields.authorId,
+    senderLabel: OrchestrationV2ConversationMessage.fields.senderLabel,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     /** Same as the text of message `messageId`. */
@@ -1651,6 +1671,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
     questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
+    resolvedBy: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1697,6 +1718,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1714,6 +1736,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     message: Schema.String,
     /** Set when the provider did not confirm the stop in time; clients then offer Force stop. */
     unresponsiveAt: Schema.optionalKey(Schema.DateTimeUtc),
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2147,6 +2170,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  ownerId: Schema.optional(Schema.NullOr(MemberId)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2292,6 +2316,13 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
         startedAt: Schema.DateTimeUtcFromString,
       }),
     ),
+  ),
+  lastRollback: Schema.optional(
+    Schema.Struct({
+      actorId: Schema.optional(MemberId),
+      checkpointId: CheckpointId,
+      requestedAt: Schema.DateTimeUtcFromString,
+    }),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
@@ -2443,6 +2474,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    authorId: OrchestrationV2ConversationMessage.fields.authorId,
+    senderLabel: OrchestrationV2ConversationMessage.fields.senderLabel,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
@@ -2484,6 +2517,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
     questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
+    resolvedBy: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2530,6 +2564,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2543,6 +2578,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
     unresponsiveAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2895,6 +2931,7 @@ export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJs
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.stop"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
@@ -2906,6 +2943,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    actorId: Schema.optional(MemberId),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -2916,6 +2954,8 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /** Only the server sets this, for threads created on a member's behalf (scheduled task, MCP client). */
+    ownerId: Schema.optional(MemberId),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
@@ -2954,6 +2994,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.delete"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     /** Delete only a thread with no runs and no messages; otherwise succeed without a change. */
@@ -3041,6 +3082,13 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.mark-unread"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.owner.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ownerId: MemberId,
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
@@ -3145,6 +3193,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    actorId: Schema.optional(MemberId),
     notification: Schema.optional(OrchestrationV2Notification),
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
@@ -3225,6 +3274,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
@@ -3264,6 +3314,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
+    actorId: Schema.optional(MemberId),
     context: Schema.optional(OrchestrationMessageContext),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3274,6 +3325,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -3284,12 +3336,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback"),
+    actorId: Schema.optional(MemberId),
     restoreFiles: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3298,6 +3352,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.fork"),
+    actorId: Schema.optional(MemberId),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     sourceThreadId: ThreadId,
@@ -3500,6 +3555,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
