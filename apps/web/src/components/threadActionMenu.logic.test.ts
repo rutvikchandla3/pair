@@ -85,6 +85,7 @@ describe("buildThreadActionMenuItems", () => {
     ];
     const solo = buildThreadActionMenuItems(baseState);
     expect(solo.some((item) => item.id === "assign")).toBe(false);
+    expect(solo.some((item) => item.id === "follow" || item.id === "unfollow")).toBe(false);
     expect(solo.find((item) => item.id === "delete")).toEqual({
       id: "delete",
       label: "Delete",
@@ -103,6 +104,17 @@ describe("buildThreadActionMenuItems", () => {
       [`assign:${ben}`, true],
     ]);
     expect(owned.find((item) => item.id === "delete")?.disabled).toBeUndefined();
+    // The owner has no Follow; Unfollow would be a dead end for them.
+    expect(owned.some((item) => item.id === "follow" || item.id === "unfollow")).toBe(false);
+
+    const follow = (following: boolean) =>
+      buildThreadActionMenuItems({
+        ...baseState,
+        team: { members, ownerId: ben, canDelete: false, following },
+      }).map((item) => item.id);
+    expect(follow(false)).toContain("follow");
+    expect(follow(true)).toContain("unfollow");
+    expect(follow(false).indexOf("follow")).toBe(follow(false).indexOf("assign") + 1);
 
     const notOwner = buildThreadActionMenuItems({
       ...baseState,

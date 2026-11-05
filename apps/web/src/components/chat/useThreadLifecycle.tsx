@@ -36,7 +36,7 @@ import {
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
-import { useIsTeamMode } from "../../state/team";
+import { useIsTeamMode, useThreadFollowing } from "../../state/team";
 import { openAssignThreadDialog } from "../team/AssignThreadDialog";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -176,8 +176,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, setThreadFollowed } = useThreadActions();
   const isTeamMode = useIsTeamMode(environmentId);
+  const activeThreadFollowing = useThreadFollowing(activeThreadShell);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -683,6 +684,15 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadRef || !isTeamMode) return false;
       openAssignThreadDialog(activeThreadRef);
+    },
+    "thread.follow": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadRef || activeThreadFollowing === null) return false;
+      void setThreadFollowed(activeThreadRef, !activeThreadFollowing).then(
+        toastThreadActionFailure(
+          activeThreadFollowing ? "Failed to unfollow thread" : "Failed to follow thread",
+        ),
+      );
     },
   } satisfies ChatShortcutCommands;
   return {

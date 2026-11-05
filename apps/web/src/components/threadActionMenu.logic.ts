@@ -19,6 +19,8 @@ export type ThreadActionMenuId =
   | "unsnooze"
   | "assign"
   | `assign:${MemberId}`
+  | "follow"
+  | "unfollow"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -103,6 +105,8 @@ export interface ThreadActionMenuState {
     readonly ownerId: MemberId | null;
     /** Only the thread's owner or an admin may delete it. */
     readonly canDelete: boolean;
+    /** Absent hides Follow: the viewer owns the thread, or the server cannot follow. */
+    readonly following?: boolean;
   };
 }
 
@@ -189,6 +193,13 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.team?.following === undefined
+      ? []
+      : [
+          state.team.following
+            ? { id: "unfollow" as const, label: "Unfollow thread", icon: "eye-off" }
+            : { id: "follow" as const, label: "Follow thread", icon: "eye" },
+        ]),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [
