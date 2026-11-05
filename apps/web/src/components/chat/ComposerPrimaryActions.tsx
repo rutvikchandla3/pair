@@ -32,6 +32,8 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
+  /** Set while another member's turn runs; its alternate action is Steer now. */
+  othersTurnName?: string | null;
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -86,6 +88,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   followUpBehavior = "steer",
+  othersTurnName = null,
   canSteer = true,
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -280,7 +283,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : isQueuing
           ? "Queue message"
           : isRunning
-            ? "Steer message"
+            ? othersTurnName !== null
+              ? "Steer now"
+              : "Steer message"
             : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
@@ -292,12 +297,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             ? "Updating queued message"
             : "Submitting message"
           : null));
+  const alternateHint = `${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""}`;
   const submitTooltip =
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, ${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+        ? othersTurnName === null
+          ? `Click to ${followUpBehavior}, ${alternateHint} to ${alternateAction}`
+          : `${othersTurnName}'s turn is running: click to queue, ${alternateHint} to steer now`
         : submitLabel);
 
   const sendButton = (

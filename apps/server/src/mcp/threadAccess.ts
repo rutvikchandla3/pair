@@ -9,11 +9,15 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { runStarterId } from "@t3tools/shared/threadCollaboration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
+import { holderOf } from "../orchestration-v2/MemberThreadState.ts";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type * as TeamState from "../team/TeamState.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -59,6 +63,30 @@ export const dispatchFailure = (
           message: Array.from(error.cause).slice(0, 1000).join(""),
         })
       : unavailable();
+
+/**
+ * On a team, the member an MCP send acts for: the client's member, or for an agent, the member
+ * whose turn it runs in. Solo servers stamp no actor.
+ */
+export const sendActorId = Effect.fn("mcp.sendActorId")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadRecords">,
+  scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "client">,
+  team: Option.Option<TeamState.TeamState["Service"]>,
+) {
+  if (Option.isNone(team) || !(yield* team.value.isTeamMode)) return undefined;
+  if (scope.thread === undefined) return scope.client?.memberId;
+  const threadId = scope.thread.threadId;
+  const { thread, runs } = yield* threads
+    .getThreadRecords(threadId, ["runs"])
+    .pipe(Effect.mapError(unavailable));
+  const holderId = holderOf(thread, team.value.ownerId);
+  const run = ThreadManagement.latestActiveRun({ runs }) ?? ThreadManagement.latestRun({ runs });
+  if (run === undefined) return holderId;
+  const { messages } = yield* threads
+    .getThreadRecords(threadId, ["messages"], { messageIds: [run.userMessageId] })
+    .pipe(Effect.mapError(unavailable));
+  return runStarterId({ run, messages, holderId });
+});
 
 export interface CallerLimits {
   readonly runtimeMode: RuntimeMode;

@@ -189,6 +189,9 @@ export interface ThreadManagementSendInput {
   readonly mode: ThreadManagementSendMode;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The member the send acts for; on a team, it queues behind another member's turn. */
+  readonly actorId?: MemberId | undefined;
+  readonly steerOthersTurn?: boolean | undefined;
 }
 
 export interface ThreadManagementSendResult {
@@ -898,6 +901,8 @@ const make = Effect.gen(function* () {
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
+      ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+      ...(input.steerOthersTurn === true ? { steerOthersTurn: true } : {}),
     });
     const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
       messageIds: [input.messageId],

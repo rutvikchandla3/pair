@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   CommandId,
   EventId,
@@ -9,6 +10,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderTurnId,
   RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
@@ -17,14 +19,18 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type { MemberRecord } from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TeamState from "../team/TeamState.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import { decideHumanAuthorship } from "./HumanAuthorship.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -36,20 +42,38 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Runs here never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
-const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = Layer.mergeAll(
-  layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-  EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-  ProviderReplayHarness.layerWithRegistry(
-    { name: "attribution" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
-  ),
-);
-
 const alice = MemberId.make("member:alice");
 const bob = MemberId.make("member:bob");
+const memberRecord = (id: MemberId, isOwner: boolean): MemberRecord => ({
+  id,
+  name: id,
+  role: isOwner ? "admin" : "member",
+  gitName: null,
+  gitEmail: null,
+  isOwner,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: null,
+  removedAt: null,
+});
+
+const makeLayer = (layerTeam: Layer.Layer<TeamState.TeamState> | Layer.Layer<never>) => {
+  const layerDatabase = SqlitePersistence.layerMemory;
+  return Layer.mergeAll(
+    layerDatabase,
+    ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+    EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+    ProviderReplayHarness.layerWithRegistry(
+      { name: "attribution" },
+      ProviderAdapterRegistry.layerFromAdapters([adapter]),
+      { databaseLayer: layerDatabase, runEffectWorker: false },
+    ).pipe(Layer.provide(layerTeam)),
+  );
+};
+const layerTest = makeLayer(Layer.empty);
+const layerTeam = makeLayer(
+  TeamState.layerTest([memberRecord(alice, true), memberRecord(bob, false)]),
+);
+const layerSolo = makeLayer(TeamState.layerTest([memberRecord(alice, true)]));
 
 type MessageDispatch = Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
 
@@ -379,4 +403,113 @@ it.effect("owner rules for create, fork, side chat, delegated child and owner.se
     assert.isTrue(replayed.replayed);
     assert.equal(yield* owner(parentId), bob);
   }).pipe(Effect.provide(layerTest)),
+);
+
+/** Moves the thread's first run to a running provider turn that accepts steers. */
+const seedRunningTurn = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const initial = yield* orchestrator.getThreadProjection(threadId);
+  const run = initial.runs[0]!;
+  const providerThread = initial.providerThreads[0]!;
+  const now = yield* DateTime.now;
+  const providerSession = {
+    id: providerThread.providerSessionId!,
+    driver: adapter.driver,
+    providerInstanceId: instanceId,
+    status: "running" as const,
+    cwd: process.cwd(),
+    model: modelSelection.model,
+    capabilities: CodexProviderCapabilitiesV2,
+    createdAt: now,
+    updatedAt: now,
+    lastError: null,
+  };
+  yield* (yield* EventSink.EventSinkV2).write({
+    commandId: CommandId.make(`running:${threadId}`),
+    events: [
+      {
+        id: EventId.make(`running-run:${threadId}`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "running", startedAt: now },
+      },
+      {
+        id: EventId.make(`running-session:${threadId}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: providerSession,
+      },
+      {
+        id: EventId.make(`running-turn:${threadId}`),
+        type: "provider-turn.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make(`turn:${threadId}`),
+          providerThreadId: providerThread.id,
+          nodeId: run.rootNodeId!,
+          runAttemptId: run.activeAttemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      },
+    ],
+  });
+  const sessionSpy = vi
+    .spyOn(sessions, "get")
+    .mockReturnValue(
+      Effect.succeedSome({ providerSession } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+    );
+  yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+  return run.id;
+});
+
+it.effect.each([
+  { row: "Bob's plain send on Alice's turn queues", intent: "auto", outcome: "queued" },
+  { row: "Bob's steer on Alice's turn queues", intent: "steer", outcome: "queued" },
+  { row: "Bob's restart on Alice's turn queues", intent: "restart", outcome: "queued" },
+  { row: "Bob's Steer now steers", intent: "steer", steerOthersTurn: true, outcome: "joined" },
+  { row: "Alice steers her own turn", intent: "auto", actorId: alice, outcome: "joined" },
+  { row: "an agent run is the holder's turn", intent: "auto", agentRun: true, outcome: "queued" },
+  { row: "a send with no actor steers", intent: "auto", actorId: null, outcome: "joined" },
+  { row: "a solo server steers as before", intent: "auto", solo: true, outcome: "joined" },
+  { row: "Bob's /goal leaves Alice's turn running", intent: "auto", goal: true, outcome: "queued" },
+] as const)("queue-not-steer: $row", (testCase) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:queue-not-steer:${testCase.row}`);
+    yield* createThread(threadId, { actorId: alice });
+    yield* send(threadId, `${threadId}:start`, {
+      dispatchMode: { type: "start_immediately" },
+      ...("agentRun" in testCase
+        ? { createdBy: "agent", creationSource: "mcp", actorId: bob }
+        : { actorId: alice }),
+    });
+    const runId = yield* seedRunningTurn(threadId);
+    const actorId = "actorId" in testCase ? testCase.actorId : bob;
+    const messageId = `${threadId}:send`;
+    yield* send(threadId, messageId, {
+      text: "goal" in testCase ? "/goal ship it" : messageId,
+      dispatchMode: { type: "start_immediately" },
+      deliveryIntent: testCase.intent,
+      ...(actorId === null ? {} : { actorId }),
+      ...("steerOthersTurn" in testCase ? { steerOthersTurn: true } : {}),
+    });
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const message = projection.messages.find((candidate) => candidate.id === messageId);
+    const queued = projection.runs.find((run) => run.id === message?.runId)?.status === "queued";
+    const stopped = projection.turnItems.some((item) => item.type === "run_interrupt_request");
+    assert.deepEqual(
+      [message?.runId === runId ? "joined" : queued ? "queued" : "other", stopped],
+      [testCase.outcome, false],
+    );
+  }).pipe(Effect.provide("solo" in testCase ? layerSolo : layerTeam)),
 );
