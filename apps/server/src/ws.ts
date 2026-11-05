@@ -2015,6 +2015,7 @@ export const layerWsRpc = (
           threadFindProgressive: true,
           threadMemberState: true,
           threadFollow: true,
+          apiTokens: true,
           presence: true,
           secretProviderSettings: true,
           secretReferences: true,

@@ -1145,7 +1145,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "This machine",
     to: "/settings/access",
     searchTerms: [
-      "connections server backend local remote access administrative permissions scope pairing links sign-in sign in links qr code authorized clients sessions revoke endpoint",
+      "connections server backend local remote access administrative permissions scope pairing links sign-in sign in links qr code authorized clients sessions revoke endpoint api token tokens",
     ],
   },
   {

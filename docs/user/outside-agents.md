@@ -42,8 +42,8 @@ The page names the agent and where its access goes:
 
 Only approve a sign-in you just started. To approve, enter a sign-in code from
 **Settings → Sharing & access** or from `t3 auth pairing create` on the host. A
-browser already signed in to the environment with permission to manage access
-can approve without a code.
+browser already signed in to the environment can approve without a code, up to
+the access that browser has. Only an admin can approve Full access.
 
 Then choose what the agent may do:
 

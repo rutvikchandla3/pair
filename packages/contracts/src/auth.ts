@@ -426,6 +426,21 @@ export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<Auth
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
+/** An API token is an `mcp-client` session the caller issues for themselves; it reaches only `/mcp`. */
+export const AuthCreateApiTokenInput = Schema.Struct({
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  access: AuthMcpClientAccess,
+  expiresInDays: Schema.optionalKey(Schema.Literals([30, 90, 365])),
+});
+export type AuthCreateApiTokenInput = typeof AuthCreateApiTokenInput.Type;
+
+export const AuthApiTokenResult = Schema.Struct({
+  sessionId: AuthSessionId,
+  token: Schema.String,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type AuthApiTokenResult = typeof AuthApiTokenResult.Type;
+
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
   authorization_servers: Schema.Array(Schema.String),

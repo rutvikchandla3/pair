@@ -138,6 +138,7 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import { CreateApiTokenButton } from "./ApiTokenDialog";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -576,7 +577,7 @@ function ConnectionsSettingsContent({
   const handleRevokeDesktopPairingLink = async (id: string) => {
     if (
       accessEnvironmentId === null ||
-      !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
+      !readEnvironmentScope(accessEnvironmentId, AuthAccessReadScope)
     )
       return;
     setRevokingDesktopPairingLinkId(id);
@@ -602,7 +603,7 @@ function ConnectionsSettingsContent({
   ) => {
     if (
       accessEnvironmentId === null ||
-      !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
+      !readEnvironmentScope(accessEnvironmentId, AuthAccessReadScope)
     )
       return;
     setRevokingDesktopClientSessionId(sessionId);
@@ -1045,7 +1046,7 @@ function ConnectionsSettingsContent({
       revokingClientSessionId={revokingDesktopClientSessionId}
       onRevokePairingLink={handleRevokeDesktopPairingLink}
       onRevokeClientSession={handleRevokeDesktopClientSession}
-      canRevoke={canWriteAccess}
+      canRevoke={canReadAccess}
     />
   );
   const renderAuthorizedClients = () => (
@@ -1129,6 +1130,7 @@ function ConnectionsSettingsContent({
   );
 
   const accessServerConfig = accessEnvironment?.serverConfig ?? null;
+  const canCreateApiToken = canReadAccess && accessServerConfig?.apiTokens === true;
   const primarySettings = (
     <>
       {accessEnvironmentPicker}
@@ -1269,21 +1271,31 @@ function ConnectionsSettingsContent({
                 visibleDesktopPairingLinks,
               )}
               control={
-                canWriteAccess ? (
-                  <AuthorizedClientsHeaderAction
-                    environmentId={accessEnvironmentId}
-                    delegatableScopes={currentSessionScopes ?? []}
-                    onPairingLinkCreated={handlePairingLinkCreated}
-                    clientSessions={
-                      canReadAccess &&
-                      authAccessChanges.error === null &&
-                      authAccessChanges.data?.type === "snapshot"
-                        ? desktopClientSessions
-                        : null
-                    }
-                    isRevokingOtherClients={isRevokingOtherDesktopClients}
-                    onRevokeOtherClients={handleRevokeOtherDesktopClients}
-                  />
+                canWriteAccess || canCreateApiToken ? (
+                  <div className="flex items-center gap-2">
+                    {canCreateApiToken ? (
+                      <CreateApiTokenButton
+                        environmentId={accessEnvironmentId}
+                        delegatableScopes={currentSessionScopes ?? []}
+                      />
+                    ) : null}
+                    {canWriteAccess ? (
+                      <AuthorizedClientsHeaderAction
+                        environmentId={accessEnvironmentId}
+                        delegatableScopes={currentSessionScopes ?? []}
+                        onPairingLinkCreated={handlePairingLinkCreated}
+                        clientSessions={
+                          canReadAccess &&
+                          authAccessChanges.error === null &&
+                          authAccessChanges.data?.type === "snapshot"
+                            ? desktopClientSessions
+                            : null
+                        }
+                        isRevokingOtherClients={isRevokingOtherDesktopClients}
+                        onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                      />
+                    ) : null}
+                  </div>
                 ) : undefined
               }
             >
