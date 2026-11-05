@@ -647,6 +647,8 @@ export const ServerConfig = Schema.Struct({
   threadFollow: Schema.optionalKey(Schema.Boolean),
   /** Accepts `POST /api/auth/api-token`. */
   apiTokens: Schema.optionalKey(Schema.Boolean),
+  /** Serves `presence.subscribe` and `presence.report`. */
+  presence: Schema.optionalKey(Schema.Boolean),
   /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */
