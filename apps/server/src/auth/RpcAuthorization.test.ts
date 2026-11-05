@@ -1,10 +1,12 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  MEMBER_SCOPES,
   ProviderDriverKind,
   ProviderInstanceId,
   SecretProviderId,
@@ -65,6 +67,22 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.previewStopLocalServer,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
+    }
+  });
+
+  it("keeps team management behind access:write while the member bundle reads and edits itself", () => {
+    for (const method of [
+      WS_METHODS.teamInvite,
+      WS_METHODS.teamSignInLink,
+      WS_METHODS.teamUpdate,
+      WS_METHODS.teamSetRole,
+      WS_METHODS.teamRemove,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
+      expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(method));
+    }
+    for (const method of [WS_METHODS.teamSubscribe, WS_METHODS.teamUpdateSelf]) {
+      expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
     }
   });
 

@@ -1,7 +1,7 @@
 import {
   authScopeRequiredResponse,
+  AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthStandardClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
@@ -226,6 +226,17 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   return session;
 });
 
+/** Without access:write, access management is limited to the caller's own member. */
+const requireAccessManagement = Effect.fnUntraced(function* () {
+  const session = yield* requireEnvironmentScope(AuthAccessReadScope);
+  return {
+    session,
+    onlyMemberId: session.scopes.has(AuthAccessWriteScope) ? undefined : session.memberId,
+  };
+});
+
+const failNotMemberOwned = () => failEnvironmentScopeRequired(AuthAccessWriteScope);
+
 export const layerAuthenticatedAuth = Layer.effect(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
@@ -445,8 +456,10 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.auth.pairingCredential")(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
+            // Any member can add a device for themselves; the link never exceeds the caller.
+            const { session } = yield* requireAccessManagement();
+            const delegatedScopes =
+              args.payload.scopes ?? [...session.scopes].filter(Schema.is(AuthGrantScope));
             if (
               delegatedScopes.length === 0 ||
               new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
@@ -458,7 +471,11 @@ export const layer = HttpApiBuilder.group(
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }
-            return yield* serverAuth.issuePairingCredential(args.payload);
+            return yield* serverAuth.issuePairingCredential({
+              ...args.payload,
+              scopes: delegatedScopes,
+              memberId: session.memberId,
+            });
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
@@ -474,10 +491,11 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.auth.revokePairingLink")(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
-            yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const revoked = yield* serverAuth.revokePairingLink(args.payload.id);
+            const { onlyMemberId } = yield* requireAccessManagement();
+            const revoked = yield* serverAuth.revokePairingLink(args.payload.id, onlyMemberId);
             return { revoked };
           },
+          Effect.catchTags({ ServerAuthNotMemberOwnedError: failNotMemberOwned }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_link_revoke_failed", error),
           ),
@@ -488,16 +506,18 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.auth.revokeClient")(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const { session, onlyMemberId } = yield* requireAccessManagement();
             const revoked = yield* serverAuth.revokeClientSession(
               session.sessionId,
               args.payload.sessionId,
+              onlyMemberId,
             );
             return { revoked };
           },
           Effect.catchTags({
             ServerAuthForbiddenOperationError: () =>
               failEnvironmentOperationForbidden("current_session_revoke_not_allowed"),
+            ServerAuthNotMemberOwnedError: failNotMemberOwned,
           }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("client_session_revoke_failed", error),
@@ -509,8 +529,11 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.auth.revokeOtherClients")(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const revokedCount = yield* serverAuth.revokeOtherClientSessions(session.sessionId);
+            const { session } = yield* requireAccessManagement();
+            const revokedCount = yield* serverAuth.revokeOtherClientSessions(
+              session.sessionId,
+              session.memberId,
+            );
             return { revokedCount };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

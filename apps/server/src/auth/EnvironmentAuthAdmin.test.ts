@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes, type ManagedPolicyDocument } from "@t3tools/contracts";
+import { AuthStandardClientScopes, type ManagedPolicyDocument, MemberId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -33,6 +33,8 @@ const layerServerConfig = (
       }),
     ),
   );
+
+const memberId = MemberId.make("member-test");
 
 const layerEnvironmentAuth = (
   overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
@@ -75,10 +77,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const sessions = yield* SessionStore.SessionStore;
         const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
         const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const phone = yield* sessions.issue({ subject: "one-time-token" });
-        const bot = yield* sessions.issue({ subject: "cli-issued-session" });
+        const phone = yield* sessions.issue({ memberId, subject: "one-time-token" });
+        const bot = yield* sessions.issue({ memberId, subject: "cli-issued-session" });
         const startup = (ipAddress: string) =>
           sessions.issue({
+            memberId,
             subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
             client: { deviceType: "unknown", ipAddress },
           });
@@ -104,8 +107,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     it.effect("revokes only T3 Connect clients when the policy keeps remote clients", () =>
       Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
-        const phone = yield* sessions.issue({ subject: "one-time-token" });
-        const connect = yield* sessions.issue({ subject: "cloud-connect" });
+        const phone = yield* sessions.issue({ memberId, subject: "one-time-token" });
+        const connect = yield* sessions.issue({ memberId, subject: "cloud-connect" });
 
         yield* EnvironmentAuth.make.pipe(
           Effect.provide(

@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  MemberId,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -26,6 +27,7 @@ import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -88,6 +90,9 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamState from "./team/TeamState.ts";
+import * as Members from "./persistence/Members.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -710,6 +715,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
+  Layer.mock(TeamMembers.TeamMembers)({}),
+  Layer.mock(TeamState.TeamState)({
+    ownerId: MemberId.make("member-test"),
+    members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(new Map()),
+  }),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
   Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),
@@ -881,6 +891,7 @@ it.effect.each([
             {
               sessionId: AuthSessionId.make("config-test"),
               subject: "config-test",
+              memberId: MemberId.make("member-test"),
               method: "browser-session-cookie",
               scopes: [],
             },
@@ -1101,6 +1112,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           {
             sessionId: AuthSessionId.make("config-test"),
             subject: "config-test",
+            memberId: MemberId.make("member-test"),
             method: "browser-session-cookie",
             scopes: [],
           },

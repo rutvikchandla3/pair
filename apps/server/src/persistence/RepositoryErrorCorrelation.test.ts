@@ -1,4 +1,4 @@
-import { AuthSessionId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { AuthSessionId, MemberId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,6 +15,7 @@ const issuedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const expiresAt = DateTime.makeUnsafe("2027-06-20T00:00:00.000Z");
 const now = DateTime.makeUnsafe("2026-06-21T00:00:00.000Z");
 const scopes: ReadonlyArray<AuthEnvironmentScope> = ["access:read"];
+const memberId = MemberId.make("member-correlation");
 
 const layerAuthSession = AuthSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const layerAuthPairingLink = AuthPairingLinks.layer.pipe(
@@ -35,6 +36,7 @@ describe("persistence error correlation", () => {
 
       yield* sessions.create({
         sessionId,
+        memberId,
         subject,
         scopes,
         method: "browser-session-cookie",
@@ -70,6 +72,7 @@ describe("persistence error correlation", () => {
       const createError = yield* Effect.flip(
         sessions.create({
           sessionId,
+          memberId,
           subject,
           scopes,
           method: "browser-session-cookie",
@@ -92,7 +95,12 @@ describe("persistence error correlation", () => {
       assert.notInclude(createError.message, DateTime.formatIso(issuedAt));
 
       const revokeOtherError = yield* Effect.flip(
-        sessions.revokeAllExcept({ currentSessionId, revokedAt: now }),
+        sessions.revokeAllExcept({
+          currentSessionId,
+          memberId,
+          includeUnassigned: true,
+          revokedAt: now,
+        }),
       );
       assert.instanceOf(revokeOtherError, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(revokeOtherError.correlation, { currentSessionId });
@@ -158,6 +166,7 @@ describe("persistence error correlation", () => {
       const createError = yield* Effect.flip(
         pairingLinks.create({
           id,
+          memberId,
           credential,
           method: "one-time-token",
           scopes,

@@ -70,6 +70,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.teamInvite]: AuthAccessWriteScope,
+  [WS_METHODS.teamSignInLink]: AuthAccessWriteScope,
+  [WS_METHODS.teamUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.teamSetRole]: AuthAccessWriteScope,
+  [WS_METHODS.teamRemove]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

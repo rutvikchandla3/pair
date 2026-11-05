@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import { authScopeResponse, AuthStandardClientScopes, MemberId } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -14,10 +14,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -258,6 +261,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           makeBearerRequest(secondBearer.access_token),
         );
         expect(firstSession.subject).toBe("reusable-dev-token-child");
+        expect(firstSession.memberId).toBe((yield* TeamState.TeamState).ownerId);
         expect(secondSession.subject).toBe("reusable-dev-token-child");
         expect((yield* sessions.verify(token)).subject).toBe("reusable-dev-token");
         const before = yield* serverAuth.listClientSessions(firstSession.sessionId);
@@ -307,6 +311,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           }),
         ),
       ),
+    );
+
+    it.effect("resolves each session's member and refuses unassigned or removed ones", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const teamState = yield* TeamState.TeamState;
+        const members = yield* Members.MemberRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const authenticate = (token: string) =>
+          serverAuth.authenticateHttpRequest(makeBearerRequest(token));
+        const legacy = yield* serverAuth.issueSession();
+        yield* sql`UPDATE auth_sessions SET member_id = NULL WHERE session_id = ${legacy.sessionId}`;
+        expect((yield* authenticate(legacy.token)).memberId).toBe(teamState.ownerId);
+        expect((yield* serverAuth.getSessionState(makeBearerRequest(legacy.token))).memberId).toBe(
+          teamState.ownerId,
+        );
+
+        const alice = MemberId.make("member-alice");
+        yield* members.insert({
+          id: alice,
+          name: "Alice",
+          role: "member",
+          gitName: null,
+          gitEmail: null,
+          createdAt: "2026-09-01T00:00:00.000Z",
+        });
+        yield* teamState.reload;
+        const pairing = yield* serverAuth.issuePairingCredential({ memberId: alice });
+        const exchange = yield* serverAuth.createBrowserSession(
+          pairing.credential,
+          requestMetadata,
+        );
+        expect(
+          (yield* serverAuth.authenticateHttpRequest(
+            makeCookieRequest(sessions.cookieName, exchange.sessionToken),
+          )).memberId,
+        ).toBe(alice);
+        expect((yield* Effect.flip(authenticate(legacy.token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        const aliceBearer = yield* serverAuth.issueSession({ memberId: alice });
+        yield* members.markRemoved({ id: alice, removedAt: "2026-09-02T00:00:00.000Z" });
+        yield* teamState.reload;
+        expect((yield* Effect.flip(authenticate(aliceBearer.token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect((yield* authenticate(legacy.token)).memberId).toBe(teamState.ownerId);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("prefers a bearer token over a stale legacy cookie", () =>
@@ -466,7 +520,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           makeCookieRequest(sessions.cookieName, browser.sessionToken),
         );
         const staleSessions = yield* Effect.forEach([1, 2, 3], () =>
-          sessions.issue({ subject: "desktop-bootstrap", method: "bearer-access-token" }),
+          sessions.issue({
+            memberId: browserSession.memberId,
+            subject: "desktop-bootstrap",
+            method: "bearer-access-token",
+          }),
         );
         const pairing = yield* serverAuth.issuePairingCredential();
         const paired = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
@@ -541,6 +599,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
 
         expect(verified.scopes).toEqual(AuthStandardClientScopes);
         expect(verified.subject).toBe("administrative-bootstrap");
+        expect(verified.memberId).toBe((yield* TeamState.TeamState).ownerId);
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
@@ -580,6 +639,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           );
           const revokedCount = yield* serverAuth.revokeOtherClientSessions(
             administrativeSession.sessionId,
+            administrativeSession.memberId,
           );
           const clientsAfterRevoke = yield* serverAuth.listClientSessions(
             administrativeSession.sessionId,
@@ -750,6 +810,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         );
         expect(signed.sessionId).toBe(session.sessionId);
+        expect(signed.memberId).toBe((yield* TeamState.TeamState).ownerId);
 
         const wrongKey = yield* Effect.flip(
           upgrade(

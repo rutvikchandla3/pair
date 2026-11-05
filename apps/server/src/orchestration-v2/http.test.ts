@@ -1,5 +1,6 @@
 import {
   AuthSessionId,
+  MemberId,
   type AuthEnvironmentScope,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -142,6 +143,7 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
               Effect.provideService(EnvironmentAuthenticatedPrincipal, {
                 sessionId: AuthSessionId.make("test-session"),
                 subject: "test",
+                memberId: MemberId.make("member-test"),
                 method: "bearer-access-token",
                 scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
               }),

@@ -11,6 +11,7 @@ import {
   type AuthMcpTokenResult,
   type AuthMcpClientAccess,
   type AuthEnvironmentScope,
+  type MemberId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
@@ -189,6 +190,8 @@ interface PendingCode {
   readonly codeChallenge: string;
   readonly resource: string;
   readonly access: AuthMcpClientAccess;
+  /** The client acts as this member. */
+  readonly approverMemberId: MemberId;
   readonly expiresAtMs: number;
 }
 
@@ -209,7 +212,11 @@ export class McpOAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
-      | { readonly csrfToken: string; readonly scopes: ReadonlyArray<AuthEnvironmentScope> }
+      | {
+          readonly csrfToken: string;
+          readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+          readonly memberId: MemberId;
+        }
       | undefined
     >;
     readonly approve: (input: {
@@ -415,7 +422,11 @@ const make = Effect.gen(function* () {
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
           ? csrfToken(session.sessionId, authorization).pipe(
-              Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })),
+              Effect.map((token) => ({
+                csrfToken: token,
+                scopes: session.scopes,
+                memberId: session.memberId,
+              })),
             )
           : Effect.undefined,
       ),
@@ -425,6 +436,7 @@ const make = Effect.gen(function* () {
   const mintCode = Effect.fn("McpOAuth.mintCode")(function* (
     authorization: AuthorizationRequest,
     access: AuthMcpClientAccess,
+    approverMemberId: MemberId,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const code = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
@@ -438,6 +450,7 @@ const make = Effect.gen(function* () {
         codeChallenge: authorization.codeChallenge,
         resource: authorization.resource,
         access,
+        approverMemberId,
         expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
       });
       return next;
@@ -447,20 +460,24 @@ const make = Effect.gen(function* () {
 
   const approve: McpOAuth["Service"]["approve"] = Effect.fn("McpOAuth.approve")(function* (input) {
     const { decision } = input;
+    let approverMemberId: MemberId;
     if (decision._tag === "pairing-code") {
-      yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
-        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
-          Effect.logError("MCP approval code check failed.", { cause }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new McpOAuthPageError({
-                  description: "The code could not be checked. Try again.",
-                }),
+      const approval = yield* environmentAuth
+        .consumeMcpApprovalCode(decision.code, decision.access)
+        .pipe(
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
+            Effect.logError("MCP approval code check failed.", { cause }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new McpOAuthPageError({
+                    description: "The code could not be checked. Try again.",
+                  }),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
+      approverMemberId = approval.memberId;
     } else {
       const session = yield* approvingBrowserSession(input.request, input.authorization);
       if (
@@ -472,8 +489,9 @@ const make = Effect.gen(function* () {
           description: "Your session cannot approve this request. Enter a pairing code instead.",
         });
       }
+      approverMemberId = session.memberId;
     }
-    const code = yield* mintCode(input.authorization, decision.access);
+    const code = yield* mintCode(input.authorization, decision.access, approverMemberId);
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,
       access: decision.access,
@@ -534,6 +552,7 @@ const make = Effect.gen(function* () {
       }
       const issued = yield* environmentAuth
         .issueMcpClientSession({
+          memberId: pending.approverMemberId,
           label: pending.clientName,
           access: pending.access,
           peerLink: pending.peerLink,

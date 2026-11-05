@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthStandardClientScopes, MemberId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -17,6 +17,8 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
+
+const memberId = MemberId.make("member-test");
 
 const layerServerConfig = (
   overrides?: Partial<
@@ -50,7 +52,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
   it.effect("accepts lowercase one-time tokens exactly once", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Julius iPhone" });
+      const issued = yield* bootstrapCredentials.issueOneTimeToken({
+        memberId,
+        label: "Julius iPhone",
+      });
       const first = yield* bootstrapCredentials.consume(issued.credential.toLowerCase());
       const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
@@ -58,6 +63,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       expect(first.scopes).toEqual(AuthStandardClientScopes);
       expect(first.subject).toBe("one-time-token");
       expect(first.label).toBe("Julius iPhone");
+      expect(first.memberId).toBe(memberId);
       expect(issued.label).toBe("Julius iPhone");
       expect(second._tag).toBe("UnknownBootstrapCredentialError");
       expect(second.message).toContain("Unknown bootstrap credential");
@@ -73,7 +79,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const token = yield* bootstrapCredentials.issueOneTimeToken();
+      const token = yield* bootstrapCredentials.issueOneTimeToken({ memberId });
       const results = yield* Effect.all(
         Array.from({ length: 8 }, () =>
           Effect.result(
@@ -103,6 +109,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const token = yield* bootstrapCredentials.issueOneTimeToken({
+        memberId,
         proofKeyThumbprint: "client-proof-key-thumbprint",
         scopes: ["orchestration:read"],
       });
@@ -219,7 +226,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         Effect.forkScoped({ startImmediately: true }),
       );
       for (const input of [{}, { label: "Synthetic phone" }]) {
-        const issued = yield* grants.issueOneTimeToken(input);
+        const issued = yield* grants.issueOneTimeToken({ memberId, ...input });
         const change = yield* Queue.take(changes);
         expect(change?.type).toBe("pairingLinkUpserted");
         if (change?.type !== "pairingLinkUpserted")

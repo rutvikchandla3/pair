@@ -170,6 +170,18 @@ import {
   GuestShareCreateInput,
   GuestShareCreateResult,
 } from "./guestShare.ts";
+import {
+  TeamError,
+  TeamInviteInput,
+  TeamLinkResult,
+  TeamMember,
+  TeamRemoveInput,
+  TeamSetRoleInput,
+  TeamSignInLinkInput,
+  TeamStreamEvent,
+  TeamUpdateInput,
+  TeamUpdateSelfInput,
+} from "./team.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -546,6 +558,14 @@ export const WS_METHODS = {
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
   guestShareCreate: "guestShare.create",
+
+  teamSubscribe: "team.subscribe",
+  teamInvite: "team.invite",
+  teamSignInLink: "team.signInLink",
+  teamUpdate: "team.update",
+  teamSetRole: "team.setRole",
+  teamRemove: "team.remove",
+  teamUpdateSelf: "team.updateSelf",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -1945,6 +1965,49 @@ const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   error: Schema.Union([GuestShareCreateError, EnvironmentAuthorizationError]),
 });
 
+const WsTeamSubscribeRpc = Rpc.make(WS_METHODS.teamSubscribe, {
+  payload: Schema.Struct({}),
+  success: TeamStreamEvent,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTeamInviteRpc = Rpc.make(WS_METHODS.teamInvite, {
+  payload: TeamInviteInput,
+  success: TeamLinkResult,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamSignInLinkRpc = Rpc.make(WS_METHODS.teamSignInLink, {
+  payload: TeamSignInLinkInput,
+  success: TeamLinkResult,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamUpdateRpc = Rpc.make(WS_METHODS.teamUpdate, {
+  payload: TeamUpdateInput,
+  success: TeamMember,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamSetRoleRpc = Rpc.make(WS_METHODS.teamSetRole, {
+  payload: TeamSetRoleInput,
+  success: TeamMember,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamRemoveRpc = Rpc.make(WS_METHODS.teamRemove, {
+  payload: TeamRemoveInput,
+  success: TeamMember,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamUpdateSelfRpc = Rpc.make(WS_METHODS.teamUpdateSelf, {
+  payload: TeamUpdateSelfInput,
+  success: TeamMember,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -1989,6 +2052,13 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 
 export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
+  WsTeamSubscribeRpc,
+  WsTeamInviteRpc,
+  WsTeamSignInLinkRpc,
+  WsTeamUpdateRpc,
+  WsTeamSetRoleRpc,
+  WsTeamRemoveRpc,
+  WsTeamUpdateSelfRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
