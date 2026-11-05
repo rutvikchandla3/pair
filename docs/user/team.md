@@ -51,6 +51,28 @@ the owner of the thread they came from.
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
 
+## Follow threads and notifications
+
+**Follow** a teammate's thread to keep it in your own sections and count its unread state; choose
+it from the thread's menu, the command palette, or the eye button in the thread header.
+**Unfollow** sends it back to the Team shelf. You follow a thread automatically when you own it,
+send it a message, or answer one of its requests.
+
+Notifications go only to the people a thread concerns:
+
+- A finished or failed turn, or a request for approval or input, notifies the member who started
+  that turn and the thread's owner.
+- The owner hears when someone else messages, archives or sends a guest request to their thread,
+  and you hear when a thread is assigned to you.
+- Following a thread marks it unread for you, without notifications.
+
+You are never notified about your own actions, or about a thread you're looking at.
+
+## Share a thread
+
+On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
+opens it while signed out is asked to sign in, and lands on the thread afterwards.
+
 ## What is yours and what is shared
 
 Pins and their order, the order of your active threads, unread state, and snoozes are yours.
