@@ -16,6 +16,9 @@ Pair adds **Team** to T3 Code, so several people can share one server ([Team](./
 - **Sign-in links.** Each invite is a one-time sign-in link. Members add their other devices with their own links, and removing a member signs out all of their devices.
 - **The Team shelf.** Threads other members own sit on a **Team** shelf in the sidebar, with the owner's avatar on each row.
 - **Assign to…** hands a thread over to another member, from the thread's menu or the command palette.
+- **Follow and notifications.** Follow teammates' threads, and get notified only about the turns and threads that concern you.
+
+See [Pair features](./docs/product/pair-features.md) for everything Pair adds and what is coming next.
 
 ## Installation
 

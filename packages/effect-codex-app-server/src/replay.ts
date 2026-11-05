@@ -238,7 +238,7 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 
 /**
  * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
- * authorization headers) and the T3 thread id vary per machine or run, and
+ * authorization headers) and per-thread shell env (thread id, git author) vary per run, and
  * recorder-only keys are not the client's.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
@@ -260,7 +260,7 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
       ([key]) =>
         key !== "mcp_servers" &&
         !key.startsWith("mcp_servers.") &&
-        key !== "shell_environment_policy.set.T3CODE_THREAD_ID",
+        !key.startsWith("shell_environment_policy.set."),
     ),
   );
   for (const key of ignoredConfigKeys) delete owned[key];

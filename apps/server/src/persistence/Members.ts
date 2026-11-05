@@ -37,12 +37,12 @@ export const InsertMemberInput = Schema.Struct({
 });
 export type InsertMemberInput = typeof InsertMemberInput.Type;
 
-/** Absent fields keep their stored value. */
+/** Absent fields keep their stored value; a `null` git field clears it. */
 export const UpdateMemberInput = Schema.Struct({
   id: MemberId,
   name: Schema.optionalKey(TrimmedNonEmptyString),
-  gitName: Schema.optionalKey(TrimmedNonEmptyString),
-  gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
+  gitName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  gitEmail: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 export type UpdateMemberInput = typeof UpdateMemberInput.Type;
@@ -138,8 +138,10 @@ const make = Effect.gen(function* () {
     execute: (input) => sql`
       UPDATE members
       SET name = COALESCE(${input.name ?? null}, name),
-        git_name = COALESCE(${input.gitName ?? null}, git_name),
-        git_email = COALESCE(${input.gitEmail ?? null}, git_email),
+        git_name = CASE WHEN ${input.gitName === undefined ? 0 : 1} = 1
+          THEN ${input.gitName ?? null} ELSE git_name END,
+        git_email = CASE WHEN ${input.gitEmail === undefined ? 0 : 1} = 1
+          THEN ${input.gitEmail ?? null} ELSE git_email END,
         updated_at = ${input.updatedAt}
       WHERE id = ${input.id}
       RETURNING ${columns}

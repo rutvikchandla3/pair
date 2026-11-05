@@ -570,6 +570,27 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("keeps live-query reuse when only the git author changes", () => {
+    const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      cwd: "/workspace",
+    });
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: mcpSessionFor(ThreadId.make("thread-claude-git-author")),
+      readOnlySandbox: false,
+    });
+    const keyFor = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+        ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy),
+        overrides,
+      );
+    assert.equal(
+      keyFor({ ...policy, gitAuthor: { name: "Bob", email: "bob@example.com" } }),
+      keyFor(policy),
+    );
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
@@ -5922,6 +5943,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           { model: "claude-opus-5-5" },
           { effortLevel: "medium", fastMode: false, ultracode: null },
         ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the launch's git author when the thread changes hands mid-session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, email: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-git-author:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, gitAuthor: { name: email, email } },
+          });
+        yield* harness.runtime.startTurn(turn(1, "bob@example.com"));
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(turn(2, "alice@example.com"));
+
+        assert.equal(harness.processQueues.length, 1);
+        assert.include(harness.getOpenedOptions()?.env, {
+          GIT_AUTHOR_NAME: "bob@example.com",
+          GIT_AUTHOR_EMAIL: "bob@example.com",
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
