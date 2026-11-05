@@ -277,7 +277,7 @@ export function parseRemotePairingFields(input: {
     throw new Error("Enter a backend host.");
   }
   if (!pairingCode) {
-    throw new Error("Enter a pairing code.");
+    throw new Error("Enter a sign-in code.");
   }
   return { host, pairingCode };
 }
@@ -306,7 +306,7 @@ export function summarizeAuthorizedClients(
   const parts = [
     `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
     links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
+      ? `${links.length} ${links.length === 1 ? "sign-in link" : "sign-in links"}`
       : null,
   ];
   return parts.filter((part): part is string => part !== null).join(" · ");

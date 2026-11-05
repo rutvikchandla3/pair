@@ -153,7 +153,7 @@ export class ServerAuthPairingLinkCreationError extends Schema.TaggedError<Serve
   },
 ) {
   override get message(): string {
-    return "Failed to create pairing link.";
+    return "Failed to create sign-in link.";
   }
 }
 
@@ -164,7 +164,7 @@ export class ServerAuthPairingLinksListError extends Schema.TaggedError<ServerAu
   },
 ) {
   override get message(): string {
-    return "Failed to list pairing links.";
+    return "Failed to list sign-in links.";
   }
 }
 
@@ -175,7 +175,7 @@ export class ServerAuthPairingLinkRevocationError extends Schema.TaggedError<Ser
   },
 ) {
   override get message(): string {
-    return "Failed to revoke pairing link.";
+    return "Failed to revoke sign-in link.";
   }
 }
 
@@ -438,10 +438,10 @@ export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAut
 ) {
   override get message(): string {
     return this.reason === "insufficient_scope"
-      ? "That pairing code cannot grant this access. It has not been used, so choose an access level it grants, or create a code with the standard scopes."
+      ? "That sign-in code cannot grant this access. It has not been used, so choose an access level it grants, or create a code with the standard scopes."
       : this.reason === "not_a_pairing_code"
-        ? "That is not a one-time pairing code."
-        : "That pairing code is unknown, expired, or already used.";
+        ? "That is not a one-time sign-in code."
+        : "That sign-in code is unknown, expired, or already used.";
   }
 }
 
@@ -1123,7 +1123,7 @@ export const make = Effect.gen(function* () {
     if (input?.purpose !== "startup" && !ManagedLimits.allowsRemoteClients(managedPolicy)) {
       return yield* ManagedLimits.refuseRemoteClients(
         managedPolicy,
-        "so this server cannot create pairing links",
+        "so this server cannot create sign-in links",
       );
     }
     return yield* issuePairingLink(input);

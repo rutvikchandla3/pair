@@ -1,6 +1,6 @@
 # Team
 
-Several people can share one T3 Code server, for example one running on a team VM. Everyone
+Several people can share one Pair server, for example one running on a team VM. Everyone
 signs in as a member, works in the same projects and threads, and sees who did what. A server
 with one member looks and behaves exactly as it did before.
 
@@ -14,7 +14,7 @@ server's user, so invite only people you would give SSH access to.
 - **Members** can do everything else: start and prompt threads, approve requests, use
   terminals and source control.
 
-To use T3 Code on another device, choose **Add a device** on your own row. An admin can create a
+To use Pair on another device, choose **Add a device** on your own row. An admin can create a
 **Sign-in link** for any member. Removing a member signs out all of their devices at once; their
 threads stay and can be assigned to someone else. The same actions are available from the
 command line: see [Team members from the command line](./remote-access.md#team-members-from-the-command-line).

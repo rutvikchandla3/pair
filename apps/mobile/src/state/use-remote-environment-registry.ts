@@ -65,7 +65,7 @@ export async function pairEnvironment(
     return { ok: true, error: null };
   }
   const error = Cause.squash(result.cause);
-  const message = error instanceof Error ? error.message : "Failed to pair with the environment.";
+  const message = error instanceof Error ? error.message : "Couldn't connect to the environment.";
   if (
     error !== null &&
     typeof error === "object" &&

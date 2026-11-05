@@ -81,7 +81,7 @@ function LinkResult({ credential }: { readonly credential: AuthPairingCredential
       </p>
       {share.qrPairingUrl === null ? (
         <p className="text-xs text-muted-foreground">
-          This server is only reachable from this machine. Copy the code and pair from another
+          This server is only reachable from this machine. Copy the code and sign in from another
           client using the server&apos;s reachable address.
         </p>
       ) : (
