@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, MemberId } from "@t3tools/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -22,6 +22,7 @@ export const AuthPairingLinkRecord = Schema.Struct({
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
   subject: Schema.String,
+  memberId: Schema.NullOr(MemberId),
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -37,6 +38,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: AuthEnvironmentScopes,
   subject: Schema.String,
+  memberId: MemberId,
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtcFromString,
@@ -65,6 +67,12 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
 
+export const RevokeMemberAuthPairingLinksInput = Schema.Struct({
+  memberId: MemberId,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeMemberAuthPairingLinksInput = typeof RevokeMemberAuthPairingLinksInput.Type;
+
 export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
   credential: Schema.String,
 });
@@ -76,6 +84,7 @@ const AuthPairingLinkRawDbRow = Schema.Struct({
   method: Schema.Unknown,
   scopes: Schema.Unknown,
   subject: Schema.Unknown,
+  memberId: Schema.Unknown,
   label: Schema.Unknown,
   proofKeyThumbprint: Schema.Unknown,
   createdAt: Schema.Unknown,
@@ -101,6 +110,9 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthPairingLinkInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+    readonly revokeUnconsumedForMember: (
+      input: RevokeMemberAuthPairingLinksInput,
+    ) => Effect.Effect<ReadonlyArray<string>, AuthPairingLinkRepositoryError>;
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
@@ -136,6 +148,7 @@ export const make = Effect.gen(function* () {
           method,
           scopes,
           subject,
+          member_id,
           label,
           proof_key_thumbprint,
           created_at,
@@ -149,6 +162,7 @@ export const make = Effect.gen(function* () {
           ${input.method},
           ${JSON.stringify(input.scopes)},
           ${input.subject},
+          ${input.memberId},
           ${input.label},
           ${input.proofKeyThumbprint},
           ${input.createdAt},
@@ -201,6 +215,7 @@ export const make = Effect.gen(function* () {
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
+          member_id AS "memberId",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
@@ -221,6 +236,7 @@ export const make = Effect.gen(function* () {
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
+          member_id AS "memberId",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
@@ -249,6 +265,20 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const revokeMemberPairingLinkRows = SqlSchema.findAll({
+    Request: RevokeMemberAuthPairingLinksInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ memberId, revokedAt }) =>
+      sql`
+        UPDATE auth_pairing_links
+        SET revoked_at = ${revokedAt}
+        WHERE member_id = ${memberId}
+          AND revoked_at IS NULL
+          AND consumed_at IS NULL
+        RETURNING id AS "id"
+      `,
+  });
+
   const getPairingLinkRowByCredential = SqlSchema.findOneOption({
     Request: GetAuthPairingLinkByCredentialInput,
     Result: AuthPairingLinkRawDbRow,
@@ -260,6 +290,7 @@ export const make = Effect.gen(function* () {
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
+          member_id AS "memberId",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
@@ -344,6 +375,18 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
+  const revokeUnconsumedForMember: AuthPairingLinkRepository["Service"]["revokeUnconsumedForMember"] =
+    (input) =>
+      revokeMemberPairingLinkRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthPairingLinkRepository.revokeUnconsumedForMember:query",
+            "AuthPairingLinkRepository.revokeUnconsumedForMember:decodeRows",
+          ),
+        ),
+        Effect.map((rows) => rows.map((row) => row.id)),
+      );
+
   const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
     getPairingLinkRowByCredential(input).pipe(
       NodeSqliteClient.readOnly,
@@ -376,6 +419,7 @@ export const make = Effect.gen(function* () {
     consumeAvailable,
     listActive,
     revoke,
+    revokeUnconsumedForMember,
     getByCredential,
   } satisfies AuthPairingLinkRepository["Service"];
 });

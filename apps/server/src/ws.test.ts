@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  MemberId,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -26,6 +27,7 @@ import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -88,6 +90,11 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamState from "./team/TeamState.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
+import type { ThreadViewer } from "./orchestration-v2/MemberThreadView.ts";
+import * as Members from "./persistence/Members.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -581,11 +588,12 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("idle", "parent", null),
       shell("live", "parent", "running"),
       ...Array.from({ length: 25 }, (_, index) => shell(`recent-${index}`, null, null, 1)),
-      shell("old", null, null, 30),
+      { ...shell("old", null, null, 30), ownerId: MemberId.make("member-alice") },
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
       readonly omitOlderSettled?: boolean;
+      readonly viewer?: ThreadViewer;
     }) =>
       subscribeOrchestrationV2Shell(input).pipe(
         Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
@@ -651,6 +659,24 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
       { projectId: ProjectId.make("project"), count: 1 },
     ]);
+    assert.isUndefined(withoutOld?.olderSettled?.ownCounts);
+
+    const viewer = (memberId: string, isTeamMode: boolean): ThreadViewer => ({
+      memberId: MemberId.make(memberId),
+      serverOwnerId: MemberId.make("member-owner"),
+      isTeamMode: Effect.succeed(isTeamMode),
+      readMemberStates: () => Effect.succeed(new Map()),
+    });
+    const ownCounts = (memberViewer: ThreadViewer) =>
+      firstSnapshot({ omitOlderSettled: true, viewer: memberViewer }).pipe(
+        Effect.map((snapshot) => snapshot?.olderSettled?.ownCounts),
+      );
+    // One member owns everything, so the snapshot stays as it was.
+    assert.isUndefined(yield* ownCounts(viewer("member-owner", false)));
+    assert.deepEqual(yield* ownCounts(viewer("member-alice", true)), [
+      { projectId: ProjectId.make("project"), count: 1 },
+    ]);
+    assert.deepEqual(yield* ownCounts(viewer("member-owner", true)), []);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
@@ -710,6 +736,12 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
+  Layer.mock(TeamMembers.TeamMembers)({}),
+  Layer.mock(TeamState.TeamState)({
+    ownerId: MemberId.make("member-test"),
+    members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(new Map()),
+  }),
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
   Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),
@@ -881,6 +913,7 @@ it.effect.each([
             {
               sessionId: AuthSessionId.make("config-test"),
               subject: "config-test",
+              memberId: MemberId.make("member-test"),
               method: "browser-session-cookie",
               scopes: [],
             },
@@ -1101,6 +1134,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           {
             sessionId: AuthSessionId.make("config-test"),
             subject: "config-test",
+            memberId: MemberId.make("member-test"),
             method: "browser-session-cookie",
             scopes: [],
           },

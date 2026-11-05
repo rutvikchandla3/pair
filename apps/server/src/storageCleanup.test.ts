@@ -347,6 +347,7 @@ const cleanupFixture = (
     let sessionLive = true;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
+    let memberPinnedThreadIds: string[] = [];
     let fullStatusCalls = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
@@ -442,17 +443,19 @@ const cleanupFixture = (
               ]
             : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
               ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
-                  ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
+              : strings.join("").includes("projection_thread_member_state")
+                ? memberPinnedThreadIds.map((thread_id) => ({ thread_id }))
+                : strings.join("").includes("deleted_at IS NOT NULL")
+                  ? deletedThreads.map((thread) => ({
+                      payload_json: JSON.stringify(thread),
+                      workspaceRoot: repo,
+                    }))
+                  : strings.join("").includes('AS "worktreePath"')
+                    ? [
+                        ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                        ...storedWorktreePaths,
+                      ].map((worktreePath) => ({ worktreePath }))
+                    : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -517,6 +520,9 @@ const cleanupFixture = (
       },
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
+      },
+      setMemberPinnedThreadIds: (threadIds: string[]) => {
+        memberPinnedThreadIds = threadIds;
       },
       setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
         deletedThreads = next;
@@ -792,6 +798,7 @@ describe("subagent worktree ownership", () => {
     "pending-parent",
     "unsettled-child",
     "pinned-child",
+    "member-pinned-child",
     "fork",
     "missing-parent",
     "cycle",
@@ -849,6 +856,7 @@ describe("subagent worktree ownership", () => {
         },
       });
       fixture.setThreads([child, middle, root]);
+      if (scenario === "member-pinned-child") fixture.setMemberPinnedThreadIds([child.id]);
       const report = yield* fixture.service.runNow;
       const removed = ["child", "grandchild", "immediate"].includes(scenario);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(!removed);

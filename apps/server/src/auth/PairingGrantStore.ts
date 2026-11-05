@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
   type AuthPairingLink,
+  type MemberId,
   type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
 import {
@@ -28,6 +29,8 @@ export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
+  /** Null for desktop grants and rows an older binary wrote; both mean the owner. */
+  readonly memberId: MemberId | null;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt: DateTime.DateTime;
@@ -168,9 +171,22 @@ export class BootstrapCredentialLookupError extends Schema.TaggedError<Bootstrap
   }
 }
 
+export class MemberPairingLinksRevokeError extends Schema.TaggedError<MemberPairingLinksRevokeError>()(
+  "MemberPairingLinksRevokeError",
+  {
+    memberId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the member's pairing links.";
+  }
+}
+
 export const BootstrapCredentialInternalError = Schema.Union([
   ActivePairingLinksLoadError,
   PairingLinkRevokeError,
+  MemberPairingLinksRevokeError,
   PairingCredentialIssueError,
   PairingCredentialRandomGenerationError,
   BootstrapCredentialConsumeError,
@@ -208,7 +224,8 @@ export type BootstrapCredentialChange =
 export class PairingGrantStore extends Context.Service<
   PairingGrantStore,
   {
-    readonly issueOneTimeToken: (input?: {
+    readonly issueOneTimeToken: (input: {
+      readonly memberId: MemberId;
       readonly ttl?: Duration.Duration;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly subject?: string;
@@ -222,6 +239,9 @@ export class PairingGrantStore extends Context.Service<
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    readonly revokeUnconsumedForMember: (
+      memberId: MemberId,
+    ) => Effect.Effect<ReadonlyArray<string>, BootstrapCredentialInternalError>;
     readonly consume: (
       credential: string,
       input?: {
@@ -327,6 +347,7 @@ const make = Effect.gen(function* () {
       method: "desktop-bootstrap",
       scopes: AuthStandardClientScopes,
       subject: "desktop-bootstrap",
+      memberId: null,
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
       }),
@@ -342,23 +363,17 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const rows = yield* pairingLinks.listActive({ now });
 
-      return rows.map((row) =>
-        row.label
-          ? ({
-              id: row.id,
-              scopes: row.scopes,
-              subject: row.subject,
-              label: row.label,
-              createdAt: row.createdAt,
-              expiresAt: row.expiresAt,
-            } satisfies AuthPairingLink)
-          : ({
-              id: row.id,
-              scopes: row.scopes,
-              subject: row.subject,
-              createdAt: row.createdAt,
-              expiresAt: row.expiresAt,
-            } satisfies AuthPairingLink),
+      return rows.map(
+        (row) =>
+          ({
+            id: row.id,
+            scopes: row.scopes,
+            subject: row.subject,
+            ...(row.memberId === null ? {} : { memberId: row.memberId }),
+            ...(row.label ? { label: row.label } : {}),
+            createdAt: row.createdAt,
+            expiresAt: row.expiresAt,
+          }) satisfies AuthPairingLink,
       );
     },
     Effect.mapError((cause) => new ActivePairingLinksLoadError({ cause })),
@@ -380,6 +395,16 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const revokeUnconsumedForMember: PairingGrantStore["Service"]["revokeUnconsumedForMember"] =
+    Effect.fn("PairingGrantStore.revokeUnconsumedForMember")(function* (memberId) {
+      const revokedAt = yield* DateTime.now;
+      const revokedIds = yield* pairingLinks
+        .revokeUnconsumedForMember({ memberId, revokedAt })
+        .pipe(Effect.mapError((cause) => new MemberPairingLinksRevokeError({ memberId, cause })));
+      yield* Effect.forEach(revokedIds, emitRemoved, { discard: true });
+      return revokedIds;
+    });
+
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(function* (input) {
@@ -392,29 +417,29 @@ const make = Effect.gen(function* () {
         ),
       );
     const credential = yield* generatePairingToken;
-    const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
+    const isDevStartupToken = config.devUrl !== undefined && input.purpose === "startup";
     const ttl =
-      input?.ttl ??
-      (isDevStartupToken ? DEV_STARTUP_TTL_HOURS : DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES);
+      input.ttl ?? (isDevStartupToken ? DEV_STARTUP_TTL_HOURS : DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES);
     const now = yield* DateTime.now;
     const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
     const issued: IssuedBootstrapCredential = {
       id,
       credential,
-      ...(input?.label ? { label: input.label } : {}),
-      ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+      ...(input.label ? { label: input.label } : {}),
+      ...(input.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
       expiresAt,
     };
-    const subject = input?.subject ?? "one-time-token";
+    const subject = input.subject ?? "one-time-token";
     yield* pairingLinks
       .create({
         id,
         credential,
         method: "one-time-token",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes: input.scopes ?? AuthStandardClientScopes,
         subject,
-        label: input?.label ?? null,
-        proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
+        memberId: input.memberId,
+        label: input.label ?? null,
+        proofKeyThumbprint: input.proofKeyThumbprint ?? null,
         createdAt: now,
         expiresAt: expiresAt,
       })
@@ -424,16 +449,17 @@ const make = Effect.gen(function* () {
             new PairingCredentialIssueError({
               pairingLinkId: id,
               subject,
-              ...(input?.label ? { label: input.label } : {}),
+              ...(input.label ? { label: input.label } : {}),
               cause,
             }),
         ),
       );
     yield* emitUpsert({
       id,
-      scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: input?.subject ?? "one-time-token",
-      ...(input?.label ? { label: input.label } : {}),
+      scopes: input.scopes ?? AuthStandardClientScopes,
+      subject,
+      memberId: input.memberId,
+      ...(input.label ? { label: input.label } : {}),
       createdAt: now,
       expiresAt,
     });
@@ -448,6 +474,7 @@ const make = Effect.gen(function* () {
           method: "desktop-bootstrap",
           scopes: AuthStandardClientScopes,
           subject: "desktop-bootstrap",
+          memberId: null,
           expiresAt: DateTime.add(now, {
             milliseconds: DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
           }),
@@ -527,6 +554,7 @@ const make = Effect.gen(function* () {
                 method: grant.method,
                 scopes: grant.scopes,
                 subject: grant.subject,
+                memberId: grant.memberId,
                 ...(grant.label ? { label: grant.label } : {}),
                 ...(grant.proofKeyThumbprint
                   ? { proofKeyThumbprint: grant.proofKeyThumbprint }
@@ -571,6 +599,7 @@ const make = Effect.gen(function* () {
           method: consumed.value.method,
           scopes: consumed.value.scopes,
           subject: consumed.value.subject,
+          memberId: consumed.value.memberId,
           ...(consumed.value.label ? { label: consumed.value.label } : {}),
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }
@@ -625,6 +654,7 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    revokeUnconsumedForMember,
     consume,
   });
 });

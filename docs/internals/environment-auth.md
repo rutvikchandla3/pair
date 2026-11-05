@@ -12,8 +12,7 @@ management: `terminal:operate` is a shell as the server's user and
 `orchestration:operate` can start a full-access agent, and either can mint a
 session with every scope through `t3 auth session issue`, so withholding
 management from the default would not be a boundary. A narrower client gets
-explicit scopes. Creating another pairing link requires both `access:write` and
-every scope being delegated. The
+explicit scopes. A pairing link never delegates a scope its creator lacks. The
 [auth handlers](../../apps/server/src/auth/http.ts) enforce this at issuance;
 client labels and device metadata have no authorization role.
 
@@ -26,6 +25,56 @@ Browser cookies, bearer tokens, and DPoP tokens adapt the same scoped session
 model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
+
+### Every session belongs to a member
+
+Sessions and pairing links carry a `member_id`; the subject keeps describing how
+the client signed in. Existing rows migrate to the owner, and desktop bootstrap
+grants issue owner sessions. A row with no member can only come from an older
+binary after a rollback. It resolves to the owner while the environment has one
+active member and is refused once it is a team. The owner cannot be removed or
+demoted, so an environment always keeps an admin.
+
+Roles are scope bundles defined in [team.ts](../../packages/contracts/src/team.ts).
+Admins hold every standard scope. Members lose settings, provider, access,
+relay and maintenance management, but keep `terminal:operate` and
+`orchestration:operate`. By the argument above, roles guard against mistakes,
+not against a hostile teammate.
+
+Any member can add a device: the pairing-credential endpoint needs only
+`access:read`, binds the link to the caller's member, and defaults to the
+caller's scopes. Without `access:write`, the access snapshot and stream show
+only the caller's own clients and links, and revoking someone else's is
+refused. "Revoke others" is member-scoped even for admins; across members it
+would sign out the whole team.
+
+[TeamMembers](../../apps/server/src/team/TeamMembers.ts) applies role changes
+to existing sessions rather than reissuing them. Demotion intersects each
+session with the member bundle and revokes unconsumed links, which still carry
+admin scopes. Promotion widens only sessions that hold the full member bundle,
+so a deliberately narrow one, such as a read-only MCP client, stays narrow.
+`awaitInvalidation` closes a socket whose session scopes changed, and the client
+reconnects with the new grant. Removal revokes the member's sessions and
+unconsumed links, and authentication independently rejects a removed member.
+
+Authentication reads members from an in-memory snapshot
+([TeamState](../../apps/server/src/team/TeamState.ts)), and only the server's own
+writes close sockets and update its Team stream. So `t3 member` sends changes
+through the `team.*` RPCs of a running server that answers, and writes the
+database itself only when none does ([member.ts](../../apps/server/src/cli/member.ts)).
+The server rereads members when it meets an unknown id or lists the team, which
+covers members written while it was unreachable; a removal written then is
+enforced through the revoked rows, while open sockets last until they reconnect.
+
+Commands carry an `actorId` only from the session that sent them
+(`withActor` in [ThreadManagementService](../../apps/server/src/orchestration-v2/ThreadManagementService.ts));
+agent, MCP and scheduled commands carry none and never count as human authors.
+The orchestrator decides at dispatch whether a user message names its sender to
+the provider: only once a thread has two or more distinct human authors. The
+stored text never changes; the name is added where provider input is built
+([SenderLabel](../../apps/server/src/orchestration-v2/SenderLabel.ts)). Solo
+threads therefore send byte-identical input, which keeps provider prompt caches
+warm.
 
 ### Guest links are not sessions
 
@@ -45,12 +94,14 @@ Agents T3 Code did not launch sign in to `/mcp` through a narrow OAuth
 authorization-code server ([McpOAuth](../../apps/server/src/auth/McpOAuth.ts)).
 It accepts loopback redirect URIs for agents on the user's machine and any
 HTTPS redirect for hosted agents (ChatGPT, bots). An HTTPS redirect means a
-link someone else sends the owner can deliver access to that someone, so the
-approval page names the host access goes to and approving stays the owner's
+link someone else sends the user can deliver access to that someone, so the
+approval page names the host access goes to and approving stays the user's
 call. Every client is public and proves itself with PKCE; a client that asks
 for a secret is registered without one. Client registration is stateless, so an unauthenticated caller cannot grow server
 state. Approval spends a one-time pairing code, or uses a browser session with
 `access:write`; proof-bound T3 Connect codes are refused without being spent.
+The client session belongs to the approving member: the pairing code's member,
+or the browser session's. Members approve with their own add-device code.
 
 The user grants either read-only access or a runtime-mode ceiling, not a
 scope list: MCP tools are all orchestration, and `orchestration:operate`

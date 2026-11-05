@@ -1,5 +1,6 @@
 import {
   AuthSessionId,
+  MemberId,
   type AuthEnvironmentScope,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -36,6 +37,8 @@ import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts
 import * as OrchestrationHttp from "./http.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -97,7 +100,7 @@ const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
 );
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
-const serveOrchestrationHttp = (allowed: () => boolean) =>
+const serveOrchestrationHttp = (allowed: () => boolean, memberId = MemberId.make("member-owner")) =>
   Effect.gen(function* () {
     const runtime = ProviderReplayHarness.layerWithRegistry(
       { name: "thread-transcript" },
@@ -114,6 +117,8 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
         ),
         OrchestrationEventStore.layer,
         ProjectStore.layer,
+        ProjectionStore.layer,
+        TeamState.layerTest(),
       ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
     );
     const eventSink = Context.get(services, EventSinkV2);
@@ -142,6 +147,7 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
               Effect.provideService(EnvironmentAuthenticatedPrincipal, {
                 sessionId: AuthSessionId.make("test-session"),
                 subject: "test",
+                memberId,
                 method: "bearer-access-token",
                 scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
               }),
@@ -247,6 +253,71 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;
     expect((yield* read(thread.id)).status).toBe(403);
+  }),
+);
+
+it.effect("shows the session's member their own pins in the HTTP snapshots", () =>
+  Effect.gen(function* () {
+    const alice = MemberId.make("member-alice");
+    const { eventSink, handler } = yield* serveOrchestrationHttp(() => true, alice);
+    const ownersPin = DateTime.makeUnsafe("2026-09-29T01:00:00.000Z");
+    const alicesPin = DateTime.makeUnsafe("2026-09-29T02:00:00.000Z");
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("owner-pins"),
+          type: "thread.pinned",
+          threadId: thread.id,
+          occurredAt: ownersPin,
+          payload: { ...thread, pinnedAt: ownersPin },
+        },
+      ],
+    });
+    const read = (path: string) =>
+      Effect.promise(async () => {
+        const response = await handler(
+          new Request(`http://localhost/api/orchestration/${path}`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        );
+        return (await response.json()) as Record<string, unknown>;
+      });
+    const pins = Effect.gen(function* () {
+      const shell = (yield* read("shell")) as {
+        readonly threads: ReadonlyArray<{ readonly pinnedAt?: string | null }>;
+      };
+      const detail = (yield* read(`threads/${thread.id}`)) as {
+        readonly projection: { readonly thread: { readonly pinnedAt?: string | null } };
+      };
+      return [shell.threads[0]?.pinnedAt ?? null, detail.projection.thread.pinnedAt ?? null];
+    });
+    expect(yield* pins).toEqual([null, null]);
+
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("alice-pins"),
+          type: "thread.pinned",
+          threadId: thread.id,
+          occurredAt: alicesPin,
+          payload: { ...thread, pinnedAt: ownersPin },
+          member: {
+            memberId: alice,
+            state: {
+              pinnedAt: alicesPin,
+              pinOrderKey: null,
+              activeOrderKey: null,
+              lastVisitedAt: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              lastSnoozeWakeAt: null,
+              opens: null,
+            },
+          },
+        },
+      ],
+    });
+    expect(yield* pins).toEqual([DateTime.formatIso(alicesPin), DateTime.formatIso(alicesPin)]);
   }),
 );
 

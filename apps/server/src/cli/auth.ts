@@ -16,17 +16,18 @@ import {
   formatSessionList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
-import { authScopesFlag } from "./authScopes.ts";
+import { authScopesFlag, memberScopesFlag } from "./authScopes.ts";
 import {
   authLocationFlags,
   type CliAuthLocationFlags,
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
+import { memberFlag, resolveMemberGrant } from "./memberGrant.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -47,13 +48,13 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
   );
 });
 
-const ttlFlag = Flag.String("ttl").pipe(
+export const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription("TTL, for example `5m`, `1h`, `30d`, or `15 minutes`."),
   Flag.optional,
 );
 
-const jsonFlag = Flag.Boolean("json").pipe(
+export const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
   Flag.withDefault(false),
 );
@@ -68,7 +69,7 @@ const subjectFlag = Flag.String("subject").pipe(
   Flag.optional,
 );
 
-const baseUrlFlag = Flag.String("base-url").pipe(
+export const baseUrlFlag = Flag.String("base-url").pipe(
   Flag.withSchema(
     Schema.URLFromString.pipe(
       Schema.check(
@@ -168,7 +169,8 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  member: memberFlag,
+  scopes: memberScopesFlag,
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
@@ -181,8 +183,9 @@ const sessionIssueCommand = Command.make("issue", {
       flags,
       (environmentAuth) =>
         Effect.gen(function* () {
+          const grant = yield* resolveMemberGrant(flags.member, flags.scopes);
           const issued = yield* environmentAuth.issueSession({
-            scopes: flags.scopes,
+            ...grant,
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),

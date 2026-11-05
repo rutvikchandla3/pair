@@ -85,6 +85,7 @@ import {
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { RemoveT3ConnectEnvironmentDialog } from "../clerk/RemoveT3ConnectEnvironmentDialog";
 import { authEnvironment } from "~/state/auth";
+import { useIsTeamMode, useTeamMembers } from "~/state/team";
 import { environmentCatalog } from "~/connection/catalog";
 import {
   readEnvironmentScope,
@@ -121,8 +122,7 @@ import {
   sortDesktopClientSessions,
   toDesktopPairingLinkRecord,
   toDesktopClientSessionRecord,
-  selectPairingEndpoint,
-  isTailscaleHttpsEndpoint,
+  resolvePairingShareEndpoints,
   endpointDefaultPreferenceKey,
 } from "./ConnectionsSettings.logic";
 import {
@@ -385,6 +385,8 @@ function ConnectionsSettingsContent({
     (state) => state.setDefaultAdvertisedEndpointKey,
   );
   const canReadAccess = useEnvironmentScope(accessEnvironmentId, AuthAccessReadScope);
+  const teamMembers = useTeamMembers(accessEnvironmentId);
+  const isTeamMode = useIsTeamMode(accessEnvironmentId);
   const canWriteAccess = useEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope);
   const canReadRelay = useEnvironmentScope(accessEnvironmentId, AuthRelayReadScope);
   const canMaintain = useEnvironmentScope(accessEnvironmentId, AuthEnvironmentMaintainScope);
@@ -708,26 +710,17 @@ function ConnectionsSettingsContent({
   };
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
-  const tailscaleHttpsEndpoint = desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
-  const visibleDesktopNetworkAdvertisedEndpoints = isLocalBackendNetworkAccessible
-    ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
-    : [];
-  const visibleDesktopAdvertisedEndpoints = tailscaleHttpsEndpoint
-    ? [...visibleDesktopNetworkAdvertisedEndpoints, tailscaleHttpsEndpoint]
-    : visibleDesktopNetworkAdvertisedEndpoints;
-  const defaultDesktopNetworkAdvertisedEndpoint = selectPairingEndpoint(
-    visibleDesktopNetworkAdvertisedEndpoints,
+  const {
+    tailscaleHttpsEndpoint,
+    networkEndpoints: visibleDesktopNetworkAdvertisedEndpoints,
+    endpoints: visibleDesktopAdvertisedEndpoints,
+    defaultNetworkEndpoint: defaultDesktopNetworkAdvertisedEndpoint,
+    defaultEndpointKey: defaultDesktopAdvertisedEndpointKey,
+  } = resolvePairingShareEndpoints(
+    desktopAdvertisedEndpoints,
+    isLocalBackendNetworkAccessible,
     defaultAdvertisedEndpointKey,
   );
-  const defaultDesktopAdvertisedEndpoint =
-    defaultDesktopNetworkAdvertisedEndpoint ??
-    selectPairingEndpoint(
-      tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [],
-      defaultAdvertisedEndpointKey,
-    );
-  const defaultDesktopAdvertisedEndpointKey = defaultDesktopAdvertisedEndpoint
-    ? endpointDefaultPreferenceKey(defaultDesktopAdvertisedEndpoint)
-    : null;
   const handleSetDefaultAdvertisedEndpoint = (endpoint: AdvertisedEndpoint) => {
     setDefaultAdvertisedEndpointKey(endpointDefaultPreferenceKey(endpoint));
   };
@@ -1039,6 +1032,7 @@ function ConnectionsSettingsContent({
   ) => (
     <PairingClientsList
       servedByEnvironment={isPrimaryAccess}
+      members={isTeamMode ? teamMembers : null}
       endpointUrl={desktopServerExposureState?.endpointUrl}
       endpoints={visibleDesktopAdvertisedEndpoints}
       defaultEndpointKey={defaultDesktopAdvertisedEndpointKey}

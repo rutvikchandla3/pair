@@ -215,6 +215,7 @@ describe("resolveNewThreadEnvMode", () => {
     null,
   );
   const newProject = {
+    teamDefault: false,
     projectSettings: worktreeEnvironment,
     workspaceRoot: "/data/projects/pinball-stats",
     newProjectsRoot: "/data/projects/",
@@ -263,6 +264,57 @@ describe("resolveNewThreadEnvMode", () => {
     ]) {
       expect(resolveNewThreadEnvMode({ ...newProject, projectSettings })).toBe("worktree");
     }
+  });
+});
+
+describe("resolveNewThreadEnvMode team default", () => {
+  const unset = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
+  const existingProject = {
+    teamDefault: true,
+    projectSettings: unset,
+    workspaceRoot: "/work/app",
+    newProjectsRoot: "/data/projects",
+    projectHasThreads: true,
+  };
+
+  it("resolves worktree only when nothing explicit is set", () => {
+    expect(resolveNewThreadEnvMode(existingProject)).toBe("worktree");
+    expect(resolveNewThreadEnvMode({ ...existingProject, teamDefault: false })).toBe("local");
+  });
+
+  it("lets an explicit local setting at any layer beat it", () => {
+    for (const projectSettings of [
+      resolveProjectSettings(
+        { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" },
+        projectId,
+        null,
+        null,
+      ),
+      resolveProjectSettings(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+        },
+        projectId,
+        null,
+        null,
+      ),
+      resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {
+        defaultThreadEnvMode: "local",
+      }),
+    ]) {
+      expect(resolveNewThreadEnvMode({ ...existingProject, projectSettings })).toBe("local");
+    }
+  });
+
+  it("still starts a new name-only project's first thread in its checkout", () => {
+    expect(
+      resolveNewThreadEnvMode({
+        ...existingProject,
+        projectHasThreads: false,
+        workspaceRoot: "/data/projects/pinball-stats",
+      }),
+    ).toBe("local");
   });
 });
 

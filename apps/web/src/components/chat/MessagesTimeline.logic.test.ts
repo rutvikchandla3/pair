@@ -21,7 +21,7 @@ import {
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
+import { CheckpointId, EnvironmentId, MemberId, MessageId, RunId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   computeStableMessagesTimelineRows,
@@ -3468,6 +3468,52 @@ describe("linked timeline resources", () => {
     projectedItem: { item: { id, type, runId: eventRunId } } as OrchestrationV2ProjectedTurnItem,
   });
   const common = { isWorking: false, turnDiffSummaries: [], supportsConversationRollback: false };
+
+  it("carries the member who stopped a run onto its interrupt result, and drops the request row", () => {
+    const actorId = MemberId.make("member-ana");
+    const interrupt = (id: string, type: "run_interrupt_request" | "run_interrupt_result") => ({
+      ...event(id, "subagent"),
+      projectedItem: {
+        item: { id, type, runId, ...(type === "run_interrupt_request" ? { actorId } : {}) },
+      } as OrchestrationV2ProjectedTurnItem,
+    });
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        interrupt("request", "run_interrupt_request"),
+        interrupt("result", "run_interrupt_result"),
+      ],
+      expandedRunIds: new Set([runId]),
+    });
+    expect(rows.filter((row) => row.kind === "event")).toMatchObject([
+      { id: "result", stoppedBy: actorId },
+    ]);
+  });
+
+  it("places the latest rollback after the last row that existed when it was requested", () => {
+    const actorId = MemberId.make("member-ana");
+    const at = (createdAt: string, id: string) => ({
+      ...event(id, "thread_created"),
+      createdAt,
+    });
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [at("2026-09-08T10:00:01Z", "before"), at("2026-09-08T10:00:09Z", "after")],
+      lastRollback: {
+        actorId,
+        checkpointId: CheckpointId.make("checkpoint-1"),
+        requestedAt: DateTime.makeUnsafe("2026-09-08T10:00:05Z"),
+      },
+    });
+    expect(rows.map((row) => row.id)).toEqual(["before", "rollback:checkpoint-1", "after"]);
+    expect(rows[1]).toMatchObject({ kind: "rollback", actorId });
+    expect(
+      deriveMessagesTimelineRows({
+        ...common,
+        timelineEntries: [at("2026-09-08T10:00:01Z", "before")],
+      }).some((row) => row.kind === "rollback"),
+    ).toBe(false);
+  });
 
   it("groups adjacent subagents without merging across a resource or run boundary", () => {
     const rows = deriveMessagesTimelineRows({

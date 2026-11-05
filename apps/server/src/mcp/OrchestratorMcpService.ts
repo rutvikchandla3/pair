@@ -98,7 +98,10 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
+import { makeThreadViewers, overlayForViewer } from "../orchestration-v2/MemberThreadView.ts";
+import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import type * as TeamState from "../team/TeamState.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1022,6 +1025,19 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const threadViewers = yield* makeThreadViewers;
+  // An outside client reads as the member who connected it; an agent's thread reads as the holder.
+  const viewerOf = (scope: McpInvocationScope) =>
+    threadViewers(scope.thread === undefined ? scope.client?.memberId : undefined);
+  const viewShells = (
+    scope: McpInvocationScope,
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  ) =>
+    overlayForViewer(viewerOf(scope), shells).pipe(
+      Effect.mapError((error) =>
+        failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+      ),
+    );
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -2028,7 +2044,7 @@ const make = Effect.gen(function* () {
             }),
       };
       const { task } = yield* scheduledTasks
-        .upsert(upsertInput)
+        .upsert(upsertInput, parent?.thread.ownerId ?? scope.client?.memberId ?? undefined)
         .pipe(
           Effect.mapError((error) =>
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
@@ -2854,6 +2870,9 @@ const make = Effect.gen(function* () {
                   interactionMode,
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
+                  ...(parent.thread.ownerId === undefined || parent.thread.ownerId === null
+                    ? {}
+                    : { ownerId: parent.thread.ownerId }),
                   ...(parent.thread.linkOrigin === undefined
                     ? {}
                     : { linkOrigin: parent.thread.linkOrigin }),
@@ -2961,6 +2980,7 @@ const make = Effect.gen(function* () {
           Effect.mapError((error) =>
             failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
           ),
+          Effect.flatMap((shells) => viewShells(scope, shells)),
         );
       const nowMs = yield* Clock.currentTimeMillis;
       // An empty list is no filter: clients that fill every optional field send `[]`.
@@ -3087,7 +3107,7 @@ const make = Effect.gen(function* () {
           scope,
           target,
           timeline.totalItems,
-          shell,
+          (yield* viewShells(scope, [shell]))[0]!,
           yield* Clock.currentTimeMillis,
         ),
         recentRuns: target.runs
@@ -3309,4 +3329,6 @@ export const layer: Layer.Layer<
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
+  | ProjectionStore.ProjectionStoreV2
+  | TeamState.TeamState
 > = Layer.effect(OrchestratorMcpService, make);

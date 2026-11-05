@@ -5,6 +5,8 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthAccessTokenType,
   EnvironmentHttpApi,
+  MEMBER_SCOPES,
+  MemberId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -21,7 +23,9 @@ import * as HttpRouter from "effect/http/HttpRouter";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
@@ -72,19 +76,21 @@ const postJson = (path: string, body: unknown, headers?: Readonly<Record<string,
     body: encodeJson(body),
   });
 
+const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+  get: () => Effect.succeedNone,
+  set: () => Effect.void,
+  create: () => Effect.void,
+  getOrCreateRandom: () => Effect.die("Not used by these routes."),
+  remove: () => Effect.void,
+});
+const makeRequestContext = (random: SecureRandom.SecureRandom["Service"]) =>
+  Context.make(SecureRandom.SecureRandom, random).pipe(
+    Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+  );
+
 it.effect("sets the selected browser session cookies through the HTTP route", () =>
   Effect.gen(function* () {
-    const random = yield* SecureRandom.SecureRandom;
-    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.succeedNone,
-      set: () => Effect.void,
-      create: () => Effect.void,
-      getOrCreateRandom: () => Effect.die("Not used by these routes."),
-      remove: () => Effect.void,
-    });
-    const requestContext = Context.make(SecureRandom.SecureRandom, random).pipe(
-      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
-    );
+    const requestContext = makeRequestContext(yield* SecureRandom.SecureRandom);
     return yield* Effect.acquireUseRelease(
       Effect.sync(
         () =>
@@ -155,6 +161,101 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+interface TeamServices {
+  readonly auth: EnvironmentAuth.EnvironmentAuth["Service"];
+  readonly members: Members.MemberRepository["Service"];
+  readonly teamState: TeamState.TeamState["Service"];
+}
+
+// The handler runs on the wall clock, so sessions issued beside it must too.
+it.live("limits access management without access:write to the caller's own member", () =>
+  Effect.gen(function* () {
+    const requestContext = makeRequestContext(yield* SecureRandom.SecureRandom);
+    let services: TeamServices | undefined;
+    const layerTeamRoutes = Layer.effectDiscard(
+      Effect.all({
+        auth: EnvironmentAuth.EnvironmentAuth,
+        members: Members.MemberRepository,
+        teamState: TeamState.TeamState,
+      }).pipe(Effect.tap((captured) => Effect.sync(() => (services = captured)))),
+    ).pipe(Layer.provideMerge(layerRoutes));
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerTeamRoutes, { disableLogger: true })),
+      (web) =>
+        Effect.gen(function* () {
+          const call = (path: string, token: string, body: unknown = {}) =>
+            Effect.promise(() =>
+              web.handler(
+                postJson(path, body, { authorization: `Bearer ${token}` }),
+                requestContext,
+              ),
+            );
+          const warmup = yield* Effect.promise(() =>
+            web.handler(new Request("http://127.0.0.1/api/auth/session"), requestContext),
+          );
+          expect(warmup.status).toBe(200);
+          const { auth, members, teamState } = services!;
+          const addMember = (name: string) =>
+            Effect.gen(function* () {
+              const id = MemberId.make(`member-${name}`);
+              yield* members.insert({
+                id,
+                name,
+                role: "member",
+                gitName: null,
+                gitEmail: null,
+                createdAt: "2026-09-01T00:00:00.000Z",
+              });
+              yield* teamState.reload;
+              return id;
+            });
+          const alice = yield* addMember("alice");
+          const bob = yield* addMember("bob");
+          const memberSession = (memberId: MemberId) =>
+            auth.issueSession({ memberId, scopes: MEMBER_SCOPES });
+          const owner = yield* auth.issueSession();
+          const aliceDevice = yield* memberSession(alice);
+          const aliceOther = yield* memberSession(alice);
+          const bobDevice = yield* memberSession(bob);
+
+          const added = yield* call("/api/auth/pairing-token", aliceDevice.token);
+          expect(added.status).toBe(200);
+          const { id: linkId } = (yield* Effect.promise(() => added.json())) as { id: string };
+          const link = (yield* auth.listPairingLinks()).find(
+            (candidate) => candidate.id === linkId,
+          );
+          expect(link?.memberId).toBe(alice);
+          expect(new Set(link?.permissions)).toEqual(new Set(MEMBER_SCOPES));
+          expect(
+            (yield* call("/api/auth/pairing-token", aliceDevice.token, {
+              scopes: ["settings:write"],
+            })).status,
+          ).toBe(403);
+
+          expect(
+            (yield* call("/api/auth/clients/revoke", aliceDevice.token, {
+              sessionId: bobDevice.sessionId,
+            })).status,
+          ).toBe(403);
+          const ownRevoke = yield* call("/api/auth/clients/revoke", aliceDevice.token, {
+            sessionId: aliceOther.sessionId,
+          });
+          expect(yield* Effect.promise(() => ownRevoke.json())).toEqual({ revoked: true });
+
+          const aliceThird = yield* memberSession(alice);
+          const others = yield* call("/api/auth/clients/revoke-others", aliceDevice.token);
+          expect(yield* Effect.promise(() => others.json())).toEqual({ revokedCount: 1 });
+          const active = new Set((yield* auth.listSessions()).map((session) => session.sessionId));
+          expect(active.has(aliceThird.sessionId)).toBe(false);
+          for (const spared of [owner, aliceDevice, bobDevice]) {
+            expect(active.has(spared.sessionId)).toBe(true);
+          }
+        }),
+      (web) => Effect.promise(() => web.dispose()),
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

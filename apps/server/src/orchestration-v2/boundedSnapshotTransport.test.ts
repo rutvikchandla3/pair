@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
+  MemberId,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -48,6 +49,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -103,6 +105,7 @@ const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("compact-transport"),
       subject: "compact-transport",
+      memberId: MemberId.make("member-owner"),
       method: "browser-session-cookie",
       scopes: new Set([AuthOrchestrationReadScope]),
     }),
@@ -408,6 +411,7 @@ const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<
     const appLayer = HttpApiBuilder.layer(OrchestrationApi).pipe(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(auth),
+      Layer.provide(TeamState.layerTest()),
       Layer.provide(Layer.succeedContext(context)),
       Layer.provide(NodeHttpPlatform.layer),
       Layer.provide(Etag.layerWeak),

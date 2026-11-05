@@ -20,6 +20,7 @@ import {
   type AuthWebSocketTicketResult,
   type AuthWebSocketTicketUse,
   DpopFailureReason,
+  type MemberId,
   type DpopFailureReason as DpopFailureReasonType,
   mcpClientScopes,
 } from "@t3tools/contracts";
@@ -49,6 +50,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as TeamState from "../team/TeamState.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -79,6 +81,7 @@ const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
+  readonly memberId: MemberId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
   /** Another T3 Code environment's link, whose work here stays within it. */
@@ -88,6 +91,7 @@ export interface McpClientSession {
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
+  readonly memberId: MemberId;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
@@ -450,6 +454,15 @@ export class ServerAuthForbiddenOperationError extends Schema.TaggedError<Server
   }
 }
 
+export class ServerAuthNotMemberOwnedError extends Schema.TaggedError<ServerAuthNotMemberOwnedError>()(
+  "ServerAuthNotMemberOwnedError",
+  {},
+) {
+  override get message(): string {
+    return "Only access:write can manage another member's access.";
+  }
+}
+
 export class EnvironmentAuth extends Context.Service<
   EnvironmentAuth,
   {
@@ -481,7 +494,9 @@ export class EnvironmentAuth extends Context.Service<
       AuthAccessTokenResult,
       ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
     >;
+    /** Links without a member pair the owner. */
     readonly createPairingLink: (input?: {
+      readonly memberId?: MemberId;
       readonly ttl?: Duration.Duration;
       readonly label?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
@@ -493,7 +508,7 @@ export class EnvironmentAuth extends Context.Service<
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly issuePairingCredential: (
-      input?: AuthCreatePairingCredentialInput,
+      input?: AuthCreatePairingCredentialInput & { readonly memberId?: MemberId },
     ) => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
@@ -502,11 +517,18 @@ export class EnvironmentAuth extends Context.Service<
       AuthPairingCredentialResult,
       ServerAuthInternalError
     >;
+    /** `memberId` limits the links to that member's. */
     readonly listPairingLinks: (input?: {
       readonly excludeSubjects?: ReadonlyArray<string>;
+      readonly memberId?: MemberId;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
-    readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /** With `memberId`, refuses a link that member does not own. */
+    readonly revokePairingLink: (
+      id: string,
+      memberId?: MemberId,
+    ) => Effect.Effect<boolean, ServerAuthNotMemberOwnedError | ServerAuthInternalError>;
     readonly issueSession: (input?: {
+      readonly memberId?: MemberId;
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
@@ -519,15 +541,24 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeSession: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /** `memberId` limits the sessions to that member's. */
     readonly listClientSessions: (
       currentSessionId: AuthSessionId,
+      memberId?: MemberId,
     ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    /** With `memberId`, refuses a session that member does not own. */
     readonly revokeClientSession: (
       currentSessionId: AuthSessionId,
       targetSessionId: AuthSessionId,
-    ) => Effect.Effect<boolean, ServerAuthForbiddenOperationError | ServerAuthInternalError>;
+      memberId?: MemberId,
+    ) => Effect.Effect<
+      boolean,
+      ServerAuthForbiddenOperationError | ServerAuthNotMemberOwnedError | ServerAuthInternalError
+    >;
+    /** Revokes the caller's other sessions, never another member's. */
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
+      memberId: MemberId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
@@ -547,6 +578,7 @@ export class EnvironmentAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueMcpClientSession: (input: {
+      readonly memberId?: MemberId;
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
@@ -560,10 +592,14 @@ export class EnvironmentAuth extends Context.Service<
       ServerAuthInternalError
     >;
     /** Spends a code covering all granted scopes. Rejects desktop grants and leaves refused proof-bound codes unspent. */
+    /** Returns the member the code pairs, who approves the client. */
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
-    ) => Effect.Effect<void, ServerAuthMcpApprovalCodeError | ServerAuthInternalError>;
+    ) => Effect.Effect<
+      { readonly memberId: MemberId },
+      ServerAuthMcpApprovalCodeError | ServerAuthInternalError
+    >;
     readonly authenticateBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -718,7 +754,29 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+  const teamState = yield* TeamState.TeamState;
   const devAuth = resolveReusableDevAuth(config);
+
+  // Runs inside each authenticate span, on every request.
+  const resolveMember = Effect.fnUntraced(function* (memberId: MemberId | null) {
+    if (memberId === null) {
+      if (yield* teamState.isTeamMode) {
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "This session belongs to no team member.",
+        });
+      }
+      return teamState.ownerId;
+    }
+    const active = yield* teamState
+      .isActive(memberId)
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionCredentialValidationError({ cause })));
+    if (!active) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "This session's team member was removed.",
+      });
+    }
+    return memberId;
+  });
 
   const authenticateToken = (
     token: string,
@@ -738,14 +796,21 @@ export const make = Effect.gen(function* () {
       ),
       mapSessionVerificationErrors,
       Effect.flatMap(rejectMcpClientAudience),
-      Effect.map((session) => ({
-        sessionId: session.sessionId,
-        subject: session.subject,
-        method: session.method,
-        scopes: session.scopes,
-        ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
-        ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-      })),
+      Effect.flatMap((session) =>
+        resolveMember(session.memberId).pipe(
+          Effect.map((memberId) => ({
+            sessionId: session.sessionId,
+            subject: session.subject,
+            memberId,
+            method: session.method,
+            scopes: session.scopes,
+            ...(session.proofKeyThumbprint
+              ? { proofKeyThumbprint: session.proofKeyThumbprint }
+              : {}),
+            ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+          })),
+        ),
+      ),
     );
 
   const resolveRequestCredential = (request: HttpServerRequest.HttpServerRequest) => {
@@ -833,6 +898,7 @@ export const make = Effect.gen(function* () {
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+            memberId: session.memberId,
           }) satisfies AuthSessionState,
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
@@ -885,6 +951,7 @@ export const make = Effect.gen(function* () {
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
+        memberId: grant.memberId ?? teamState.ownerId,
         scopes: grant.scopes,
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
@@ -908,7 +975,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "memberId" | "label"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -948,6 +1015,7 @@ export const make = Effect.gen(function* () {
             method: "reusable-dev-token",
             scopes: session.scopes,
             subject: "reusable-dev-token-child",
+            memberId: session.memberId,
           }) satisfies ResolvedBootstrapGrant,
       ),
     );
@@ -972,6 +1040,7 @@ export const make = Effect.gen(function* () {
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
+                memberId: grant.memberId ?? teamState.ownerId,
                 scopes: grantedScopes,
                 ...(input?.proofKeyThumbprint
                   ? {
@@ -1026,6 +1095,7 @@ export const make = Effect.gen(function* () {
     function* (input: Parameters<EnvironmentAuth["Service"]["createPairingLink"]>[0]) {
       const createdAt = yield* DateTime.now;
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
+        memberId: input?.memberId ?? teamState.ownerId,
         scopes: input?.scopes ?? AuthStandardClientScopes,
         subject: input?.subject ?? "one-time-token",
         ...(input?.ttl ? { ttl: input.ttl } : {}),
@@ -1059,6 +1129,10 @@ export const make = Effect.gen(function* () {
     return yield* issuePairingLink(input);
   });
 
+  // Rows an older binary wrote have no member and belong to the owner.
+  const ownedBy = (memberId: MemberId | undefined) => (row: { readonly memberId?: MemberId }) =>
+    memberId === undefined || (row.memberId ?? teamState.ownerId) === memberId;
+
   const listPairingLinks: EnvironmentAuth["Service"]["listPairingLinks"] = (input) =>
     bootstrapCredentials.listActive().pipe(
       Effect.map((pairingLinks) => {
@@ -1067,6 +1141,7 @@ export const make = Effect.gen(function* () {
         ];
         return pairingLinks
           .filter((pairingLink) => !excludedSubjects.includes(pairingLink.subject))
+          .filter(ownedBy(input?.memberId))
           .map((link) => ({ ...link, ...authScopeResponse(link.scopes) }))
           .toSorted(
             (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
@@ -1076,16 +1151,25 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.listPairingLinks"),
     );
 
-  const revokePairingLink: EnvironmentAuth["Service"]["revokePairingLink"] = (id) =>
-    bootstrapCredentials.revoke(id).pipe(
-      Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })),
-      Effect.withSpan("EnvironmentAuth.revokePairingLink"),
-    );
+  const revokePairingLink: EnvironmentAuth["Service"]["revokePairingLink"] = Effect.fn(
+    "EnvironmentAuth.revokePairingLink",
+  )(function* (id, memberId) {
+    if (memberId !== undefined) {
+      const owned = yield* listPairingLinks({ excludeSubjects: [], memberId });
+      if (!owned.some((link) => link.id === id)) {
+        return yield* new ServerAuthNotMemberOwnedError({});
+      }
+    }
+    return yield* bootstrapCredentials
+      .revoke(id)
+      .pipe(Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })));
+  });
 
   const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
     sessions
       .issue({
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
+        memberId: input?.memberId ?? teamState.ownerId,
         method: "bearer-access-token",
         scopes: input?.scopes ?? AuthStandardClientScopes,
         client: {
@@ -1124,14 +1208,15 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeSession"),
     );
 
-  const revokeOtherSessionsExcept = (sessionId: AuthSessionId) =>
-    sessions.revokeAllExcept(sessionId).pipe(
+  const revokeOtherSessionsExcept = (sessionId: AuthSessionId, memberId: MemberId) =>
+    sessions.revokeAllExcept(sessionId, memberId).pipe(
       Effect.mapError((cause) => new ServerAuthOtherSessionsRevocationError({ cause })),
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
     createPairingLink({
+      ...(input?.memberId ? { memberId: input.memberId } : {}),
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
@@ -1170,10 +1255,13 @@ export const make = Effect.gen(function* () {
       );
     };
 
-  const listClientSessions: EnvironmentAuth["Service"]["listClientSessions"] = (currentSessionId) =>
+  const listClientSessions: EnvironmentAuth["Service"]["listClientSessions"] = (
+    currentSessionId,
+    memberId,
+  ) =>
     listSessions().pipe(
       Effect.map((clientSessions) =>
-        clientSessions.map((clientSession): AuthClientSession => ({
+        clientSessions.filter(ownedBy(memberId)).map((clientSession): AuthClientSession => ({
           ...clientSession,
           ...authScopeResponse(clientSession.scopes),
           current: clientSession.sessionId === currentSessionId,
@@ -1184,17 +1272,28 @@ export const make = Effect.gen(function* () {
 
   const revokeClientSession: EnvironmentAuth["Service"]["revokeClientSession"] = Effect.fn(
     "EnvironmentAuth.revokeClientSession",
-  )(function* (currentSessionId, targetSessionId) {
+  )(function* (currentSessionId, targetSessionId, memberId) {
     if (currentSessionId === targetSessionId) {
       return yield* new ServerAuthForbiddenOperationError({});
+    }
+    if (memberId !== undefined) {
+      const owned = yield* listSessions();
+      if (
+        !owned.some(
+          (session) => session.sessionId === targetSessionId && ownedBy(memberId)(session),
+        )
+      ) {
+        return yield* new ServerAuthNotMemberOwnedError({});
+      }
     }
     return yield* revokeSession(targetSessionId);
   });
 
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
     currentSessionId,
+    memberId,
   ) =>
-    revokeOtherSessionsExcept(currentSessionId).pipe(
+    revokeOtherSessionsExcept(currentSessionId, memberId).pipe(
       Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
     );
 
@@ -1282,6 +1381,7 @@ export const make = Effect.gen(function* () {
           return {
             sessionId: session.sessionId,
             subject: session.subject,
+            memberId: yield* resolveMember(session.memberId),
             method: session.method,
             scopes: session.scopes,
             ...(session.proofKeyThumbprint
@@ -1301,9 +1401,13 @@ export const make = Effect.gen(function* () {
     return sessions.verify(token).pipe(
       mapSessionVerificationErrors,
       Effect.flatMap((session) =>
+        resolveMember(session.memberId).pipe(Effect.map((memberId) => ({ session, memberId }))),
+      ),
+      Effect.flatMap(({ session, memberId }) =>
         session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
           ? Effect.succeed({
               sessionId: session.sessionId,
+              memberId,
               label: session.client.label ?? "MCP client",
               access: session.scopes.includes(AuthOrchestrationOperateScope)
                 ? (session.runtimeModeCeiling ?? "approval-required")
@@ -1324,6 +1428,7 @@ export const make = Effect.gen(function* () {
     sessions
       .issue({
         subject: MCP_CLIENT_SUBJECT,
+        memberId: input.memberId ?? teamState.ownerId,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
         ttl: MCP_CLIENT_SESSION_TTL,
@@ -1371,7 +1476,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((grant) =>
         grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-          : Effect.void,
+          : Effect.succeed({ memberId: grant.memberId ?? teamState.ownerId }),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
@@ -1457,6 +1562,7 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
+  Layer.provideMerge(TeamState.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );

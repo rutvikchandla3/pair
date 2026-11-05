@@ -8,6 +8,7 @@ import {
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
+  MemberId,
   NodeId,
   OrchestratorMcpThreadReadResult,
   ProviderDriverKind,
@@ -18,6 +19,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -63,6 +65,7 @@ import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(McpToolAccessTestkit.layerSingleMemberViews),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
@@ -485,77 +488,92 @@ const clientScope = (
   environmentId: EnvironmentId.make("mcp-core-environment"),
   requestNamespace: "client:session-1",
   thread: undefined,
-  client: { sessionId: "session-1", label: "Claude Code", access },
+  client: {
+    sessionId: "session-1",
+    label: "Claude Code",
+    access,
+    memberId: MemberId.make("member-owner"),
+  },
   issuedAt: 0,
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
 });
 
-it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
-  Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const call = (
-      name: string,
-      args: Record<string, unknown>,
-      invocation: McpInvocationContext.McpInvocationScope,
-    ) =>
-      server
-        .callTool({ name, arguments: args })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
+it.effect(
+  "a client caller targets any thread within its ceiling and cannot act as a thread",
+  () => {
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (
+        name: string,
+        args: Record<string, unknown>,
+        invocation: McpInvocationContext.McpInvocationScope,
+      ) =>
+        server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
 
-    const untargeted = yield* call("t3_thread_organize", { action: "pin" }, clientScope("auto"));
-    expect(declaredFailure(untargeted)).toMatchObject({ code: "target_required" });
+      const untargeted = yield* call("t3_thread_organize", { action: "pin" }, clientScope("auto"));
+      expect(declaredFailure(untargeted)).toMatchObject({ code: "target_required" });
 
-    const pinned = yield* call(
-      "t3_thread_organize",
-      { action: "pin", threadId: "other-project-thread" },
-      clientScope("auto"),
-    );
-    expect(pinned.isError).toBe(false);
-    expect(pinned.structuredContent).toMatchObject({ sequence: 7 });
+      const pinned = yield* call(
+        "t3_thread_organize",
+        { action: "pin", threadId: "other-project-thread" },
+        clientScope("auto"),
+      );
+      expect(pinned.isError).toBe(false);
+      expect(pinned.structuredContent).toMatchObject({ sequence: 7 });
+      expect(dispatched).toEqual([
+        expect.objectContaining({ type: "thread.pin", actorId: MemberId.make("member-owner") }),
+      ]);
 
-    const aboveCeiling = yield* call(
-      "t3_thread_organize",
-      { action: "pin", threadId: "other-project-thread" },
-      clientScope("approval-required"),
-    );
-    expect(declaredFailure(aboveCeiling)).toMatchObject({
-      code: "runtime_mode_escalation_denied",
-    });
+      const aboveCeiling = yield* call(
+        "t3_thread_organize",
+        { action: "pin", threadId: "other-project-thread" },
+        clientScope("approval-required"),
+      );
+      expect(declaredFailure(aboveCeiling)).toMatchObject({
+        code: "runtime_mode_escalation_denied",
+      });
 
-    const forked = yield* call(
-      "t3_thread_transfer",
-      { action: "fork", sourcePoint: { type: "latest_stable" } },
-      clientScope("auto"),
-    );
-    expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) =>
-              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
-            getProjectThreadRecords: () =>
-              Effect.succeed({
-                thread: {
-                  id: ThreadId.make("other-project-thread"),
-                  projectId: "other-project",
-                  runtimeMode: "auto",
-                  interactionMode: "default",
-                  deletedAt: null,
-                },
-              } as never),
-            dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
-          }),
+      const forked = yield* call(
+        "t3_thread_transfer",
+        { action: "fork", sourcePoint: { type: "latest_stable" } },
+        clientScope("auto"),
+      );
+      expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) =>
+                Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+              getProjectThreadRecords: () =>
+                Effect.succeed({
+                  thread: {
+                    id: ThreadId.make("other-project-thread"),
+                    projectId: "other-project",
+                    runtimeMode: "auto",
+                    interactionMode: "default",
+                    deletedAt: null,
+                  },
+                } as never),
+              dispatch: (command) => {
+                dispatched.push(command);
+                return Effect.succeed({ sequence: 7, storedEvents: [] });
+              },
+            }),
+          ),
         ),
       ),
-    ),
-  ),
+    );
+  },
 );
 
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>

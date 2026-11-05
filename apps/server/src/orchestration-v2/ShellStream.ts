@@ -1,5 +1,6 @@
 import type {
   ApplicationStoredEvent,
+  MemberId,
   OrchestrationProjectShell,
   OrchestrationV2OlderSettledCount,
   OrchestrationV2OlderSettledThreads,
@@ -32,6 +33,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+import { holderOf, isMemberThreadEvent } from "./MemberThreadState.ts";
 import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 
 type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
@@ -74,8 +76,14 @@ function buildActiveShellSnapshot(input: {
 
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "ownerId"
 >;
+
+/** The member whose own older settled threads a team-mode snapshot counts into `ownCounts`. */
+export interface OlderSettledReader {
+  readonly memberId: MemberId;
+  readonly serverOwnerId: MemberId;
+}
 
 /**
  * What a subscriber's trims read across every active row. Computed from full shells or from the
@@ -87,11 +95,19 @@ interface ShellTrimFacts {
   /** Undefined when no thread is settled, so none is older. */
   readonly olderSettledBeforeMs: number | undefined;
   readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+  readonly olderSettledOwnCounts: ReadonlyArray<OrchestrationV2OlderSettledCount> | undefined;
 }
 
 const NEWEST_SETTLED_KEPT = 25;
 
-function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
+function countsOf(counts: ReadonlyMap<ProjectId, number>) {
+  return Array.from(counts, ([projectId, count]) => ({ projectId, count }));
+}
+
+function shellTrimFacts(
+  rows: ReadonlyArray<ShellTrimRow>,
+  reader: OlderSettledReader | null = null,
+): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
   const settledTimes: Array<number> = [];
@@ -111,10 +127,14 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   // With fewer than 25, the oldest one is the cut, so nothing is older.
   const olderSettledBeforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1);
   const counts = new Map<ProjectId, number>();
+  const ownCounts = new Map<ProjectId, number>();
   if (olderSettledBeforeMs !== undefined) {
     for (const row of rows) {
       if (isOlderSettledThreadShell(row, olderSettledBeforeMs)) {
         counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1);
+        if (reader !== null && holderOf(row, reader.serverOwnerId) === reader.memberId) {
+          ownCounts.set(row.projectId, (ownCounts.get(row.projectId) ?? 0) + 1);
+        }
       }
     }
   }
@@ -122,7 +142,8 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     subagentParentIds,
     subagentThreadIds,
     olderSettledBeforeMs,
-    olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
+    olderSettledCounts: countsOf(counts),
+    olderSettledOwnCounts: reader === null ? undefined : countsOf(ownCounts),
   };
 }
 
@@ -156,7 +177,10 @@ function omitOlderSettledShellsWith(
     readonly snapshotSequence: number;
     readonly now: DateTime.Utc;
   },
-  facts: Pick<ShellTrimFacts, "olderSettledBeforeMs" | "olderSettledCounts">,
+  facts: Pick<
+    ShellTrimFacts,
+    "olderSettledBeforeMs" | "olderSettledCounts" | "olderSettledOwnCounts"
+  >,
 ): {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
@@ -178,6 +202,9 @@ function omitOlderSettledShellsWith(
       before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
       asOfSequence: input.snapshotSequence,
       counts: facts.olderSettledCounts,
+      ...(facts.olderSettledOwnCounts === undefined
+        ? {}
+        : { ownCounts: facts.olderSettledOwnCounts }),
     },
   };
 }
@@ -221,16 +248,19 @@ export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly snapshotSequence: number;
   readonly now: DateTime.Utc;
+  readonly reader?: OlderSettledReader | null;
 }): {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
 } {
-  return omitOlderSettledShellsWith(input, shellTrimFacts(input.threads));
+  return omitOlderSettledShellsWith(input, shellTrimFacts(input.threads, input.reader ?? null));
 }
 
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
   readonly omitOlderSettled: boolean;
+  /** Team mode only: adds `ownCounts` for this member. */
+  readonly olderSettledReader?: OlderSettledReader | null;
 }
 
 function trimShellSnapshot(
@@ -322,7 +352,10 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       threads: yield* read.decodeThreads,
       snapshotSequence: read.snapshotSequence,
     });
-    const facts = shellTrimFacts(read.index ?? base.threads);
+    const facts = shellTrimFacts(
+      read.index ?? base.threads,
+      input.options.olderSettledReader ?? null,
+    );
     return {
       snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
       subagentThreadIds: facts.subagentThreadIds,
@@ -370,6 +403,7 @@ export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettl
       {
         readonly threadIds: ReadonlyArray<ThreadId>;
         readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+        readonly ownCounts?: ReadonlyArray<OrchestrationV2OlderSettledCount>;
       },
       E1
     >;
@@ -397,6 +431,7 @@ export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettl
       snapshotSequence: read.snapshotSequence,
       threads: threads.toSorted((left, right) => order.get(left.id)! - order.get(right.id)!),
       counts: read.listed.counts,
+      ...(read.listed.ownCounts === undefined ? {} : { ownCounts: read.listed.ownCounts }),
     };
   },
 );
@@ -434,6 +469,18 @@ export function shouldPublishShellApplicationEvent(
       event.type === "turn-item.updated" ||
       event.type === "provider-turn.updated" ||
       event.type === "message.updated")
+  );
+}
+
+/** Another member's personal change: refetching the shell would show this viewer nothing new. */
+export function isOtherMembersShellEvent(
+  stored: ApplicationStoredEvent,
+  viewer: MemberId | null,
+): boolean {
+  return (
+    !("aggregateKind" in stored) &&
+    isMemberThreadEvent(stored.event) &&
+    stored.event.member.memberId !== viewer
   );
 }
 

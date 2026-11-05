@@ -223,6 +223,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        // An agent's thread belongs to its caller's owner; an outside client's to its member.
+        const ownerId =
+          (caller === undefined ? scope.client?.memberId : caller.ownerId) ?? undefined;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -244,6 +247,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               }),
           createdBy: "agent",
           creationSource: "mcp",
+          ...(ownerId === undefined ? {} : { ownerId }),
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
           // Kept only alongside linkOrigin: thread.create drops it otherwise.
           ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),

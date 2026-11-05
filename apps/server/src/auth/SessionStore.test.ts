@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthEnvironmentScope, EnvironmentId, MemberId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -50,7 +51,10 @@ const layerSessionStore = (
     Layer.provide(layerServerConfig(overrides)),
   );
 
+const memberId = MemberId.make("member-test");
+
 const relaySessionInput = {
+  memberId,
   subject: "managed-relay-bootstrap",
   method: "dpop-access-token",
   proofKeyThumbprint: "relay-proof-key",
@@ -90,7 +94,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     (operation) =>
       Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
-        const owner = yield* sessions.issue({ subject: "owner" });
+        const owner = yield* sessions.issue({ memberId, subject: "owner" });
         const client = yield* sessions.issue(relaySessionInput);
         const ownerInvalidated = yield* Deferred.make<void>();
         yield* sessions
@@ -106,7 +110,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
           .pipe(Effect.forkScoped({ startImmediately: true }));
         if (operation === "revoke") yield* sessions.revoke(client.sessionId);
-        else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
+        else if (operation === "revokeAllExcept")
+          yield* sessions.revokeAllExcept(owner.sessionId, memberId);
         else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
         yield* Fiber.join(first);
         yield* Fiber.join(second);
@@ -145,6 +150,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     {
       name: "a renewal with fewer scopes",
       renewal: { scopes: ["orchestration:read"] as const },
+      closesAtMinute: 60,
+    },
+    {
+      name: "a renewal for another member",
+      renewal: { memberId: MemberId.make("member-other") },
       closesAtMinute: 60,
     },
     {
@@ -207,6 +217,108 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("keeps a socket on a wider renewal until a scope change, without flapping", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const readOnly = ["orchestration:read"] as const;
+      const client = yield* sessions.issue({ ...relaySessionInput, scopes: readOnly });
+      const watch = (
+        sessionId: typeof client.sessionId,
+        scopes: ReadonlyArray<AuthEnvironmentScope>,
+      ) =>
+        Effect.gen(function* () {
+          const invalidated = yield* Deferred.make<void>();
+          const fiber = yield* sessions
+            .awaitInvalidation(sessionId, relaySessionInput.proofKeyThumbprint, scopes)
+            .pipe(
+              Effect.andThen(Deferred.succeed(invalidated, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+          return { invalidated, fiber };
+        });
+      const first = yield* watch(client.sessionId, readOnly);
+      yield* TestClock.adjust(Duration.minutes(59));
+      const renewal = yield* sessions.issue(relaySessionInput);
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* sessions.markConnected(renewal.sessionId);
+      yield* sessions.markDisconnected(client.sessionId);
+      expect(yield* Deferred.isDone(first.invalidated)).toBe(false);
+
+      yield* sessions.updateScopesForMember(memberId, (scopes) =>
+        scopes.filter((scope) => scope !== "orchestration:operate"),
+      );
+      yield* Fiber.join(first.fiber);
+
+      const reconnected = yield* sessions.verify(renewal.token);
+      expect(reconnected.scopes).not.toContain("orchestration:operate");
+      const second = yield* watch(renewal.sessionId, reconnected.scopes);
+      yield* sessions.markConnected(renewal.sessionId);
+      yield* sessions.markDisconnected(renewal.sessionId);
+      // The renewal expires at minute 119.
+      yield* TestClock.adjust(Duration.millis(58 * 60_000 - 1));
+      expect(yield* Deferred.isDone(second.invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Fiber.join(second.fiber);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("scopes member revocation and scope changes to that member's sessions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const other = MemberId.make("member-other");
+      const phone = yield* sessions.issue({ memberId, subject: "one-time-token" });
+      const laptop = yield* sessions.issue({ memberId, subject: "one-time-token" });
+      const colleague = yield* sessions.issue({ memberId: other, subject: "one-time-token" });
+      expect((yield* sessions.verify(phone.token)).memberId).toBe(memberId);
+      const ticket = yield* sessions.issueWebSocketToken(colleague.sessionId);
+      expect((yield* sessions.verifyWebSocketToken(ticket.token)).memberId).toBe(other);
+
+      const narrowed = yield* sessions.updateScopesForMember(memberId, () => [
+        "orchestration:read",
+      ]);
+      expect([...narrowed].sort()).toEqual([phone.sessionId, laptop.sessionId].sort());
+      expect((yield* sessions.verify(laptop.token)).scopes).toEqual(["orchestration:read"]);
+      expect(yield* sessions.updateScopesForMember(memberId, () => ["orchestration:read"])).toEqual(
+        [],
+      );
+
+      const phoneSocket = yield* sessions
+        .awaitInvalidation(phone.sessionId)
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const revoked = yield* sessions.revokeForMember(memberId);
+      expect([...revoked].sort()).toEqual([phone.sessionId, laptop.sessionId].sort());
+      yield* Fiber.join(phoneSocket);
+      const colleagueSession = yield* sessions.verify(colleague.token);
+      expect(colleagueSession.scopes).toContain("orchestration:operate");
+    }).pipe(Effect.scoped, Effect.provide(layerSessionStore())),
+  );
+
+  it.effect("revokes only the caller's other sessions, and unassigned ones for the owner", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const ownerId = (yield* (yield* Members.MemberRepository).getOwner()).id;
+      const owner = yield* sessions.issue({ memberId: ownerId, subject: "desktop-bootstrap" });
+      const ownerPhone = yield* sessions.issue({ memberId: ownerId, subject: "one-time-token" });
+      const legacy = yield* sessions.issue({ memberId: ownerId, subject: "one-time-token" });
+      yield* sql`UPDATE auth_sessions SET member_id = NULL WHERE session_id = ${legacy.sessionId}`;
+      const member = yield* sessions.issue({ memberId, subject: "one-time-token" });
+      const memberPhone = yield* sessions.issue({ memberId, subject: "one-time-token" });
+
+      expect(yield* sessions.revokeAllExcept(member.sessionId, memberId)).toBe(1);
+      expect(yield* sessions.revokeAllExcept(owner.sessionId, ownerId)).toBe(2);
+      expect((yield* sessions.listActive()).map((row) => row.sessionId).sort()).toEqual(
+        [owner.sessionId, member.sessionId].sort(),
+      );
+      expect((yield* Effect.flip(sessions.verify(memberPhone.token)))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
+      expect((yield* Effect.flip(sessions.verify(ownerPhone.token)))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+
   it.effect("keeps a renewed DPoP socket when another socket on its expired session closes", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -262,7 +374,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const fromA = yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         const dev = yield* sessions.verify(token);
-        const local = yield* sessions.issue({ subject: "environment-a" });
+        const local = yield* sessions.issue({ memberId, subject: "environment-a" });
         const ticket = yield* sessions.issueWebSocketToken(local.sessionId);
         yield* sessions.revoke(dev.sessionId);
         return { dev, local, ticket };
@@ -349,11 +461,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const capped = yield* sessions.issue({
+        memberId,
         subject: "mcp-client",
         method: "bearer-access-token",
         runtimeModeCeiling: "auto",
       });
-      const uncapped = yield* sessions.issue({ method: "bearer-access-token" });
+      const uncapped = yield* sessions.issue({ memberId, method: "bearer-access-token" });
 
       expect((yield* sessions.verify(capped.token)).runtimeModeCeiling).toBe("auto");
       expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
@@ -364,7 +477,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const sessions = yield* SessionStore.SessionStore;
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
-      const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
+      const issued = yield* sessions.issue({
+        memberId,
+        subject: "one-time-token",
+        scopes: legacyScopes,
+      });
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
       expect(currentClaims).toContain('"v":1');
@@ -399,17 +516,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const browser = yield* sessions.issue({
+        memberId,
         subject: "desktop-bootstrap",
         method: "browser-session-cookie",
       });
       const [firstBearer, secondBearer] = yield* Effect.all(
         [
           sessions.issue({
+            memberId,
             subject: "desktop-bootstrap",
             method: "bearer-access-token",
             replaceActiveForSubjectAndMethod: true,
           }),
           sessions.issue({
+            memberId,
             subject: "desktop-bootstrap",
             method: "bearer-access-token",
             replaceActiveForSubjectAndMethod: true,
@@ -441,6 +561,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const sessions = yield* SessionStore.SessionStore;
       const sql = yield* SqlClient.SqlClient;
       const previous = yield* sessions.issue({
+        memberId,
         subject: "desktop-bootstrap",
         method: "bearer-access-token",
       });
@@ -453,6 +574,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
       const error = yield* sessions
         .issue({
+          memberId,
           subject: "desktop-bootstrap",
           method: "bearer-access-token",
           replaceActiveForSubjectAndMethod: true,
@@ -473,8 +595,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;
         const sql = yield* SqlClient.SqlClient;
-        const previous = yield* sessions.issue({ subject: "one-time-token" });
-        const unrelated = yield* sessions.issue({ subject: "one-time-token" });
+        const previous = yield* sessions.issue({ memberId, subject: "one-time-token" });
+        const unrelated = yield* sessions.issue({ memberId, subject: "one-time-token" });
         if (operation === "insert") {
           yield* sql`
             CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
@@ -493,6 +615,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
         const error = yield* sessions
           .issue({
+            memberId,
             subject: "replacement-pairing",
             scopes: ["orchestration:read"],
             replaceSessionId: previous.sessionId,
@@ -512,6 +635,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
+        memberId,
         method: "bearer-access-token",
         subject: "short-lived",
         ttl: Duration.seconds(1),
@@ -536,6 +660,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const administrative = yield* sessions.issue({
+        memberId,
         subject: "desktop-bootstrap",
         scopes: ["orchestration:read", "access:write"],
         client: {
@@ -546,6 +671,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
         },
       });
       const client = yield* sessions.issue({
+        memberId,
         subject: "one-time-token",
         scopes: ["orchestration:read"],
         client: {
@@ -560,7 +686,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
       yield* sessions.markConnected(client.sessionId);
       const beforeRevoke = yield* sessions.listActive();
-      const revokedCount = yield* sessions.revokeAllExcept(administrative.sessionId);
+      const revokedCount = yield* sessions.revokeAllExcept(administrative.sessionId, memberId);
       const afterRevoke = yield* sessions.listActive();
       const revokedClient = yield* Effect.flip(sessions.verify(client.token));
       const revokedClientWebSocket = yield* Effect.flip(

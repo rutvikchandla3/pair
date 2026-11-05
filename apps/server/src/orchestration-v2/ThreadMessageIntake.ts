@@ -1,10 +1,17 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type OrchestrationV2Command,
+  MemberId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -31,6 +38,47 @@ function dispatchWasNotAccepted(
       return false;
   }
 }
+export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<ThreadMessageIntakeForbiddenError>()(
+  "ThreadMessageIntakeForbiddenError",
+  {
+    threadId: ThreadId,
+    memberId: MemberId,
+    reason: Schema.Literals(["not_owner_or_admin", "inactive_owner"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "not_owner_or_admin"
+      ? "Only the thread's owner or an admin can delete it."
+      : "Threads can only be assigned to active team members.";
+  }
+}
+
+/** Team permissions the orchestrator cannot see; it only records who acted. */
+const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission")(function* (
+  command: OrchestrationV2Command,
+) {
+  const team = yield* TeamState.TeamState;
+  if (command.type === "thread.owner.set" && !(yield* team.isActive(command.ownerId))) {
+    return yield* new ThreadMessageIntakeForbiddenError({
+      threadId: command.threadId,
+      memberId: command.ownerId,
+      reason: "inactive_owner",
+    });
+  }
+  if (command.type !== "thread.delete" || command.actorId === undefined) return;
+  const actor = (yield* Ref.get(team.members)).get(command.actorId);
+  if (actor?.role === "admin" || actor?.isOwner === true) return;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads.getThreadShell(command.threadId);
+  // A missing thread is the orchestrator's to reject.
+  if (shell === null || shell.ownerId === command.actorId) return;
+  return yield* new ThreadMessageIntakeForbiddenError({
+    threadId: command.threadId,
+    memberId: command.actorId,
+    reason: "not_owner_or_admin",
+  });
+});
+
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
@@ -85,6 +133,7 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
+  yield* assertTeamPermission(incoming);
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
