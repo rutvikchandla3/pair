@@ -19,6 +19,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AssignThreadDialogHost } from "../components/team/AssignThreadDialog";
+import { PresenceWatch } from "../components/team/PresenceWatch";
 import { TeamMembersWatch } from "../components/team/TeamMembersWatch";
 import { PrimarySignOutWatch } from "../components/auth/PrimarySignOutWatch";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
@@ -215,6 +216,7 @@ function RootRouteBranch() {
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <TeamMembersWatch />
+        <PresenceWatch />
         <AssignThreadDialogHost />
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />

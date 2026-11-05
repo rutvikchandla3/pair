@@ -257,6 +257,7 @@ import {
   useThreadCheckpointSummaries,
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
+import { ComposerTypingLine } from "./chat/ComposerTypingLine";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
@@ -3534,6 +3535,9 @@ export default function ChatView(props: ChatViewProps) {
                         />
                       </div>
                     </div>
+                  ) : null}
+                  {isServerThread && activeThreadRef !== null ? (
+                    <ComposerTypingLine threadRef={activeThreadRef} />
                   ) : null}
                   <div
                     ref={draftHeroComposerAnchorRef}
