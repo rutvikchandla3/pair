@@ -263,6 +263,8 @@ describe("remote thread lifecycle commands", () => {
     ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],
+    ["follow", {}, { followedAt: expect.any(Object), lastVisitedAt: expect.any(Object) }],
+    ["unfollow", {}, { followedAt: null }],
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
@@ -288,6 +290,7 @@ describe("remote thread lifecycle commands", () => {
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }
                 : {}),
+              ...(action === "unfollow" ? { followedAt: NOW } : {}),
             },
           ],
         };

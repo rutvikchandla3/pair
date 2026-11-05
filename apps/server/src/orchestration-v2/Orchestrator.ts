@@ -180,10 +180,10 @@ import { authorshipFields, decideHumanAuthorship } from "./HumanAuthorship.ts";
 import {
   clearedForSettle,
   EMPTY_MEMBER_STATE,
+  followedView,
   hasPersonalState,
   holderOf,
   isNonHolderMemberEvent,
-  PERSONAL_FIELDS,
   personalStateOf,
   transferHolder,
   withPersonalState,
@@ -588,6 +588,8 @@ function personalCommandActorId(command: OrchestrationV2ServerCommand): MemberId
     case "thread.active.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.follow":
+    case "thread.unfollow":
       return command.actorId;
     case "thread.metadata.update":
       return command.limitRecovery?.snooze === undefined ? undefined : command.actorId;
@@ -620,6 +622,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.tag.set":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.follow":
+    case "thread.unfollow":
     case "thread.metadata.update":
     case "thread.owner.set":
     case "thread.pull-request.link":
@@ -3095,6 +3099,71 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const dispatchThreadFollow = Effect.fn("orchestrationV2.dispatch.threadFollow")(function* (
+    command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "thread.follow" | "thread.unfollow" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const row = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (row.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const actor = personalActor(row, command.actorId);
+    // The holder follows implicitly, and a server without a team has only the holder.
+    if (actor === null || actor.isHolder) return;
+    const view = yield* personalView(row, actor);
+    const now = yield* DateTime.now;
+    const next =
+      command.type === "thread.follow" ? followedView(view, now) : { ...view, followedAt: null };
+    if ((next.followedAt ?? null) === (view.followedAt ?? null)) return;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      providerInstanceId: row.providerInstanceId,
+      occurredAt: now,
+      ...memberEventFields(actor, row, next),
+    });
+  });
+
+  /** Answering a request follows the thread again, even after an Unfollow, as sending does. */
+  const emitAnswerFollow = Effect.fn("orchestrationV2.dispatch.answerFollow")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    if (command.actorId === undefined || Option.isNone(serverOwnerId)) return;
+    const row = yield* projectionStore.getThread(command.threadId).pipe(mapDispatchError(command));
+    const actor = personalActor(row, command.actorId);
+    if (actor === null || actor.isHolder) return;
+    const view = yield* personalView(row, actor);
+    if (view.followedAt != null) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: row.id,
+      providerInstanceId: row.providerInstanceId,
+      occurredAt: now,
+      ...memberEventFields(actor, row, followedView(view, now)),
+    });
+  });
+
   // Recheck under the lock after reading the host. Record the watch first so wake events carry it.
   const dispatchPullRequestWatchSync = Effect.fn("orchestrationV2.dispatch.pullRequestWatchSync")(
     function* (
@@ -3699,17 +3768,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
-        case "thread.archive":
+        case "thread.archive": {
+          const { archivedBy: _previous, ...rest } = thread;
+          const archivedBy =
+            command.actorId !== undefined &&
+            Option.isSome(serverOwnerId) &&
+            command.actorId !== holderOf(thread, serverOwnerId.value)
+              ? command.actorId
+              : undefined;
           return {
-            ...thread,
+            ...rest,
+            ...(archivedBy === undefined ? {} : { archivedBy }),
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
-        case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+        }
+        case "thread.unarchive": {
+          const { archivedBy: _archivedBy, ...rest } = thread;
+          return { ...rest, archivedAt: null, updatedAt: now };
+        }
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -4296,15 +4376,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedThread,
         holderOf(row, serverOwnerId.value),
         newHolderState,
+        now,
       );
       yield* emitThreadEvent({ ...eventBase, type: eventType, payload: transferred });
-      if (PERSONAL_FIELDS.some((field) => demoted.state[field] !== null)) {
-        yield* emitThreadEvent({
-          ...eventBase,
-          type: "thread.metadata-updated",
-          ...nonHolderEventFields(transferred, demoted.memberId, demoted.state),
-        });
-      }
+      yield* emitThreadEvent({
+        ...eventBase,
+        type: "thread.metadata-updated",
+        ...nonHolderEventFields(transferred, demoted.memberId, demoted.state),
+      });
     } else {
       yield* emitThreadEvent({ ...eventBase, type: eventType, payload: updatedThread });
     }
@@ -4792,6 +4871,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .pipe(mapDispatchError(command));
     const {
       ownerUpdatedBy: _ownerUpdatedBy,
+      archivedBy: _archivedBy,
       humanAuthorIds: _humanAuthorIds,
       lastRollback: _lastRollback,
       ...forkedThread
@@ -5883,27 +5963,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // only a message someone actually sent ends the snooze.
     const automaticWake =
       command.notification !== undefined || command.delegatedCompletion !== undefined;
-    // Sending ends only the sender's own snooze.
+    // Sending ends only the sender's own snooze, and a non-holder who sends follows.
     const sender = personalActor(
       projection.thread,
       decideHumanAuthorship(projection.thread, command).authorId,
     );
     if (sender !== null && !sender.isHolder) {
       const senderView = yield* personalView(projection.thread, sender);
-      if (senderView.snoozedUntil != null && !automaticWake) {
+      const now = yield* DateTime.now;
+      const unsnoozes = senderView.snoozedUntil != null && !automaticWake;
+      const next = automaticWake
+        ? senderView
+        : followedView(
+            unsnoozes ? { ...senderView, snoozedUntil: null, snoozedAt: null } : senderView,
+            now,
+          );
+      if (next !== senderView) {
         yield* emit(
           events,
           command,
         )({
-          type: "thread.unsnoozed",
+          type: unsnoozes ? "thread.unsnoozed" : "thread.metadata-updated",
           threadId: command.threadId,
           providerInstanceId: senderView.providerInstanceId,
-          occurredAt: yield* DateTime.now,
-          ...memberEventFields(sender, projection.thread, {
-            ...senderView,
-            snoozedUntil: null,
-            snoozedAt: null,
-          }),
+          occurredAt: now,
+          ...memberEventFields(sender, projection.thread, next),
         });
       }
     } else if (projection.thread.snoozedUntil != null && !automaticWake) {
@@ -9634,6 +9718,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           },
         });
+      }
+      // An answer sent as a message follows through dispatchMessage.
+      if (
+        runtimeRequest.responseCapability.type !== "message" ||
+        resolvedNodeStatus === "cancelled"
+      ) {
+        yield* emitAnswerFollow(command, events);
       }
       if (runtimeRequest.responseCapability.type === "message") {
         if (resolvedNodeStatus === "cancelled") return;
@@ -13446,6 +13537,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.visit":
         yield* dispatchThreadVisit(command, events);
         break;
+      case "thread.follow":
+      case "thread.unfollow":
+        yield* dispatchThreadFollow(command, events);
+        break;
       case "thread.auto-settle": {
         // Recheck live state; changes and explicit overrides take precedence over the sweep snapshot.
         const thread = yield* projectionStore
@@ -13928,7 +14023,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true) ||
-          command.type === "thread.owner.set",
+          command.type === "thread.owner.set" ||
+          // The holder follows implicitly, so their follow changes nothing.
+          command.type === "thread.follow" ||
+          command.type === "thread.unfollow",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

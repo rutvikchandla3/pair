@@ -76,6 +76,8 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -107,7 +109,6 @@ import {
 import { useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -247,7 +248,12 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openAssignThreadDialog } from "./team/AssignThreadDialog";
-import { useIsTeamMode } from "~/state/team";
+import {
+  useIsTeamMode,
+  useSetThreadFollowed,
+  useThreadFollowing,
+  useThreadShareOrigin,
+} from "~/state/team";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -484,10 +490,13 @@ function OpenCommandPaletteDialog(props: {
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
   const activeThreadIsTeamMode = useIsTeamMode(activeThread?.environmentId ?? null);
+  const activeThreadFollowing = useThreadFollowing(activeThread);
+  const setThreadFollowed = useSetThreadFollowed();
   const canOperateActiveThread = useEnvironmentScope(
     activeThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const threadShareOrigin = useThreadShareOrigin(referenceThreadRef?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -498,7 +507,7 @@ function OpenCommandPaletteDialog(props: {
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
-          hostedAppUrl: configuredHostedAppUrl(),
+          hostedAppUrl: threadShareOrigin,
         });
   const copyActiveThreadReference = async () => {
     if (activeThreadReferenceCopyTarget === null) return;
@@ -1425,6 +1434,26 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "thread.assign",
       run: async () => {
         openAssignThreadDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null && activeThreadFollowing !== null && canOperateActiveThread) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const following = activeThreadFollowing;
+    actionItems.push({
+      kind: "action",
+      value: "action:follow-thread",
+      searchTerms: ["follow", "unfollow", "watch", "team", "thread"],
+      title: following ? "Unfollow thread" : "Follow thread",
+      icon: following ? (
+        <EyeOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <EyeIcon className={ITEM_ICON_CLASS} />
+      ),
+      shortcutCommand: "thread.follow",
+      run: async () => {
+        await setThreadFollowed(threadRef, !following);
       },
     });
   }

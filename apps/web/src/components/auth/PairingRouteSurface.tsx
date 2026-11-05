@@ -29,10 +29,13 @@ export function PairingPendingSurface() {
 export function PairingRouteSurface({
   auth,
   initialErrorMessage,
+  hasReturnPath = false,
   onAuthenticated,
 }: {
   auth: AuthSessionState["auth"];
   initialErrorMessage?: string;
+  /** The visitor was sent here from a link, so they need an account, not just this screen. */
+  hasReturnPath?: boolean;
   onAuthenticated: () => void;
 }) {
   const [autoPairToken] = useState(peekPairingTokenFromUrl);
@@ -88,6 +91,12 @@ export function PairingRouteSurface({
         title="Sign in to this environment"
         description={describeAuthGate(auth.bootstrapMethods)}
       />
+
+      {hasReturnPath && !autoPairToken ? (
+        <p className="mt-4 text-sm text-foreground">
+          Ask an admin for an invite, or open your sign-in link.
+        </p>
+      ) : null}
 
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">

@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   EnvironmentId,
   EventId,
+  MemberId,
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
@@ -37,6 +38,7 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { EMPTY_MEMBER_STATE } from "../orchestration-v2/MemberThreadState.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -821,6 +823,17 @@ describe("AgentAwarenessRelay", () => {
       yield* deliver(
         itemEvent("event:held-item:tick", item("item:tool", { ...background, status: "running" })),
       );
+      const followed = { ...EMPTY_MEMBER_STATE, followedAt: now };
+      yield* Queue.offer(events, {
+        id: EventId.make("event:held-item:follow"),
+        type: "thread.metadata-updated",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: { ...(yield* store.getThread(THREAD_ID).pipe(Effect.orDie)), followedAt: now },
+        member: { memberId: MemberId.make("member:bob"), state: followed },
+      });
+      yield* Queue.take(pulls);
+      yield* relay.drain;
       assert.equal(shellReads.length, readsBeforeOutput);
 
       yield* deliver(

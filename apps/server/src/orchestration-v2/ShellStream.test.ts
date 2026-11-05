@@ -24,6 +24,7 @@ import {
   omitIdleSubagentShells,
   omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
@@ -141,6 +142,20 @@ it.effect("coalesces a slow shell subscriber by identity and location in sequenc
 function shellFixture(overrides: Partial<OrchestrationV2ThreadShell>): OrchestrationV2ThreadShell {
   return { id: "thread-a", archivedAt: null, ...overrides } as OrchestrationV2ThreadShell;
 }
+
+it("removes an archived thread from the active list, naming another member who archived it", () => {
+  const archived = (archivedBy?: MemberId) =>
+    shellStreamItemFromThreadShell({
+      stored: { sequence: 4 } as Parameters<typeof shellStreamItemFromThreadShell>[0]["stored"],
+      shell: shellFixture({
+        archivedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
+        ...(archivedBy === undefined ? {} : { archivedBy }),
+      }),
+    });
+  const removed = { kind: "thread.removed", sequence: 4, location: "active", threadId: "thread-a" };
+  expect(archived(MemberId.make("bob"))).toEqual({ ...removed, archivedBy: "bob" });
+  expect(archived()).toEqual(removed);
+});
 
 describe("omitIdleSubagentShells", () => {
   const row = (
@@ -275,16 +290,24 @@ describe("omitOlderSettledShells", () => {
       row("b-alices", 40, { ownerId: alice }),
       row("b-owners", 40, { ownerId: owner }),
     ];
-    const ownCounts = (memberId: MemberId) =>
+    const ownCounts = (memberId: MemberId, followed: ReadonlyArray<string> = []) =>
       omitOlderSettledShells({
         threads,
         snapshotSequence: 7,
         now,
-        reader: { memberId, serverOwnerId: owner },
+        reader: {
+          memberId,
+          serverOwnerId: owner,
+          followedThreadIds: new Set(followed.map((id) => ThreadId.make(id))),
+        },
       }).olderSettled.ownCounts;
     expect(ownCounts(alice)).toEqual([
       { projectId: "project-a", count: 1 },
       { projectId: "project-b", count: 1 },
+    ]);
+    expect(ownCounts(alice, ["b-owners"])).toEqual([
+      { projectId: "project-a", count: 1 },
+      { projectId: "project-b", count: 2 },
     ]);
     expect(ownCounts(owner)).toEqual([
       { projectId: "project-a", count: 1 },

@@ -666,6 +666,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       serverOwnerId: MemberId.make("member-owner"),
       isTeamMode: Effect.succeed(isTeamMode),
       readMemberStates: () => Effect.succeed(new Map()),
+      readFollowedThreadIds: Effect.succeed(new Set()),
     });
     const ownCounts = (memberViewer: ThreadViewer) =>
       firstSnapshot({ omitOlderSettled: true, viewer: memberViewer }).pipe(

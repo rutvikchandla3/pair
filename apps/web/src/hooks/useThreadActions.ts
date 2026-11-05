@@ -302,6 +302,12 @@ export function useThreadActions() {
   const setThreadOwnerMutation = useOrchestrationCommand(threadEnvironment.setOwner, {
     reportFailure: false,
   });
+  const followThreadMutation = useOrchestrationCommand(threadEnvironment.follow, {
+    reportFailure: false,
+  });
+  const unfollowThreadMutation = useOrchestrationCommand(threadEnvironment.unfollow, {
+    reportFailure: false,
+  });
   const reorderPinnedThreadMutation = useOrchestrationCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
@@ -697,6 +703,12 @@ export function useThreadActions() {
       input: { threadId: target.threadId, ownerId },
     });
 
+  const setThreadFollowed = (target: ScopedThreadRef, following: boolean) =>
+    (following ? followThreadMutation : unfollowThreadMutation)({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+
   const pinThread = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -976,6 +988,7 @@ export function useThreadActions() {
     markThreadUnread,
     setThreadAutoSettle,
     setThreadOwner,
+    setThreadFollowed,
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

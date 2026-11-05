@@ -62,6 +62,8 @@ describe("V2 preview upgrade", () => {
         [80, "TeamMembers"],
         [81, "AttributionBackfill"],
         [82, "ThreadMemberState"],
+        [83, "ThreadMemberFollow"],
+        [84, "ShellAttribution"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -167,6 +169,8 @@ describe("V2 preview upgrade", () => {
         [80, "TeamMembers"],
         [81, "AttributionBackfill"],
         [82, "ThreadMemberState"],
+        [83, "ThreadMemberFollow"],
+        [84, "ShellAttribution"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

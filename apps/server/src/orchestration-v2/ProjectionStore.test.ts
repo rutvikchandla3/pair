@@ -10,6 +10,7 @@ import {
   MemberId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
@@ -1970,13 +1971,10 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
       readonly ownerId?: MemberId;
+      readonly followedBy?: MemberId;
     }) =>
-      store.apply({
-        id: EventId.make(`event:older:${input.name}`),
-        type: "thread.created",
-        threadId: id(input.name),
-        occurredAt: now,
-        payload: {
+      Effect.gen(function* () {
+        const payload: OrchestrationV2AppThread = {
           createdBy: "user",
           creationSource: "web",
           id: id(input.name),
@@ -2004,13 +2002,40 @@ it.effect("SQL list older settled threads below a cursor", () =>
           lastVisitedAt: null,
           deletedAt: null,
           ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
-        },
+        };
+        yield* store.apply({
+          id: EventId.make(`event:older:${input.name}`),
+          type: "thread.created",
+          threadId: id(input.name),
+          occurredAt: now,
+          payload,
+        });
+        if (input.followedBy === undefined) return;
+        const state = {
+          pinnedAt: null,
+          pinOrderKey: null,
+          activeOrderKey: null,
+          lastVisitedAt: now,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastSnoozeWakeAt: null,
+          opens: null,
+          followedAt: now,
+        };
+        yield* store.apply({
+          id: EventId.make(`event:older:${input.name}:follow`),
+          type: "thread.metadata-updated",
+          threadId: id(input.name),
+          occurredAt: now,
+          payload: { ...payload, ...state },
+          member: { memberId: input.followedBy, state },
+        });
       });
     const alice = MemberId.make("member-alice");
     yield* createThread({ name: "a", settledDay: 5 });
     yield* createThread({ name: "b", settledDay: 4, ownerId: alice });
     yield* createThread({ name: "c", settledDay: 4 });
-    yield* createThread({ name: "d", settledDay: 3, project: "project:b" });
+    yield* createThread({ name: "d", settledDay: 3, project: "project:b", followedBy: alice });
     yield* createThread({ name: "snoozed", settledDay: 2, snoozedUntilDay: 30 });
     yield* createThread({ name: "recent", settledDay: 20 });
     yield* createThread({ name: "unsettled", settledDay: null });
@@ -2051,13 +2076,13 @@ it.effect("SQL list older settled threads below a cursor", () =>
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
 
-    // A thread with no owner is the server owner's.
+    // A thread with no owner is the server owner's; a member's own threads include those they follow.
     const [serverOwner] = yield* sql<{ readonly id: MemberId }>`
       SELECT id FROM members WHERE is_owner = 1
     `;
     assert.deepEqual(
       (yield* store.listOlderSettledThreads({ before, limit: 10, ownerId: alice })).threadIds,
-      [id("b")],
+      [id("b"), id("d")],
     );
     assert.deepEqual(
       (yield* store.listOlderSettledThreads({ before, limit: 10, ownerId: serverOwner!.id }))
@@ -2068,9 +2093,13 @@ it.effect("SQL list older settled threads below a cursor", () =>
       store
         .listOlderSettledThreads({ before, limit: 0, ownCountsFor: memberId })
         .pipe(Effect.map((listing) => listing.ownCounts));
-    assert.deepEqual(yield* ownCounts(alice), [
-      { projectId: ProjectId.make("project:a"), count: 1 },
-    ]);
+    assert.sameDeepMembers(
+      [...((yield* ownCounts(alice)) ?? [])],
+      [
+        { projectId: ProjectId.make("project:a"), count: 1 },
+        { projectId: ProjectId.make("project:b"), count: 1 },
+      ],
+    );
     assert.sameDeepMembers(
       [...((yield* ownCounts(serverOwner!.id)) ?? [])],
       [
@@ -4194,6 +4223,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     snoozedAt: null,
     lastSnoozeWakeAt: null,
     opens: { openedAt: 1, score: 1, picks: [{ query: "pin", at: 1 }] },
+    followedAt: DateTime.makeUnsafe("2026-10-01T00:45:00.000Z"),
   };
   const applyMemberPin = (threadId: ThreadId, ownerId: MemberId | null, memberId: MemberId) =>
     Effect.gen(function* () {
@@ -4296,6 +4326,106 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: { ...memberStateThread(threadId, null), deletedAt },
       });
       assert.deepEqual(yield* projectionStore.listThreadMemberStates(threadId), []);
+    }),
+  );
+
+  it.effect("shells name another member's run, message and assignment, never the holder", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const alice = MemberId.make("member-alice");
+      const bob = MemberId.make("member-bob");
+      const at = DateTime.makeUnsafe("2026-10-01T01:00:00.000Z");
+      const prompt = (threadId: ThreadId, authorId: MemberId) =>
+        Effect.gen(function* () {
+          const runId = RunId.make(`${threadId}:run`);
+          const messageId = MessageId.make(`${threadId}:message`);
+          // Dispatch order: the run is created before its prompt message is written.
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:run`),
+            type: "run.created",
+            threadId,
+            runId,
+            nodeId: NodeId.make(`${threadId}:node`),
+            driver,
+            occurredAt: at,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: messageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "running",
+              requestedAt: at,
+              startedAt: at,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:message`),
+            type: "message.updated",
+            threadId,
+            occurredAt: at,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              authorId,
+              id: messageId,
+              threadId,
+              runId,
+              nodeId: null,
+              role: "user",
+              text: "hello",
+              attachments: [],
+              streaming: false,
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
+        });
+      const shared = ThreadId.make("thread:attribution:shared");
+      const own = ThreadId.make("thread:attribution:own");
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${shared}:created`),
+        type: "thread.created",
+        threadId: shared,
+        occurredAt: at,
+        payload: { ...memberStateThread(shared, alice), ownerUpdatedBy: bob },
+      });
+      yield* createMemberStateThread(own, alice);
+      yield* prompt(shared, bob);
+      yield* prompt(own, alice);
+
+      const shells = (yield* projectionStore.getShellSnapshot()).threads;
+      const attribution = (threadId: ThreadId) => {
+        const shell = shells.find((thread) => thread.id === threadId);
+        return {
+          latestRunAuthorId: shell?.latestRunAuthorId,
+          latestUserMessageAuthorId: shell?.latestUserMessageAuthorId,
+          ownerUpdatedBy: shell?.ownerUpdatedBy,
+          archivedBy: shell?.archivedBy,
+        };
+      };
+      assert.deepEqual(attribution(shared), {
+        latestRunAuthorId: bob,
+        latestUserMessageAuthorId: bob,
+        ownerUpdatedBy: bob,
+        archivedBy: undefined,
+      });
+      const ownShell = shells.find((thread) => thread.id === own);
+      for (const key of [
+        "latestRunAuthorId",
+        "latestUserMessageAuthorId",
+        "ownerUpdatedBy",
+        "archivedBy",
+      ]) {
+        assert.notProperty(ownShell, key);
+      }
     }),
   );
 

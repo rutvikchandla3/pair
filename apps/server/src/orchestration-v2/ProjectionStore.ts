@@ -450,9 +450,9 @@ export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
   readonly limit: number;
-  /** Only this member's threads; a thread with no owner is the server owner's. */
+  /** Only this member's threads, held or followed; a thread with no owner is the server owner's. */
   readonly ownerId?: MemberId | undefined;
-  /** For `limit: 0`, also count this member's threads into `ownCounts`. */
+  /** For `limit: 0`, also count this member's threads (held or followed) into `ownCounts`. */
   readonly ownCountsFor?: MemberId | undefined;
 }
 
@@ -587,6 +587,9 @@ export interface ProjectionStoreV2Shape {
     memberId: MemberId,
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyMap<ThreadId, ThreadMemberState>, ProjectionStoreV2Error>;
+  readonly listFollowedThreadIds: (
+    memberId: MemberId,
+  ) => Effect.Effect<ReadonlySet<ThreadId>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -1080,6 +1083,9 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly latest_run_author_id: string | null;
+  readonly blocking_run_author_id: string | null;
+  readonly latest_user_message_author_id: string | null;
 };
 
 type ShellRunRow = {
@@ -1139,6 +1145,7 @@ const ThreadMemberStateColumns = Schema.Struct({
   snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   opens: Schema.NullOr(Schema.fromJsonString(ThreadMemberState.fields.opens)),
+  followedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 });
 const encodeThreadMemberStateColumns = Schema.encodeEffect(ThreadMemberStateColumns);
 const ThreadMemberStateRow = Schema.Struct({
@@ -1829,8 +1836,27 @@ function isActivityRunForShell(
   return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
+type ShellAttribution = Pick<
+  OrchestrationV2ThreadShell,
+  "latestRunAuthorId" | "latestUserMessageAuthorId" | "ownerUpdatedBy" | "archivedBy"
+>;
+
+/** Each fact is left out when it names the holder, so single-member shells never carry one. */
+function shellAttribution(
+  holderId: MemberId | null,
+  facts: { readonly [K in keyof ShellAttribution]-?: string | null | undefined },
+): ShellAttribution {
+  const attribution: { -readonly [K in keyof ShellAttribution]?: MemberId } = {};
+  for (const key of Object.keys(facts) as Array<keyof ShellAttribution>) {
+    const memberId = facts[key];
+    if (memberId != null && memberId !== holderId) attribution[key] = MemberId.make(memberId);
+  }
+  return attribution;
+}
+
 type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
+  readonly attribution: ShellAttribution;
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
   readonly latestRunRequestedAt: DateTime.Utc | null;
@@ -1993,6 +2019,7 @@ function shellFromState(input: {
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
     ...(input.state.thread.ownerId === undefined ? {} : { ownerId: input.state.thread.ownerId }),
+    ...input.state.attribution,
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -2094,6 +2121,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       snoozed_at AS "snoozedAt",
       last_snooze_wake_at AS "lastSnoozeWakeAt",
       opens_json AS "opens",
+      followed_at AS "followedAt",
       updated_at AS "updatedAt"
     `;
 
@@ -2152,6 +2180,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       snoozed_at,
                       last_snooze_wake_at,
                       opens_json,
+                      followed_at,
                       updated_at
                     )
                     VALUES (
@@ -2165,6 +2194,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ${columns.snoozedAt},
                       ${columns.lastSnoozeWakeAt},
                       ${columns.opens},
+                      ${columns.followedAt},
                       ${updatedAt}
                     )
                     ON CONFLICT(thread_id, member_id)
@@ -2177,6 +2207,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       snoozed_at = excluded.snoozed_at,
                       last_snooze_wake_at = excluded.last_snooze_wake_at,
                       opens_json = excluded.opens_json,
+                      followed_at = excluded.followed_at,
                       updated_at = excluded.updated_at
                   `;
                   break;
@@ -2256,7 +2287,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 requested_at,
                 completed_at,
-                payload_json
+                payload_json,
+                author_id
               )
               VALUES (
                 ${event.payload.id},
@@ -2268,10 +2300,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${stringField(payload, "requestedAt")},
                 ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                (
+                  SELECT json_extract(prompt.payload_json, '$.authorId')
+                  FROM orchestration_v2_projection_messages prompt
+                  WHERE prompt.message_id = ${event.payload.userMessageId}
+                )
               )
               ON CONFLICT(run_id)
               DO UPDATE SET
+                author_id = COALESCE(orchestration_v2_projection_runs.author_id, excluded.author_id),
                 thread_id = excluded.thread_id,
                 ordinal = excluded.ordinal,
                 provider = excluded.provider,
@@ -2738,6 +2776,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
+              if (event.payload.role !== "user") break;
+              // Routing facts for the shell: the run's prompter, and the latest human message's author.
+              const authorId = event.payload.authorId ?? null;
+              if (authorId !== null && event.payload.runId !== null) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_runs SET author_id = ${authorId}
+                  WHERE run_id = ${event.payload.runId}
+                    AND json_extract(payload_json, '$.userMessageId') = ${event.payload.id}
+                    AND author_id IS NOT ${authorId}
+                `;
+              }
+              if (
+                event.payload.createdBy === "user" &&
+                idleCompactionOf(event.payload) === undefined
+              ) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_threads
+                  SET latest_user_message_author_id = ${authorId}
+                  WHERE thread_id = ${event.payload.threadId}
+                    AND latest_user_message_author_id IS NOT ${authorId}
+                `;
+              }
               break;
             }
             case "plan.updated": {
@@ -6329,6 +6389,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
+              presented.author_id AS latest_run_author_id,
+              t.latest_user_message_author_id,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
@@ -6386,6 +6448,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               blocked.requested_at AS blocking_run_requested_at,
               json_extract(blocked.payload_json, '$.startedAt') AS blocking_run_started_at,
               blocked.completed_at AS blocking_run_completed_at,
+              blocked.author_id AS blocking_run_author_id,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = blocked.run_id
@@ -6989,6 +7052,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? null
             : DateTime.makeUnsafe(row.latest_run_completed_at);
         let latestRunStopRequested = row.latest_run_stop_requested === 1;
+        let latestRunAuthorId = row.latest_run_author_id;
         if (row.blocking_run_id !== null && row.blocking_failure_payload_json !== null) {
           const blockingFailure = yield* decodeTurnItemPayload(
             row.blocking_failure_payload_json,
@@ -7002,6 +7066,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             terminalFailureItem = blockingFailure;
             latestRunId = RunId.make(row.blocking_run_id);
             latestRunStopRequested = row.blocking_run_stop_requested === 1;
+            latestRunAuthorId = row.blocking_run_author_id;
             latestRunStatus = "failed";
             latestRunRequestedAt =
               row.blocking_run_requested_at === null
@@ -7034,8 +7099,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pullRequests: thread.pullRequests,
           }),
         ];
+        const holderId = thread.ownerId ?? (yield* serverOwnerId);
         return {
           thread,
+          attribution: shellAttribution(holderId, {
+            latestRunAuthorId,
+            latestUserMessageAuthorId: row.latest_user_message_author_id,
+            ownerUpdatedBy: thread.ownerUpdatedBy,
+            archivedBy: thread.archivedBy,
+          }),
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,
@@ -7480,15 +7552,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit, ownerId, ownCountsFor }) {
-      const holder =
-        ownerId === undefined && ownCountsFor === undefined
-          ? sql`NULL`
-          : sql`COALESCE(json_extract(t.payload_json, '$.ownerId'), ${yield* serverOwnerId})`;
+      const serverOwner =
+        ownerId === undefined && ownCountsFor === undefined ? null : yield* serverOwnerId;
+      // A member's threads are those they hold and those they follow.
+      const isMine = (memberId: MemberId) => sql`(
+        COALESCE(json_extract(t.payload_json, '$.ownerId'), ${serverOwner}) = ${memberId}
+        OR EXISTS (
+          SELECT 1 FROM projection_thread_member_state member
+          WHERE member.thread_id = t.thread_id AND member.member_id = ${memberId}
+            AND member.followed_at IS NOT NULL
+        )
+      )`;
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
-          ${holder} AS holder_id
+          ${ownCountsFor === undefined ? sql`0` : isMine(ownCountsFor)} AS own
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
@@ -7497,7 +7576,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
-          }${ownerId === undefined ? sql`` : sql` AND ${holder} = ${ownerId}`}
+          }${ownerId === undefined ? sql`` : sql` AND ${isMine(ownerId)}`}
       `;
       const belowCursor =
         before.threadId === undefined
@@ -7524,7 +7603,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }>`
               WITH older AS (${older})
               SELECT older.project_id, COUNT(*) AS count,
-                COALESCE(SUM(older.holder_id = ${ownCountsFor ?? null}), 0) AS own_count
+                COALESCE(SUM(older.own), 0) AS own_count
               FROM older
               WHERE ${belowCursor}
               GROUP BY older.project_id
@@ -7682,6 +7761,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ),
     );
 
+    const listFollowedThreadIds = Effect.fn("ProjectionStore.listFollowedThreadIds")(
+      function* (memberId: MemberId) {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM projection_thread_member_state
+          WHERE member_id = ${memberId} AND followed_at IS NOT NULL
+        `;
+        return new Set(rows.map((row) => ThreadId.make(row.thread_id)));
+      },
+      Effect.mapError(
+        (cause) =>
+          new ProjectionStoreReadError({ threadId: ThreadId.make("thread:member-state"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7705,6 +7798,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadMemberState: readOnReader(getThreadMemberState),
       listThreadMemberStates: readOnReader(listThreadMemberStates),
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
+      listFollowedThreadIds: readOnReader(listFollowedThreadIds),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),

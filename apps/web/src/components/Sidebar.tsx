@@ -69,8 +69,11 @@ import {
   ListFilterIcon,
   PlusIcon,
   SettingsIcon,
+  UserIcon,
+  UsersIcon,
 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -104,7 +107,6 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   pickableProjectGroups,
@@ -160,7 +162,8 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/older
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
-import { readCanDeleteThread, readThreadTeamMenu } from "../state/team";
+import { readCanDeleteThread, readThreadShareOrigin, readThreadTeamMenu } from "../state/team";
+import { MemberAvatar } from "./team/MemberAvatar";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -198,7 +201,9 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  buildSidebarOwnerScopeItems,
   isSidebarThreadMine,
+  matchesSidebarOwnerFilter,
   resolveSidebarThreadSection,
   sortTeamThreadsByActivity,
   resolveSidebarReorderableThreadKeys,
@@ -250,6 +255,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
+  ComboboxSeparator,
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
@@ -361,6 +367,7 @@ interface SidebarThreadPartitionInput {
   readonly sortActiveBySend: boolean;
   /** Team-mode environments only: single-member environments partition as before. */
   readonly teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>;
+  readonly ownerFilters: Readonly<Record<string, string>>;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
@@ -474,6 +481,7 @@ function useSidebarThreads(input: {
     Schema.Boolean,
   );
   const teamViewers = useTeamViewers([...serverConfigs.keys()]);
+  const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -497,6 +505,7 @@ function useSidebarThreads(input: {
     workingShelfEnabled,
     sortActiveBySend: folderGroups !== null,
     teamViewers,
+    ownerFilters,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
@@ -614,6 +623,7 @@ function useSidebarThreads(input: {
     teamViewers,
     teamShelfExpanded,
     toggleTeamShelf: () => setTeamShelfExpanded((value) => !value),
+    expandTeamShelf: () => setTeamShelfExpanded(true),
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -649,6 +659,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     workingShelfEnabled,
     sortActiveBySend,
     teamViewers,
+    ownerFilters,
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
@@ -697,6 +708,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         pinned: thread.pinnedAt != null,
         teamMode: viewer !== undefined,
         mine: viewer === undefined || isSidebarThreadMine(thread, viewer),
+        ownerFilterMatch:
+          viewer === undefined ||
+          matchesSidebarOwnerFilter(thread, viewer, ownerFilters[thread.environmentId]),
       });
       if (section === null) continue;
       (section === "snoozed"
@@ -805,7 +819,10 @@ function isOptimisticDropReleased(input: {
       ? "settled"
       : thread.pinnedAt != null
         ? "pinned"
-        : "active";
+        : // A Team row dropped into Active stays held until its follow lands.
+          optimisticDrop.sourceSection === "team" && thread.followedAt == null
+          ? "team"
+          : "active";
   if (
     canonicalSection !== optimisticDrop.sourceSection &&
     canonicalSection !== optimisticDrop.section
@@ -975,6 +992,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     confirmAndUnpinThread,
     setThreadAutoSettle,
     setThreadOwner,
+    setThreadFollowed,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -1223,12 +1241,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? null
       : (projectScopeItems.find((item) => item.value === (projectScopeKeys[0] ?? "all")) ??
         projectScopeItems[0]!);
-  const filteredProjectScopeItems = filterSidebarProjectScopeItems({
-    items: projectScopeItems,
-    query: projectScopeMenuState.query,
-    matches: (item, query) =>
-      projectScopeFilter.contains(item, query, (candidate) => candidate.label),
-  });
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
@@ -1367,6 +1379,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     teamViewers,
     teamShelfExpanded,
     toggleTeamShelf,
+    expandTeamShelf,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
@@ -1399,6 +1412,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+  });
+  const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
+  const setOwnerFilters = useUiStateStore((store) => store.setSidebarOwnerFilters);
+  const ownerScopeItems = buildSidebarOwnerScopeItems({
+    teamViewers,
+    filters: ownerFilters,
+    environmentLabel: (environmentId) => environmentLabelById.get(environmentId),
+  });
+  const ownerScopeItemByValue = new Map(ownerScopeItems.map((item) => [item.value, item]));
+  const ownerFilterLabel = ownerScopeItems.find(
+    (item) => item.selected && !item.value.endsWith("anyone"),
+  )?.label;
+  const scopeMenuItems =
+    ownerScopeItems.length === 0
+      ? projectScopeItems
+      : [...ownerScopeItems.map(({ value, label }) => ({ value, label })), ...projectScopeItems];
+  const filteredScopeMenuItems = filterSidebarProjectScopeItems({
+    items: scopeMenuItems,
+    query: projectScopeMenuState.query,
+    matches: (item, query) =>
+      projectScopeFilter.contains(item, query, (candidate) => candidate.label),
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -2225,6 +2259,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         case "move-active":
+          if (
+            plan.follow &&
+            !(await run(setThreadFollowed(threadRef, true), "Failed to follow thread"))
+          )
+            return;
           if (plan.unpin && !(await run(unpinThread(threadRef), "Failed to unpin thread"))) return;
           if (
             plan.unsettle &&
@@ -2240,6 +2279,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
               "Failed to pin thread",
             ))
+          )
+            return;
+          // After the pin, so the row never lands in Active on its way to Pinned.
+          if (
+            plan.follow &&
+            !(await run(setThreadFollowed(threadRef, true), "Failed to follow thread"))
           )
             return;
           break;
@@ -2671,7 +2716,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
-        const teamMenu = readThreadTeamMenu(thread.environmentId, thread.source.ownerId);
+        const teamMenu = readThreadTeamMenu(thread);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2727,17 +2772,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
-        if (clicked.value?.startsWith("assign:")) {
-          const result = await setThreadOwner(
-            threadRef,
-            MemberId.make(clicked.value.slice("assign:".length)),
-          );
+        const follow = clicked.value === "follow" || clicked.value === "unfollow";
+        if (clicked.value?.startsWith("assign:") || follow) {
+          const result = await (follow
+            ? setThreadFollowed(threadRef, clicked.value === "follow")
+            : setThreadOwner(threadRef, MemberId.make(clicked.value.slice("assign:".length))));
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Could not assign the thread",
+                title: follow ? `Failed to ${clicked.value} thread` : "Could not assign the thread",
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
@@ -2882,7 +2927,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "copy-thread":
             void copyThreadReference(
-              threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+              threadChipCopyTarget(
+                threadRef,
+                thread.title,
+                readThreadShareOrigin(threadRef.environmentId),
+              ),
             );
             return;
           case "copy-thread-id":
@@ -3066,8 +3115,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <Combobox
-                  items={projectScopeItems}
-                  filteredItems={filteredProjectScopeItems}
+                  items={scopeMenuItems}
+                  filteredItems={filteredScopeMenuItems}
                   autoHighlight
                   itemToStringLabel={(item) => item.label}
                   isItemEqualToValue={(a, b) => a.value === b.value}
@@ -3087,7 +3136,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       return;
                     }
                     if (!item) return;
-                    if (item.value === "all") {
+                    const ownerItem = ownerScopeItemByValue.get(item.value);
+                    if (ownerItem) {
+                      setOwnerFilters(ownerItem.filters);
+                      // Another member's threads are Team threads, so show them.
+                      if (ownerItem.member !== null) expandTeamShelf();
+                    } else if (item.value === "all") {
                       setProjectScopeKeys([]);
                     } else if (
                       eventDetails.event instanceof MouseEvent &&
@@ -3104,11 +3158,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        label={
+                        label={[
                           scopedProjectGroups.length > 0
                             ? `Filter threads by project: ${scopedProjectGroups.map((project) => project.displayName).join(", ")}`
-                            : "Filter threads by project"
-                        }
+                            : "Filter threads by project",
+                          ownerFilterLabel,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       />
                     }
                   >
@@ -3131,6 +3188,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <span className="flex shrink-0">
                         <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
                       </span>
+                    ) : ownerFilterLabel ? (
+                      <UserIcon className="size-4" />
                     ) : (
                       <ListFilterIcon className="size-4" />
                     )}
@@ -3191,7 +3250,39 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     />
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <ComboboxList aria-multiselectable>
-                      {(item: (typeof projectScopeItems)[number]) => {
+                      {(item: (typeof scopeMenuItems)[number]) => {
+                        const ownerItem = ownerScopeItemByValue.get(item.value);
+                        if (ownerItem) {
+                          const row = (
+                            <ComboboxItem
+                              key={item.value}
+                              hideIndicator
+                              value={item}
+                              aria-selected={ownerItem.selected}
+                              data-selected={undefined}
+                            >
+                              <ProjectScopeRowIcon isSelected={ownerItem.selected}>
+                                {ownerItem.member ? (
+                                  <MemberAvatar member={ownerItem.member} className="size-4" />
+                                ) : ownerItem.value.endsWith("anyone") ? (
+                                  <UsersIcon className="size-4 shrink-0" />
+                                ) : (
+                                  <UserIcon className="size-4 shrink-0" />
+                                )}
+                              </ProjectScopeRowIcon>
+                              <span className="min-w-0 truncate text-sm">{item.label}</span>
+                              <span className="ml-auto size-7 shrink-0 sm:size-6" />
+                            </ComboboxItem>
+                          );
+                          return ownerItem === ownerScopeItems.at(-1) ? (
+                            <Fragment key={item.value}>
+                              {row}
+                              <ComboboxSeparator />
+                            </Fragment>
+                          ) : (
+                            row
+                          );
+                        }
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         const isSelected = project
                           ? projectScopeKeys.includes(item.value)

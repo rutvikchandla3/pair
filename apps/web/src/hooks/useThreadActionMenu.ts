@@ -35,9 +35,8 @@ import {
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
-import { readThreadTeamMenu } from "../state/team";
+import { readThreadShareOrigin, readThreadTeamMenu } from "../state/team";
 import { readLocalApi } from "../localApi";
-import { configuredHostedAppUrl } from "../hostedPairing";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -86,6 +85,7 @@ export function useThreadActionMenu(input: {
     confirmAndUnpinThread,
     setThreadAutoSettle,
     setThreadOwner,
+    setThreadFollowed,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -136,7 +136,7 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
-      const team = readThreadTeamMenu(threadRef.environmentId, thread.source.ownerId);
+      const team = readThreadTeamMenu(thread);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -249,6 +249,13 @@ export function useThreadActionMenu(input: {
           await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
           return;
         }
+        case "follow":
+        case "unfollow":
+          await reportFailure(
+            action === "follow" ? "Failed to follow thread" : "Failed to unfollow thread",
+            () => setThreadFollowed(threadRef, action === "follow"),
+          );
+          return;
         case "auto-settle:enabled":
         case "auto-settle:disabled":
           await reportFailure("Failed to update auto-settle", () =>
@@ -308,7 +315,11 @@ export function useThreadActionMenu(input: {
           return;
         case "copy-thread":
           void copyThreadReference(
-            threadChipCopyTarget(threadRef, thread.title, configuredHostedAppUrl()),
+            threadChipCopyTarget(
+              threadRef,
+              thread.title,
+              readThreadShareOrigin(threadRef.environmentId),
+            ),
           );
           return;
         case "copy-thread-id":

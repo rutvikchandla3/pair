@@ -17,6 +17,7 @@ import {
   viewThreadEvent,
 } from "./MemberThreadState.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import type { OlderSettledReader } from "./ShellStream.ts";
 
 /** The member a transport reads for. Null (guests, member-less readers) sees the holder's view. */
 export interface ThreadViewer {
@@ -28,6 +29,10 @@ export interface ThreadViewer {
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<
     ReadonlyMap<ThreadId, ThreadMemberState>,
+    ProjectionStore.ProjectionStoreV2Error
+  >;
+  readonly readFollowedThreadIds: Effect.Effect<
+    ReadonlySet<ThreadId>,
     ProjectionStore.ProjectionStoreV2Error
   >;
 }
@@ -44,16 +49,24 @@ export const makeThreadViewers = Effect.gen(function* () {
           isTeamMode,
           readMemberStates: (threadIds) =>
             projections.getMemberStatesForThreads(memberId, threadIds),
+          readFollowedThreadIds: projections.listFollowedThreadIds(memberId),
         };
 });
 
 /** The viewer, in team mode only: whose own older settled threads reads count and filter. */
 export function olderSettledReaderOf(
   viewer: ThreadViewer | null,
-): Effect.Effect<ThreadViewer | null> {
-  return viewer === null
-    ? Effect.succeed(null)
-    : Effect.map(viewer.isTeamMode, (team) => (team ? viewer : null));
+): Effect.Effect<OlderSettledReader | null, ProjectionStore.ProjectionStoreV2Error> {
+  if (viewer === null) return Effect.succeed(null);
+  return Effect.flatMap(viewer.isTeamMode, (team) =>
+    team
+      ? Effect.map(viewer.readFollowedThreadIds, (followedThreadIds) => ({
+          memberId: viewer.memberId,
+          serverOwnerId: viewer.serverOwnerId,
+          followedThreadIds,
+        }))
+      : Effect.succeed(null),
+  );
 }
 
 /** Reads member rows only for threads the viewer does not hold, in one batch. */
