@@ -1,13 +1,24 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 
 import {
+  clearStashedReturnPath,
+  readStashedReturnPath,
+  safeReturnPath,
+  stashReturnPath,
+} from "../authReturnPath";
+
+import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
 
 export const Route = createFileRoute("/pair")({
-  beforeLoad: async ({ context }) => {
+  validateSearch: (raw: Record<string, unknown>): { next?: string } => {
+    const next = safeReturnPath(raw.next);
+    return next === null ? {} : { next };
+  },
+  beforeLoad: async ({ context, search }) => {
     const { authGateState } = context;
     if (authGateState.status === "hosted-pairing") {
       return {
@@ -20,8 +31,13 @@ export const Route = createFileRoute("/pair")({
       authGateState.status === "hosted-static" ||
       authGateState.status === "guest"
     ) {
-      throw redirect({ to: "/", replace: true });
+      const returnPath =
+        authGateState.status === "authenticated" ? (search.next ?? readStashedReturnPath()) : null;
+      clearStashedReturnPath();
+      // `href` wins over `to` when the router navigates a redirect.
+      throw redirect({ to: "/", replace: true, ...(returnPath ? { href: returnPath } : {}) });
     }
+    if (search.next) stashReturnPath(search.next);
     return {
       authGateState,
     };
@@ -33,6 +49,7 @@ export const Route = createFileRoute("/pair")({
 function PairRouteView() {
   const router = useRouter();
   const { authGateState } = Route.useRouteContext();
+  const { next } = Route.useSearch();
 
   if (!authGateState) {
     return null;
@@ -45,9 +62,13 @@ function PairRouteView() {
   return (
     <PairingRouteSurface
       auth={authGateState.auth}
+      hasReturnPath={next !== undefined}
       onAuthenticated={() => {
+        // The sign-in link often opens in a new tab with no `next`, so the stash stands in.
+        const returnPath = next ?? readStashedReturnPath() ?? "/";
+        clearStashedReturnPath();
         // Recreate the connection so WebSocket and cached scopes use the new pairing cookie.
-        router.history.replace("/");
+        router.history.replace(returnPath);
         router.history.flush();
         window.location.reload();
       }}
