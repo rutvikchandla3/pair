@@ -369,6 +369,8 @@ export interface ChatComposerProps {
   projectSelectionRequired: boolean;
 
   phase: SessionPhase;
+  /** Who started the running turn, when it was another member: sends then queue by default. */
+  othersTurnName: string | null;
   canInterrupt: boolean;
   isSendBusy: boolean;
   canResume: boolean;
@@ -523,6 +525,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
+    othersTurnName,
     canInterrupt,
     isSendBusy,
     canResume,
@@ -1183,11 +1186,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerApprovalState = activePendingApproval !== null;
   // A send declines the approvals shown here to redirect the agent, so it steers the waiting
   // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
-  const followUpBehavior = pendingApprovals.some(
-    (approval) => !heldRequestIds.has(approval.requestId),
-  )
-    ? "steer"
-    : settings.followUpBehavior;
+  // Another member's turn is never redirected by default: the send queues and leaves its approvals.
+  const followUpBehavior =
+    othersTurnName !== null
+      ? "queue"
+      : pendingApprovals.some((approval) => !heldRequestIds.has(approval.requestId))
+        ? "steer"
+        : settings.followUpBehavior;
   const composerSuggestionsVisible = composerMenuOpen;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
@@ -3509,6 +3514,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
                     followUpBehavior={followUpBehavior}
+                    othersTurnName={othersTurnName}
                     canSteer={!isCompacting}
                     alternateShortcutLabel={shortcutLabelForCommand(
                       keybindings,

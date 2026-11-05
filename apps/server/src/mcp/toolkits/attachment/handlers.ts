@@ -11,8 +11,9 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
+import * as TeamState from "../../../team/TeamState.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { newCommandId, readThread, sendActorId, unavailable } from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -85,7 +86,9 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const { scope, threads, caller, projection } = yield* readThread(input.threadId, [
+              "messages",
+            ]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -95,9 +98,15 @@ export const layer = McpToolAccess.toLayer(
               input.attachments,
               projection.messages.flatMap((message) => message.attachments),
             );
+            const actorId = yield* sendActorId(
+              threads,
+              scope,
+              yield* Effect.serviceOption(TeamState.TeamState),
+            );
             const commandId = yield* newCommandId();
             const messageId = MessageId.make(commandId);
             const result = yield* ThreadMessageIntake.sendToThread({
+              ...(actorId === undefined ? {} : { actorId }),
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
               commandId,

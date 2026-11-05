@@ -6,6 +6,7 @@ import {
   ContextTransferId,
   EnvironmentId,
   GitCommandError,
+  MemberId,
   MessageId,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -71,7 +72,9 @@ import {
 } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
+import * as TeamState from "../team/TeamState.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
@@ -3397,6 +3400,98 @@ describe("OrchestratorMcpService thread lookup", () => {
               Effect.succeed({ threadId: launched.id, run: null, timedOut: false }),
           }),
         ),
+      );
+    }),
+  );
+});
+
+describe("OrchestratorMcpService send actor", () => {
+  const owner = MemberId.make("member:alice");
+  const bob = MemberId.make("member:bob");
+  const record = (id: MemberId, isOwner: boolean) => ({
+    id,
+    name: id,
+    role: isOwner ? ("admin" as const) : ("member" as const),
+    gitName: null,
+    gitEmail: null,
+    isOwner,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: null,
+    removedAt: null,
+  });
+  const target = liveThreadShell(ThreadId.make("thread:send-actor"));
+  const client: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:send-actor"),
+    requestNamespace: "client:send-actor",
+    thread: undefined,
+    client: { sessionId: "send-actor", label: "Claude Code", access: "full-access", memberId: bob },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+
+  it.effect.each([
+    {
+      row: "a team client's auto send acts for its member",
+      mode: "auto",
+      team: true,
+      sent: { actorId: bob },
+    },
+    {
+      row: "a team client's explicit steer is a Steer now",
+      mode: "steer",
+      team: true,
+      sent: { actorId: bob, steerOthersTurn: true },
+    },
+    { row: "a solo server stamps no actor", mode: "steer", team: false, sent: {} },
+  ] as const)("$row", ({ mode, team, sent }) =>
+    Effect.gen(function* () {
+      const inputs = yield* Ref.make<
+        ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>
+      >([]);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* mcp.sendToThread(client, { threadId: target.id, message: "hello", mode });
+      }).pipe(
+        Effect.provide(
+          OrchestratorMcpService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                TeamState.layerTest(
+                  team ? [record(owner, true), record(bob, false)] : [record(owner, true)],
+                ),
+                Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                NodeServices.layer,
+                NodeCrypto.layer,
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  getThreadShell: () => Effect.succeed(target),
+                  getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(target)),
+                  sendToThread: (input) =>
+                    Ref.update(inputs, (all) => [...all, input]).pipe(
+                      Effect.as({
+                        run: { id: RunId.make("run:send-actor"), status: "queued" },
+                      } as never),
+                    ),
+                }),
+                ServerSettings.layerTest(),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+                Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                  list: () => Effect.succeed([]),
+                }),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              ),
+            ),
+          ),
+        ),
+      );
+      const [input] = yield* Ref.get(inputs);
+      assert.deepEqual(
+        { actorId: input?.actorId, steerOthersTurn: input?.steerOthersTurn },
+        { actorId: undefined, steerOthersTurn: undefined, ...sent },
       );
     }),
   );

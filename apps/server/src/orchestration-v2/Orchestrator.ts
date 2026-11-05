@@ -78,6 +78,7 @@ import {
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { runStarterId } from "@t3tools/shared/threadCollaboration";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -1125,10 +1126,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   // CLI and test runtimes have no team: every actor is the holder and events carry no member.
-  const serverOwnerId = Option.map(
-    yield* Effect.serviceOption(TeamState.TeamState),
-    (team) => team.ownerId,
-  );
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
+  const serverOwnerId = Option.map(team, (state) => state.ownerId);
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -6122,6 +6121,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "queue_after_active" };
       }
     }
+    // On a team, another member's turn is steered or stopped only by an explicit Steer now.
+    const steeredRunId =
+      dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active"
+        ? dispatchMode.targetRunId
+        : goalStopRunId;
+    const steeredRun =
+      steeredRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === steeredRunId);
+    if (
+      steeredRun !== undefined &&
+      command.actorId !== undefined &&
+      command.steerOthersTurn !== true &&
+      Option.isSome(team) &&
+      (yield* team.value.isTeamMode) &&
+      runStarterId({
+        run: steeredRun,
+        messages: projection.messages,
+        holderId: holderOf(projection.thread, team.value.ownerId),
+      }) !== command.actorId
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+      goalStopRunId = undefined;
+    }
     if (
       command.notification !== undefined &&
       (command.createdBy !== "agent" ||
@@ -9770,7 +9793,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           attachments: [],
           createdBy: "user" as const,
           creationSource: "server" as const,
-          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
+          // Any member may answer an agent's question in anyone's turn.
+          ...(command.actorId === undefined
+            ? {}
+            : { actorId: command.actorId, steerOthersTurn: true }),
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);
