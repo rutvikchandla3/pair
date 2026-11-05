@@ -1751,6 +1751,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** The member whose action the notice records; `message` already names them. */
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2650,6 +2652,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3053,6 +3056,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unarchive"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),
@@ -3081,6 +3085,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
@@ -3195,6 +3200,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
@@ -3204,6 +3210,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.unlink"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
@@ -3255,6 +3262,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,

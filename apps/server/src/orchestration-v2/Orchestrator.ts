@@ -76,6 +76,7 @@ import {
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
+  RUNTIME_MODE_LABELS,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { runStarterId } from "@t3tools/shared/threadCollaboration";
@@ -1373,6 +1374,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: row.id, cause })),
       );
     return withPersonalState(row, state ?? EMPTY_MEMBER_STATE);
+  });
+
+  /**
+   * The quiet timeline row a member's change leaves on a team: a runless, persisted
+   * `system_notice` naming them. Nothing for a solo server, a command without an actor, or no
+   * change. The name is baked in so old clients and MCP reads show the sentence as is.
+   */
+  const emitLifecycleNotice = Effect.fn("Orchestrator.emitLifecycleNotice")(function* (
+    command: OrchestrationV2ServerCommand & { readonly actorId?: MemberId | undefined },
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    thread: OrchestrationV2AppThread,
+    sentence: ((actor: string, nameOf: (id: MemberId) => string) => string) | null,
+  ) {
+    const actorId = command.actorId;
+    if (sentence === null || actorId === undefined || Option.isNone(team)) return;
+    if (!(yield* team.value.isTeamMode)) return;
+    const members = yield* Ref.get(team.value.members);
+    const activeName = (id: MemberId) => {
+      const member = members.get(id);
+      return member?.removedAt === null ? member.name : undefined;
+    };
+    const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+      event.type === "turn-item.updated" && event.threadId === thread.id ? [event.payload] : [],
+    );
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.lifecycleNoticeTurnItem({ commandId: command.commandId }),
+        threadId: thread.id,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: sentence(
+          activeName(actorId) ?? "A former member",
+          (id) => activeName(id) ?? "a former member",
+        ),
+        actorId,
+      },
+    });
   });
 
   /** A non-holder's event leaves the shared row as it is; the holder's writes `next` to the row. */
