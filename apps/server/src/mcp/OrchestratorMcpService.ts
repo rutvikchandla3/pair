@@ -126,7 +126,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { isLiveCallerShell, sendActorId, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -3133,6 +3133,7 @@ const make = Effect.gen(function* () {
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
       const mode = input.mode ?? "auto";
+      const actorId = yield* sendActorId(threadManagement, scope);
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
@@ -3141,6 +3142,9 @@ const make = Effect.gen(function* () {
       });
       const result = yield* threadManagement
         .sendToThread({
+          ...(actorId === undefined
+            ? {}
+            : { actorId, ...(mode === "steer" || mode === "restart" ? { steerOthersTurn: true } : {}) }),
           projectId: target.thread.projectId,
           commandId: stableCommandId({
             scope,
