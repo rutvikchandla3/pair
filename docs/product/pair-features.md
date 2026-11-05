@@ -52,6 +52,14 @@ T3 Code throughout.
 - **Pull requests Pair opens** end with `Requested by <name> via Pair`.
 - Clearing your git email makes your commits the server's again.
 
+### Presence · [#15](https://github.com/rutvikchandla3/t3code/pull/15) [#16](https://github.com/rutvikchandla3/t3code/pull/16) [#17](https://github.com/rutvikchandla3/t3code/pull/17)
+
+- **Who is here.** The server tracks who is viewing and typing, and sends nothing while you're
+  alone. The thread header shows who else is viewing, with away members drawn hollow.
+- **"Bob is typing"** above the composer.
+- **Viewers in the sidebar** on each thread's row, and **Online** or **Away** in **Settings → Team**.
+  Away means no input for 10 minutes.
+
 ## Built
 
 ### Collaborative control
@@ -64,14 +72,6 @@ T3 Code throughout.
   or reorder one, and only the author can edit its text.
 - **Revert warns** when it would discard a teammate's turns: "Discards 2 turns by Alice".
 
-### Presence
-
-- **Who is here.** The server tracks who is viewing and typing, and sends nothing while you're
-  alone. The thread header shows who else is viewing, with away members drawn hollow.
-- **"Bob is typing"** above the composer.
-- **Viewers in the sidebar** on each thread's row, and **Online** or **Away** in **Settings → Team**.
-  Away means no input for 10 minutes.
-
 ### Team API
 
 - **API tokens.** Members create their own tokens in **Settings → Sharing & access → Authorized
@@ -79,15 +79,14 @@ T3 Code throughout.
   threads as them. A token is shown once, expires after 30, 90 or 365 days, and is capped at the
   member's own access.
 - Members revoke their own clients and approve an agent's sign-in with one click.
-- **`t3 thread` from anywhere** with a token, and one guide to agents and automation. _(In
-  progress.)_
+- **`t3 thread` from anywhere** with a token, and one guide to agents and automation.
 
 ## Planned
 
 - **Bring your own subscription.** Members connect their own Claude or ChatGPT account. A new
-  thread uses its creator's account, and usage is shown per member.
+  thread uses its creator's account, and usage is shown per member. _(In progress.)_
 - **GitHub sign-in.** Members connect GitHub with the device flow, so pull requests open as the
-  person. GitHub sign-in can replace sign-in links.
+  person. GitHub sign-in can replace sign-in links. _(In progress.)_
 - **Mobile parity.** Names, avatars, the Team shelf, Follow, presence and per-member push
   notifications in the iOS and Android apps.
 
