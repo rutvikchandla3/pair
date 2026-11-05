@@ -81,7 +81,7 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
       catch: (cause) =>
         new ConnectionBlockedError({
           reason: "configuration",
-          detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
+          detail: cause instanceof Error ? cause.message : "The sign-in details are invalid.",
         }),
     });
   },

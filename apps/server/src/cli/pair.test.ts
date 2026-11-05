@@ -187,7 +187,7 @@ describe("t3 pair", () => {
           );
 
           expect(serving).toBe(true);
-          assert.include(output, "Pairing URL: https://pair-test.tail.ts.net/pair#token=");
+          assert.include(output, "Sign-in link: https://pair-test.tail.ts.net/pair#token=");
         }),
       "::1",
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -209,8 +209,8 @@ describe("t3 pair", () => {
 
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
 
-        assert.include(output, `Pairing with pair-test (${origin})`);
-        assert.include(output, `Pairing URL: ${origin}/pair#token=`);
+        assert.include(output, `Sign-in link for pair-test (${origin})`);
+        assert.include(output, `Sign-in link: ${origin}/pair#token=`);
         assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
         assert.include(output, "only reachable from this machine");
 
@@ -263,7 +263,7 @@ describe("t3 pair", () => {
 
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
 
-        assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
+        assert.include(output, "Sign-in link: http://localhost:5733/pair#token=");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -333,7 +333,7 @@ describe("t3 pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, "No running Pair server found.");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -369,7 +369,7 @@ describe("t3 pair", () => {
           ),
         );
 
-        assert.include(String(error), "No running T3 Code server found.");
+        assert.include(String(error), "No running Pair server found.");
         assert.notInclude(String(error), sharedHome);
         assert.deepEqual(NodeFS.readdirSync(NodePath.join(sharedHome, "userdata")), [
           "server-runtime.json",

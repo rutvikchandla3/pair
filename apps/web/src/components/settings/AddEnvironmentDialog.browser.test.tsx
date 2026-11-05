@@ -104,7 +104,7 @@ describe("AddEnvironmentDialog", () => {
     await openDialogOnSsh();
     await userEvent.click(remoteCard());
     await userEvent.type(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
-    await userEvent.type(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+    await userEvent.type(page.getByPlaceholder("CODE", { exact: true }), "PAIRCODE");
     await userEvent.click(sshCard());
     await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
     await userEvent.type(page.getByPlaceholder("root"), "maria");
@@ -113,7 +113,7 @@ describe("AddEnvironmentDialog", () => {
 
     await expectDefaultModeAfterReopen();
     await expect.element(page.getByPlaceholder("backend.example.com")).toHaveValue("");
-    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
+    await expect.element(page.getByPlaceholder("CODE", { exact: true })).toHaveValue("");
     await userEvent.click(sshCard());
     await expect.element(page.getByPlaceholder("Search hosts or type devbox")).toHaveValue("");
     await expect.element(page.getByPlaceholder("root")).toHaveValue("");

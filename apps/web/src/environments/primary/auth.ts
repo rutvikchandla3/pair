@@ -75,7 +75,7 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Invalid pairing token. Check the token and try again.";
+    return "Invalid sign-in code. Check the code and try again.";
   }
 }
 
@@ -98,7 +98,7 @@ export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Enter a pairing token to continue.";
+    return "Enter a sign-in code to continue.";
   }
 }
 

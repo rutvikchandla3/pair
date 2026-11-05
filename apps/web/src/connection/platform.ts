@@ -220,7 +220,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   if (pairingToken === null) {
     return yield* new ConnectionBlockedError({
       reason: "authentication",
-      detail: "The SSH environment did not issue a pairing credential.",
+      detail: "The SSH environment did not issue a sign-in code.",
     });
   }
   const descriptor = yield* Effect.tryPromise({
@@ -248,7 +248,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
       }
       return new ConnectionBlockedError({
         reason: "configuration",
-        detail: `${descriptor.label} runs T3 Code ${descriptor.serverVersion}, but this desktop is ${APP_VERSION}, and that server could not accept its pairing. Restart the T3 server on ${descriptor.label} so it runs ${APP_VERSION}, then retry.`,
+        detail: `${descriptor.label} runs Pair ${descriptor.serverVersion}, but this desktop is ${APP_VERSION}, and that server could not accept its sign-in. Restart the Pair server on ${descriptor.label} so it runs ${APP_VERSION}, then retry.`,
       });
     },
   });
