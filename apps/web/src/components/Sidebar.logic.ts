@@ -24,8 +24,10 @@ import {
   type ContextMenuItem,
   type EnvironmentId,
   type MemberId,
+  type TeamMember,
   type ThreadId,
 } from "@t3tools/contracts";
+import { activeTeamMembers } from "@t3tools/client-runtime/state/team";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
@@ -176,23 +178,107 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-// Team rows belong to someone else, so they are neither a drop target nor a drag source.
+// Team rows belong to someone else: never a drop target, and they drag out only to be followed.
 
 export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled" | "team";
 
+type SidebarTeamThread = {
+  readonly source: { readonly ownerId?: MemberId | null | undefined };
+  readonly pinnedAt?: string | null | undefined;
+  readonly followedAt?: string | null | undefined;
+};
+
 /** A thread with no recorded owner belongs to the server owner. */
-export function isSidebarThreadMine(
-  thread: {
-    readonly source: { readonly ownerId?: MemberId | null | undefined };
-    readonly pinnedAt?: string | null | undefined;
-  },
-  team: TeamViewer,
-): boolean {
+function sidebarThreadOwnerId(thread: SidebarTeamThread, team: TeamViewer): MemberId | null {
+  return thread.source.ownerId ?? team.ownerId;
+}
+
+export function isSidebarThreadMine(thread: SidebarTeamThread, team: TeamViewer): boolean {
   return (
-    (thread.source.ownerId ?? team.ownerId) === team.memberId ||
-    // Pins are per member, so a pin on someone else's thread is mine.
-    thread.pinnedAt != null
+    sidebarThreadOwnerId(thread, team) === team.memberId ||
+    // Pins and follows are per member, so either one on someone else's thread makes it mine.
+    thread.pinnedAt != null ||
+    thread.followedAt != null
   );
+}
+
+/** Null hides Follow: solo mode, a server without it, or the viewer owns the thread. */
+export function resolveThreadFollowing(
+  thread: SidebarTeamThread,
+  team: TeamViewer | null | undefined,
+): boolean | null {
+  if (!team || sidebarThreadOwnerId(thread, team) === team.memberId) return null;
+  return thread.followedAt != null;
+}
+
+/** The stored owner filter is "me" or a member id; anything else, like a purged member, is Anyone. */
+function sidebarOwnerFilterId(team: TeamViewer, filter: string | undefined): MemberId | undefined {
+  if (filter === undefined) return undefined;
+  return filter === "me" ? team.memberId : team.members.get(filter as MemberId)?.id;
+}
+
+export function matchesSidebarOwnerFilter(
+  thread: SidebarTeamThread,
+  team: TeamViewer,
+  filter: string | undefined,
+): boolean {
+  const ownerId = sidebarOwnerFilterId(team, filter);
+  return ownerId === undefined || sidebarThreadOwnerId(thread, team) === ownerId;
+}
+
+const SIDEBAR_OWNER_SCOPE_PREFIX = "owner:";
+
+export interface SidebarOwnerScopeItem {
+  readonly value: string;
+  readonly label: string;
+  readonly member: Pick<TeamMember, "name" | "color"> | null;
+  readonly selected: boolean;
+  /** The whole filter this row sets, one entry per environment. */
+  readonly filters: Readonly<Record<string, string>>;
+}
+
+/** The owner rows of the project filter; none unless an environment is in team mode. */
+export function buildSidebarOwnerScopeItems(input: {
+  readonly teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>;
+  readonly filters: Readonly<Record<string, string>>;
+  readonly environmentLabel: (environmentId: EnvironmentId) => string | undefined;
+}): SidebarOwnerScopeItem[] {
+  const viewers = [...input.teamViewers];
+  if (viewers.length === 0) return [];
+  const filterOf = ([environmentId, team]: (typeof viewers)[number]) =>
+    sidebarOwnerFilterId(team, input.filters[environmentId]);
+  const members = viewers.flatMap(([environmentId, team]) =>
+    activeTeamMembers(team.members)
+      .filter((member) => member.id !== team.memberId)
+      .map((member): SidebarOwnerScopeItem => {
+        const environmentLabel =
+          viewers.length > 1 ? input.environmentLabel(environmentId) : undefined;
+        return {
+          value: `${SIDEBAR_OWNER_SCOPE_PREFIX}${environmentId}:${member.id}`,
+          label: `Owner: ${member.name}${environmentLabel ? ` (${environmentLabel})` : ""}`,
+          member,
+          selected: filterOf([environmentId, team]) === member.id,
+          filters: { [environmentId]: member.id },
+        };
+      }),
+  );
+  return [
+    {
+      value: `${SIDEBAR_OWNER_SCOPE_PREFIX}anyone`,
+      label: "Owner: Anyone",
+      member: null,
+      selected: viewers.every((viewer) => filterOf(viewer) === undefined),
+      filters: {},
+    },
+    {
+      value: `${SIDEBAR_OWNER_SCOPE_PREFIX}me`,
+      label: "Owner: Me",
+      member: null,
+      selected: viewers.every((viewer) => filterOf(viewer) === viewer[1].memberId),
+      filters: Object.fromEntries(viewers.map(([environmentId]) => [environmentId, "me"])),
+    },
+    ...members,
+  ];
 }
 
 /** Null means the thread is not listed: another member's settled thread in team mode. */
@@ -202,10 +288,13 @@ export function resolveSidebarThreadSection(input: {
   readonly pinned: boolean;
   readonly teamMode?: boolean;
   readonly mine?: boolean;
+  /** The owner filter narrows every section but Settled, which lists only the viewer's threads. */
+  readonly ownerFilterMatch?: boolean;
 }): SidebarSection | null {
-  const { teamMode = false, mine = true } = input;
-  if (input.snoozed) return "snoozed";
+  const { teamMode = false, mine = true, ownerFilterMatch = true } = input;
+  if (input.snoozed) return ownerFilterMatch ? "snoozed" : null;
   if (input.settled) return teamMode && !mine ? null : "settled";
+  if (!ownerFilterMatch) return null;
   if (input.pinned) return "pinned";
   if (teamMode && !mine) return "team";
   return "active";
@@ -321,6 +410,8 @@ type SidebarThreadDropPlan =
       readonly order: readonly string[];
       readonly orderKey: string | undefined;
       readonly extraAssignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+      /** Set when a Team row moves into the viewer's sections. */
+      readonly follow?: true;
     }
   | {
       readonly kind: "move-active";
@@ -329,17 +420,19 @@ type SidebarThreadDropPlan =
       readonly unpin: boolean;
       readonly unsettle: boolean;
       readonly unsnooze: boolean;
+      readonly follow?: true;
     }
   | { readonly kind: "settle" };
 
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake" | "follow";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (from === "team" || to === null || to === from) return null;
+  if (to === null || to === from) return null;
   if (to === "working" || to === "snoozed" || to === "team") return null;
+  if (from === "team") return to === "settled" ? null : "follow";
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -424,7 +517,10 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working" || activeSection === "team") return { kind: "none" };
+  if (activeSection === "working") return { kind: "none" };
+  const fromTeam = activeSection === "team";
+  if (fromTeam && target.section === "settled") return { kind: "none" };
+  const follow = fromTeam ? { follow: true as const } : {};
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
@@ -475,6 +571,7 @@ export function planSidebarThreadDrop(input: {
               unpin: activePinned,
               unsettle: activeSettled,
               unsnooze: activeSection === "snoozed",
+              ...follow,
             };
       }
       const order = target.activeOrder;
@@ -494,6 +591,7 @@ export function planSidebarThreadDrop(input: {
         unpin: activePinned,
         unsettle: activeSettled,
         unsnooze: activeSection === "snoozed",
+        ...follow,
       };
     }
     case "settled":
@@ -521,6 +619,7 @@ export function planSidebarThreadDrop(input: {
         extraAssignments: activePinned
           ? assignments
           : assignments.filter((assignment) => assignment.id !== activeKey),
+        ...follow,
       };
     }
   }
@@ -1109,7 +1208,12 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
 }): readonly TItem[] {
   const query = input.query.trim();
   if (query.length === 0) return input.items;
-  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+  return input.items.filter(
+    (item) =>
+      item.value !== "all" &&
+      !item.value.startsWith(SIDEBAR_OWNER_SCOPE_PREFIX) &&
+      input.matches(item, query),
+  );
 }
 
 interface SidebarProjectScopeMenuState {

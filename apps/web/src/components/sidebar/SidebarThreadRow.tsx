@@ -39,6 +39,7 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
+  EyeIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -514,6 +515,12 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
     <>
       <AlarmClockOffIcon aria-hidden className="size-3" />
       Wake
+    </>
+  ),
+  follow: (
+    <>
+      <EyeIcon aria-hidden className="size-3" />
+      Follow
     </>
   ),
 };

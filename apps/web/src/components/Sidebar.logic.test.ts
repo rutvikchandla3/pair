@@ -35,6 +35,8 @@ import {
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
   isSidebarThreadMine,
+  matchesSidebarOwnerFilter,
+  buildSidebarOwnerScopeItems,
   resolveSidebarThreadSection,
   sortTeamThreadsByActivity,
 } from "./Sidebar.logic";
@@ -51,8 +53,10 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  type TeamMember,
   ThreadId,
 } from "@t3tools/contracts";
+import type { TeamViewer } from "../state/team";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1441,44 +1445,127 @@ describe("Working shelf (beta)", () => {
 describe("Team shelf", () => {
   const me = MemberId.make("member-me");
   const bob = MemberId.make("member-bob");
-  const viewer = { memberId: me, ownerId: bob, members: new Map() };
+  const member = (id: MemberId, name: string, removedAt: string | null = null): TeamMember => ({
+    id,
+    name,
+    role: "member",
+    color: "#888",
+    isOwner: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    removedAt,
+  });
+  const viewer: TeamViewer = { memberId: me, ownerId: bob, members: new Map() };
   const sectionOf = (
     thread: {
       ownerId?: MemberId | null;
       pinnedAt?: string | null;
+      followedAt?: string | null;
       settled?: boolean;
       snoozed?: boolean;
     },
     team: typeof viewer | null = viewer,
-  ) =>
-    resolveSidebarThreadSection({
+    ownerFilter?: string,
+  ) => {
+    const shell = {
+      source: { ownerId: thread.ownerId },
+      pinnedAt: thread.pinnedAt,
+      followedAt: thread.followedAt,
+    };
+    return resolveSidebarThreadSection({
       snoozed: thread.snoozed ?? false,
       settled: thread.settled ?? false,
       pinned: thread.pinnedAt != null,
       teamMode: team !== null,
-      mine:
-        team === null ||
-        isSidebarThreadMine(
-          { source: { ownerId: thread.ownerId }, pinnedAt: thread.pinnedAt },
-          team,
-        ),
+      mine: team === null || isSidebarThreadMine(shell, team),
+      ownerFilterMatch: team === null || matchesSidebarOwnerFilter(shell, team, ownerFilter),
     });
+  };
 
   it.each([
     ["a thread I own stays Active", { ownerId: me }, "active"],
     ["a thread without an owner belongs to the server owner", {}, "team"],
     ["another member's active thread goes to Team", { ownerId: bob }, "team"],
+    ["another member's thread I follow is Active", { ownerId: bob, followedAt: "t" }, "active"],
+    [
+      "another member's thread I unfollowed goes back to Team",
+      { ownerId: bob, followedAt: null },
+      "team",
+    ],
     ["another member's thread I pinned stays Pinned", { ownerId: bob, pinnedAt: "t" }, "pinned"],
     ["another member's snoozed thread stays Snoozed", { ownerId: bob, snoozed: true }, "snoozed"],
     ["my settled thread is Settled", { ownerId: me, settled: true }, "settled"],
     ["another member's settled thread is not listed", { ownerId: bob, settled: true }, null],
+    [
+      "a followed settled thread is Settled",
+      { ownerId: bob, followedAt: "t", settled: true },
+      "settled",
+    ],
   ] as const)("team mode: %s", (_name, thread, expected) => {
     expect(sectionOf(thread)).toBe(expected);
+  });
+
+  it.each([
+    ["Anyone keeps everything", undefined, ["active", "team", "settled", "snoozed"]],
+    ["Me keeps only my own threads, and my Settled", "me", ["active", null, "settled", null]],
+    ["a member keeps only theirs, and my Settled", bob, [null, "team", "settled", "snoozed"]],
+    ["a purged member reads as Anyone", "member-gone", ["active", "team", "settled", "snoozed"]],
+  ] as const)("owner filter: %s", (_name, filter, expected) => {
+    const team = { ...viewer, members: new Map([[bob, member(bob, "Bob")]]) };
+    expect(
+      [
+        { ownerId: me },
+        { ownerId: bob },
+        { ownerId: bob, followedAt: "t", settled: true },
+        { ownerId: bob, snoozed: true },
+      ].map((thread) => sectionOf(thread, team, filter)),
+    ).toEqual(expected);
+  });
+
+  it("offers owner rows only in team mode, one per other member", () => {
+    const viewers = new Map([
+      [
+        localEnvironmentId,
+        {
+          ...viewer,
+          members: new Map(
+            [
+              member(me, "Me"),
+              member(bob, "Bob"),
+              member(MemberId.make("member-gone"), "Gone", "2026-02-01T00:00:00.000Z"),
+            ].map((entry) => [entry.id, entry]),
+          ),
+        },
+      ],
+    ]);
+    const rows = (filters: Record<string, string>) =>
+      buildSidebarOwnerScopeItems({
+        teamViewers: viewers,
+        filters,
+        environmentLabel: () => "Laptop",
+      }).map((item) => [item.label, item.selected, item.filters]);
+    expect(
+      buildSidebarOwnerScopeItems({
+        teamViewers: new Map(),
+        filters: {},
+        environmentLabel: () => undefined,
+      }),
+    ).toEqual([]);
+    expect(rows({})).toEqual([
+      ["Owner: Anyone", true, {}],
+      ["Owner: Me", false, { [localEnvironmentId]: "me" }],
+      ["Owner: Bob", false, { [localEnvironmentId]: bob }],
+    ]);
+    expect(rows({ [localEnvironmentId]: bob }).map(([, selected]) => selected)).toEqual([
+      false,
+      false,
+      true,
+    ]);
   });
 
   it("partitions a single-member environment as before", () => {
     for (const thread of [
       { ownerId: bob },
+      { ownerId: bob, followedAt: "t" },
       { ownerId: bob, settled: true },
       { ownerId: bob, snoozed: true },
       { ownerId: bob, pinnedAt: "t" },
@@ -1523,7 +1610,7 @@ describe("Team shelf", () => {
     expect(sorted.map((entry) => entry.id)).toEqual(["finished", "touched", "messaged", "stale"]);
   });
 
-  it("rejects drops into and out of the Team section", () => {
+  it("rejects drops into Team, and follows a Team row dropped into Active or Pinned", () => {
     const row = (key: string, section: SidebarSection): SidebarListItem => ({
       kind: "thread",
       key,
@@ -1542,20 +1629,40 @@ describe("Team shelf", () => {
     ];
     expect(resolveSidebarDropTarget(items, "a1", "t1")).toBeNull();
     expect(resolveSidebarDropVerb("active", "team")).toBeNull();
-    expect(resolveSidebarDropVerb("team", "pinned")).toBeNull();
-    const target = resolveSidebarDropTarget(items, "t1", "a1");
-    expect(target?.activeOrder).toEqual(["t1", "a1"]);
-    expect(
+    expect(resolveSidebarDropVerb("team", "pinned")).toBe("follow");
+    expect(resolveSidebarDropVerb("team", "active")).toBe("follow");
+    expect(resolveSidebarDropVerb("team", "settled")).toBeNull();
+    const plan = (overKey: string, activeTimeOrdered = false) =>
       planSidebarThreadDrop({
         activeKey: "t1",
         activeSection: "team",
-        target: target!,
+        target: resolveSidebarDropTarget(items, "t1", overKey)!,
         pinnedOrder: ["p1"],
-        pinnedKeysById: new Map(),
+        pinnedKeysById: new Map([["p1", "m"]]),
         activeOrder: ["a1"],
         activeKeysById: new Map(),
-      }),
-    ).toEqual({ kind: "none" });
+        activeTimeOrdered,
+      });
+    expect(resolveSidebarDropTarget(items, "t1", "a1")?.activeOrder).toEqual(["t1", "a1"]);
+    expect(plan("a1")).toMatchObject({
+      kind: "move-active",
+      order: ["t1", "a1"],
+      unpin: false,
+      unsettle: false,
+      unsnooze: false,
+      follow: true,
+    });
+    expect(plan("a1", true)).toEqual({
+      kind: "move-active",
+      order: null,
+      assignments: [],
+      unpin: false,
+      unsettle: false,
+      unsnooze: false,
+      follow: true,
+    });
+    expect(plan("p1")).toMatchObject({ kind: "pin", order: ["t1", "p1"], follow: true });
+    expect(plan("s1")).toEqual({ kind: "none" });
   });
 });
 

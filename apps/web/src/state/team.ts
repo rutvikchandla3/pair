@@ -11,13 +11,18 @@ import {
   AuthAccessWriteScope,
   type EnvironmentId,
   type MemberId,
+  type ScopedThreadRef,
   type TeamMember,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
+import { resolveThreadFollowing } from "../components/Sidebar.logic";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "./environments";
+import { serverEnvironment } from "./server";
+import { threadEnvironment } from "./threads";
+import { useOrchestrationCommand } from "./use-orchestration-command";
 import { useEnvironmentScope } from "./session";
 
 export const teamEnvironment = createTeamEnvironmentAtoms(connectionAtomRuntime);
@@ -122,18 +127,65 @@ export function useTeamViewers(
   return useAtomValue(teamViewersFamily(environmentIds.join("\n")));
 }
 
+const NO_VIEWER_ATOM = Atom.make<TeamViewer | null>(null).pipe(Atom.withLabel("team-viewer:none"));
+
+/** The viewer in a team-mode environment whose server accepts follows; null hides Follow. */
+const followViewerFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    get(serverEnvironment.configValueAtom(environmentId))?.threadFollow === true
+      ? teamViewerOf(
+          get(teamEnvironment.membersValueAtom(environmentId)),
+          get(teamEnvironment.currentMemberIdAtom(environmentId)),
+        )
+      : null,
+  ).pipe(Atom.withLabel("team-follow-viewer")),
+);
+
+type FollowableThread = Parameters<typeof resolveThreadFollowing>[0] & {
+  readonly environmentId: EnvironmentId;
+};
+
+/** Whether the viewer follows the thread, or null where Follow does not apply. */
+export function useThreadFollowing(thread: FollowableThread | null): boolean | null {
+  const viewer = useAtomValue(
+    thread === null ? NO_VIEWER_ATOM : followViewerFamily(thread.environmentId),
+  );
+  return thread === null ? null : resolveThreadFollowing(thread, viewer);
+}
+
+function readThreadFollowing(thread: FollowableThread): boolean | null {
+  return resolveThreadFollowing(
+    thread,
+    appAtomRegistry.get(followViewerFamily(thread.environmentId)),
+  );
+}
+
+/** Follows or unfollows a thread; a failure shows a toast. */
+export function useSetThreadFollowed() {
+  const follow = useOrchestrationCommand(threadEnvironment.follow, { label: "follow thread" });
+  const unfollow = useOrchestrationCommand(threadEnvironment.unfollow, {
+    label: "unfollow thread",
+  });
+  return (threadRef: ScopedThreadRef, following: boolean) =>
+    (following ? follow : unfollow)({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId },
+    });
+}
+
 /** For menus that read on demand. Team members are kept subscribed by TeamMembersWatch. */
-export function readThreadTeamMenu(
-  environmentId: EnvironmentId,
-  ownerId: MemberId | null | undefined,
-) {
+export function readThreadTeamMenu(thread: FollowableThread) {
+  const { environmentId } = thread;
+  const ownerId = thread.source.ownerId;
   const members = appAtomRegistry.get(teamEnvironment.membersValueAtom(environmentId));
   if (!isTeamModeMembers(members)) return undefined;
   const memberId = appAtomRegistry.get(teamEnvironment.currentMemberIdAtom(environmentId));
+  const following = readThreadFollowing(thread);
   return {
     members: activeTeamMembers(members).map(({ id, name }) => ({ id, name })),
     ownerId: ownerId ?? null,
     canDelete: canMemberDeleteThread({ members, memberId, ownerId }),
+    ...(following === null ? {} : { following }),
   };
 }
 
@@ -141,5 +193,5 @@ export function readCanDeleteThread(
   environmentId: EnvironmentId,
   ownerId: MemberId | null | undefined,
 ): boolean {
-  return readThreadTeamMenu(environmentId, ownerId)?.canDelete ?? true;
+  return readThreadTeamMenu({ environmentId, source: { ownerId } })?.canDelete ?? true;
 }
