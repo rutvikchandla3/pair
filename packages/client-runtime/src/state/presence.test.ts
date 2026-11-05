@@ -31,7 +31,9 @@ describe("applyPresenceUpdate", () => {
     expect(next.members).toEqual(new Map([[bob, "away"]]));
     expect([...next.viewers.keys()]).toEqual([threadY]);
     expect(next.typing.get(threadY)).toEqual([carol]);
-    expect(applyPresenceUpdate(next, { typing: { threadId: threadY, memberIds: [] } }).typing.size).toBe(0);
+    expect(
+      applyPresenceUpdate(next, { typing: { threadId: threadY, memberIds: [] } }).typing.size,
+    ).toBe(0);
   });
 
   it("keeps the identity of values that did not change", () => {

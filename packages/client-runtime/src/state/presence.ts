@@ -36,7 +36,10 @@ const sameIds = (left: ReadonlyArray<MemberId>, right: ReadonlyArray<MemberId>) 
 
 function replaceThreadMembers(
   current: ReadonlyMap<ThreadId, ReadonlyArray<MemberId>>,
-  entries: ReadonlyArray<{ readonly threadId: ThreadId; readonly memberIds: ReadonlyArray<MemberId> }>,
+  entries: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly memberIds: ReadonlyArray<MemberId>;
+  }>,
 ) {
   let next: Map<ThreadId, ReadonlyArray<MemberId>> | undefined;
   for (const { threadId, memberIds } of entries) {
@@ -70,9 +73,13 @@ export function applyPresenceUpdate(state: PresenceState, update: PresenceUpdate
   const members =
     update.members === undefined ? state.members : replaceMembers(state.members, update.members);
   const viewers =
-    update.viewers === undefined ? state.viewers : replaceThreadMembers(state.viewers, update.viewers);
+    update.viewers === undefined
+      ? state.viewers
+      : replaceThreadMembers(state.viewers, update.viewers);
   const typing =
-    update.typing === undefined ? state.typing : replaceThreadMembers(state.typing, [update.typing]);
+    update.typing === undefined
+      ? state.typing
+      : replaceThreadMembers(state.typing, [update.typing]);
   return members === state.members && viewers === state.viewers && typing === state.typing
     ? state
     : { members, viewers, typing };

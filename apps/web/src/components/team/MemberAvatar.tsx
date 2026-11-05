@@ -34,7 +34,7 @@ export function MemberAvatar({
       aria-label={away ? `${member.name} (away)` : member.name}
       className={cn(
         "inline-flex shrink-0 select-none items-center justify-center rounded-full font-medium leading-none",
-        away ? "border-[1.5px] bg-background" : "text-white",
+        away ? "border-2 bg-background" : "text-white",
         SIZE_CLASSNAMES[size],
         className,
       )}

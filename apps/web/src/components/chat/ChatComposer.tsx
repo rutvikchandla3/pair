@@ -1601,7 +1601,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Cursor moves also land here; only a changed, non-empty text counts as typing.
     if (
       nextPrompt.length > 0 &&
-      nextPrompt !== (activePendingProgress ? activePendingProgress.customAnswer : promptRef.current)
+      nextPrompt !==
+        (activePendingProgress ? activePendingProgress.customAnswer : promptRef.current)
     ) {
       reportComposerTyping(routeThreadRef);
     }
