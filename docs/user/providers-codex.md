@@ -31,6 +31,9 @@ Add another ChatGPT account in **Settings → Providers**, then select the accou
 from the thread's model picker. Compatible accounts can continue the same thread.
 Connecting accounts through Pair leaves your CLI login unchanged.
 
+On a team server, members add their own ChatGPT account in **Settings → Team**; see
+[Your own provider account](./team.md#your-own-provider-account).
+
 ### Multiple CLI logins
 
 A shared Codex home with a shadow home lets work and personal accounts continue

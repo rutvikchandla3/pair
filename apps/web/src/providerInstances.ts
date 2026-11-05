@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   resolveProjectProviderInstanceEnabled,
+  type MemberId,
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
@@ -17,6 +18,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
+import { canSelectProviderInstance } from "@t3tools/shared/providerInstanceOwnership";
 
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
 
@@ -34,6 +36,7 @@ export interface ProviderInstanceEntry {
   readonly acpRegistryAgentId?: string | undefined;
   readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
+  readonly ownerMemberId?: MemberId | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
   readonly status: ServerProviderState;
@@ -48,8 +51,32 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
-export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled;
+/** Who is picking, in team mode only: other members' accounts stay out of their picker. */
+export interface ProviderInstancePickerViewer {
+  readonly memberId: MemberId;
+  readonly currentInstanceId: ProviderInstanceId | undefined;
+}
+
+export function isProviderInstanceSelectableBy(
+  entry: ProviderInstanceEntry,
+  viewer: ProviderInstancePickerViewer | null,
+): boolean {
+  return (
+    viewer === null ||
+    canSelectProviderInstance({
+      ownerMemberId: entry.ownerMemberId,
+      memberId: viewer.memberId,
+      currentInstanceId: viewer.currentInstanceId,
+      instanceId: entry.instanceId,
+    })
+  );
+}
+
+export function isProviderInstancePickerVisible(
+  entry: ProviderInstanceEntry,
+  viewer: ProviderInstancePickerViewer | null = null,
+): boolean {
+  return entry.enabled && isProviderInstanceSelectableBy(entry, viewer);
 }
 
 export function deriveProviderInstanceEntries(
@@ -132,6 +159,10 @@ function applyProviderInstanceBranding(
   const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
     ? settings.providerInstances[entry.instanceId]
     : undefined;
+  const ownerMemberId = explicitInstance?.ownerMemberId;
+  if (ownerMemberId !== undefined && entry.ownerMemberId !== ownerMemberId) {
+    return applyProviderInstanceBranding({ ...entry, ownerMemberId }, settings);
+  }
   if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) return entry;
   const config =
     explicitInstance.config !== null && typeof explicitInstance.config === "object"
