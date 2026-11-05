@@ -98,3 +98,50 @@ export function queuedRunLock(input: {
   const canControl = canChangeQueuedRun({ ...rule, action: "control" });
   return canEdit && canControl ? null : { starterId, canEdit, canControl };
 }
+
+const DISCARDED_RUN_STATUSES = new Set(["completed", "interrupted", "failed"]);
+
+/**
+ * On a team, whose turns reverting to `targetTurnCount` discards, other than `me`'s, in the order
+ * they ran. Runs mirror the server's rollback; the bounded projection drops older runs, so turns
+ * whose run it no longer holds are read from the timeline's messages instead.
+ */
+export function discardedTurnAuthors(input: {
+  readonly projection: Pick<ThreadProjectionForStarter, "thread"> & {
+    readonly runs: ReadonlyArray<
+      Pick<OrchestrationV2Run, "id" | "ordinal" | "status" | "userMessageId">
+    >;
+  };
+  /** The timeline's messages from the one being edited onward. */
+  readonly messages: ReadonlyArray<{
+    readonly id: OrchestrationV2ConversationMessage["id"];
+    readonly role: string;
+    readonly runId: OrchestrationV2Run["id"] | null;
+    readonly authorId?: MemberId | undefined;
+  }>;
+  readonly targetTurnCount: number;
+  readonly members: TeamMembers;
+  readonly me: MemberId | null;
+}): ReadonlyArray<{ readonly memberId: MemberId; readonly count: number }> {
+  if (input.me === null || !isTeamModeMembers(input.members)) return [];
+  const holderId = holderIdOf(input.projection.thread, input.members);
+  if (holderId === null) return [];
+  const counts = new Map<MemberId, number>();
+  const add = (memberId: MemberId) => {
+    if (memberId !== input.me) counts.set(memberId, (counts.get(memberId) ?? 0) + 1);
+  };
+  // Turns the projection no longer holds are older than its runs. Paged-in history only shows live
+  // turns, and a run's first user message is its starter's.
+  const heldRunIds = new Set<string>(input.projection.runs.map((run) => run.id));
+  for (const message of input.messages) {
+    if (message.role !== "user" || message.runId === null || heldRunIds.has(message.runId))
+      continue;
+    heldRunIds.add(message.runId);
+    add(message.authorId ?? holderId);
+  }
+  for (const run of input.projection.runs) {
+    if (run.ordinal <= input.targetTurnCount || !DISCARDED_RUN_STATUSES.has(run.status)) continue;
+    add(runStarterId({ run, messages: input.messages, holderId }));
+  }
+  return [...counts].map(([memberId, count]) => ({ memberId, count }));
+}
