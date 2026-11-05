@@ -353,6 +353,20 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
                 <span aria-hidden> · </span>
               </>
             ) : null}
+            {/* Tokens and agents cannot refresh, so their expiry is when they stop working. */}
+            {clientSession.client.deviceType === "bot" ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger render={<span />}>
+                    {formatExpiresInLabel(clientSession.expiresAt, nowMs)}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    {formatAccessTimestamp(clientSession.expiresAt)}
+                  </TooltipPopup>
+                </Tooltip>
+                <span aria-hidden> · </span>
+              </>
+            ) : null}
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
           </p>
         </div>
