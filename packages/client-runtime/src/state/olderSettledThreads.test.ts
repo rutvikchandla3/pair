@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MemberId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2GetShellSnapshotError,
   ProjectId,
@@ -200,6 +201,49 @@ it("counts older threads the client does not hold, once", () => {
       ],
     }),
   ).toBe(18);
+});
+
+it("counts only the owner's older threads when the server sent own counts", () => {
+  const owner = MemberId.make("member-owner");
+  const alice = MemberId.make("member-alice");
+  const local = [
+    { source: { ...row("alices-old", { settledDay: 10 }), ownerId: alice }, environmentId },
+    { source: row("owners-old", { settledDay: 20 }), environmentId },
+  ];
+  const ownerScope = (ownerId: MemberId) => [
+    { environmentId, projectIds: null, ownerId, serverOwnerId: owner },
+  ];
+  const withOwnCounts = (): OlderSettled => ({ ...older, ownCounts: new Map([[project, 2]]) });
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: withOwnCounts,
+      scopes: ownerScope(alice),
+      threads: local,
+    }),
+  ).toBe(1);
+  // A row with no owner is the server owner's.
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: withOwnCounts,
+      scopes: ownerScope(owner),
+      threads: local,
+    }),
+  ).toBe(1);
+  // An older server sends no own counts: everyone's counts, less every older row held.
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: () => ({ ...older, counts: new Map([[project, 5]]) }),
+      scopes: ownerScope(alice),
+      threads: local,
+    }),
+  ).toBe(3);
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: withOwnCounts,
+      scopes: [{ environmentId, projectIds: null }],
+      threads: local,
+    }),
+  ).toBe(1);
 });
 
 describe("wantedOlderSettledPages", () => {

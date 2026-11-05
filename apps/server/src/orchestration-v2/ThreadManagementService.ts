@@ -116,6 +116,16 @@ export function withActor(
     case "checkpoint.rollback":
     case "thread.fork":
     case "thread.owner.set":
+    case "thread.settle":
+    case "thread.snooze":
+    case "thread.unsnooze":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.pin.reorder":
+    case "thread.active.reorder":
+    case "thread.visit":
+    case "thread.mark-unread":
+    case "thread.metadata.update":
       return { ...command, actorId: memberId };
     default:
       return command;
@@ -483,6 +493,7 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly byOwnAgent: boolean;
+    readonly actorId?: MemberId;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
@@ -1087,6 +1098,7 @@ const make = Effect.gen(function* () {
       type: "thread.settle",
       commandId: input.commandId,
       threadId: input.threadId,
+      ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
     });
     return { sequence: result.sequence };
   });

@@ -5,7 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { MemberId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -263,6 +263,34 @@ describe("omitOlderSettledShells", () => {
         { projectId: "project-b", count: 1 },
       ],
     });
+  });
+
+  it("counts the reader's own older threads in team mode, a missing owner being the server owner's", () => {
+    const owner = MemberId.make("member-owner");
+    const alice = MemberId.make("member-alice");
+    const threads = [
+      ...newest,
+      row("old", 30),
+      row("alices", 30, { ownerId: alice }),
+      row("b-alices", 40, { ownerId: alice }),
+      row("b-owners", 40, { ownerId: owner }),
+    ];
+    const ownCounts = (memberId: MemberId) =>
+      omitOlderSettledShells({
+        threads,
+        snapshotSequence: 7,
+        now,
+        reader: { memberId, serverOwnerId: owner },
+      }).olderSettled.ownCounts;
+    expect(ownCounts(alice)).toEqual([
+      { projectId: "project-a", count: 1 },
+      { projectId: "project-b", count: 1 },
+    ]);
+    expect(ownCounts(owner)).toEqual([
+      { projectId: "project-a", count: 1 },
+      { projectId: "project-b", count: 1 },
+    ]);
+    expect(omit(threads).olderSettled).not.toHaveProperty("ownCounts");
   });
 
   it("keeps threads tied with the 25th newest", () => {

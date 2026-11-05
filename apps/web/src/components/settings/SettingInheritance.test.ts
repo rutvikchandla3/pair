@@ -98,5 +98,20 @@ describe("settingInheritanceLayers", () => {
       ["Inherits", false],
       ["Current checkout", false],
     ]);
+    const teamDefault = settingInheritanceLayers(
+      {
+        environmentId,
+        label: "Laptop",
+        projectId: null,
+        ...resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null, null, null),
+      },
+      DEFAULT_SERVER_SETTINGS,
+      "defaultThreadEnvMode",
+      true,
+    );
+    expect(teamDefault.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
+      ["Laptop", "Inherits", false],
+      ["Default", "New worktree (team default)", true],
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
+  MemberId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
@@ -12,6 +13,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadMemberState,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { EMPTY_MEMBER_STATE } from "./MemberThreadState.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
@@ -402,5 +405,59 @@ it.effect("sql: an unsettled-only shell read skips settled threads", () =>
     assert.equal(shell.archivedThreads.length, 0);
     const all = yield* store.getShellSnapshot({ location: "active" });
     assert.equal(all.threads.length, 4);
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: another member's pin or active snooze holds settlement for everyone", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const memberId = MemberId.make("member:settlement:bob");
+    const changedAt = DateTime.subtract(now, { hours: 1 });
+    const memberEvent = Effect.fn(function* (
+      threadId: ThreadId,
+      state: Partial<ThreadMemberState>,
+    ) {
+      yield* store.apply({
+        id: EventId.make(`event:member:${threadId}`),
+        type: "thread.pinned",
+        threadId,
+        occurredAt: changedAt,
+        payload: yield* store.getThread(threadId),
+        member: { memberId, state: { ...EMPTY_MEMBER_STATE, ...state } },
+      });
+    });
+    const pinned = yield* createThread("member-pinned");
+    yield* memberEvent(pinned, { pinnedAt: old });
+    const snoozed = yield* createThread("member-snoozed");
+    yield* memberEvent(snoozed, { snoozedUntil: DateTime.add(now, { days: 1 }), snoozedAt: old });
+    const woke = yield* createThread("member-woke");
+    yield* memberEvent(woke, { lastSnoozeWakeAt: changedAt });
+    const visited = yield* createThread("member-visited");
+    yield* memberEvent(visited, { lastVisitedAt: changedAt });
+
+    const candidates = yield* store.getSettlementCandidates();
+    assert.deepEqual(
+      new Set(candidates.map((thread) => thread.id)),
+      new Set([snoozed, woke, visited]),
+    );
+    const nowMs = DateTime.toEpochMillis(now);
+    const byId = new Map(candidates.map((thread) => [thread.id, thread]));
+    assert.isFalse(isAutoSettlementCandidate(byId.get(snoozed)!, nowMs));
+    const settles = (threadId: ThreadId) =>
+      resolveAutoSettlementAt({
+        thread: byId.get(threadId)!,
+        pullRequest: null,
+        nowMs,
+        autoSettleAfterDays: 7,
+        autoSettleOnMerge: false,
+      });
+    assert.isNull(settles(woke));
+    assert.deepEqual(settles(visited), old);
+    assert.deepEqual(byId.get(visited)!.memberStateUpdatedAt, changedAt);
+
+    const index = new Map((yield* store.listActiveShellIndex()).map((entry) => [entry.id, entry]));
+    assert.deepEqual(index.get(pinned)!.pinnedAt, old);
+    assert.isNotNull(index.get(snoozed)!.snoozedUntil);
+    assert.isNull(index.get(visited)!.pinnedAt);
   }).pipe(Effect.provide(layerSql)),
 );

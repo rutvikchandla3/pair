@@ -62,6 +62,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
+  readonly primarySession?: "authenticated" | "signed-out" | "unreachable";
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -128,8 +129,23 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
-    RpcHttp.layerRemoteHttpClient((() =>
-      Promise.resolve(
+    RpcHttp.layerRemoteHttpClient(((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/auth/session")) {
+        const session = options?.primarySession ?? "authenticated";
+        if (session === "unreachable") return Promise.reject(new TypeError("Failed to fetch"));
+        return Promise.resolve(
+          Response.json({
+            authenticated: session === "authenticated",
+            auth: {
+              policy: "remote-reachable",
+              bootstrapMethods: ["one-time-token"],
+              sessionMethods: ["browser-session-cookie"],
+              sessionCookieName: "t3_session",
+            },
+          }),
+        );
+      }
+      return Promise.resolve(
         Response.json({
           environmentId: ENVIRONMENT_ID,
           label: "Compatible environment",
@@ -142,7 +158,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
               : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
           capabilities: { repositoryIdentity: true },
         }),
-      )) satisfies typeof fetch),
+      );
+    }) satisfies typeof fetch),
     Layer.succeed(
       ConnectionProfileStore.ConnectionProfileStore,
       options?.profileStore ?? profileStore,
@@ -207,6 +224,36 @@ describe("ConnectionResolver", () => {
         target,
       });
     }),
+  );
+
+  it.effect.each([
+    {
+      primarySession: "signed-out",
+      expected: { _tag: "ConnectionBlockedError", reason: "authentication", hop: "server" },
+    },
+    {
+      primarySession: "unreachable",
+      expected: { _tag: "ConnectionTransientError", reason: "network" },
+    },
+  ] as const)(
+    "checks a cookie primary's session before opening its socket: $primarySession",
+    ({ primarySession, expected }) =>
+      Effect.gen(function* () {
+        const layerBroker = yield* makeDependencies({ primarySession });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(layerBroker),
+        );
+        const target = new PrimaryConnectionTarget({
+          environmentId: ENVIRONMENT_ID,
+          label: "Primary",
+          httpBaseUrl: "http://127.0.0.1:3777",
+          wsBaseUrl: "ws://127.0.0.1:3777",
+        });
+
+        const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
+
+        expect(error).toMatchObject(expected);
+      }),
   );
 
   it.effect("offers the saved SSH token on each connect and saves the one it gets back", () =>

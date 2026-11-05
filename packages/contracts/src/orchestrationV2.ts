@@ -1873,6 +1873,27 @@ export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
 });
 export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
 
+/** One member's personal view of a thread; the holder's lives in the thread row instead. */
+export const ThreadMemberState = Schema.Struct({
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtc),
+  pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtc),
+  snoozedAt: Schema.NullOr(Schema.DateTimeUtc),
+  lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtc),
+  opens: LenientThreadOpens,
+});
+export type ThreadMemberState = typeof ThreadMemberState.Type;
+
+/** Server-internal: marks a personal event as one member's change. Transports strip it. */
+export const OrchestrationV2ThreadMemberEventField = Schema.Struct({
+  memberId: MemberId,
+  state: ThreadMemberState,
+});
+export type OrchestrationV2ThreadMemberEventField =
+  typeof OrchestrationV2ThreadMemberEventField.Type;
+
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
   threadId: ThreadId,
@@ -1917,6 +1938,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThread,
+    member: Schema.optional(OrchestrationV2ThreadMemberEventField),
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2227,12 +2249,14 @@ export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettle
 /**
  * Snapshots that leave out older settled threads (`omitOlderSettled`) name the cut and count, per
  * project, every thread `isOlderSettledThreadShell` matches, sent or not. `asOfSequence` is the
- * snapshot's own sequence: the counts are exact until a later change.
+ * snapshot's own sequence: the counts are exact until a later change. On a server with more than
+ * one member, `ownCounts` counts only the reading member's threads (no owner means the server owner).
  */
 export const OrchestrationV2OlderSettledThreads = Schema.Struct({
   before: IsoDateTime,
   asOfSequence: NonNegativeInt,
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  ownCounts: Schema.optionalKey(Schema.Array(OrchestrationV2OlderSettledCount)),
 });
 export type OrchestrationV2OlderSettledThreads = typeof OrchestrationV2OlderSettledThreads.Type;
 
@@ -2327,6 +2351,20 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
+
+const ThreadMemberStateJson = ThreadMemberState.mapFields((fields) => ({
+  ...fields,
+  pinnedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  lastSnoozeWakeAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+
+const OrchestrationV2ThreadMemberEventFieldJson = Schema.Struct({
+  memberId: MemberId,
+  state: ThreadMemberStateJson,
+});
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
@@ -2814,6 +2852,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.guest-share-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
+    member: Schema.optional(OrchestrationV2ThreadMemberEventFieldJson),
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3002,6 +3041,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     settledAt: Schema.optional(Schema.DateTimeUtc),
@@ -3022,12 +3062,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.snooze"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
@@ -3040,12 +3082,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unpin"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),
@@ -3058,18 +3102,21 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.active.reorder"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     visitedAt: IsoDateTime,
@@ -3080,6 +3127,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.mark-unread"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
   }),
@@ -3092,6 +3140,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
+    /** Only a limit-recovery snooze reads it: a non-holder's snooze is their own. */
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
@@ -3811,6 +3861,8 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
+  /** Only this member's threads (no owner means the server owner); ignored with one member. */
+  ownerId: Schema.optionalKey(MemberId),
 });
 export type OrchestrationV2GetOlderSettledThreadsInput =
   typeof OrchestrationV2GetOlderSettledThreadsInput.Type;
@@ -3824,6 +3876,8 @@ export const OrchestrationV2OlderSettledThreadsPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  /** As in `OrchestrationV2OlderSettledThreads`, for a `limit: 0` read. */
+  ownCounts: Schema.optionalKey(Schema.Array(OrchestrationV2OlderSettledCount)),
 });
 export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;

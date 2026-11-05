@@ -156,7 +156,8 @@ export function isAutoSettlementCandidate(
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
-  return !isSnoozed(thread, nowMs);
+  if (isSnoozed(thread, nowMs)) return false;
+  return !(thread.memberSnoozes ?? []).some((member) => isSnoozed({ ...thread, ...member }, nowMs));
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -233,11 +234,13 @@ export function resolveAutoSettlementAt(input: {
     thread.branchPullRequest != null;
   if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
   if (input.autoSettleAfterDays === null) return null;
-  const snoozedUntilMs = toMillis(thread.snoozedUntil);
-  const timerWakeAtMs =
-    snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
-  const inactivityAtMs =
-    latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
+  const wakesAtMs = [thread, ...(thread.memberSnoozes ?? [])].flatMap((snooze) => {
+    const snoozedUntilMs = toMillis(snooze.snoozedUntil);
+    const timerWakeAtMs =
+      snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
+    return [toMillis(snooze.lastSnoozeWakeAt), timerWakeAtMs];
+  });
+  const inactivityAtMs = latestMillis([activityAtMs, ...wakesAtMs]) ?? activityAtMs;
   return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
     ? DateTime.makeUnsafe(inactivityAtMs)
     : null;
@@ -346,7 +349,10 @@ export const make = Effect.gen(function* () {
           type: "thread.auto-settle",
           commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
           threadId: thread.id,
-          snapshotAt: thread.updatedAt,
+          snapshotAt:
+            thread.memberStateUpdatedAt == null
+              ? thread.updatedAt
+              : DateTime.max(thread.updatedAt, thread.memberStateUpdatedAt),
           settledAt,
         });
         return null;
