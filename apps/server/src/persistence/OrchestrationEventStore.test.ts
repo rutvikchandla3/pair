@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnItemId,
+  OrchestrationV2DomainEventJson,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -101,6 +102,68 @@ layer("OrchestrationEventStore", (it) => {
         }
       }),
     ),
+  );
+
+  it.effect("replays a member event's personal state", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const afterSequence = yield* store.latestApplicationSequence;
+      const threadId = "thread:member-event";
+      const at = "2026-10-01T00:00:00.000Z";
+      const pinnedAt = "2026-10-01T01:00:00.000Z";
+      const event = yield* Schema.decodeEffect(OrchestrationV2DomainEventJson)({
+        id: "event:member-event",
+        type: "thread.pinned",
+        threadId,
+        occurredAt: at,
+        payload: {
+          id: threadId,
+          projectId: "project-1",
+          title: "Thread",
+          providerInstanceId: "codex",
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: at,
+          updatedAt: at,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          deletedAt: null,
+          pinnedAt,
+          pinOrderKey: "a0",
+        },
+        member: {
+          memberId: "member-bob",
+          state: {
+            pinnedAt,
+            pinOrderKey: "a0",
+            activeOrderKey: null,
+            lastVisitedAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            lastSnoozeWakeAt: null,
+            opens: null,
+          },
+        },
+      });
+      const [appended] = yield* store.appendAgentEvents({ events: [event] });
+      assert.deepEqual(appended?.event, event);
+      const replayed = yield* store
+        .readAgentEvents({ threadId: ThreadId.make(threadId), afterSequence })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        Array.from(replayed, (stored) => stored.event),
+        [event],
+      );
+    }),
   );
 
   it.effect("stores an unchanged subagent prompt once and replays it on every update", () =>

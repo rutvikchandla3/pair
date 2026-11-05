@@ -7,6 +7,7 @@ import {
   latestProviderTurnForAttempt,
   OrchestrationV2AppThreadJson,
   OrchestrationV2Command,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -603,6 +604,44 @@ describe("member attribution", () => {
         ownerId: "member-1",
       }),
     ).toMatchObject({ actorId: "member-2", ownerId: "member-1" });
+  });
+
+  it("round-trips a personal event's member state, and decodes actorId on personal commands", () => {
+    const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+    const encodeEvent = Schema.encodeSync(OrchestrationV2DomainEventJson);
+    const stored = {
+      id: "event-1",
+      threadId: "thread-1",
+      occurredAt: "2026-10-01T02:00:00.000Z",
+      type: "thread.pinned",
+      payload: { ...thread, lastVisitedAt: null },
+      member: {
+        memberId: "member-2",
+        state: {
+          pinnedAt: "2026-10-01T02:00:00.000Z",
+          pinOrderKey: "a0",
+          activeOrderKey: null,
+          lastVisitedAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastSnoozeWakeAt: null,
+          opens: null,
+        },
+      },
+    };
+    const event = decodeEvent(stored);
+    expect(event).toMatchObject({ member: { memberId: "member-2", state: { pinOrderKey: "a0" } } });
+    expect(encodeEvent(event)).toMatchObject({ member: stored.member });
+
+    const decodeCommand = Schema.decodeSync(OrchestrationV2Command);
+    expect(
+      decodeCommand({
+        type: "thread.pin",
+        commandId: "command-3",
+        threadId: "thread-1",
+        actorId: "member-2",
+      }),
+    ).toMatchObject({ actorId: "member-2" });
   });
 });
 

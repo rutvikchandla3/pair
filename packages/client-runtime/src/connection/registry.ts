@@ -558,6 +558,17 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const credentialChanged = (registration: ConnectionRegistration) =>
+    registration._tag === "RelayConnectionRegistration"
+      ? Effect.succeed(false)
+      : credentials.get(registration.target.connectionId).pipe(
+          Effect.map(
+            (stored) =>
+              Option.isNone(stored) || !Equal.equals(stored.value, registration.credential),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
     options?: { readonly knownAddressOnly?: boolean },
@@ -590,10 +601,22 @@ export const make = Effect.gen(function* () {
           }
           entry = next.entry;
         }
+        // A new credential may sign in as another member, whose personal thread state differs.
+        const repaired = previous !== undefined && (yield* credentialChanged(registration));
         yield* registrations.register(registration, persistedRoutes(entry));
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
+        if (repaired) {
+          yield* cache.clear(environmentId).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not clear cached environment data after re-pairing.", {
+                environmentId,
+                error,
+              }),
+            ),
+          );
+        }
         yield* installEntryLocked(entry);
         return true;
       }),

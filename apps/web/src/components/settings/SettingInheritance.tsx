@@ -11,8 +11,13 @@ import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { useTeamViewers } from "../../state/team";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
+import {
+  resolveEnvModeLabel,
+  TEAM_DEFAULT_ENV_MODE_LABEL,
+  WORKTREE_SUBMODULES_LABELS,
+} from "../BranchToolbar.logic";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -101,6 +106,8 @@ export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
   environmentSettings: ServerSettings,
   key: keyof ServerSettings,
+  // Team mode makes new worktrees the built-in workspace default.
+  teamMode = false,
 ): readonly InheritanceLayer[] {
   const environmentValue = environmentSettings[key];
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
@@ -139,7 +146,10 @@ export function settingInheritanceLayers(
   layers.push({
     key: "built-in",
     label: "Default",
-    value: formatValue(key, builtIn),
+    value:
+      teamMode && key === "defaultThreadEnvMode"
+        ? TEAM_DEFAULT_ENV_MODE_LABEL
+        : formatValue(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,
   });
@@ -185,6 +195,7 @@ export function SettingInheritance({
   onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
   const scopeContext = useOptionalSettingsScope();
+  const teamViewers = useTeamViewers(targets.map((target) => target.environmentId));
   const key = keys[0];
   if (!key || targets.length === 0) return null;
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
@@ -204,7 +215,12 @@ export function SettingInheritance({
     const secondary = [labels.secondary, path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/")]
       .filter(Boolean)
       .join(" · ");
-    const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
+    const layers = settingInheritanceLayers(
+      target,
+      environment.serverConfig.settings,
+      key,
+      teamViewers.has(target.environmentId),
+    );
     const winningLayer = layers.find((layer) => layer.effective);
     return [
       {

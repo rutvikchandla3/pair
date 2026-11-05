@@ -36,6 +36,9 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  isSidebarThreadMine,
+  resolveSidebarThreadSection,
+  sortTeamThreadsByActivity,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -44,7 +47,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MemberId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1453,6 +1463,127 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("Team shelf", () => {
+  const me = MemberId.make("member-me");
+  const bob = MemberId.make("member-bob");
+  const viewer = { memberId: me, ownerId: bob, members: new Map() };
+  const sectionOf = (
+    thread: {
+      ownerId?: MemberId | null;
+      pinnedAt?: string | null;
+      settled?: boolean;
+      snoozed?: boolean;
+    },
+    team: typeof viewer | null = viewer,
+  ) =>
+    resolveSidebarThreadSection({
+      snoozed: thread.snoozed ?? false,
+      settled: thread.settled ?? false,
+      pinned: thread.pinnedAt != null,
+      teamMode: team !== null,
+      mine:
+        team === null ||
+        isSidebarThreadMine(
+          { source: { ownerId: thread.ownerId }, pinnedAt: thread.pinnedAt },
+          team,
+        ),
+    });
+
+  it.each([
+    ["a thread I own stays Active", { ownerId: me }, "active"],
+    ["a thread without an owner belongs to the server owner", {}, "team"],
+    ["another member's active thread goes to Team", { ownerId: bob }, "team"],
+    ["another member's thread I pinned stays Pinned", { ownerId: bob, pinnedAt: "t" }, "pinned"],
+    ["another member's snoozed thread stays Snoozed", { ownerId: bob, snoozed: true }, "snoozed"],
+    ["my settled thread is Settled", { ownerId: me, settled: true }, "settled"],
+    ["another member's settled thread is not listed", { ownerId: bob, settled: true }, null],
+  ] as const)("team mode: %s", (_name, thread, expected) => {
+    expect(sectionOf(thread)).toBe(expected);
+  });
+
+  it("partitions a single-member environment as before", () => {
+    for (const thread of [
+      { ownerId: bob },
+      { ownerId: bob, settled: true },
+      { ownerId: bob, snoozed: true },
+      { ownerId: bob, pinnedAt: "t" },
+    ]) {
+      expect(sectionOf(thread, null)).toBe(
+        resolveSidebarThreadSection({
+          snoozed: thread.snoozed ?? false,
+          settled: thread.settled ?? false,
+          pinned: thread.pinnedAt != null,
+        }),
+      );
+    }
+    expect(sectionOf({ ownerId: bob }, null)).toBe("active");
+  });
+
+  it("sorts the Team bucket by the latest message, run or update", () => {
+    const shell = (
+      id: string,
+      input: { message?: string; completed?: string; updated: string },
+    ) => ({
+      id: ThreadId.make(id),
+      environmentId: localEnvironmentId,
+      latestUserMessageAt: input.message ?? null,
+      latestRun:
+        input.completed === undefined
+          ? null
+          : { ...makeLatestRun({ completedAt: input.completed }), startedAt: null },
+      updatedAt: input.updated,
+    });
+    const sorted = sortTeamThreadsByActivity([
+      shell("stale", { updated: "2026-03-01T00:00:00.000Z" }),
+      shell("messaged", {
+        message: "2026-03-09T09:00:00.000Z",
+        updated: "2026-03-02T00:00:00.000Z",
+      }),
+      shell("finished", {
+        completed: "2026-03-09T12:00:00.000Z",
+        updated: "2026-03-03T00:00:00.000Z",
+      }),
+      shell("touched", { updated: "2026-03-09T10:00:00.000Z" }),
+    ]);
+    expect(sorted.map((entry) => entry.id)).toEqual(["finished", "touched", "messaged", "stale"]);
+  });
+
+  it("rejects drops into and out of the Team section", () => {
+    const row = (key: string, section: SidebarSection): SidebarListItem => ({
+      kind: "thread",
+      key,
+      section,
+    });
+    const marker = (name: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker: name });
+    const items: readonly SidebarListItem[] = [
+      marker("pinned-header"),
+      row("p1", "pinned"),
+      marker("pinned-divider"),
+      row("a1", "active"),
+      marker("team-header"),
+      row("t1", "team"),
+      marker("settled-header"),
+      row("s1", "settled"),
+    ];
+    expect(resolveSidebarDropTarget(items, "a1", "t1")).toBeNull();
+    expect(resolveSidebarDropVerb("active", "team")).toBeNull();
+    expect(resolveSidebarDropVerb("team", "pinned")).toBeNull();
+    const target = resolveSidebarDropTarget(items, "t1", "a1");
+    expect(target?.activeOrder).toEqual(["t1", "a1"]);
+    expect(
+      planSidebarThreadDrop({
+        activeKey: "t1",
+        activeSection: "team",
+        target: target!,
+        pinnedOrder: ["p1"],
+        pinnedKeysById: new Map(),
+        activeOrder: ["a1"],
+        activeKeysById: new Map(),
+      }),
+    ).toEqual({ kind: "none" });
   });
 });
 
