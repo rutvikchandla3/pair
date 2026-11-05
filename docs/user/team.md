@@ -28,6 +28,19 @@ Once two or more people have prompted the same thread, the agent sees each new m
 `Message from <name>:` so it knows who is asking. Threads only one person has prompted are sent
 to the agent unchanged.
 
+## Commits and pull requests
+
+Commits you make with the commit and pull request buttons are authored with your git email and
+git name, falling back to your member name. Set them under **Edit profile** in **Settings →
+Team**; an admin can set your email when inviting you, and clearing it makes your commits use the
+server's git identity again. The committer is always the server's own git identity, so the server
+still needs `user.name` and `user.email` configured.
+
+Agents commit as the thread's owner, from the next session after Assign. Cursor and OpenCode (v2 or
+an external server) commit as the server.
+
+In a team, pull requests Pair opens end with `Requested by <name> via Pair`.
+
 ## Your threads and the Team shelf
 
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to
@@ -40,6 +53,28 @@ the owner of the thread they came from.
 - To hand a thread over, choose **Assign to…** from the thread's menu or the command palette. You
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
+
+## Follow threads and notifications
+
+**Follow** a teammate's thread to keep it in your own sections and count its unread state; choose
+it from the thread's menu, the command palette, or the eye button in the thread header.
+**Unfollow** sends it back to the Team shelf. You follow a thread automatically when you own it,
+send it a message, or answer one of its requests.
+
+Notifications go only to the people a thread concerns:
+
+- A finished or failed turn, or a request for approval or input, notifies the member who started
+  that turn and the thread's owner.
+- The owner hears when someone else messages, archives or sends a guest request to their thread,
+  and you hear when a thread is assigned to you.
+- Following a thread marks it unread for you, without notifications.
+
+You are never notified about your own actions, or about a thread you're looking at.
+
+## Share a thread
+
+On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
+opens it while signed out is asked to sign in, and lands on the thread afterwards.
 
 ## See who's around
 

@@ -182,7 +182,7 @@ const make = Effect.gen(function* () {
         name: input.name,
         role: input.role,
         gitName: null,
-        gitEmail: null,
+        gitEmail: input.gitEmail ?? null,
         isOwner: false,
         createdAt: yield* now,
         updatedAt: null,
