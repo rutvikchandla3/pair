@@ -1,6 +1,7 @@
 import {
   type CommandId,
   type GitRunStackedActionResult,
+  type MemberId,
   type OrchestrationProjectShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -51,12 +52,14 @@ export const linkCreatedPullRequest: <E>(input: {
   readonly threadId: ThreadId;
   readonly result: Pick<GitRunStackedActionResult, "pr">;
   readonly commandId: Effect.Effect<CommandId, E>;
+  readonly actorId?: MemberId | undefined;
 }) => Effect.Effect<void, never, Orchestrator.OrchestratorV2 | ProjectService.ProjectService> =
   Effect.fn("linkCreatedPullRequest")(
     function* <E>(input: {
       readonly threadId: ThreadId;
       readonly result: Pick<GitRunStackedActionResult, "pr">;
       readonly commandId: Effect.Effect<CommandId, E>;
+      readonly actorId?: MemberId | undefined;
     }) {
       const engine = yield* Orchestrator.OrchestratorV2;
       const projects = yield* ProjectService.ProjectService;
@@ -75,6 +78,7 @@ export const linkCreatedPullRequest: <E>(input: {
           threadId: input.threadId,
           ...key,
           source: "created",
+          ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
         })
         .pipe(Effect.asVoid);
     },
