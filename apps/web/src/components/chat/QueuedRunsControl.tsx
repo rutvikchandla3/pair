@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { queuedRunLock } from "@t3tools/client-runtime/state/composer-dispatch";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
@@ -24,17 +25,27 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useTeamAttribution } from "../../state/team";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { MessageAuthorChip } from "../team/MessageAuthorChip";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
@@ -99,6 +110,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const team = useTeamAttribution(props.environmentId);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -123,9 +135,23 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
+  const lockOf = (run: Pick<(typeof queued)[number]["run"], "userMessageId">) =>
+    projection === undefined
+      ? null
+      : queuedRunLock({ projection, run, members: team.members, me: team.currentMemberId });
+  const authorIdByMessageId = team.isTeamMode
+    ? new Map((projection?.messages ?? []).map((message) => [message.id, message.authorId]))
+    : null;
+  const teammateOf = (run: Pick<(typeof queued)[number]["run"], "userMessageId">) => {
+    const authorId = authorIdByMessageId?.get(run.userMessageId);
+    if (authorId === undefined || authorId === team.currentMemberId) return null;
+    return { member: team.members.get(authorId) ?? null, name: team.nameOf(authorId) };
+  };
   const items = [
     ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
       key: run.id,
+      lock: lockOf(run),
+      author: teammateOf(run),
       message,
       runId: run.id,
       messageId: run.userMessageId,
@@ -145,6 +171,8 @@ export function QueuedRunsControl({
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
+      lock: null,
+      author: null,
       message: undefined,
       runId: null,
       messageId: null,
@@ -185,7 +213,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      if (!next || !canSend || lockOf(next.run)?.canControl === false) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },
@@ -195,6 +223,7 @@ export function QueuedRunsControl({
       if (
         !latest ||
         latest.context?.guest !== undefined ||
+        lockOf(latest.run)?.canEdit === false ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
         busyRunId !== null
@@ -248,6 +277,15 @@ export function QueuedRunsControl({
                 ),
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
+          const controlLockedReason =
+            item.lock?.canControl === false
+              ? `Only ${team.nameOf(item.lock.starterId)} or the owner can change this`
+              : null;
+          const editLockedReason =
+            controlLockedReason ??
+            (item.lock?.canEdit === false
+              ? `Only ${team.nameOf(item.lock.starterId)} can edit this message`
+              : null);
           return (
             <li
               key={item.key}
@@ -260,6 +298,7 @@ export function QueuedRunsControl({
               <QueuedMessage
                 environmentId={props.environmentId}
                 message={item.message}
+                author={item.author}
                 previewText={previewText}
                 thumbnails={item.thumbnails}
                 isEditing={isEditing}
@@ -273,7 +312,11 @@ export function QueuedRunsControl({
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null}
+                          disabled={
+                            item.runId === null ||
+                            busyRunId !== null ||
+                            controlLockedReason !== null
+                          }
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -285,7 +328,8 @@ export function QueuedRunsControl({
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                        {controlLockedReason ??
+                          `${workflow?.canSendNow ? "Start a turn with this message" : workflow?.promoteSkipsCompaction ? "Skip compaction and send this message" : "Send into the current turn"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                   </>
@@ -320,6 +364,7 @@ export function QueuedRunsControl({
                           disabled={
                             item.runId === null ||
                             !item.editable ||
+                            editLockedReason !== null ||
                             busyRunId !== null ||
                             props.editBlockedReason !== null
                           }
@@ -338,27 +383,30 @@ export function QueuedRunsControl({
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {props.editBlockedReason ??
+                        {editLockedReason ??
+                          props.editBlockedReason ??
                           `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                     <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            aria-label="Remove queued message"
-                            disabled={item.runId === null || busyRunId !== null}
-                            onClick={() => {
-                              if (item.runId !== null) void remove(item.runId);
-                            }}
-                          />
-                        }
-                      >
-                        <XIcon />
+                      <TooltipTrigger render={<span className="flex shrink-0" />}>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label="Remove queued message"
+                          disabled={
+                            item.runId === null ||
+                            busyRunId !== null ||
+                            controlLockedReason !== null
+                          }
+                          onClick={() => {
+                            if (item.runId !== null) void remove(item.runId);
+                          }}
+                        >
+                          <XIcon />
+                        </Button>
                       </TooltipTrigger>
-                      <TooltipPopup>Remove from queue</TooltipPopup>
+                      <TooltipPopup>{controlLockedReason ?? "Remove from queue"}</TooltipPopup>
                     </Tooltip>
                   </>
                 )}
@@ -398,6 +446,7 @@ type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
 function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage | undefined;
+  readonly author: ComponentProps<typeof MessageAuthorChip> | null;
   readonly previewText: string;
   readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
   readonly isEditing: boolean;
@@ -440,6 +489,9 @@ function QueuedMessage(props: {
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}
+      {props.author !== null && attribution === null ? (
+        <MessageAuthorChip {...props.author} />
+      ) : null}
       {/* Dashed and unfilled: a turn that has not been sent yet. */}
       <div
         className={cn(

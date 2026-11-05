@@ -36,7 +36,8 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isTerminalRunStatus } from "./ThreadManagementService.ts";
+import { currentRunStarterId, isTerminalRunStatus } from "./ThreadManagementService.ts";
+import * as TeamState from "../team/TeamState.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // Every server polls every open linked pull request, and most of them sit untouched for days.
@@ -334,6 +335,7 @@ export class PullRequestSyncReactor extends Context.Service<
 export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitManager.GitManager;
   const random = yield* SecureRandom.SecureRandom;
@@ -649,8 +651,14 @@ export const make = Effect.gen(function* () {
   const linkCreatedChangeRequests = Effect.fn("PullRequestSyncReactor.linkCreatedChangeRequests")(
     function* (threadId: ThreadId, item: CommandExecution) {
       if (isOrchestrationV2WorkActive(item.status)) return;
+      const createdRequests = changeRequestsCreatedBy(item.input, item.output ?? "");
+      if (createdRequests.length === 0) return;
+      // The agent acts as the member whose turn it runs in.
+      const actorId = yield* currentRunStarterId(engine, threadId, team).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
       yield* Effect.forEach(
-        changeRequestsCreatedBy(item.input, item.output ?? ""),
+        createdRequests,
         (created) =>
           engine
             .dispatch({
@@ -662,6 +670,7 @@ export const make = Effect.gen(function* () {
               threadId,
               ...created,
               source: "created",
+              ...(actorId === undefined ? {} : { actorId }),
             })
             .pipe(
               Effect.catchCause(

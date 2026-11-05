@@ -9,6 +9,8 @@ export function TimelineSystemDivider(props: {
   readonly detail?: ReactNode | null;
   readonly tone?: "neutral" | "danger";
   readonly icon?: LucideIcon;
+  /** Shown in place of the icon, such as the acting member's avatar. */
+  readonly leading?: ReactNode;
   readonly showDetailSeparator?: boolean;
   readonly wrapDetail?: boolean;
   readonly actionLabel?: string;
@@ -17,7 +19,7 @@ export function TimelineSystemDivider(props: {
   const Icon = props.icon;
   const content = (
     <>
-      {Icon ? <Icon className="size-3 shrink-0" /> : null}
+      {props.leading ?? (Icon ? <Icon className="size-3 shrink-0" /> : null)}
       <span className="font-medium">{props.label}</span>
       {props.detail ? (
         <span

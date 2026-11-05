@@ -45,6 +45,7 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { runStarterId } from "@t3tools/shared/threadCollaboration";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -58,6 +59,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { holderOf } from "./MemberThreadState.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
@@ -67,6 +69,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type * as TeamState from "../team/TeamState.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -108,9 +111,14 @@ export function withActor(
     }
     case "thread.stop":
     case "thread.archive":
+    case "thread.unarchive":
     case "thread.delete":
     case "message.dispatch":
     case "run.interrupt":
+    case "queued-message.promote-to-steer":
+    case "queued-run.start":
+    case "queued-run.reorder":
+    case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
     case "thread.user-input.dismiss":
@@ -118,6 +126,7 @@ export function withActor(
     case "thread.fork":
     case "thread.owner.set":
     case "thread.settle":
+    case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.pin":
@@ -129,6 +138,9 @@ export function withActor(
     case "thread.follow":
     case "thread.unfollow":
     case "thread.metadata.update":
+    case "thread.runtime-mode.set":
+    case "thread.pull-request.link":
+    case "thread.pull-request.unlink":
       return { ...command, actorId: memberId };
     default:
       return command;
@@ -189,6 +201,9 @@ export interface ThreadManagementSendInput {
   readonly mode: ThreadManagementSendMode;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The member the send acts for; on a team, it queues behind another member's turn. */
+  readonly actorId?: MemberId | undefined;
+  readonly steerOthersTurn?: boolean | undefined;
 }
 
 export interface ThreadManagementSendResult {
@@ -591,6 +606,26 @@ export function latestActiveRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+/**
+ * On a team, the member whose turn the thread's current run (else its latest) is, so agent work
+ * acts as that member. Solo servers have no actor.
+ */
+export const currentRunStarterId = Effect.fn("ThreadManagement.currentRunStarterId")(function* (
+  records: Pick<Orchestrator.OrchestratorV2["Service"], "getThreadRecords">,
+  threadId: ThreadId,
+  team: Option.Option<TeamState.TeamState["Service"]>,
+) {
+  if (Option.isNone(team) || !(yield* team.value.isTeamMode)) return undefined;
+  const { thread, runs } = yield* records.getThreadRecords(threadId, ["runs"]);
+  const holderId = holderOf(thread, team.value.ownerId);
+  const run = latestActiveRun({ runs }) ?? latestRun({ runs });
+  if (run === undefined) return holderId;
+  const { messages } = yield* records.getThreadRecords(threadId, ["messages"], {
+    messageIds: [run.userMessageId],
+  });
+  return runStarterId({ run, messages, holderId });
+});
+
 function latestSteerableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
 ): OrchestrationV2Run | undefined {
@@ -898,6 +933,8 @@ const make = Effect.gen(function* () {
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
+      ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+      ...(input.steerOthersTurn === true ? { steerOthersTurn: true } : {}),
     });
     const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
       messageIds: [input.messageId],
