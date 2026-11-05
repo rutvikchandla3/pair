@@ -54,6 +54,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  MemberId,
   ProjectId,
   type ScopedThreadRef,
   type ThreadId,
@@ -158,6 +159,7 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/older
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import { readCanDeleteThread, readThreadTeamMenu } from "../state/team";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -920,6 +922,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     unpinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadOwner,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -2280,6 +2283,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const regeneratableTitleThreads = titleRegenerationThreads.filter(
         (thread) => thread.titleRegeneration == null,
       );
+      const canDeleteSelection = selectedThreads.every((thread) =>
+        readCanDeleteThread(thread.environmentId, thread.source.ownerId),
+      );
       const titleRegenerationMenuItem = buildBulkTitleRegenerationContextMenuItem({
         supportedCount: titleRegenerationThreads.length,
         actionableCount: regeneratableTitleThreads.length,
@@ -2344,9 +2350,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             { id: "mark-unread", label: `Mark unread (${count})` },
             {
               id: "delete",
-              label: `Delete (${count})`,
+              label: canDeleteSelection
+                ? `Delete (${count})`
+                : `Delete (${count}, owner or admin only)`,
               destructive: true,
-              disabled: !canOperateThreads(selectedThreads),
+              disabled: !canOperateThreads(selectedThreads) || !canDeleteSelection,
             },
           ],
           position,
@@ -2598,6 +2606,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const teamMenu = readThreadTeamMenu(thread.environmentId, thread.source.ownerId);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2625,6 +2634,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              ...(teamMenu ? { team: teamMenu } : {}),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2650,6 +2660,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value?.startsWith("assign:")) {
+          const result = await setThreadOwner(
+            threadRef,
+            MemberId.make(clicked.value.slice("assign:".length)),
+          );
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not assign the thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {

@@ -16,6 +16,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   EMPTY_TEAM_MEMBERS,
   applyTeamStreamEvent,
+  canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
 } from "./team.ts";
@@ -106,6 +107,21 @@ describe("team state", () => {
 
     const replaced = applyTeamStreamEvent(removed, { _tag: "snapshot", members: [owner] });
     expect([...replaced.keys()]).toEqual([ownerId]);
+  });
+
+  it("delete is for the owner or an admin once the server has a team", () => {
+    const guest = member(guestId);
+    const other = member(MemberId.make("member-other"));
+    const team = new Map([owner, guest, other].map((entry) => [entry.id, entry]));
+    const solo = new Map([[ownerId, owner]]);
+    const can = (members: typeof team, memberId: MemberId | null, owned: MemberId | null) =>
+      canMemberDeleteThread({ members, memberId, ownerId: owned });
+    expect(can(team, ownerId, guestId)).toBe(true);
+    expect(can(team, guestId, guestId)).toBe(true);
+    expect(can(team, other.id, guestId)).toBe(false);
+    expect(can(team, other.id, null)).toBe(false);
+    expect(can(solo, ownerId, null)).toBe(true);
+    expect(can(team, null, guestId)).toBe(true);
   });
 
   it.effect("currentMember and team mode follow the member stream", () =>

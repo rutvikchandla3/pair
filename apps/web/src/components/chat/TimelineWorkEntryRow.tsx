@@ -36,6 +36,7 @@ import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
+import { useTeamAttribution } from "../../state/team";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -66,6 +67,7 @@ import {
   workEntryIconName,
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
+  requestResolutionLabel,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -176,6 +178,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
+  const team = useTeamAttribution(ctx.activeThreadEnvironmentId);
+  const resolution = team.isTeamMode
+    ? requestResolutionLabel(workEntry.projectedItem?.item, team.nameOf)
+    : null;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
@@ -293,7 +299,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+      : questionHeading ||
+        (resolution ?? displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -456,6 +463,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               >
                 {answerPreview}
               </span>
+            ) : null}
+            {resolution !== null && questionHeading ? (
+              <span className="shrink-0 text-muted-foreground">{resolution}</span>
             ) : null}
           </p>
         </div>
