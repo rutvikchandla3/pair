@@ -645,6 +645,8 @@ export const ServerConfig = Schema.Struct({
   threadMemberState: Schema.optionalKey(Schema.Boolean),
   /** Accepts `thread.follow` / `thread.unfollow`; followers see `followedAt` on their view. */
   threadFollow: Schema.optionalKey(Schema.Boolean),
+  /** Members can connect GitHub (`team.githubLink*`); sent only when the server has a client ID. */
+  teamGitHub: Schema.optionalKey(Schema.Boolean),
   /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */

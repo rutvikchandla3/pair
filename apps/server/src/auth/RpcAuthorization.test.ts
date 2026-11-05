@@ -81,7 +81,14 @@ describe("RPC authorization scopes", () => {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
       expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(method));
     }
-    for (const method of [WS_METHODS.teamSubscribe, WS_METHODS.teamUpdateSelf]) {
+    for (const method of [
+      WS_METHODS.teamSubscribe,
+      WS_METHODS.teamUpdateSelf,
+      WS_METHODS.teamGitHubLinkStart,
+      WS_METHODS.teamGitHubLinkWait,
+      WS_METHODS.teamGitHubLinkCancel,
+      WS_METHODS.teamGitHubDisconnect,
+    ]) {
       expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
     }
   });

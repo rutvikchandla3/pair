@@ -229,6 +229,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamSetRole]: "team",
   [WS_METHODS.teamRemove]: "team",
   [WS_METHODS.teamUpdateSelf]: "team",
+  [WS_METHODS.teamGitHubLinkStart]: "team",
+  [WS_METHODS.teamGitHubLinkWait]: "team",
+  [WS_METHODS.teamGitHubLinkCancel]: "team",
+  [WS_METHODS.teamGitHubDisconnect]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

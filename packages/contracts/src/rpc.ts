@@ -566,6 +566,10 @@ export const WS_METHODS = {
   teamSetRole: "team.setRole",
   teamRemove: "team.remove",
   teamUpdateSelf: "team.updateSelf",
+  teamGitHubLinkStart: "team.githubLinkStart",
+  teamGitHubLinkWait: "team.githubLinkWait",
+  teamGitHubLinkCancel: "team.githubLinkCancel",
+  teamGitHubDisconnect: "team.githubDisconnect",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2014,6 +2018,31 @@ const WsTeamUpdateSelfRpc = Rpc.make(WS_METHODS.teamUpdateSelf, {
   error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
 });
 
+// The GitHub link RPCs act on the caller's own member; the device flow proves the account.
+const WsTeamGitHubLinkStartRpc = Rpc.make(WS_METHODS.teamGitHubLinkStart, {
+  payload: Schema.Struct({}),
+  success: SourceControlSignInPrompt,
+  error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamGitHubLinkWaitRpc = Rpc.make(WS_METHODS.teamGitHubLinkWait, {
+  payload: Schema.Struct({}),
+  success: TeamMember,
+  error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamGitHubLinkCancelRpc = Rpc.make(WS_METHODS.teamGitHubLinkCancel, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamGitHubDisconnectRpc = Rpc.make(WS_METHODS.teamGitHubDisconnect, {
+  payload: Schema.Struct({}),
+  success: TeamMember,
+  error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2065,6 +2094,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamSetRoleRpc,
   WsTeamRemoveRpc,
   WsTeamUpdateSelfRpc,
+  WsTeamGitHubLinkStartRpc,
+  WsTeamGitHubLinkWaitRpc,
+  WsTeamGitHubLinkCancelRpc,
+  WsTeamGitHubDisconnectRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

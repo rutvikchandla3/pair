@@ -44,11 +44,10 @@ function isRepositoryPath(repository: string): boolean {
   );
 }
 
-/** Signing in through the T3 Code for GitHub app lifts the per-user API rate limit to the app's. */
+/** Signing in through the team's own GitHub App lifts the per-user API rate limit to the app's. */
 export const APP_SIGN_IN: SourceControlAppSignIn = {
-  appName: "T3 Code for GitHub",
+  appName: "GitHub App",
   hosts: ["github.com"],
-  installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
   revokeUrl: "https://github.com/settings/apps/authorizations",
 };
 
