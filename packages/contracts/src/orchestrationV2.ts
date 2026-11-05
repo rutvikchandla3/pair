@@ -3267,6 +3267,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
@@ -3507,6 +3508,7 @@ export const OrchestrationV2Command = Schema.Union([
 
   Schema.Struct({
     type: Schema.Literal("provider.switch"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
