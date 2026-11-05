@@ -10862,13 +10862,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(launchArgSettings === undefined
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
-            environment: claudeQueryEnvironment(
-              adapterOptions.environment,
-              turnInput.appThread,
-              turnInput.appThread.lineage.relationshipToParent === "subagent"
-                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
-                : undefined,
-            ),
+            environment: {
+              ...claudeQueryEnvironment(
+                adapterOptions.environment,
+                turnInput.appThread,
+                turnInput.appThread.lineage.relationshipToParent === "subagent"
+                  ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
+                  : undefined,
+              ),
+              ...ProviderAdapter.gitAuthorEnvironment(turnInput.runtimePolicy),
+            },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}

@@ -4,6 +4,8 @@ import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -121,6 +123,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
+    gitAuthorEmail: string | undefined;
     tempDirectory: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
@@ -178,6 +181,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: env("GEMINI_API_KEY"),
+        gitAuthorEmail: env("GIT_AUTHOR_EMAIL"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
         handle,
@@ -315,6 +319,10 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           expect(launch.extendEnv).toBe(false);
         }
         for (const launch of h.launches) expect(launch.credentialKeys).toEqual([]);
+        expect(nativeLaunches.map((launch) => launch.gitAuthorEmail)).toEqual([
+          undefined,
+          undefined,
+        ]);
         expect(h.releases).toEqual([h.first.version, h.second.version]);
         const requests = yield* h.readRequests;
         expect(requests.map((request) => request.method)).toEqual([
@@ -337,6 +345,32 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         ).toEqual([[], []]);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)("launches a thread's agent as its holder's git author", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("thread-antigravity-git-author");
+      const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+      const runtimePolicy = {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+        gitAuthor: { name: "Bob", email: "bob@example.com" },
+      } as const;
+      const runtime = yield* h.instance.orchestrationAdapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-git-author"),
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      expect(
+        h.launches
+          .filter((launch) => launch.harnessPath !== undefined)
+          .map((launch) => launch.gitAuthorEmail),
+      ).toEqual(["bob@example.com"]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(

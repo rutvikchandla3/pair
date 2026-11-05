@@ -36,6 +36,9 @@ Team**; an admin can set your email when inviting you, and clearing it makes you
 server's git identity again. The committer is always the server's own git identity, so the server
 still needs `user.name` and `user.email` configured.
 
+Agents commit as the thread's owner, from the next session after Assign. Cursor and OpenCode (v2 or
+an external server) commit as the server.
+
 In a team, pull requests T3 Code opens end with `Requested by <name> via Pair`.
 
 ## Your threads and the Team shelf

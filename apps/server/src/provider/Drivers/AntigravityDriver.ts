@@ -51,6 +51,7 @@ import {
   retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
@@ -254,7 +255,7 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
-          baseEnv: processEnvironment,
+          baseEnv: { ...processEnvironment, ...ProviderAdapter.gitAuthorEnvironment(input) },
           auth,
           runtimeTempDirectory,
         }),

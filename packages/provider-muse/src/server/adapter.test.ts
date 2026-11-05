@@ -385,7 +385,7 @@ const approval = (turnId: string) => ({
 vi.mock("node:fs/promises", { spy: true });
 
 describe("MuseAdapterV2", () => {
-  it.effect("connects the thread's MCP credential on native start and resume", () =>
+  it.effect("connects the thread's MCP credential and git author on native start and resume", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("test-environment"),
@@ -396,10 +396,25 @@ describe("MuseAdapterV2", () => {
         authorizationHeader: "Bearer thread-scoped-test-token",
         browserToolsAvailable: true,
       });
+      const authors: Array<string | undefined> = [];
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
         fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
-        yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        yield* makeHarness(
+          fake,
+          INSTANCE_ID,
+          nativeId,
+          undefined,
+          undefined,
+          { ...runtimePolicy, gitAuthor: { name: "Bob", email: "bob@example.com" } },
+          {
+            createHost: async (options) => {
+              authors.push(options.environment?.GIT_AUTHOR_EMAIL);
+              fake.observeProcessExit(options.onProcessExit);
+              return fake.host;
+            },
+          },
+        );
         const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
         assert.deepStrictEqual(call.params.config, {
           mcpServers: {
@@ -412,6 +427,7 @@ describe("MuseAdapterV2", () => {
           },
         });
       }
+      assert.deepStrictEqual(authors, ["bob@example.com", "bob@example.com"]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
