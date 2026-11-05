@@ -182,6 +182,10 @@ import {
   TeamUpdateInput,
   TeamUpdateSelfInput,
 } from "./team.ts";
+import {
+  MemberProviderAccountMutation,
+  MemberProviderAccountResult,
+} from "./memberProviderAccount.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -566,6 +570,7 @@ export const WS_METHODS = {
   teamSetRole: "team.setRole",
   teamRemove: "team.remove",
   teamUpdateSelf: "team.updateSelf",
+  teamProviderAccountsMutate: "team.providerAccounts.mutate",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2014,6 +2019,12 @@ const WsTeamUpdateSelfRpc = Rpc.make(WS_METHODS.teamUpdateSelf, {
   error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
 });
 
+const WsTeamProviderAccountsMutateRpc = Rpc.make(WS_METHODS.teamProviderAccountsMutate, {
+  payload: MemberProviderAccountMutation,
+  success: MemberProviderAccountResult,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2065,6 +2076,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamSetRoleRpc,
   WsTeamRemoveRpc,
   WsTeamUpdateSelfRpc,
+  WsTeamProviderAccountsMutateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

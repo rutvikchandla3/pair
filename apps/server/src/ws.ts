@@ -131,6 +131,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
 import {
@@ -1474,6 +1475,7 @@ export const layerWsRpc = (
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
       const teamState = yield* TeamState.TeamState;
+      const memberProviderAccounts = yield* MemberProviderAccounts.MemberProviderAccounts;
       const threadViewer = (yield* makeThreadViewers)(currentSession.memberId);
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2457,6 +2459,8 @@ export const layerWsRpc = (
         [WS_METHODS.teamRemove]: (input) => teamMembers.remove(input),
         [WS_METHODS.teamUpdateSelf]: (input) =>
           teamMembers.updateSelf(currentSession.memberId, input),
+        [WS_METHODS.teamProviderAccountsMutate]: (input) =>
+          memberProviderAccounts.mutate(currentSession.memberId, input),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
@@ -2796,9 +2800,16 @@ export const layerWsRpc = (
                 )
               : undefined;
             const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
+            const ownership = {
+              activeMemberIds: TeamState.activeMemberIds(yield* Ref.get(teamState.members)),
+            };
             const settings = yield* providerInstanceMutation === undefined
-              ? serverSettings.updateSettings(nextPatch)
-              : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
+              ? serverSettings.updateSettings(nextPatch, ownership)
+              : serverSettings.updateProviderInstance(
+                  providerInstanceMutation,
+                  nextPatch,
+                  ownership,
+                );
             return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
@@ -3589,6 +3600,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3622,13 +3634,21 @@ export const layer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
+        const ownsProviderInstance = (instanceId: ProviderInstanceId) =>
+          serverSettings.getSettings.pipe(
+            Effect.map(
+              (settings) =>
+                settings.providerInstances[instanceId]?.ownerMemberId === session.memberId,
+            ),
+            Effect.orElseSucceed(() => false),
+          );
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
-                RpcAuthorization.layer(session.scopes, (method, payload) => {
+                RpcAuthorization.layer(session.scopes, ownsProviderInstance, (method, payload) => {
                   // Anonymous product signal: the feature and its enum variant,
                   // credited to the connecting client's surface only.
                   const usage = featureUsage(method, payload);

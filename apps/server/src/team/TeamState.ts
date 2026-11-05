@@ -22,6 +22,11 @@ export class TeamState extends Context.Service<
   }
 >()("t3/team/TeamState") {}
 
+export const activeMemberIds = (
+  members: ReadonlyMap<MemberId, Members.MemberRecord>,
+): ReadonlySet<MemberId> =>
+  new Set([...members.values()].filter((member) => member.removedAt === null).map(({ id }) => id));
+
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));
 

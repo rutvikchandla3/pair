@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  MemberId,
+  type ProviderInstanceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -17,11 +19,15 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import type * as Members from "../persistence/Members.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderAuthService from "./ProviderAuthService.ts";
@@ -135,6 +141,10 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     beforeListSessions?: Effect.Effect<void>;
     onLookup?: Effect.Effect<void>;
     onListThreads?: (instances: ProviderInstance[]) => void;
+    team?: {
+      readonly members: ReadonlyArray<Members.MemberRecord>;
+      readonly providerInstances: Record<string, ProviderInstanceConfig>;
+    };
   } = {},
 ) {
   const actions: string[] = [];
@@ -240,6 +250,8 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   const service = yield* ProviderAuthService.makeProviderAuthService.pipe(
     Effect.provide(
       Layer.mergeAll(
+        ServerSettings.layerTest({ providerInstances: input.team?.providerInstances ?? {} }),
+        TeamState.layerTest(input.team?.members),
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.gen(function* () {
@@ -354,6 +366,8 @@ const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscrip
     const service = yield* ProviderAuthService.makeProviderAuthService.pipe(
       Effect.provide(
         Layer.mergeAll(
+          ServerSettings.layerTest(),
+          TeamState.layerTest(),
           Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
             subscribeChanges: Effect.gen(function* () {
               const subscription = yield* PubSub.subscribe(changes);
@@ -664,6 +678,103 @@ describe("ProviderAuthService", () => {
 
         assert.deepStrictEqual(released, [shared.id]);
       }),
+  );
+
+  const member = (id: string, name: string, role: "admin" | "member") => ({
+    id: MemberId.make(id),
+    name,
+    role,
+    gitName: null,
+    gitEmail: null,
+    isOwner: role === "admin",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: null,
+    removedAt: null,
+  });
+  const alice = member("alice", "Alice", "admin");
+  const bob = member("bob", "Bob", "member");
+  const carol = member("carol", "Carol", "member");
+  it.effect.each([
+    { case: "Bob on his own account", owned: true, actor: bob.id, refusal: undefined },
+    {
+      case: "an admin on Bob's account",
+      owned: true,
+      actor: alice.id,
+      refusal: "Only Bob can sign Bob's Antigravity out.",
+    },
+    { case: "an admin on the team login", owned: false, actor: alice.id, refusal: undefined },
+    {
+      case: "a member on the team login",
+      owned: false,
+      actor: carol.id,
+      refusal: "Only an admin can sign out the team login.",
+    },
+    {
+      case: "an unattributed prompt on the team login",
+      owned: false,
+      actor: undefined,
+      refusal: "Only an admin can sign out the team login.",
+    },
+  ])("lets /logout through on a team only for the account's owner: $case", (row) =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness({
+        team: {
+          members: [alice, bob, carol],
+          providerInstances: {
+            [instanceId]: {
+              driver: driverKind,
+              displayName: "Bob's Antigravity",
+              ...(row.owned ? { ownerMemberId: bob.id } : {}),
+            },
+          },
+        },
+      });
+      const result = yield* Effect.result(
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          ...(row.actor === undefined ? {} : { actorId: row.actor }),
+        }),
+      );
+      if (row.refusal === undefined) {
+        assert.deepStrictEqual(result, Result.succeed(true));
+        assert.include(actions, "native-logout");
+      } else {
+        assert.isTrue(Result.isFailure(result));
+        assert.strictEqual(Result.isFailure(result) && result.failure.detail, row.refusal);
+        assert.deepStrictEqual(actions, []);
+      }
+    }),
+  );
+
+  it.effect("refuses a teammate's /logout even where the driver has no sign-in", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        team: {
+          members: [alice, bob],
+          providerInstances: {
+            [unsupportedInstanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              displayName: "Bob's Codex",
+              ownerMemberId: bob.id,
+            },
+          },
+        },
+      });
+      const prompt = (actorId: MemberId) =>
+        service.tryHandlePromptCommand({
+          instanceId: unsupportedInstanceId,
+          text: "/logout",
+          hasAttachments: false,
+          actorId,
+        });
+      assert.strictEqual(
+        (yield* Effect.flip(prompt(alice.id))).detail,
+        "Only Bob can sign Bob's Codex out.",
+      );
+      assert.isFalse(yield* prompt(bob.id));
+    }),
   );
 
   it.effect("does not log out when the thread shell cannot be read", () =>

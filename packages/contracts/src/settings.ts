@@ -1506,6 +1506,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  "change-provider-instance-owner",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1531,6 +1532,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   override get message(): string {
     if (this.operation === "write-managed-setting") {
       return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
+    }
+    if (this.operation === "change-provider-instance-owner") {
+      return `${this.providerLabel ?? this.providerInstanceId ?? "This account"} belongs to a member of the team, so only they can give it up.`;
     }
     if (this.operation === "use-disallowed-provider") {
       return disallowedProviderMessage(
