@@ -36,6 +36,7 @@ import {
   type EnvironmentId,
   type MemberId,
   type NodeId,
+  type TeamMember,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -66,6 +67,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import { MemberAvatar } from "../team/MemberAvatar";
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
@@ -99,6 +101,27 @@ export function RollbackDivider(props: {
   );
 }
 
+function memberAvatar(member: TeamMember | undefined) {
+  return member === undefined ? undefined : (
+    <MemberAvatar member={member} size="sm" className="size-4" />
+  );
+}
+
+/** A member's change to the thread, such as "Bob archived this thread". */
+function MemberNoticeDivider(props: {
+  readonly environmentId: EnvironmentId;
+  readonly message: string;
+  readonly actorId: MemberId;
+}) {
+  const team = useTeamAttribution(props.environmentId);
+  return (
+    <TimelineSystemDivider
+      label={props.message}
+      leading={memberAvatar(team.members.get(props.actorId))}
+    />
+  );
+}
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly environmentId: EnvironmentId;
@@ -108,6 +131,15 @@ export function V2LifecycleRow(props: {
   readonly stoppedBy?: MemberId | undefined;
 }) {
   const { item } = props;
+  if (item.type === "system_notice" && item.actorId !== undefined) {
+    return (
+      <MemberNoticeDivider
+        environmentId={props.environmentId}
+        message={item.message}
+        actorId={item.actorId}
+      />
+    );
+  }
   if (item.type === "run_interrupt_result") {
     return (
       <InterruptResultDivider
@@ -634,7 +666,9 @@ function EnvironmentHandoffRow({
 export function ModelSwitchRow(props: {
   readonly environmentId: EnvironmentId;
   readonly modelSwitch: OrchestrationV2ModelSwitch;
+  readonly authorId?: MemberId | undefined;
 }) {
+  const team = useTeamAttribution(props.environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
     EMPTY_SERVER_PROVIDERS;
@@ -647,9 +681,14 @@ export function ModelSwitchRow(props: {
     return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
   };
   const { from, to } = props.modelSwitch;
+  const switched = `${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`;
+  const authorId = team.isTeamMode ? props.authorId : undefined;
+  if (authorId === undefined) return <TimelineSystemDivider label={switched} />;
   return (
     <TimelineSystemDivider
-      label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
+      label={`${team.nameOf(authorId)} switched model`}
+      detail={switched}
+      leading={memberAvatar(team.members.get(authorId))}
     />
   );
 }

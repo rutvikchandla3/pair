@@ -115,6 +115,10 @@ export function withActor(
     case "thread.delete":
     case "message.dispatch":
     case "run.interrupt":
+    case "queued-message.promote-to-steer":
+    case "queued-run.start":
+    case "queued-run.reorder":
+    case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
     case "thread.user-input.dismiss":

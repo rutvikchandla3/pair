@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MemberId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -136,7 +137,7 @@ describe("createdPullRequestKey", () => {
 });
 
 describe("linkCreatedPullRequest", () => {
-  it.effect("links a created pull request to the thread with source created", () =>
+  it.effect("links a created pull request to the thread as its creator, with source created", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
       yield* linkCreatedPullRequest({
@@ -147,6 +148,7 @@ describe("linkCreatedPullRequest", () => {
           url: "https://github.com/t3tools/t3code/pull/42",
         }),
         commandId,
+        actorId: MemberId.make("member:bob"),
       }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
 
       expect(yield* Ref.get(commands)).toEqual([
@@ -159,6 +161,7 @@ describe("linkCreatedPullRequest", () => {
           number: 42,
           url: "https://github.com/t3tools/t3code/pull/42",
           source: "created",
+          actorId: "member:bob",
         },
       ]);
     }),

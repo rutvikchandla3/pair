@@ -360,7 +360,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           command = { ...personal, type: "thread.unsnooze", reason: "user" };
           break;
         case "unsettle":
-          command = { ...common, type: "thread.unsettle", reason: "user" };
+          command = { ...personal, type: "thread.unsettle", reason: "user" };
           break;
         case "mark_unread":
           command = { ...personal, type: "thread.mark-unread" };
@@ -373,7 +373,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           command = { ...personal, type: `thread.${input.action}` };
           break;
         default:
-          command = { ...common, type: `thread.${input.action}` };
+          command = { ...personal, type: `thread.${input.action}` };
       }
       const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };

@@ -12,7 +12,10 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
+import {
+  builtInSourceControlDefinitions,
+  canonicalizeGitCafePullRequestUrl,
+} from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   normalizeThreadPullRequestKey,
@@ -1431,6 +1434,66 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     });
   });
+
+  const lifecycleSentence = (
+    command: OrchestrationV2ServerCommand,
+    before: OrchestrationV2AppThread,
+    after: OrchestrationV2AppThread,
+  ): ((actor: string, nameOf: (id: MemberId) => string) => string) | null => {
+    const wasSettled = before.settledOverride === "settled" || before.settledAt !== null;
+    const pullRequest = (url: string, number: number) =>
+      `${builtInSourceControlDefinitions.findByChangeRequestUrl(url)?.changeRequest.shortLabel ?? "PR"} #${number}`;
+    switch (command.type) {
+      case "thread.runtime-mode.set":
+        return before.runtimeMode === after.runtimeMode
+          ? null
+          : (actor) => `${actor} set permissions to ${RUNTIME_MODE_LABELS[after.runtimeMode]}`;
+      case "thread.owner.set": {
+        const { ownerId, actorId } = command;
+        if (Option.isNone(serverOwnerId) || holderOf(before, serverOwnerId.value) === ownerId) {
+          return null;
+        }
+        return actorId === ownerId
+          ? (actor) => `${actor} took over this thread`
+          : (actor, nameOf) => `${actor} assigned this thread to ${nameOf(ownerId)}`;
+      }
+      case "thread.archive":
+        return (actor) => `${actor} archived this thread`;
+      case "thread.unarchive":
+        return (actor) => `${actor} unarchived this thread`;
+      case "thread.settle":
+        return wasSettled ? null : (actor) => `${actor} settled this thread`;
+      case "thread.unsettle":
+        return wasSettled ? (actor) => `${actor} un-settled this thread` : null;
+      case "thread.metadata.update": {
+        const { title } = command;
+        return title === undefined || title === before.title
+          ? null
+          : (actor) => `${actor} renamed this thread to “${title}”`;
+      }
+      case "thread.pull-request.link":
+        // Stack layers are discovered, not chosen, so they leave no row.
+        return after === before ||
+          command.source === "stack" ||
+          command.source === "stack-dismissed"
+          ? null
+          : (actor) =>
+              `${actor} ${command.source === "created" ? "opened" : "linked"} ${pullRequest(command.url, command.number)}`;
+      case "thread.pull-request.unlink": {
+        const key = normalizeThreadPullRequestKey(command);
+        const existing = threadPullRequestsOf(before).find((link) =>
+          threadPullRequestKeysEqual(link, key),
+        );
+        return existing === undefined ||
+          existing.source === "stack" ||
+          existing.source === "stack-dismissed"
+          ? null
+          : (actor) => `${actor} unlinked ${pullRequest(existing.url, command.number)}`;
+      }
+      default:
+        return null;
+    }
+  };
 
   /** A non-holder's event leaves the shared row as it is; the holder's writes `next` to the row. */
   const memberEventFields = (
@@ -4457,6 +4520,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    yield* emitLifecycleNotice(
+      command,
+      events,
+      updatedThread,
+      lifecycleSentence(command, thread, updatedThread),
+    );
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 

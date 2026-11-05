@@ -72,7 +72,9 @@ export const sendActorId = Effect.fn("mcp.sendActorId")(function* (
   team: Option.Option<TeamState.TeamState["Service"]>,
 ) {
   if (scope.thread === undefined) {
-    return Option.isSome(team) && (yield* team.value.isTeamMode) ? scope.client?.memberId : undefined;
+    return Option.isSome(team) && (yield* team.value.isTeamMode)
+      ? scope.client?.memberId
+      : undefined;
   }
   return yield* ThreadManagement.currentRunStarterId(threads, scope.thread.threadId, team).pipe(
     Effect.mapError(unavailable),

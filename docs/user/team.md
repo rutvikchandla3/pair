@@ -24,6 +24,10 @@ command line: see [Team members from the command line](./remote-access.md#team-m
 Messages from other people show their name. Resolved requests say **Approved by**, **Declined
 by**, or **Answered by**, and stops and reverts say who did them.
 
+The thread also gets a quiet line when someone renames, archives, settles, or reassigns it, changes
+its permissions, switches its model, or links or opens a pull request from it. These lines start
+when your server has a second member; earlier changes are not filled in.
+
 Once two or more people have prompted the same thread, the agent sees each new message as
 `Message from <name>:` so it knows who is asking. Threads only one person has prompted are sent
 to the agent unchanged.

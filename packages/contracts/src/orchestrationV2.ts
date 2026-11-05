@@ -3380,6 +3380,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     queuedRunId: RunId,
@@ -3392,12 +3393,14 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.start"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
@@ -3405,6 +3408,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.cancel"),
+    actorId: Schema.optional(MemberId),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
