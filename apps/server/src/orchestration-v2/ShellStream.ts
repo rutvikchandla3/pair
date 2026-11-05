@@ -83,6 +83,8 @@ type ShellTrimRow = Pick<
 export interface OlderSettledReader {
   readonly memberId: MemberId;
   readonly serverOwnerId: MemberId;
+  /** Followed threads count as the member's own. */
+  readonly followedThreadIds: ReadonlySet<ThreadId>;
 }
 
 /**
@@ -132,7 +134,11 @@ function shellTrimFacts(
     for (const row of rows) {
       if (isOlderSettledThreadShell(row, olderSettledBeforeMs)) {
         counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1);
-        if (reader !== null && holderOf(row, reader.serverOwnerId) === reader.memberId) {
+        if (
+          reader !== null &&
+          (holderOf(row, reader.serverOwnerId) === reader.memberId ||
+            reader.followedThreadIds.has(row.id))
+        ) {
           ownCounts.set(row.projectId, (ownCounts.get(row.projectId) ?? 0) + 1);
         }
       }

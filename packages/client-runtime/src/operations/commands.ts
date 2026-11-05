@@ -101,6 +101,7 @@ export interface PinThreadInput extends ThreadCommandInput {
   readonly orderKey?: string;
 }
 export type UnpinThreadInput = ThreadCommandInput;
+export type FollowThreadInput = ThreadCommandInput;
 
 export interface ReorderPinnedThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
@@ -420,6 +421,8 @@ function simpleThreadCommand(
     | "thread.settle"
     | "thread.pin"
     | "thread.unpin"
+    | "thread.follow"
+    | "thread.unfollow"
     | "thread.guest-share.close",
   input: ThreadCommandInput,
 ) {
@@ -563,6 +566,18 @@ export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function
   input: UnpinThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.unpin", input);
+});
+
+export const followThread = Effect.fn("EnvironmentCommands.followThread")(function* (
+  input: FollowThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.follow", input);
+});
+
+export const unfollowThread = Effect.fn("EnvironmentCommands.unfollowThread")(function* (
+  input: FollowThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unfollow", input);
 });
 
 export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (

@@ -38,6 +38,7 @@ import {
   respondToThreadApproval,
   respondToThreadUserInput,
   dismissThreadUserInput,
+  followThread,
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
@@ -51,6 +52,7 @@ import {
   startThreadTurn,
   stopThreadSession,
   unarchiveThread,
+  unfollowThread,
   unlinkThreadPullRequest,
   unpinThread,
   unsettleThread,
@@ -189,6 +191,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     unpin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unpin",
       execute: unpinThread,
+      scheduler,
+      concurrency,
+    }),
+    follow: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:follow",
+      execute: followThread,
+      scheduler,
+      concurrency,
+    }),
+    unfollow: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unfollow",
+      execute: unfollowThread,
       scheduler,
       concurrency,
     }),
@@ -450,6 +464,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       pinnedAt: null,
       pinOrderKey: null,
     })),
+    follow: optimistic.wrap(commands.follow, (thread, _input, now) => ({
+      ...thread,
+      followedAt: thread.followedAt ?? now,
+      lastVisitedAt: thread.lastVisitedAt ?? now,
+    })),
+    unfollow: optimistic.wrap(commands.unfollow, (thread) => ({ ...thread, followedAt: null })),
     reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
       ...thread,
       pinOrderKey: input.orderKey,

@@ -312,6 +312,7 @@ it.effect("shows the session's member their own pins in the HTTP snapshots", () 
               snoozedAt: null,
               lastSnoozeWakeAt: null,
               opens: null,
+              followedAt: null,
             },
           },
         },

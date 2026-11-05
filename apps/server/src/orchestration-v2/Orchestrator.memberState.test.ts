@@ -4,11 +4,13 @@ import {
   EventId,
   MemberId,
   MessageId,
+  NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2StoredEvent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -229,6 +231,12 @@ it.effect("a single member reaches the solo end state and writes no member rows"
           threadId,
           ...actor,
         }),
+        yield* emitted({
+          type: "thread.follow",
+          commandId: CommandId.make("follow"),
+          threadId,
+          ...actor,
+        }),
       ];
       return { owner: actorId, steps, ...(yield* readState) };
     });
@@ -243,6 +251,7 @@ it.effect("a single member reaches the solo end state and writes no member rows"
       ["thread.pinned"],
       ["thread.visited"],
       ["thread.marked-unread"],
+      [],
     ]);
     assert.deepEqual(team.steps, [
       ["thread.metadata-updated"],
@@ -252,6 +261,8 @@ it.effect("a single member reaches the solo end state and writes no member rows"
       ["thread.unsettled", `thread.pinned:${team.owner}`],
       [`thread.visited:${team.owner}`],
       [`thread.marked-unread:${team.owner}`],
+      // The holder follows implicitly.
+      [],
     ]);
   }),
 );
@@ -442,12 +453,163 @@ it.effect("a message ends only its sender's snooze", () =>
       ],
       [DateTime.makeUnsafe(later), null, DateTime.makeUnsafe(later)],
     );
+    assert.deepEqual(
+      [state.members.get(bob)!.followedAt, state.members.get(carol)!.followedAt],
+      [DateTime.makeUnsafe(0), null],
+    );
     yield* send("from-owner", owner);
     state = yield* readState;
     assert.deepEqual(
       [state.row.snoozedUntil, state.members.get(carol)!.snoozedUntil],
       [null, DateTime.makeUnsafe(later)],
     );
+  }).pipe(Effect.provide(layerTeam)),
+);
+
+const follow = (id: string, actorId: MemberId, type: "thread.follow" | "thread.unfollow") =>
+  emitted({ type, commandId: CommandId.make(id), threadId, actorId });
+
+it.effect(
+  "a non-holder's follow baselines their visit, and messaging re-follows after unfollow",
+  () =>
+    Effect.gen(function* () {
+      const owner = (yield* serverOwner)!;
+      yield* createThread;
+      yield* TestClock.adjust("10 seconds");
+      yield* dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("carol-visit"),
+        threadId,
+        visitedAt: "1970-01-01T00:00:05.000Z",
+        actorId: carol,
+      });
+      assert.deepEqual(yield* follow("bob-follow", bob, "thread.follow"), [
+        `thread.metadata-updated:${bob}`,
+      ]);
+      assert.deepEqual(yield* follow("bob-follow-again", bob, "thread.follow"), []);
+      assert.deepEqual(yield* follow("carol-follow", carol, "thread.follow"), [
+        `thread.metadata-updated:${carol}`,
+      ]);
+      assert.deepEqual(yield* follow("owner-follow", owner, "thread.follow"), []);
+      let { row, members } = yield* readState;
+      assert.notProperty(row, "followedAt");
+      assert.deepEqual(
+        [bob, carol].map((memberId) => [
+          members.get(memberId)!.followedAt,
+          members.get(memberId)!.lastVisitedAt,
+        ]),
+        [
+          [DateTime.makeUnsafe(10_000), DateTime.makeUnsafe(10_000)],
+          [DateTime.makeUnsafe(10_000), DateTime.makeUnsafe(5_000)],
+        ],
+      );
+
+      assert.deepEqual(yield* follow("bob-unfollow", bob, "thread.unfollow"), [
+        `thread.metadata-updated:${bob}`,
+      ]);
+      assert.deepEqual(yield* follow("bob-unfollow-again", bob, "thread.unfollow"), []);
+      ({ members } = yield* readState);
+      assert.deepEqual(
+        [members.get(bob)!.followedAt, members.get(bob)!.lastVisitedAt],
+        [null, DateTime.makeUnsafe(10_000)],
+      );
+
+      yield* TestClock.adjust("10 seconds");
+      assert.include(yield* send("from-bob", bob), `thread.metadata-updated:${bob}`);
+      assert.notInclude(yield* send("from-carol", carol), `thread.metadata-updated:${carol}`);
+      ({ members } = yield* readState);
+      assert.deepEqual(members.get(bob)!.followedAt, DateTime.makeUnsafe(20_000));
+    }).pipe(Effect.provide(layerTeam)),
+);
+
+const pendingQuestion = (id: string) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const requestId = RuntimeRequestId.make(`request:${id}`);
+    const nodeId = NodeId.make(`node:${id}`);
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`event:${id}-request`),
+      type: "runtime-request.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make(`event:${id}-item`),
+      type: "turn-item.updated",
+      threadId,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`turn-item:${id}`),
+        type: "user_input_request",
+        threadId,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "waiting",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        requestId,
+        questions: [{ id: "color", header: "Color", question: "Which color?", options: [] }],
+      },
+    });
+    return requestId;
+  });
+
+it.effect("answering or cancelling a request follows the thread once", () =>
+  Effect.gen(function* () {
+    yield* createThread;
+    const answered = yield* pendingQuestion("answered");
+    const answerEvents = yield* emitted({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("bob-answer"),
+      threadId,
+      requestId: answered,
+      answers: { color: "Blue" },
+      actorId: bob,
+    });
+    assert.deepEqual(
+      answerEvents.filter((type) => type === `thread.metadata-updated:${bob}`),
+      [`thread.metadata-updated:${bob}`],
+    );
+    yield* dispatch({
+      type: "thread.unfollow",
+      commandId: CommandId.make("bob-unfollow"),
+      threadId,
+      actorId: bob,
+    });
+    const cancelled = yield* pendingQuestion("cancelled");
+    assert.include(
+      yield* emitted({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("bob-cancel"),
+        threadId,
+        requestId: cancelled,
+        decision: "cancel",
+        actorId: bob,
+      }),
+      `thread.metadata-updated:${bob}`,
+    );
+    assert.notEqual((yield* readState).members.get(bob)!.followedAt, null);
   }).pipe(Effect.provide(layerTeam)),
 );
 
@@ -485,6 +647,8 @@ it.effect("owner.set hands the holder's state to the new owner and back", () =>
       [bob, "bob", [owner]],
     );
     assert.equal(state.members.get(owner)!.pinOrderKey, "owner");
+    // The demoted owner keeps watching the thread they handed over.
+    assert.deepEqual(state.members.get(owner)!.followedAt, DateTime.makeUnsafe(0));
 
     yield* dispatch({
       type: "thread.owner.set",
@@ -499,6 +663,8 @@ it.effect("owner.set hands the holder's state to the new owner and back", () =>
       [owner, "owner", [bob]],
     );
     assert.equal(state.members.get(bob)!.pinOrderKey, "bob");
+    assert.deepEqual(state.members.get(bob)!.followedAt, DateTime.makeUnsafe(0));
+    assert.notProperty(state.row, "followedAt");
   }).pipe(Effect.provide(layerTeam)),
 );
 

@@ -44,6 +44,7 @@ import {
 } from "../cloud/config.ts";
 import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -70,9 +71,9 @@ function isTurnItemPayload(
   );
 }
 
-function shouldPublishAgentAwarenessEvent(
-  event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
-): boolean {
+function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): boolean {
+  // Follows, Assign demotions and member snoozes change one member's view, not the agent's state.
+  if (isMemberThreadEvent(event)) return false;
   if (
     event.type === "thread.created" &&
     typeof event.payload === "object" &&

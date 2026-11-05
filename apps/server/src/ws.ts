@@ -2012,6 +2012,7 @@ export const layerWsRpc = (
           threadFind: true,
           threadFindProgressive: true,
           threadMemberState: true,
+          threadFollow: true,
           secretProviderSettings: true,
           secretReferences: true,
           ...Option.match(scratchWorkspaceRoot, {

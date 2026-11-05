@@ -1,3 +1,4 @@
+import type * as DateTime from "effect/DateTime";
 import type {
   MemberId,
   OrchestrationV2AppThread,
@@ -10,17 +11,6 @@ import type {
  * A thread's holder (its owner, else the server owner) keeps personal state in the thread row;
  * every other member's lives in `projection_thread_member_state`. See the 1c design.
  */
-export const PERSONAL_FIELDS = [
-  "pinnedAt",
-  "pinOrderKey",
-  "activeOrderKey",
-  "lastVisitedAt",
-  "snoozedUntil",
-  "snoozedAt",
-  "lastSnoozeWakeAt",
-  "opens",
-] as const satisfies ReadonlyArray<keyof ThreadMemberState>;
-
 export const EMPTY_MEMBER_STATE: ThreadMemberState = {
   pinnedAt: null,
   pinOrderKey: null,
@@ -30,6 +20,7 @@ export const EMPTY_MEMBER_STATE: ThreadMemberState = {
   snoozedAt: null,
   lastSnoozeWakeAt: null,
   opens: null,
+  followedAt: null,
 };
 
 export type PersonalStateCarrier = OrchestrationV2AppThread | OrchestrationV2ThreadShell;
@@ -59,15 +50,25 @@ export function personalStateOf(row: PersonalStateCarrier): ThreadMemberState {
     snoozedAt: row.snoozedAt ?? null,
     lastSnoozeWakeAt: isShell(row) ? null : (row.lastSnoozeWakeAt ?? null),
     opens: row.opens ?? null,
+    followedAt: row.followedAt ?? null,
   };
 }
 
+/** `followedAt` is written only when set, so holder rows and solo payloads never carry the key. */
 export function withPersonalState<T extends PersonalStateCarrier>(
   row: T,
   state: ThreadMemberState,
 ): T {
-  const { lastSnoozeWakeAt, ...shared } = state;
-  return isShell(row) ? { ...row, ...shared } : { ...row, ...shared, lastSnoozeWakeAt };
+  const { lastSnoozeWakeAt, followedAt, ...shared } = state;
+  const { followedAt: _previous, ...rest } = row;
+  const next = { ...rest, ...shared, ...(followedAt === null ? {} : { followedAt }) };
+  return (isShell(row) ? next : { ...next, lastSnoozeWakeAt }) as T;
+}
+
+/** Following baselines the visit watermark, so the next completion reads as unread. */
+export function followedView<T extends PersonalStateCarrier>(view: T, now: DateTime.Utc): T {
+  if (view.followedAt != null) return view;
+  return { ...view, followedAt: now, lastVisitedAt: view.lastVisitedAt ?? now };
 }
 
 export function holderOf(
@@ -88,7 +89,10 @@ export function viewFor<T extends PersonalStateCarrier>(
   return withPersonalState(row, memberState ?? EMPTY_MEMBER_STATE);
 }
 
-/** Pin, order or snooze: the state settle clears and auto-settle respects. Visits and opens are not. */
+/**
+ * Pin, order or snooze: the state settle clears and auto-settle respects. Visits, opens and
+ * follows are not.
+ */
 export function hasPersonalState(state: ThreadMemberState): boolean {
   return (
     state.pinnedAt !== null ||
@@ -112,20 +116,21 @@ export function clearedForSettle(state: ThreadMemberState): ThreadMemberState {
 
 /**
  * Ownership moves from `oldHolderId` to a new holder: the row takes the new holder's member state
- * (empty without one), and the old holder's row state becomes their member row. The caller sets
- * `ownerId` and deletes the new holder's member row.
+ * (empty without one) minus their follow, and the old holder's row state becomes their member row,
+ * following. The caller sets `ownerId` and deletes the new holder's member row.
  */
 export function transferHolder<T extends PersonalStateCarrier>(
   row: T,
   oldHolderId: MemberId,
   newHolderState: ThreadMemberState | null,
+  now: DateTime.Utc,
 ): {
   readonly row: T;
   readonly demoted: { readonly memberId: MemberId; readonly state: ThreadMemberState };
 } {
   return {
-    row: withPersonalState(row, newHolderState ?? EMPTY_MEMBER_STATE),
-    demoted: { memberId: oldHolderId, state: personalStateOf(row) },
+    row: withPersonalState(row, { ...(newHolderState ?? EMPTY_MEMBER_STATE), followedAt: null }),
+    demoted: { memberId: oldHolderId, state: { ...personalStateOf(row), followedAt: now } },
   };
 }
 
