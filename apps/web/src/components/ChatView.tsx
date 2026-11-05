@@ -2814,6 +2814,7 @@ export default function ChatView(props: ChatViewProps) {
       serverProjection,
       activeThread,
       timelineMessages,
+      team,
       phase,
       isSendBusy,
       isRevertingCheckpoint,
