@@ -47,6 +47,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
+  /** Conversational sessions only: the thread holder who authors the agent's commits. */
+  readonly gitAuthor?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["gitAuthor"];
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {

@@ -56,8 +56,23 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
+  /**
+   * The thread holder's commit identity, fixed when a session launches. Never a restart key:
+   * a holder change applies at the next launch.
+   */
+  gitAuthor: Schema.optionalKey(Schema.Struct({ name: Schema.String, email: Schema.String })),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
+
+/** Author-only env for agent commits; the committer stays the server's own identity. */
+export function gitAuthorEnvironment(
+  policy: Pick<ProviderAdapterV2RuntimePolicy, "gitAuthor"> | undefined,
+): { readonly GIT_AUTHOR_NAME?: string; readonly GIT_AUTHOR_EMAIL?: string } {
+  const author = policy?.gitAuthor;
+  return author === undefined
+    ? {}
+    : { GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email };
+}
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
   messageId: MessageId,

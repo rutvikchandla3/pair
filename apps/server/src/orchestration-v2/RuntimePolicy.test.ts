@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ManagedPolicySummary,
+  MemberId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
@@ -16,7 +17,9 @@ import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import type * as Members from "../persistence/Members.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -32,6 +35,7 @@ function makeThread(input: {
   readonly now: DateTime.Utc;
   readonly worktreePath: string | null;
   readonly runtimeMode?: RuntimeMode;
+  readonly ownerId?: MemberId | null;
 }): OrchestrationV2AppThread {
   const threadId = ThreadId.make("thread:runtime-policy");
   return {
@@ -60,6 +64,7 @@ function makeThread(input: {
     settledAt: null,
     lastVisitedAt: null,
     deletedAt: null,
+    ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
   };
 }
 
@@ -154,6 +159,59 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
+      const withoutTeam = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null }),
+        modelSelection,
+      });
+      assert.isFalse("gitAuthor" in withoutTeam);
+    }),
+  );
+});
+
+const member = (
+  id: string,
+  fields: Partial<Members.MemberRecord> = {},
+): Members.MemberRecord => ({
+  id: MemberId.make(id),
+  name: id,
+  role: "member",
+  gitName: null,
+  gitEmail: null,
+  isOwner: false,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: null,
+  removedAt: null,
+  ...fields,
+});
+
+it.layer(
+  layerWithPolicy().pipe(
+    Layer.provide(
+      TeamState.layerTest([
+        member("alice", { isOwner: true, role: "admin", gitEmail: "alice@example.com" }),
+        member("bob", { gitName: "Bob B", gitEmail: "bob@example.com" }),
+        member("carol"),
+        member("dave", { gitEmail: "dave@example.com", removedAt: "2026-02-01T00:00:00.000Z" }),
+      ]),
+    ),
+  ),
+)("RuntimePolicyV2 in a team", (it) => {
+  it.effect("authors agent commits as the thread holder only when they set a git email", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const authorOf = (ownerId: MemberId | null | undefined) =>
+        policy.resolve({ thread: makeThread({ now, worktreePath: null, ownerId }), modelSelection });
+
+      assert.deepStrictEqual((yield* authorOf(MemberId.make("bob"))).gitAuthor, {
+        name: "Bob B",
+        email: "bob@example.com",
+      });
+      assert.isFalse("gitAuthor" in (yield* authorOf(MemberId.make("carol"))));
+      assert.isFalse("gitAuthor" in (yield* authorOf(MemberId.make("dave"))));
+      const serverOwner = { name: "alice", email: "alice@example.com" };
+      assert.deepStrictEqual((yield* authorOf(null)).gitAuthor, serverOwner);
+      assert.deepStrictEqual((yield* authorOf(undefined)).gitAuthor, serverOwner);
     }),
   );
 });

@@ -254,7 +254,7 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
-          baseEnv: processEnvironment,
+          baseEnv: { ...processEnvironment, ...ProviderAdapter.gitAuthorEnvironment(input) },
           auth,
           runtimeTempDirectory,
         }),

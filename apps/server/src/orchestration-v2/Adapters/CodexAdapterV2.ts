@@ -1423,6 +1423,11 @@ function codexThreadRuntimeParams(input: {
       ...(input.threadId === null
         ? {}
         : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
+      ...Object.fromEntries(
+        Object.entries(ProviderAdapter.gitAuthorEnvironment(input.runtimePolicy)).map(
+          ([name, value]) => [`shell_environment_policy.set.${name}`, value],
+        ),
+      ),
       ...(t3Server === undefined
         ? {}
         : {
