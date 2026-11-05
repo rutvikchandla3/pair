@@ -230,6 +230,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamRemove]: "team",
   [WS_METHODS.teamUpdateSelf]: "team",
   [WS_METHODS.teamProviderAccountsMutate]: "team",
+  [WS_METHODS.presenceSubscribe]: "presence",
+  [WS_METHODS.presenceReport]: "presence",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";
