@@ -50,6 +50,7 @@ import {
   MemberLinkDialog,
 } from "./InviteMemberDialog";
 import { MemberAvatar } from "./MemberAvatar";
+import { ProviderAccountsSection } from "./ProviderAccountsSection";
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
@@ -75,6 +76,7 @@ export function TeamSettings() {
       ) : (
         <TeamMembersSection environmentId={environmentId} />
       )}
+      {environmentId === null ? null : <ProviderAccountsSection environmentId={environmentId} />}
     </SettingsPageContainer>
   );
 }

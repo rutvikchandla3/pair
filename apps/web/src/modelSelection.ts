@@ -3,6 +3,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  type MemberId,
   type ModelSelection,
   type ProjectId,
   ProviderDriverKind,
@@ -32,10 +33,14 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  getDefaultProviderInstanceModel,
+  isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
+  providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
 } from "./providerInstances";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 
@@ -422,4 +427,55 @@ export function resolveAppModelSelectionState(
   }
 
   return NO_PROVIDER_MODEL_SELECTION;
+}
+
+/**
+ * A new team thread defaults to the creator's own account: the resolved selection (carried,
+ * sticky, or the project default) moves to the viewer's enabled instance of the same driver.
+ * Another member's instance is never a default, so it falls back to the project default.
+ * Returns null when the selection stands; `memberId` is null outside team mode.
+ */
+export function resolveTeamNewThreadModelSelection(input: {
+  readonly selection: ModelSelection | null;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly settings: ServerSettings;
+  readonly projectId: ProjectId | null;
+  readonly memberId: MemberId | null;
+}): ModelSelection | null {
+  const { selection, providers, settings, memberId } = input;
+  if (memberId === null) return null;
+  const ownerOf = (instanceId: ProviderInstanceId) => providerInstanceOwner(settings, instanceId);
+  const isForeign = (instanceId: ProviderInstanceId) => {
+    const owner = ownerOf(instanceId);
+    return owner !== undefined && owner !== memberId;
+  };
+  const base =
+    selection !== null && !isForeign(selection.instanceId)
+      ? selection
+      : resolveProjectDefaultProviderModelSelection(
+          providers.filter((provider) => !isForeign(provider.instanceId)),
+          settings,
+          input.projectId,
+        );
+  if (base === null) return null;
+  const entries = providerInstanceEntriesFor(providers, settings, input.projectId);
+  const driver = entries.find((entry) => entry.instanceId === base.instanceId)?.driverKind;
+  const owned = entries.filter(
+    (entry) =>
+      entry.driverKind === driver &&
+      ownerOf(entry.instanceId) === memberId &&
+      entry.enabled &&
+      entry.isAvailable,
+  );
+  const own =
+    ownerOf(base.instanceId) === memberId
+      ? undefined
+      : (owned.find(isProviderInstancePickerReady) ?? owned[0]);
+  // With nothing chosen and nothing to swap, the composer resolves the default as it always has.
+  if (own === undefined) return base === selection || selection === null ? null : base;
+  if (own.models.some((model) => model.slug === base.model)) {
+    return { ...base, instanceId: own.instanceId };
+  }
+  const model = getDefaultProviderInstanceModel(providers, own.instanceId);
+  return model === undefined ? base : { instanceId: own.instanceId, model };
 }

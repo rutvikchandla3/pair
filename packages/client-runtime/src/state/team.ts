@@ -130,5 +130,9 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:update-self",
       tag: WS_METHODS.teamUpdateSelf,
     }),
+    mutateProviderAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:provider-accounts-mutate",
+      tag: WS_METHODS.teamProviderAccountsMutate,
+    }),
   };
 }

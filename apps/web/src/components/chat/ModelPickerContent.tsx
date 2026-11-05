@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type TeamMember,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
@@ -60,9 +61,12 @@ import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  isProviderInstanceSelectableBy,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { useTeamAttribution } from "../../state/team";
+import { setAddProviderAccountDialogOpen } from "../team/providerAccountDialogState";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
@@ -78,6 +82,7 @@ type ModelPickerItem = {
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   continuationGroupKey?: string | undefined;
+  owner?: Pick<TeamMember, "name" | "color"> | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
 };
@@ -373,13 +378,35 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     searchInputRef,
     keybindings: providedKeybindings,
     modelOptionsByInstance,
-    instanceEntries,
-    getModelDisabledReason,
     onInstanceModelChange,
     onToggleModel,
     onRequestClose,
     onOpenProviderSetup,
   } = props;
+  const navigate = useNavigate();
+  const team = useTeamAttribution(props.environmentId);
+  const viewer =
+    team.isTeamMode && team.currentMemberId !== null
+      ? { memberId: team.currentMemberId, currentInstanceId: props.activeInstanceId }
+      : null;
+  // Other members' accounts are left out, except the one this thread already runs on.
+  const instanceEntries =
+    viewer === null
+      ? props.instanceEntries
+      : props.instanceEntries.filter((entry) => isProviderInstanceSelectableBy(entry, viewer));
+  const foreignOwnerOf = (entry: ProviderInstanceEntry | undefined) =>
+    viewer !== null &&
+    entry?.ownerMemberId !== undefined &&
+    entry.ownerMemberId !== viewer.memberId
+      ? entry.ownerMemberId
+      : null;
+  const getModelDisabledReason = (instanceId: ProviderInstanceId, model: string) => {
+    const reason = props.getModelDisabledReason?.(instanceId, model) ?? null;
+    if (reason !== null) return reason;
+    const entry = instanceEntries.find((candidate) => candidate.instanceId === instanceId);
+    const owner = foreignOwnerOf(entry);
+    return owner === null ? null : `${entry?.displayName} belongs to ${team.nameOf(owner)}.`;
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
@@ -485,7 +512,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     instanceId: ProviderInstanceId,
     additive = false,
   ): string | null => {
-    if (getModelDisabledReason?.(instanceId, modelSlug)) {
+    if (getModelDisabledReason(instanceId, modelSlug)) {
       return null;
     }
     const options = modelOptionsByInstance.get(instanceId);
@@ -577,6 +604,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
+          ...(viewer !== null && entry.ownerMemberId !== undefined
+            ? { owner: team.members.get(entry.ownerMemberId) }
+            : {}),
         });
       }
     }
@@ -622,7 +652,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return disabled;
   })();
   const sidebarInstanceEntries = (() => {
-    const enabledEntries = instanceEntries.filter(isProviderInstancePickerVisible);
+    const enabledEntries = instanceEntries.filter((entry) =>
+      isProviderInstancePickerVisible(entry, viewer),
+    );
     if (!isLocked) {
       return enabledEntries;
     }
@@ -734,7 +766,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   });
 
   const modelJumpModelKeys = visibleModels
-    .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
+    .filter((model) => !getModelDisabledReason(model.instanceId, model.slug))
     .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
     .map((model) => modelPickerModelKey(model.instanceId, model.slug));
   const allItemKeys = ((): string[] => [
@@ -1032,8 +1064,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (!model) {
                   return null;
                 }
-                const disabledReason =
-                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const disabledReason = getModelDisabledReason(model.instanceId, model.slug);
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1059,6 +1090,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                     disabledReason={disabledReason}
+                    owner={model.owner}
                     onToggleFavorite={toggleFavorite}
                   />
                 );
@@ -1075,6 +1107,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onRequestClose={onRequestClose}
               onOpenProviderSetup={onOpenProviderSetup}
             />
+            {viewer === null ? null : (
+              <p className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug">
+                <InlineButton
+                  onClick={() => {
+                    onRequestClose?.();
+                    setAddProviderAccountDialogOpen(true);
+                    void navigate({ to: "/settings/team" });
+                  }}
+                >
+                  Add your own account…
+                </InlineButton>
+              </p>
+            )}
             {props.listFooter}
           </div>
         </Combobox>

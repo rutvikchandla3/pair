@@ -1,4 +1,8 @@
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type TeamMember,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
@@ -10,6 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { MemberAvatar } from "../team/MemberAvatar";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -32,6 +37,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
+  /** Whose own account this is, in team mode. */
+  owner?: Pick<TeamMember, "name" | "color"> | undefined;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
   const model = {
@@ -98,6 +105,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             Unavailable
           </Badge>
         ) : null}
+        {props.owner ? <MemberAvatar member={props.owner} size="sm" /> : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

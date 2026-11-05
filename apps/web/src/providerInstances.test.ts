@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  MemberId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,6 +14,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
@@ -159,6 +161,48 @@ describe("applyProviderInstanceSettings", () => {
 
     expect(codex?.enabled).toBe(true);
     expect(grok?.enabled).toBe(false);
+  });
+});
+
+describe("isProviderInstancePickerVisible", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const entries = applyProviderInstanceSettings(
+    deriveProviderInstanceEntries([
+      provider({ provider: claude, instanceId: "claudeAgent" }),
+      provider({ provider: claude, instanceId: "claude-alice" }),
+      provider({ provider: claude, instanceId: "claude-bob" }),
+    ]),
+    {
+      providerInstances: {
+        [ProviderInstanceId.make("claude-alice")]: { driver: claude, ownerMemberId: alice },
+        [ProviderInstanceId.make("claude-bob")]: { driver: claude, ownerMemberId: bob },
+      },
+      projectSettingsOverrides: {},
+    },
+    null,
+  );
+  const visibleTo = (viewer: Parameters<typeof isProviderInstancePickerVisible>[1]) =>
+    entries.filter((entry) => isProviderInstancePickerVisible(entry, viewer)).map((e) => e.instanceId);
+
+  it.each([
+    ["solo, every instance", null, undefined, ["claudeAgent", "claude-alice", "claude-bob"]],
+    ["Alice, team and her own", alice, undefined, ["claudeAgent", "claude-alice"]],
+    ["Bob, team and his own", bob, undefined, ["claudeAgent", "claude-bob"]],
+    ["Alice on Bob's thread instance", alice, "claude-bob", ["claudeAgent", "claude-alice", "claude-bob"]],
+  ] as const)("shows %s", (_label, memberId, currentInstanceId, expected) => {
+    const viewer =
+      memberId === null
+        ? null
+        : {
+            memberId,
+            currentInstanceId:
+              currentInstanceId === undefined
+                ? undefined
+                : ProviderInstanceId.make(currentInstanceId),
+          };
+    expect(visibleTo(viewer)).toEqual(expected);
   });
 });
 

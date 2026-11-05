@@ -2,6 +2,8 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_SERVER_SETTINGS,
+  MemberId,
+  type ModelSelection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -28,6 +30,7 @@ import {
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
+  resolveTeamNewThreadModelSelection,
 } from "./modelSelection";
 
 function provider(input: {
@@ -1252,5 +1255,44 @@ describe("composer fallback to another instance of the same driver", () => {
 
     expect(selectedInstanceId).toBe(ProviderInstanceId.make("codex"));
     expect(state.modelOptions?.[selectedInstanceId]).toBeUndefined();
+  });
+});
+
+describe("resolveTeamNewThreadModelSelection", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const codex = ProviderDriverKind.make("codex");
+  const providers = [
+    provider({ instanceId: "claudeAgent", provider: claude, models: ["sonnet", "opus"] }),
+    provider({ instanceId: "claude_alice", provider: claude, models: ["sonnet", "opus"] }),
+    provider({ instanceId: "claude_bob", provider: claude, models: ["sonnet"] }),
+    provider({ instanceId: "codex", provider: codex, models: ["gpt-6"] }),
+  ];
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerInstances: {
+      [ProviderInstanceId.make("claude_alice")]: { driver: claude, ownerMemberId: alice },
+      [ProviderInstanceId.make("claude_bob")]: { driver: claude, ownerMemberId: bob },
+    },
+  };
+  const pick = (instanceId: string, model: string): ModelSelection => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    model,
+  });
+
+  it.each([
+    ["solo leaves the selection", null, pick("claude_bob", "sonnet"), null],
+    ["swaps the team default to her own", alice, null, pick("claude_alice", "sonnet")],
+    ["swaps a sticky team pick, keeping the model", alice, pick("claudeAgent", "opus"), pick("claude_alice", "opus")],
+    ["does not swap across drivers", alice, pick("codex", "gpt-6"), null],
+    ["keeps her own pick", alice, pick("claude_alice", "opus"), null],
+    ["leaves the team default to someone without an account", MemberId.make("member-carol"), null, null],
+    ["drops someone else's sticky pick for the project default", MemberId.make("member-carol"), pick("claude_bob", "sonnet"), pick("claudeAgent", "sonnet")],
+    ["drops someone else's carried pick, then swaps", alice, pick("claude_bob", "sonnet"), pick("claude_alice", "sonnet")],
+  ] as const)("%s", (_label, memberId, selection, expected) => {
+    expect(
+      resolveTeamNewThreadModelSelection({ selection, providers, settings, projectId: null, memberId }),
+    ).toEqual(expected);
   });
 });

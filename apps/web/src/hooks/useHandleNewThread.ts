@@ -46,6 +46,7 @@ import { getClientSettings } from "./useSettings";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
+import { resolveTeamNewThreadModelSelection } from "../modelSelection";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 interface NewThreadWorkspaceOptions {
@@ -168,14 +169,33 @@ export function createNewThreadHandler(router: AnyRouter) {
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;
     const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-    const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
-      resolveNewThreadModelSelectionOverride({
+    const teamMemberId = appAtomRegistry.get(teamEnvironment.isTeamModeAtom(projectRef.environmentId))
+      ? appAtomRegistry.get(teamEnvironment.currentMemberIdAtom(projectRef.environmentId))
+      : null;
+    // Runs after applyStickyState, so the draft's selection is the sticky one.
+    const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
+      const override = resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: projectDefaultModelSelection ?? null,
         carrySelection: carryModelSelection,
         carrySourceDraftId:
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
+      if (teamMemberId === null) return override;
+      const draft = getComposerDraft(destinationDraftId);
+      const sticky = draft?.activeProvider
+        ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+        : null;
+      return (
+        resolveTeamNewThreadModelSelection({
+          selection: override ?? sticky,
+          providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+          settings: targetServerSettings,
+          projectId: projectRef.projectId,
+          memberId: teamMemberId,
+        }) ?? override
+      );
+    };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
