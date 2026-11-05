@@ -3,6 +3,8 @@ import { vi } from "vite-plus/test";
 import {
   CommandId,
   EventId,
+  GuestMessageId,
+  GuestShareId,
   MemberId,
   MessageId,
   NodeId,
@@ -12,6 +14,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderTurnId,
+  RunId,
   RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
@@ -146,7 +149,7 @@ it.each([
       actorId: bob,
       context: { version: 1 as const, records: [], guest: { name: "Sam", text: "Hi" } },
     },
-    {},
+    { authorId: bob },
   ],
   [
     "first author",
@@ -694,5 +697,185 @@ it.effect.each([
       [message?.runId === runId ? "joined" : queued ? "queued" : "other", stopped],
       [testCase.outcome, false],
     );
+  }).pipe(Effect.provide("solo" in testCase ? layerSolo : layerTeam)),
+);
+
+type QueueAction = "cancel" | "edit" | "promote" | "reorder" | "start";
+const queueCommand = (
+  action: QueueAction,
+  threadId: ThreadId,
+  runId: RunId,
+  otherRunId: RunId,
+  activeRunId: RunId | undefined,
+  actorId: MemberId | null,
+): OrchestrationV2Command => {
+  const common = {
+    commandId: CommandId.make(`${action}:${threadId}`),
+    threadId,
+    ...(actorId === null ? {} : { actorId }),
+  };
+  switch (action) {
+    case "cancel":
+      return { ...common, type: "queued-run.cancel", runId };
+    case "edit":
+      return { ...common, type: "queued-run.edit", runId, text: "Edited" };
+    case "promote":
+      return {
+        ...common,
+        type: "queued-message.promote-to-steer",
+        queuedRunId: runId,
+        targetRunId: activeRunId ?? runId,
+      };
+    case "reorder":
+      return { ...common, type: "queued-run.reorder", runId, beforeRunId: otherRunId };
+    case "start":
+      return { ...common, type: "queued-run.start", runId };
+  }
+};
+
+it.effect.each([
+  { row: "Bob cancels Alice's queued run", action: "cancel", actor: bob, target: alice },
+  { row: "Bob edits Alice's queued text", action: "edit", actor: bob, target: alice },
+  { row: "Bob sends Alice's queued run now", action: "promote", actor: bob, target: alice },
+  { row: "Bob reorders Alice's queued run", action: "reorder", actor: bob, target: alice },
+  { row: "Bob starts Alice's queued run", action: "start", actor: bob, target: alice, idle: true },
+  { row: "owner Alice edits Bob's queued text", action: "edit", actor: alice, target: bob },
+  { row: "owner Alice cancels Bob's", action: "cancel", actor: alice, target: bob, allowed: true },
+  {
+    row: "owner Alice sends Bob's now",
+    action: "promote",
+    actor: alice,
+    target: bob,
+    allowed: true,
+  },
+  {
+    row: "owner Alice reorders Bob's",
+    action: "reorder",
+    actor: alice,
+    target: bob,
+    allowed: true,
+  },
+  { row: "Bob edits his own", action: "edit", actor: bob, target: bob, allowed: true },
+  { row: "Bob cancels his own", action: "cancel", actor: bob, target: bob, allowed: true },
+  { row: "Bob sends his own now", action: "promote", actor: bob, target: bob, allowed: true },
+  {
+    row: "Bob starts his own",
+    action: "start",
+    actor: bob,
+    target: bob,
+    idle: true,
+    allowed: true,
+  },
+  { row: "no actor edits Alice's", action: "edit", actor: null, target: alice, allowed: true },
+  { row: "a solo server", action: "edit", actor: bob, target: alice, solo: true, allowed: true },
+] as const)("queue control: $row", (testCase) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:queue-control:${testCase.row}`);
+    yield* createThread(threadId, { actorId: alice });
+    yield* send(threadId, `${threadId}:first`, {
+      dispatchMode: { type: "start_immediately" },
+      actorId: alice,
+    });
+    const activeRunId = yield* seedRunningTurn(threadId);
+    for (const author of [alice, bob]) {
+      yield* send(threadId, `${threadId}:${author}`, { actorId: author });
+    }
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    if ("idle" in testCase) {
+      // A stopped turn with its queue held, so a queued run can only start on demand.
+      const occurredAt = yield* DateTime.now;
+      yield* (yield* EventSink.EventSinkV2).write({
+        commandId: CommandId.make(`stopped:${threadId}`),
+        events: projection.runs.map((run) => ({
+          id: EventId.make(`stopped:${run.id}`),
+          type: "run.updated" as const,
+          threadId,
+          runId: run.id,
+          occurredAt,
+          payload:
+            run.id === activeRunId
+              ? { ...run, status: "interrupted" as const }
+              : { ...run, queueHeld: true },
+        })),
+      });
+    }
+    const [runId, otherRunId] = [testCase.target, testCase.target === alice ? bob : alice].map(
+      (author) =>
+        projection.messages.find((message) => message.id === `${threadId}:${author}`)!.runId!,
+    );
+    const command = queueCommand(
+      testCase.action,
+      threadId,
+      runId!,
+      otherRunId!,
+      "idle" in testCase ? undefined : activeRunId,
+      testCase.actor,
+    );
+    const outcome = yield* orchestrator.dispatch(command).pipe(
+      Effect.as("allowed"),
+      Effect.catchTags({
+        OrchestratorDispatchError: (error) => Effect.succeed(String(error.cause)),
+        OrchestratorCommandRejectedError: (error) => Effect.succeed(String(error.cause)),
+      }),
+    );
+    const starter = testCase.target.slice("member:".length);
+    assert.equal(
+      outcome,
+      "allowed" in testCase
+        ? "allowed"
+        : testCase.action === "edit"
+          ? `Only ${starter} can edit this queued message.`
+          : `Only ${starter} or the thread owner can change this queued message.`,
+    );
+  }).pipe(Effect.provide("solo" in testCase ? layerSolo : layerTeam)),
+);
+
+it.effect.each([
+  { row: "on a team, Bob sends it and can cancel it", sender: "bob", authorId: bob },
+  { row: "solo, the owner sends it", solo: true, sender: "the owner", authorId: undefined },
+] as const)("guest send: $row", (testCase) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:guest-send:${testCase.row}`);
+    const shareId = GuestShareId.make(`share:${threadId}`);
+    const guestMessageId = GuestMessageId.make(`guest:${threadId}`);
+    const actorId = "solo" in testCase ? alice : bob;
+    yield* createThread(threadId, { actorId: alice });
+    yield* send(threadId, `${threadId}:first`, { dispatchMode: { type: "defer_start" } });
+    const share = { commandId: CommandId.make(`share:${threadId}`), threadId, shareId };
+    yield* orchestrator.dispatch({
+      ...share,
+      type: "thread.guest-share.open",
+      host: "env.t3.test",
+      expiresAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 })),
+    });
+    yield* orchestrator.dispatch({
+      ...share,
+      commandId: CommandId.make(`redeem:${threadId}`),
+      type: "thread.guest-share.redeem",
+      guestName: "Sam",
+    });
+    yield* orchestrator.dispatch({
+      ...share,
+      commandId: CommandId.make(`submit:${threadId}`),
+      type: "thread.guest-message.submit",
+      guestMessageId,
+      text: "Why?",
+    });
+    yield* send(threadId, `${threadId}:guest`, { guestMessageId, actorId });
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const message = projection.messages.find((candidate) => candidate.id === `${threadId}:guest`);
+    assert.deepEqual(
+      [message?.text, message?.authorId],
+      [`Message from guest Sam, sent by ${testCase.sender}:\n\nWhy?`, testCase.authorId],
+    );
+    yield* orchestrator.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make(`cancel:${threadId}`),
+      threadId,
+      runId: message!.runId!,
+      actorId,
+    });
   }).pipe(Effect.provide("solo" in testCase ? layerSolo : layerTeam)),
 );

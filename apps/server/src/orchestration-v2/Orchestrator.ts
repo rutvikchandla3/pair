@@ -82,7 +82,7 @@ import {
   RUNTIME_MODE_LABELS,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { runStarterId } from "@t3tools/shared/threadCollaboration";
+import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollaboration";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -1377,6 +1377,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: row.id, cause })),
       );
     return withPersonalState(row, state ?? EMPTY_MEMBER_STATE);
+  });
+
+  /** On a team, a member's current name; nothing on a solo server or for an actorless command. */
+  const teamMemberName = Effect.fn("Orchestrator.teamMemberName")(function* (
+    memberId: MemberId | undefined,
+  ) {
+    if (memberId === undefined || Option.isNone(team)) return undefined;
+    if (!(yield* team.value.isTeamMode)) return undefined;
+    const member = (yield* Ref.get(team.value.members)).get(memberId);
+    return member?.removedAt === null ? member.name : "a former member";
+  });
+
+  /** Fails unless the command's actor may edit or otherwise change this queued run. */
+  const ensureMayChangeQueuedRun = Effect.fn("Orchestrator.ensureMayChangeQueuedRun")(function* (
+    command: {
+      readonly type: OrchestrationV2Command["type"];
+      readonly commandId: CommandId;
+      readonly actorId?: MemberId | undefined;
+    },
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+    run: Pick<OrchestrationV2Run, "userMessageId">,
+    action: "edit" | "control",
+  ) {
+    if (command.actorId === undefined || Option.isNone(team)) return;
+    const holderId = holderOf(projection.thread, team.value.ownerId);
+    const starterId = runStarterId({ run, messages: projection.messages, holderId });
+    const allowed = canChangeQueuedRun({
+      action,
+      actorId: command.actorId,
+      holderId,
+      starterId,
+      teamMode: yield* team.value.isTeamMode,
+    });
+    if (allowed) return;
+    const name = (yield* teamMemberName(starterId)) ?? "its author";
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause:
+        action === "edit"
+          ? `Only ${name} can edit this queued message.`
+          : `Only ${name} or the thread owner can change this queued message.`,
+    });
   });
 
   /**
@@ -3411,7 +3454,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const now = yield* DateTime.now;
-    const decided = decideGuestMessageSend({ thread, guestMessageId, now });
+    const senderName = yield* teamMemberName(command.actorId);
+    const decided = decideGuestMessageSend({
+      thread,
+      guestMessageId,
+      now,
+      ...(senderName === undefined ? {} : { senderName }),
+    });
     if (Result.isFailure(decided)) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3429,7 +3478,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: decided.success.thread,
     });
-    return decided.success;
+    return { ...decided.success, sentByMember: senderName !== undefined };
   });
 
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
@@ -10088,6 +10137,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${command.queuedRunId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "control");
     const queuedRootNode =
       queuedRun.rootNodeId === null
         ? undefined
@@ -10279,6 +10329,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, moving, "control");
     const movingMessage = projection.messages.find(
       (candidate) => candidate.id === moving.userMessageId,
     );
@@ -10366,6 +10417,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "control");
     const queuedMessage = projection.messages.find(
       (candidate) => candidate.id === queuedRun.userMessageId,
     );
@@ -10474,6 +10526,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "edit");
     const queuedMessage = projection.messages.find(
       (candidate) => candidate.id === queuedRun.userMessageId,
     );
@@ -13855,11 +13908,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.guestMessageId === undefined
             ? undefined
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+        const { actorId: _soloActorId, ...withoutActor } = command;
         const dispatched =
           guestSend === undefined
             ? withoutGuestAttribution(command)
             : {
-                ...command,
+                // On a team the sending member authors the guest's turn; solo stays authorless.
+                ...(guestSend.sentByMember ? command : withoutActor),
                 text: guestSend.text,
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
@@ -13965,6 +14020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause: "A queued user message can only be sent now while the thread is stopped.",
             });
           }
+          yield* ensureMayChangeQueuedRun(command, projection, selectedRun, "control");
         }
         const nextRun = selectedRun ?? queuedRunsInDeliveryOrder(projection)[0];
         if (
