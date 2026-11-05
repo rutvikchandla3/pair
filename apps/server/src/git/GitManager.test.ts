@@ -34,6 +34,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   GitCommandError,
+  MemberId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -60,10 +61,12 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import type * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as GitManager from "./GitManager.ts";
 
 /** A change request the fake host reports. Omitted fields read as an open, undated request. */
@@ -112,6 +115,7 @@ type FakeProviderCall =
       readonly baseRefName: string;
       readonly headSelector: string;
       readonly title: string;
+      readonly body: string;
     }
   | { readonly operation: "getChangeRequest"; readonly reference: string }
   | {
@@ -474,6 +478,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
+          body: NodeFS.readFileSync(input.bodyFile, "utf8"),
         }),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
@@ -600,6 +605,8 @@ function makeManager(input?: {
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
+  /** Members of a server team; without them the manager runs as the CLI does, with no team. */
+  team?: ReadonlyArray<Members.MemberRecord>;
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
@@ -712,6 +719,7 @@ function makeManager(input?: {
       },
     ),
     layerServerSettings,
+    input?.team === undefined ? Layer.empty : TeamState.layerTest(input.team),
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
     Layer.provideMerge(layerVcsDriver),
@@ -3312,6 +3320,84 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ),
         ).toBe(true);
       }),
+  );
+
+  const teamMember = (
+    name: string,
+    fields: Partial<Members.MemberRecord> = {},
+  ): Members.MemberRecord => ({
+    id: MemberId.make(`member-${name.toLowerCase()}`),
+    name,
+    role: "member",
+    gitName: null,
+    gitEmail: null,
+    isOwner: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: null,
+    removedAt: null,
+    ...fields,
+  });
+  const generatedPrBody = "## Summary\n- Add stacked git workflow\n\n## Testing\n- Not run";
+  const owner = teamMember("Ada", { role: "admin", isOwner: true });
+  const bob = teamMember("Bob", { gitEmail: "bob@example.com" });
+  const cleo = teamMember("Cleo");
+  it.effect.each([
+    {
+      name: "a team member with a git email authors the commit and is named on the PR",
+      team: [owner, bob, cleo],
+      actor: bob,
+      author: "Bob|bob@example.com",
+      body: `${generatedPrBody}\n\n---\nRequested by Bob via Pair`,
+    },
+    {
+      name: "a team member without a git email leaves the server author but is named on the PR",
+      team: [owner, bob, cleo],
+      actor: cleo,
+      author: "Test User|test@example.com",
+      body: `${generatedPrBody}\n\n---\nRequested by Cleo via Pair`,
+    },
+    {
+      name: "a solo server with no git identity commits and opens the PR as before",
+      team: [owner],
+      actor: owner,
+      author: "Test User|test@example.com",
+      body: generatedPrBody,
+    },
+    {
+      name: "a solo server with a git identity authors the commit without a PR footer",
+      team: [{ ...owner, gitName: "Ada Lovelace", gitEmail: "ada@example.com" }],
+      actor: owner,
+      author: "Ada Lovelace|ada@example.com",
+      body: generatedPrBody,
+    },
+  ])("$name", ({ team, actor, author, body }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/acting-member"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+      const { manager, providerCalls } = yield* makeManager({ team });
+
+      const result = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "commit_push_pr" },
+        { actorId: actor.id },
+      );
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--format=%an|%ae|%cn|%ce"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe(`${author}|Test User|test@example.com`);
+      expect(
+        providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.body] : [],
+        ),
+      ).toEqual([body]);
+    }),
   );
 
   it.effect("pushes existing commits without committing dirty worktree changes", () =>

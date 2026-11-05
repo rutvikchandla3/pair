@@ -40,6 +40,7 @@ export type TeamStreamEvent = typeof TeamStreamEvent.Type;
 export const TeamInviteInput = Schema.Struct({
   name: TrimmedNonEmptyString,
   role: MemberRole,
+  gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
   ttlMs: Schema.optionalKey(PositiveInt),
 });
 export type TeamInviteInput = typeof TeamInviteInput.Type;
@@ -47,10 +48,11 @@ export type TeamInviteInput = typeof TeamInviteInput.Type;
 export const TeamSignInLinkInput = Schema.Struct({ memberId: MemberId });
 export type TeamSignInLinkInput = typeof TeamSignInLinkInput.Type;
 
+/** A `null` git field clears it, so the member's commits fall back to the server identity. */
 export const TeamUpdateSelfInput = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
-  gitName: Schema.optionalKey(TrimmedNonEmptyString),
-  gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
+  gitName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  gitEmail: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type TeamUpdateSelfInput = typeof TeamUpdateSelfInput.Type;
 

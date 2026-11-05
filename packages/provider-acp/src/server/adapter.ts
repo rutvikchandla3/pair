@@ -878,6 +878,17 @@ function acpMcpContext(
   };
 }
 
+// The agent, its MCP bridge and the client terminals it runs commands in share one environment.
+function withGitAuthor(
+  context: AcpMcpContext,
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): AcpMcpContext {
+  const author = ProviderAdapter.gitAuthorEnvironment(runtimePolicy);
+  return Object.keys(author).length === 0
+    ? context
+    : { ...context, processEnvironment: { ...context.processEnvironment, ...author } };
+}
+
 function acpMcpActivation(context: AcpMcpContext) {
   return {
     mcpServers: context.servers,
@@ -1693,12 +1704,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
-  const readMcpContext = (threadId: ThreadId | null) =>
-    threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
-      : mcpSessions
-          .read(threadId)
-          .pipe(Effect.map((session) => acpMcpContext(session, self, flavor.mcpOverHttp)));
+  // The session's launch policy fixes the git author for its process; a new holder waits for relaunch.
+  const mcpContextReader =
+    (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+    (threadId: ThreadId | null) =>
+      (threadId === null
+        ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
+        : mcpSessions
+            .read(threadId)
+            .pipe(Effect.map((session) => acpMcpContext(session, self, flavor.mcpOverHttp)))
+      ).pipe(Effect.map((context) => withGitAuthor(context, runtimePolicy)));
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -1716,6 +1731,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const readMcpContext = mcpContextReader(input.runtimePolicy);
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);

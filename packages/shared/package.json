@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./productName": {
+      "types": "./src/productName.ts",
+      "import": "./src/productName.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

@@ -455,7 +455,7 @@ screenshots, logs, or bug reports.
 `t3 member` manages who can use a server, the same as **Settings → Team**:
 
 ```sh
-npx t3 member invite "Ada Lovelace" --role admin
+npx t3 member invite "Ada Lovelace" --role admin --git-email ada@example.com
 npx t3 member list
 npx t3 member signin-link "ada lovelace"
 npx t3 member remove "ada lovelace"
