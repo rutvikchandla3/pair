@@ -76,6 +76,17 @@ You are never notified about your own actions, or about a thread you're looking 
 On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
 opens it while signed out is asked to sign in, and lands on the thread afterwards.
 
+## See who's around
+
+Avatars show who else has a thread open: in the thread header, and on the thread's row in the
+sidebar. A **Bob is typing** line appears above the composer while someone types in that thread.
+You never see yourself, and a hidden tab or Settings open over a thread doesn't count as viewing
+it.
+
+Someone with no input for 10 minutes is **Away**: their avatar is hollow, and **Settings → Team**
+says **Away** instead of **Online**. Members who aren't connected show no status. Presence from
+the mobile app isn't shown yet.
+
 ## What is yours and what is shared
 
 Pins and their order, the order of your active threads, unread state, and snoozes are yours.

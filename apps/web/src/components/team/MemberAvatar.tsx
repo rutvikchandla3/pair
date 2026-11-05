@@ -19,22 +19,30 @@ function memberInitials(name: string): string {
 export function MemberAvatar({
   member,
   size = "md",
+  away = false,
   className,
 }: {
   readonly member: Pick<TeamMember, "name" | "color">;
   readonly size?: keyof typeof SIZE_CLASSNAMES;
+  /** Connected but without recent input: drawn hollow in the member's color. */
+  readonly away?: boolean;
   readonly className?: string;
 }) {
   return (
     <span
       role="img"
-      aria-label={member.name}
+      aria-label={away ? `${member.name} (away)` : member.name}
       className={cn(
-        "inline-flex shrink-0 select-none items-center justify-center rounded-full font-medium leading-none text-white",
+        "inline-flex shrink-0 select-none items-center justify-center rounded-full font-medium leading-none",
+        away ? "border-2 bg-background" : "text-white",
         SIZE_CLASSNAMES[size],
         className,
       )}
-      style={{ backgroundColor: member.color }}
+      style={
+        away
+          ? { borderColor: member.color, color: member.color }
+          : { backgroundColor: member.color }
+      }
     >
       <span aria-hidden>{memberInitials(member.name)}</span>
     </span>
