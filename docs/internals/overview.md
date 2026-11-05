@@ -33,6 +33,12 @@ Provider-specific behavior belongs behind an adapter. Orchestration works with n
 and events, so adding a provider should not require branches throughout the domain or clients.
 See [provider constraints](./providers.md).
 
+Presence (who is online, viewing or typing) lives in server memory per connection and is never
+event-sourced or persisted. It stays silent while nobody else is around: clients subscribe in team
+mode but send reports only while another member is connected, and the server resets a lone
+member's connections so stale state never reaches the next arrival. Keep both halves of that
+handshake when changing either side. See [presence](../../apps/server/src/team/Presence.ts).
+
 ## Settings ownership
 
 Client preferences stay in the current client; environment defaults and project overrides stay
