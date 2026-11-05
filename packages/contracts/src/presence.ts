@@ -4,6 +4,10 @@ import { MemberId, ThreadId } from "./baseSchemas.ts";
 
 export const PRESENCE_FLUSH_MS = 1_000;
 export const PRESENCE_TYPING_TTL_MS = 8_000;
+/** How often a client repeats `typing: true` while its user keeps typing. */
+export const PRESENCE_TYPING_REFRESH_MS = 5_000;
+/** A client reports `idle: true` after this long without input. */
+export const PRESENCE_IDLE_AFTER_MS = 600_000;
 
 export const PresenceStatus = Schema.Literals(["online", "away"]);
 export type PresenceStatus = typeof PresenceStatus.Type;
