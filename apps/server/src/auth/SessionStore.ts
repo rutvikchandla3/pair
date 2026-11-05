@@ -6,6 +6,7 @@ import {
   type AuthClientSession,
   type AuthEnvironmentScope,
   AuthWebSocketTicketUse,
+  type MemberId,
   RuntimeMode,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import * as Members from "../persistence/Members.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
@@ -55,6 +57,8 @@ export interface VerifiedSession {
   readonly client: AuthClientMetadata;
   readonly expiresAt?: DateTime.DateTime;
   readonly subject: string;
+  /** Null only on rows an older binary wrote; EnvironmentAuth resolves it. */
+  readonly memberId: MemberId | null;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
@@ -350,6 +354,30 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class MemberSessionsRevocationError extends Schema.TaggedError<MemberSessionsRevocationError>()(
+  "MemberSessionsRevocationError",
+  {
+    memberId: Schema.String,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the member's sessions.";
+  }
+}
+
+export class MemberSessionScopesUpdateError extends Schema.TaggedError<MemberSessionScopesUpdateError>()(
+  "MemberSessionScopesUpdateError",
+  {
+    memberId: Schema.String,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to update the member's session scopes.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -359,6 +387,8 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  MemberSessionsRevocationError,
+  MemberSessionScopesUpdateError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -373,7 +403,8 @@ export class SessionStore extends Context.Service<
   {
     readonly cookieName: string;
     readonly legacyCookieName: string | undefined;
-    readonly issue: (input?: {
+    readonly issue: (input: {
+      readonly memberId: MemberId;
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly method?: ServerAuthSessionMethod;
@@ -408,17 +439,33 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /**
+     * Completes when a live socket's session is revoked, its scopes change, or it expires without
+     * a renewal for its DPoP key. `scopes` are the ones the socket was authorized with.
+     */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
+      scopes?: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<void, SessionCredentialVerificationError>;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    /** Revokes the member's other sessions; never another member's. */
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
+      memberId: MemberId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly revokeForMember: (
+      memberId: MemberId,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, SessionCredentialInternalError>;
+    /** Live sockets on a changed session close, so their clients reconnect with the new scopes. */
+    readonly updateScopesForMember: (
+      memberId: MemberId,
+      transform: (
+        scopes: ReadonlyArray<AuthEnvironmentScope>,
+      ) => ReadonlyArray<AuthEnvironmentScope>,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
@@ -482,12 +529,24 @@ function toClientMetadata(record: {
   };
 }
 
-function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthClientSession {
+function toAuthClientSession(
+  input: Omit<AuthClientSession, "current" | "memberId"> & { readonly memberId: MemberId | null },
+): AuthClientSession {
+  const { memberId, ...session } = input;
   return {
-    ...input,
+    ...session,
+    ...(memberId === null ? {} : { memberId }),
     current: false,
   };
 }
+
+const sameScopes = (
+  left: ReadonlyArray<AuthEnvironmentScope>,
+  right: ReadonlyArray<AuthEnvironmentScope>,
+) =>
+  left.length === right.length &&
+  left.every((scope) => right.includes(scope)) &&
+  right.every((scope) => left.includes(scope));
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
@@ -495,6 +554,8 @@ const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
+  // The owner is immutable, so its id is read once.
+  const ownerId = (yield* (yield* Members.MemberRepository).getOwner()).id;
   const signer = yield* PayloadSigner.fromSecret(
     yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32),
   );
@@ -519,6 +580,7 @@ const make = Effect.gen(function* () {
       .createIfAbsent({
         sessionId: devAuth.sessionId,
         subject: "reusable-dev-token",
+        memberId: ownerId,
         scopes: AuthStandardClientScopes,
         method: "browser-session-cookie",
         client: {
@@ -569,6 +631,7 @@ const make = Effect.gen(function* () {
       toAuthClientSession({
         sessionId: row.value.sessionId,
         subject: row.value.subject,
+        memberId: row.value.memberId,
         scopes: row.value.scopes,
         method: row.value.method,
         client: toClientMetadata(row.value.client),
@@ -650,18 +713,18 @@ const make = Effect.gen(function* () {
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
+        milliseconds: Duration.toMillis(input.ttl ?? DEFAULT_SESSION_TTL),
       });
       const claims: SessionClaims = {
         v: 1,
         kind: "session",
         sid: sessionId,
-        sub: input?.subject ?? "browser",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
-        method: input?.method ?? "browser-session-cookie",
-        ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
-        ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
-        ...(input?.peerLink === true ? { plk: 1 as const } : {}),
+        sub: input.subject ?? "browser",
+        scopes: input.scopes ?? AuthStandardClientScopes,
+        method: input.method ?? "browser-session-cookie",
+        ...(input.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
+        ...(input.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
+        ...(input.peerLink === true ? { plk: 1 as const } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
@@ -681,10 +744,11 @@ const make = Effect.gen(function* () {
         ),
       );
       const signature = yield* signer.sign(encodedPayload);
-      const client = input?.client ?? createDefaultClientMetadata();
+      const client = input.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
         subject: claims.sub,
+        memberId: input.memberId,
         scopes: claims.scopes,
         method: claims.method,
         client: {
@@ -699,7 +763,7 @@ const make = Effect.gen(function* () {
         expiresAt,
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
-        input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
+        input.replaceSessionId !== undefined || input.replaceActiveForSubjectAndMethod
           ? authSessions.createReplacingActive({
               session: sessionRecord,
               revokedAt: issuedAt,
@@ -727,6 +791,7 @@ const make = Effect.gen(function* () {
         toAuthClientSession({
           sessionId,
           subject: claims.sub,
+          memberId: input.memberId,
           scopes: claims.scopes,
           method: claims.method,
           client,
@@ -784,6 +849,7 @@ const make = Effect.gen(function* () {
           client: toClientMetadata(row.value.client),
           expiresAt: row.value.expiresAt,
           subject: row.value.subject,
+          memberId: row.value.memberId,
           scopes: row.value.scopes,
         } satisfies VerifiedSession;
       }
@@ -840,6 +906,7 @@ const make = Effect.gen(function* () {
         client: toClientMetadata(row.value.client),
         expiresAt: expiresAt.value,
         subject: claims.sub,
+        memberId: row.value.memberId,
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
@@ -952,6 +1019,7 @@ const make = Effect.gen(function* () {
       client: toClientMetadata(row.value.client),
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
+      memberId: row.value.memberId,
       scopes: row.value.scopes,
       ...(claims.aud ? { audience: claims.aud } : {}),
       ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -971,6 +1039,7 @@ const make = Effect.gen(function* () {
         toAuthClientSession({
           sessionId: row.sessionId,
           subject: row.subject,
+          memberId: row.memberId,
           scopes: row.scopes,
           method: row.method,
           client: toClientMetadata(row.client),
@@ -1005,13 +1074,28 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const forgetRevoked = (sessionIds: ReadonlyArray<AuthSessionId>) =>
+    sessionIds.length === 0
+      ? Effect.void
+      : Ref.update(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          for (const sessionId of sessionIds) next.delete(sessionId);
+          return next;
+        }).pipe(
+          Effect.andThen(
+            Effect.forEach(sessionIds, emitRemoved, { concurrency: "unbounded", discard: true }),
+          ),
+        );
+
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
-  )(function* (sessionId) {
+  )(function* (sessionId, memberId) {
     const revokedAt = yield* DateTime.now;
     const revokedSessionIds = yield* authSessions
       .revokeAllExcept({
         currentSessionId: sessionId,
+        memberId,
+        includeUnassigned: memberId === ownerId,
         revokedAt,
       })
       .pipe(
@@ -1019,29 +1103,54 @@ const make = Effect.gen(function* () {
           (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
         ),
       );
-    if (revokedSessionIds.length > 0) {
-      yield* Ref.update(connectedSessionsRef, (current) => {
-        const next = new Map(current);
-        for (const revokedSessionId of revokedSessionIds) {
-          next.delete(revokedSessionId);
-        }
-        return next;
-      });
-      yield* Effect.forEach(
-        revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
-        {
-          concurrency: "unbounded",
-          discard: true,
-        },
-      );
-    }
+    yield* forgetRevoked(revokedSessionIds);
     return revokedSessionIds.length;
+  });
+
+  const revokeForMember: SessionStore["Service"]["revokeForMember"] = Effect.fn(
+    "SessionStore.revokeForMember",
+  )(function* (memberId) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeForMember({ memberId, revokedAt })
+      .pipe(Effect.mapError((cause) => new MemberSessionsRevocationError({ memberId, cause })));
+    yield* forgetRevoked(revokedSessionIds);
+    return revokedSessionIds;
+  });
+
+  const updateScopesForMember: SessionStore["Service"]["updateScopesForMember"] = Effect.fn(
+    "SessionStore.updateScopesForMember",
+  )(function* (memberId, transform) {
+    const changed = yield* authSessions
+      .updateScopesForMember(memberId, transform)
+      .pipe(Effect.mapError((cause) => new MemberSessionScopesUpdateError({ memberId, cause })));
+    const connectedSessions = yield* Ref.get(connectedSessionsRef);
+    yield* Effect.forEach(
+      changed,
+      (row) =>
+        emitUpsert(
+          toAuthClientSession({
+            sessionId: row.sessionId,
+            subject: row.subject,
+            memberId: row.memberId,
+            scopes: row.scopes,
+            method: row.method,
+            client: toClientMetadata(row.client),
+            issuedAt: row.issuedAt,
+            expiresAt: row.expiresAt,
+            lastConnectedAt: row.lastConnectedAt,
+            connected: connectedSessions.has(row.sessionId),
+          }),
+        ),
+      { discard: true },
+    );
+    return changed.map((row) => row.sessionId);
   });
 
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
+    scopes?: ReadonlyArray<AuthEnvironmentScope>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1057,24 +1166,41 @@ const make = Effect.gen(function* () {
             );
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
-        // Revoking any session the socket has used closes it. Events only wake this loop
-        // and the rows decide: revocations are written before they are published, and
-        // clientRemoved also reports an expired session losing its last socket.
-        const chain = [sessionId];
-        const nextRemoval = Effect.gen(function* () {
+        // Revoking any session the socket has used, or changing its scopes, closes it. Events
+        // only wake this loop and the rows decide: writes happen before they are published, and
+        // clientRemoved also reports an expired session losing its last socket. Each link keeps
+        // the scopes it had when the socket adopted it, so a wider renewal is not a change.
+        const socketScopes = scopes ?? original.value.scopes;
+        const chain = [{ sessionId, scopes: socketScopes }];
+        const linkOf = (id: AuthSessionId) => chain.find((link) => link.sessionId === id);
+        const nextWake = Effect.gen(function* () {
           while (true) {
             const change = yield* PubSub.take(subscription);
-            if (change.type === "clientRemoved" && chain.includes(change.sessionId)) return;
+            if (change.type === "clientRemoved") {
+              if (linkOf(change.sessionId)) return;
+              continue;
+            }
+            const link = linkOf(change.clientSession.sessionId);
+            if (link && !sameScopes(link.scopes, change.clientSession.scopes)) return;
           }
         });
         let current = original.value;
         while (true) {
-          const rows = yield* Effect.forEach(chain, readRow);
-          if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          const rows = yield* Effect.forEach(chain, (link) => readRow(link.sessionId));
+          if (
+            rows.some(
+              (row, index) =>
+                Option.isNone(row) ||
+                row.value.revokedAt !== null ||
+                !sameScopes(row.value.scopes, chain[index]!.scopes),
+            )
+          ) {
+            return;
+          }
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            yield* Effect.raceFirst(nextWake, Effect.sleep(Duration.millis(remaining)));
             continue;
           }
           const successorId =
@@ -1087,11 +1213,12 @@ const make = Effect.gen(function* () {
           if (
             Option.isNone(successor) ||
             successor.value.subject !== original.value.subject ||
-            !original.value.scopes.every((scope) => successor.value.scopes.includes(scope))
+            successor.value.memberId !== original.value.memberId ||
+            !socketScopes.every((scope) => successor.value.scopes.includes(scope))
           ) {
             return;
           }
-          chain.push(successorId);
+          chain.push({ sessionId: successorId, scopes: successor.value.scopes });
           current = successor.value;
         }
       }),
@@ -1112,9 +1239,14 @@ const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    revokeForMember,
+    updateScopesForMember,
     markConnected,
     markDisconnected,
   });
 });
 
-export const layer = Layer.effect(SessionStore, make).pipe(Layer.provideMerge(AuthSessions.layer));
+export const layer = Layer.effect(SessionStore, make).pipe(
+  Layer.provideMerge(AuthSessions.layer),
+  Layer.provideMerge(Members.layer),
+);

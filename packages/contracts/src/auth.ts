@@ -6,6 +6,7 @@ import {
   ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
+  MemberId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
@@ -267,6 +268,7 @@ export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
   ...authScopeResponseFields,
   subject: TrimmedNonEmptyString,
+  memberId: Schema.optionalKey(MemberId),
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
@@ -286,6 +288,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
+  memberId: Schema.optionalKey(MemberId),
   ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
@@ -397,6 +400,7 @@ export const AuthSessionState = Schema.Struct({
   permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+  memberId: Schema.optionalKey(MemberId),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
 

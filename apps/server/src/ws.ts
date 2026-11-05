@@ -27,8 +27,10 @@ import {
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
+  type MemberId,
   type ScheduledTaskListResult,
   AuthSessionId,
   ClientConnectionMethod,
@@ -127,6 +129,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamState from "./team/TeamState.ts";
 import {
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
@@ -687,6 +691,23 @@ function toAuthAccessStreamEvent(
         type: "clientRemoved",
         payload: { sessionId: change.sessionId },
       };
+  }
+}
+
+// Removals carry only an id, which reveals nothing, so they pass through.
+function isVisibleAccessChange(
+  change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
+  memberId: MemberId | undefined,
+  ownerId: MemberId,
+): boolean {
+  if (memberId === undefined) return true;
+  switch (change.type) {
+    case "pairingLinkUpserted":
+      return (change.pairingLink.memberId ?? ownerId) === memberId;
+    case "clientUpserted":
+      return (change.clientSession.memberId ?? ownerId) === memberId;
+    default:
+      return true;
   }
 }
 
@@ -1407,6 +1428,8 @@ export const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
+      const teamMembers = yield* TeamMembers.TeamMembers;
+      const teamState = yield* TeamState.TeamState;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1843,10 +1866,16 @@ export const layerWsRpc = (
         yield* providerRegistry.refreshInstance(input.instanceId);
         return { disabled: true } as const;
       });
+      // Without access:write, a session sees only its own member's devices and links.
+      const accessMemberId = currentSession.scopes.includes(AuthAccessWriteScope)
+        ? undefined
+        : currentSession.memberId;
       const loadAuthAccessSnapshot = () =>
         Effect.all({
-          pairingLinks: serverAuth.listPairingLinks(),
-          clientSessions: serverAuth.listClientSessions(currentSessionId),
+          pairingLinks: serverAuth.listPairingLinks(
+            accessMemberId === undefined ? undefined : { memberId: accessMemberId },
+          ),
+          clientSessions: serverAuth.listClientSessions(currentSessionId, accessMemberId),
         }).pipe(
           Effect.mapError(
             (error) =>
@@ -2315,6 +2344,14 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(guestShares.create(input)),
           ),
+        [WS_METHODS.teamSubscribe]: (_input) => teamMembers.streamChanges,
+        [WS_METHODS.teamInvite]: (input) => teamMembers.invite(input),
+        [WS_METHODS.teamSignInLink]: (input) => teamMembers.signInLink(input),
+        [WS_METHODS.teamUpdate]: (input) => teamMembers.update(input),
+        [WS_METHODS.teamSetRole]: (input) => teamMembers.setRole(input),
+        [WS_METHODS.teamRemove]: (input) => teamMembers.remove(input),
+        [WS_METHODS.teamUpdateSelf]: (input) =>
+          teamMembers.updateSelf(currentSession.memberId, input),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
@@ -3388,6 +3425,9 @@ export const layerWsRpc = (
               > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
 
               const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
+                Stream.filter((change) =>
+                  isVisibleAccessChange(change, accessMemberId, teamState.ownerId),
+                ),
                 Stream.mapEffect((change) =>
                   Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
                     Effect.map((revision) =>
@@ -3566,13 +3606,15 @@ export const layer = Layer.unwrap(
           () =>
             Effect.raceFirst(
               framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                Effect.as(HttpServerResponse.empty()),
-                Effect.catchTags({
-                  SessionCredentialVerificationError: (error) =>
-                    failEnvironmentInternal("internal_error", error),
-                }),
-              ),
+              sessions
+                .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+                .pipe(
+                  Effect.as(HttpServerResponse.empty()),
+                  Effect.catchTags({
+                    SessionCredentialVerificationError: (error) =>
+                      failEnvironmentInternal("internal_error", error),
+                  }),
+                ),
             ),
           () => sessions.markDisconnected(session.sessionId),
         );

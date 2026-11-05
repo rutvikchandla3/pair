@@ -5,6 +5,7 @@ import {
   AuthStandardClientScopes,
   type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
+  MemberId,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -23,7 +24,9 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Members from "../persistence/Members.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
@@ -43,10 +46,20 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
-const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
+interface Services {
+  readonly auth: EnvironmentAuth.EnvironmentAuth["Service"];
+  readonly members: Members.MemberRepository["Service"];
+  readonly teamState: TeamState.TeamState["Service"];
+}
+
+const makeLayerRoutes = (capture: (services: Services) => void) =>
   Layer.mergeAll(
     Layer.effectDiscard(
-      EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
+      Effect.all({
+        auth: EnvironmentAuth.EnvironmentAuth,
+        members: Members.MemberRepository,
+        teamState: TeamState.TeamState,
+      }).pipe(Effect.tap((services) => Effect.sync(() => capture(services)))),
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
@@ -90,14 +103,18 @@ const form = (body: Record<string, string>) => ({
 type Handler = (request: Request) => Effect.Effect<Response>;
 
 const withRoutes = <A, E>(
-  use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  use: (
+    handler: Handler,
+    auth: EnvironmentAuth.EnvironmentAuth["Service"],
+    services: Services,
+  ) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
     const context = Context.make(SecureRandom.SecureRandom, random);
-    let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
-    const layerRoutes = makeLayerRoutes((auth) => {
-      routerAuth = auth;
+    let routerServices: Services | undefined;
+    const layerRoutes = makeLayerRoutes((services) => {
+      routerServices = services;
     });
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
@@ -105,7 +122,7 @@ const withRoutes = <A, E>(
         Effect.gen(function* () {
           const handler: Handler = (request) => Effect.promise(() => web.handler(request, context));
           yield* handler(at("/.well-known/oauth-authorization-server"));
-          return yield* use(handler, routerAuth!);
+          return yield* use(handler, routerServices!.auth, routerServices!);
         }),
       (web) => Effect.promise(() => web.dispose()),
     );
@@ -578,6 +595,84 @@ it.live("one-click approves only access the browser session holds the scopes for
         reader,
       );
       expect(new URL(readOnly.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+    }),
+  ),
+);
+
+it.live("issues each MCP client session to the member who approved it", () =>
+  withRoutes((handler, auth, { members, teamState }) =>
+    Effect.gen(function* () {
+      const addMember = (name: string) =>
+        Effect.gen(function* () {
+          const id = MemberId.make(`member-${name}`);
+          yield* members.insert({
+            id,
+            name,
+            role: "member",
+            gitName: null,
+            gitEmail: null,
+            createdAt: "2026-09-01T00:00:00.000Z",
+          });
+          yield* teamState.reload;
+          return id;
+        });
+      const clientId = yield* registeredClientId(handler);
+      const params = authorizeParams(clientId);
+      const approveAndExchange = (decision: Record<string, string>, cookie?: string) =>
+        Effect.gen(function* () {
+          const approved = yield* decide(handler, params, decision, cookie);
+          const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+          const response = yield* handler(
+            at(
+              "/oauth/mcp/token",
+              form({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: params.redirect_uri,
+                client_id: clientId,
+                code_verifier: verifier,
+                resource: `${ORIGIN}/mcp`,
+              }),
+            ),
+          );
+          const { access_token } = yield* json<{ access_token: string }>(response);
+          const client = yield* auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(
+              at("/mcp", { headers: { authorization: `Bearer ${access_token}` } }),
+            ),
+          );
+          const sessions = yield* auth.listSessions();
+          return sessions.find((session) => session.sessionId === client.sessionId)?.memberId;
+        });
+
+      const alice = yield* addMember("alice");
+      const aliceCode = yield* auth.issuePairingCredential({ memberId: alice });
+      expect(
+        yield* approveAndExchange({
+          _tag: "pairing-code",
+          access: "read-only",
+          code: aliceCode.credential,
+        }),
+      ).toBe(alice);
+
+      const bob = yield* addMember("bob");
+      const bobPairing = yield* auth.issuePairingCredential({
+        memberId: bob,
+        scopes: ["access:write", "orchestration:read"],
+      });
+      const browser = yield* handler(
+        postJson("/api/auth/browser-session", { credential: bobPairing.credential }),
+      );
+      const bobCookie = browser.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+      const { csrfToken } = yield* handler(postJson("/oauth/mcp/approval", params, bobCookie)).pipe(
+        Effect.flatMap(json<{ csrfToken: string }>),
+      );
+      expect(
+        yield* approveAndExchange(
+          { _tag: "browser-session", access: "read-only", csrfToken },
+          bobCookie,
+        ),
+      ).toBe(bob);
     }),
   ),
 );

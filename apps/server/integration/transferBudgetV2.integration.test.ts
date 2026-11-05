@@ -9,6 +9,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   AuthSessionId,
+  MemberId,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   EnvironmentId,
@@ -161,6 +162,7 @@ const layerAuth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("transfer-session"),
       subject: "transfer-test",
+      memberId: MemberId.make("member-test"),
       method: "browser-session-cookie",
       scopes: new Set([AuthOrchestrationReadScope]),
     }),

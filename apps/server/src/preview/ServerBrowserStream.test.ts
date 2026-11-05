@@ -7,6 +7,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSessionId,
+  MemberId,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
   type AuthEnvironmentScope,
@@ -40,6 +41,7 @@ const makeAuth = (
         : Effect.succeed({
             sessionId: AuthSessionId.make("stream-test"),
             subject: "stream-test",
+            memberId: MemberId.make("member-test"),
             method: "bearer-access-token",
             scopes,
           });

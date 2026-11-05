@@ -4,6 +4,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  MemberId,
   type AuthBrowserSessionRequest,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -54,6 +55,7 @@ const authenticatedAuth: Context.Service.Shape<typeof EnvironmentAuthenticatedAu
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("test-session"),
       subject: "test-client",
+      memberId: MemberId.make("test-member"),
       method: "browser-session-cookie",
       scopes: new Set<AuthEnvironmentScope>(),
       expiresAt: DateTime.makeUnsafe("2026-05-01T12:00:00.000Z"),

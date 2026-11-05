@@ -45,6 +45,7 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  type MemberId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -376,6 +377,7 @@ const EnvironmentProjectMutationErrors = [
 export interface EnvironmentSessionPrincipalShape {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
+  readonly memberId: MemberId;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlySet<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;

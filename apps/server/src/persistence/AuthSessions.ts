@@ -10,7 +10,9 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
+  type AuthEnvironmentScope,
   AuthSessionId,
+  MemberId,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -34,6 +36,7 @@ export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRe
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
+  memberId: Schema.NullOr(MemberId),
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
@@ -47,6 +50,7 @@ export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 export const CreateAuthSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
+  memberId: MemberId,
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
@@ -82,9 +86,18 @@ export type RevokeAuthSessionInput = typeof RevokeAuthSessionInput.Type;
 
 export const RevokeOtherAuthSessionsInput = Schema.Struct({
   currentSessionId: AuthSessionId,
+  memberId: MemberId,
+  /** Rows an older binary wrote without a member belong to the owner. */
+  includeUnassigned: Schema.Boolean,
   revokedAt: Schema.DateTimeUtcFromString,
 });
 export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.Type;
+
+export const RevokeMemberAuthSessionsInput = Schema.Struct({
+  memberId: MemberId,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeMemberAuthSessionsInput = typeof RevokeMemberAuthSessionsInput.Type;
 
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
@@ -116,6 +129,16 @@ export class AuthSessionRepository extends Context.Service<
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly revokeForMember: (
+      input: RevokeMemberAuthSessionsInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    /** Rewrites the scopes of the member's unrevoked sessions; returns only the rows that changed. */
+    readonly updateScopesForMember: (
+      memberId: MemberId,
+      transform: (
+        scopes: ReadonlyArray<AuthEnvironmentScope>,
+      ) => ReadonlyArray<AuthEnvironmentScope>,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionRecord>, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
@@ -125,6 +148,7 @@ export class AuthSessionRepository extends Context.Service<
 const AuthSessionDbRow = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
+  memberId: Schema.NullOr(MemberId),
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
   method: ServerAuthSessionMethod,
   clientLabel: Schema.NullOr(Schema.String),
@@ -142,6 +166,7 @@ const AuthSessionDbRow = Schema.Struct({
 const AuthSessionRawDbRow = Schema.Struct({
   sessionId: Schema.String,
   subject: Schema.Unknown,
+  memberId: Schema.Unknown,
   scopes: Schema.Unknown,
   method: Schema.Unknown,
   clientLabel: Schema.Unknown,
@@ -162,6 +187,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
   return {
     sessionId: row.sessionId,
     subject: row.subject,
+    memberId: row.memberId,
     scopes: row.scopes,
     method: row.method,
     client: {
@@ -206,6 +232,7 @@ export const make = Effect.gen(function* () {
         INSERT INTO auth_sessions (
           session_id,
           subject,
+          member_id,
           scopes,
           method,
           client_label,
@@ -221,6 +248,7 @@ export const make = Effect.gen(function* () {
         VALUES (
           ${input.sessionId},
           ${input.subject},
+          ${input.memberId},
           ${JSON.stringify(input.scopes)},
           ${input.method},
           ${input.client.label},
@@ -247,6 +275,7 @@ export const make = Effect.gen(function* () {
         SELECT
           session_id AS "sessionId",
           subject AS "subject",
+          member_id AS "memberId",
           scopes AS "scopes",
           method AS "method",
           client_label AS "clientLabel",
@@ -291,6 +320,7 @@ export const make = Effect.gen(function* () {
         SELECT
           session_id AS "sessionId",
           subject AS "subject",
+          member_id AS "memberId",
           scopes AS "scopes",
           method AS "method",
           client_label AS "clientLabel",
@@ -307,6 +337,43 @@ export const make = Effect.gen(function* () {
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
         ORDER BY issued_at DESC, session_id DESC
+      `,
+  });
+
+  const listMemberSessionRows = SqlSchema.findAll({
+    Request: Schema.Struct({ memberId: MemberId }),
+    Result: AuthSessionRawDbRow,
+    execute: ({ memberId }) =>
+      sql`
+        SELECT
+          session_id AS "sessionId",
+          subject AS "subject",
+          member_id AS "memberId",
+          scopes AS "scopes",
+          method AS "method",
+          client_label AS "clientLabel",
+          client_ip_address AS "clientIpAddress",
+          client_user_agent AS "clientUserAgent",
+          client_device_type AS "clientDeviceType",
+          client_os AS "clientOs",
+          client_browser AS "clientBrowser",
+          issued_at AS "issuedAt",
+          expires_at AS "expiresAt",
+          last_connected_at AS "lastConnectedAt",
+          revoked_at AS "revokedAt"
+        FROM auth_sessions
+        WHERE member_id = ${memberId}
+          AND revoked_at IS NULL
+      `,
+  });
+
+  const setSessionScopesRow = SqlSchema.void({
+    Request: Schema.Struct({ sessionId: AuthSessionId, scopes: AuthEnvironmentScopes }),
+    execute: ({ sessionId, scopes }) =>
+      sql`
+        UPDATE auth_sessions
+        SET scopes = ${JSON.stringify(scopes)}
+        WHERE session_id = ${sessionId}
       `,
   });
 
@@ -337,11 +404,25 @@ export const make = Effect.gen(function* () {
   const revokeOtherSessionRows = SqlSchema.findAll({
     Request: RevokeOtherAuthSessionsInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ currentSessionId, revokedAt }) =>
+    execute: ({ currentSessionId, memberId, includeUnassigned, revokedAt }) =>
       sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE session_id <> ${currentSessionId}
+          AND (member_id = ${memberId}${includeUnassigned ? sql` OR member_id IS NULL` : sql``})
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokeMemberSessionRows = SqlSchema.findAll({
+    Request: RevokeMemberAuthSessionsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ memberId, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE member_id = ${memberId}
           AND revoked_at IS NULL
         RETURNING session_id AS "sessionId"
       `,
@@ -469,6 +550,50 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeForMember: AuthSessionRepository["Service"]["revokeForMember"] = (input) =>
+    revokeMemberSessionRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.revokeForMember:query",
+          "AuthSessionRepository.revokeForMember:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
+    );
+
+  const updateScopesForMember: AuthSessionRepository["Service"]["updateScopesForMember"] = (
+    memberId,
+    transform,
+  ) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* listMemberSessionRows({ memberId });
+          const changed: Array<AuthSessionRecord> = [];
+          for (const raw of rows) {
+            const record = toAuthSessionRecord(yield* decodeAuthSessionDbRow(raw));
+            const scopes = transform(record.scopes);
+            if (
+              scopes.length === record.scopes.length &&
+              scopes.every((scope) => record.scopes.includes(scope))
+            ) {
+              continue;
+            }
+            yield* setSessionScopesRow({ sessionId: record.sessionId, scopes });
+            changed.push({ ...record, scopes });
+          }
+          return changed;
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.updateScopesForMember:query",
+            "AuthSessionRepository.updateScopesForMember:decodeRows",
+          ),
+        ),
+      );
+
   const setLastConnectedAt: AuthSessionRepository["Service"]["setLastConnectedAt"] = (input) =>
     setLastConnectedAtRow(input).pipe(
       Effect.mapError(
@@ -488,6 +613,8 @@ export const make = Effect.gen(function* () {
     listActive,
     revoke,
     revokeAllExcept,
+    revokeForMember,
+    updateScopesForMember,
     setLastConnectedAt,
   } satisfies AuthSessionRepository["Service"];
 });
