@@ -3,24 +3,38 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { isTeamModeMembers } from "@t3tools/client-runtime/state/team";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MemberId,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import {
+  shouldNotifyMember,
+  type ThreadNotificationKind as RoutedNotificationKind,
+} from "@t3tools/shared/threadNotificationRouting";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
 import {
+  ArchiveIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   MessageCircleQuestionIcon,
+  MessageSquareIcon,
   ShieldQuestionIcon,
+  UserRoundCheckIcon,
 } from "lucide-react";
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { teamEnvironment } from "../state/team";
 import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
@@ -43,6 +57,21 @@ interface NotificationState extends ThreadNotificationObservation {
   readonly subagentRequest: PendingSubagentRequest | null;
   readonly thread: EnvironmentThreadShell;
   readonly status: SidebarThreadStatus;
+  /** Who archived it, when another member than the holder did; set when it leaves the list. */
+  readonly archivedBy: MemberId | null;
+}
+
+function routedKind(
+  kind: ThreadNotificationKind,
+  status: SidebarThreadStatus,
+): RoutedNotificationKind {
+  if (kind !== "input") return kind;
+  return status === "approval" ||
+    status === "limited" ||
+    status === "failed" ||
+    status === "request"
+    ? status
+    : "input";
 }
 
 type ToastId = ReturnType<typeof toastManager.add>;
@@ -51,7 +80,7 @@ interface WatchedEnvironment {
   unsubscribe: () => void;
   previous: Map<ThreadId, NotificationState>;
   reconnecting: boolean;
-  readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
+  readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId, NotificationState>>;
 }
 
 /**
@@ -111,6 +140,38 @@ export function startThreadNotifications(
     setNotificationBadge(0);
   };
 
+  // Attribution facts are absent when they are the holder, so each falls back to the holder.
+  const isRouted = (
+    environmentId: EnvironmentId,
+    state: NotificationState,
+    kind: ThreadNotificationKind,
+  ) => {
+    const members = registry.get(teamEnvironment.membersValueAtom(environmentId));
+    let serverOwnerId: MemberId | null = null;
+    for (const member of members.values()) if (member.isOwner) serverOwnerId = member.id;
+    const { thread } = state;
+    const ownerId = state.raw.ownerId ?? serverOwnerId;
+    return shouldNotifyMember(
+      {
+        kind: routedKind(kind, state.status),
+        actorId:
+          kind === "message"
+            ? (thread.latestUserMessageAuthorId ?? ownerId)
+            : kind === "assigned"
+              ? (thread.ownerUpdatedBy ?? ownerId)
+              : kind === "archived"
+                ? (state.archivedBy ?? ownerId)
+                : null,
+        prompterId: thread.latestRunAuthorId ?? ownerId,
+        ownerId,
+      },
+      {
+        memberId: registry.get(teamEnvironment.currentMemberIdAtom(environmentId)),
+        teamMode: isTeamModeMembers(members),
+      },
+    );
+  };
+
   const present = (
     environmentId: EnvironmentId,
     state: NotificationState,
@@ -128,23 +189,42 @@ export function startThreadNotifications(
       environmentId?: string;
       threadId?: string;
     };
+    const archiverName =
+      kind === "archived" && state.archivedBy !== null
+        ? (registry.get(teamEnvironment.membersValueAtom(environmentId)).get(state.archivedBy)
+            ?.name ?? "Former member")
+        : null;
     const title =
       kind === "completion"
         ? "Thread completed"
-        : status === "approval"
-          ? "Approval needed"
-          : status === "limited"
-            ? "Usage limit reached"
-            : status === "failed"
-              ? "Thread failed"
-              : status === "request"
-                ? "Guest request"
-                : "Input needed";
+        : kind === "message"
+          ? "New message"
+          : kind === "assigned"
+            ? "Assigned to you"
+            : kind === "archived"
+              ? `Archived by ${archiverName ?? "another member"}`
+              : status === "approval"
+                ? "Approval needed"
+                : status === "limited"
+                  ? "Usage limit reached"
+                  : status === "failed"
+                    ? "Thread failed"
+                    : status === "request"
+                      ? "Guest request"
+                      : "Input needed";
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
+      void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
         hasNotificationSound(getClientSettings().notificationMode),
       );
     }
+    // An archived thread is gone from the chat list; Settings → Archived shows it with Unarchive.
+    const open = () =>
+      kind === "archived"
+        ? router.navigate({ to: "/settings/archived" })
+        : router.navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId, threadId: thread.id },
+          });
     if (
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
@@ -154,7 +234,14 @@ export function startThreadNotifications(
       const toastKey = threadKey({ environmentId, threadId: thread.id });
       const toastId: ToastId = toastManager.add({
         onRemove: (): void => forgetToast(toastKey, toastId),
-        type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
+        type:
+          kind === "completion"
+            ? "success"
+            : kind === "message" || kind === "assigned" || kind === "archived"
+              ? "info"
+              : status === "failed"
+                ? "error"
+                : "warning",
         title,
         description: thread.title,
         data: {
@@ -162,6 +249,12 @@ export function startThreadNotifications(
           leadingIcon:
             kind === "completion" ? (
               <CircleCheckIcon aria-hidden className="size-4 text-success-foreground" />
+            ) : kind === "message" ? (
+              <MessageSquareIcon aria-hidden className="size-4 text-info-foreground" />
+            ) : kind === "assigned" ? (
+              <UserRoundCheckIcon aria-hidden className="size-4 text-info-foreground" />
+            ) : kind === "archived" ? (
+              <ArchiveIcon aria-hidden className="size-4 text-info-foreground" />
             ) : status === "approval" ? (
               <ShieldQuestionIcon aria-hidden className="size-4 text-warning-foreground" />
             ) : status === "limited" ? (
@@ -173,13 +266,10 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: "Open thread",
+          children: kind === "archived" ? "Open archive" : "Open thread",
           onClick: () => {
             toastManager.close(toastId);
-            void router.navigate({
-              to: "/$environmentId/$threadId",
-              params: { environmentId, threadId: thread.id },
-            });
+            void open();
           },
         },
       });
@@ -206,10 +296,7 @@ export function startThreadNotifications(
         notification.close();
         window.focus();
         void window.desktopBridge?.revealWindow().catch(() => undefined);
-        void router.navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: thread.id },
-        });
+        void open();
       });
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
@@ -220,6 +307,7 @@ export function startThreadNotifications(
     environmentId: EnvironmentId,
     entry: WatchedEnvironment,
     threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+    removedBy: ReadonlyMap<ThreadId, MemberId>,
   ) => {
     const previous = entry.previous;
     const next = new Map<ThreadId, NotificationState>();
@@ -262,7 +350,8 @@ export function startThreadNotifications(
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const settled = status === "ready" && thread.latestRun?.status === "completed";
-      const state = {
+      const messageAt = Date.parse(thread.latestUserAuthoredMessageAt ?? "");
+      const state: NotificationState = {
         raw: rawThread,
         subagentRequest,
         thread,
@@ -270,13 +359,22 @@ export function startThreadNotifications(
         attention,
         settled,
         completedAt: settled && Number.isFinite(completedAt) ? completedAt : null,
+        messageAt: Number.isFinite(messageAt) ? messageAt : null,
+        ownerId: rawThread.ownerId ?? null,
+        archivedBy: null,
       };
       next.set(thread.id, state);
       changed.push([prior, state]);
     }
+    const archived: Array<NotificationState> = [];
+    for (const [threadId, prior] of previous) {
+      const archivedBy = removedBy.get(threadId);
+      if (!next.has(threadId) && archivedBy !== undefined) archived.push({ ...prior, archivedBy });
+    }
     entry.reconnecting = false;
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
+    for (const prior of archived) entry.gate.archived(prior.thread.id, prior);
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
@@ -290,12 +388,12 @@ export function startThreadNotifications(
       previous: new Map(),
       reconnecting: false,
       unsubscribe: () => {},
-      gate: createThreadNotificationGate<ThreadId>((threadId, kind) => {
-        const state = entry.previous.get(threadId);
-        if (state) present(environmentId, state, kind);
+      gate: createThreadNotificationGate<ThreadId, NotificationState>((_threadId, kind, state) => {
+        if (isRouted(environmentId, state, kind)) present(environmentId, state, kind);
       }),
     };
     let threads: ReadonlyArray<OrchestrationV2ThreadShell> | null = null;
+    let removedBy: ReadonlyMap<ThreadId, MemberId> = new Map();
     const unsubscribeShell = registry.subscribe(
       environmentShell.stateValueAtom(environmentId),
       (shell) => {
@@ -303,8 +401,9 @@ export function startThreadNotifications(
           shell.status === "live" && Option.isSome(shell.snapshot)
             ? shell.snapshot.value.threads
             : null;
+        removedBy = shell.removedBy;
         if (threads !== null) {
-          observeThreads(environmentId, entry, threads);
+          observeThreads(environmentId, entry, threads, removedBy);
           return;
         }
         entry.reconnecting = true;
@@ -312,7 +411,7 @@ export function startThreadNotifications(
       { immediate: true },
     );
     const reobserve = () => {
-      if (threads !== null) observeThreads(environmentId, entry, threads);
+      if (threads !== null) observeThreads(environmentId, entry, threads, removedBy);
     };
     const unsubscribeRequests = registry.subscribe(
       environmentThreadShells.pendingSubagentRequestsAtom(environmentId),

@@ -24,6 +24,7 @@ import {
   omitIdleSubagentShells,
   omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
@@ -141,6 +142,20 @@ it.effect("coalesces a slow shell subscriber by identity and location in sequenc
 function shellFixture(overrides: Partial<OrchestrationV2ThreadShell>): OrchestrationV2ThreadShell {
   return { id: "thread-a", archivedAt: null, ...overrides } as OrchestrationV2ThreadShell;
 }
+
+it("removes an archived thread from the active list, naming another member who archived it", () => {
+  const archived = (archivedBy?: MemberId) =>
+    shellStreamItemFromThreadShell({
+      stored: { sequence: 4 } as Parameters<typeof shellStreamItemFromThreadShell>[0]["stored"],
+      shell: shellFixture({
+        archivedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
+        ...(archivedBy === undefined ? {} : { archivedBy }),
+      }),
+    });
+  const removed = { kind: "thread.removed", sequence: 4, location: "active", threadId: "thread-a" };
+  expect(archived(MemberId.make("bob"))).toEqual({ ...removed, archivedBy: "bob" });
+  expect(archived()).toEqual(removed);
+});
 
 describe("omitIdleSubagentShells", () => {
   const row = (

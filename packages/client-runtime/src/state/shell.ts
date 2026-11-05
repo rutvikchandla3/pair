@@ -1,6 +1,7 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
+  type MemberId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadShell,
@@ -54,9 +55,12 @@ export interface EnvironmentShellState {
   readonly generation: number;
   /** Sequences of the thread removals applied since the latest authoritative snapshot. */
   readonly removedAt: ReadonlyMap<ThreadId, number>;
+  /** Who archived each of those threads, when another member than the holder did. */
+  readonly removedBy: ReadonlyMap<ThreadId, MemberId>;
 }
 
 const EMPTY_REMOVALS: ReadonlyMap<ThreadId, number> = new Map();
+const EMPTY_REMOVERS: ReadonlyMap<ThreadId, MemberId> = new Map();
 // Shared by every shell state, so a rebuilt one never reuses a generation another already used.
 let lastShellGeneration = 0;
 
@@ -66,6 +70,7 @@ export const EMPTY_SHELL_STATE: EnvironmentShellState = {
   error: Option.none(),
   generation: 0,
   removedAt: EMPTY_REMOVALS,
+  removedBy: EMPTY_REMOVERS,
 };
 
 function shellStatusForSnapshot(
@@ -219,14 +224,32 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       if (deltas.length > 0 && Option.isSome(next.snapshot)) {
         let sequence = next.snapshot.value.snapshotSequence;
         let removedAt: Map<ThreadId, number> | undefined;
+        let removedBy: Map<ThreadId, MemberId> | undefined;
         for (const delta of deltas) {
           if (delta.sequence <= sequence) continue;
           switch (delta.kind) {
             case "thread.removed":
               removedAt ??= new Map(next.removedAt);
               removedAt.set(delta.threadId, delta.sequence);
+              if (
+                delta.archivedBy !== undefined ||
+                (removedBy ?? next.removedBy).has(delta.threadId)
+              ) {
+                removedBy ??= new Map(next.removedBy);
+                if (delta.archivedBy === undefined) removedBy.delete(delta.threadId);
+                else removedBy.set(delta.threadId, delta.archivedBy);
+              }
               break;
             case "thread.updated":
+              // A thread back in the list (unarchived) no longer reads as archived by someone.
+              if (
+                delta.location === "active" &&
+                (removedBy ?? next.removedBy).has(delta.thread.id)
+              ) {
+                removedBy ??= new Map(next.removedBy);
+                removedBy.delete(delta.thread.id);
+              }
+              break;
             case "project.updated":
             case "project.removed":
               break;
@@ -238,6 +261,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         next = {
           ...next,
           removedAt: removedAt ?? next.removedAt,
+          removedBy: removedBy ?? next.removedBy,
           snapshot: Option.some(applyShellStreamEvents(next.snapshot.value, deltas)),
           status: waiting ? "synchronizing" : "live",
           error: Option.none(),
@@ -274,6 +298,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         error: Option.none(),
         generation: authoritative ? ++lastShellGeneration : next.generation,
         removedAt: authoritative ? EMPTY_REMOVALS : next.removedAt,
+        removedBy: authoritative ? EMPTY_REMOVERS : next.removedBy,
       };
     }
     flushDeltas();

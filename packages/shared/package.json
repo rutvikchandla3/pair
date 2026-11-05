@@ -275,6 +275,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./threadNotificationRouting": {
+      "types": "./src/threadNotificationRouting.ts",
+      "import": "./src/threadNotificationRouting.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

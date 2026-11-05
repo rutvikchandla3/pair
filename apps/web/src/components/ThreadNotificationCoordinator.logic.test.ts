@@ -9,9 +9,11 @@ const working: ThreadNotificationObservation = {
   attention: null,
   settled: false,
   completedAt: null,
+  messageAt: null,
+  ownerId: null,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
-  attention: null,
+  ...working,
   settled: true,
   completedAt: at,
 });
@@ -19,7 +21,7 @@ const visible = { archived: false, quiet: false };
 
 function harness() {
   const notify = vi.fn();
-  const gate = createThreadNotificationGate<string>(notify);
+  const gate = createThreadNotificationGate<string>((key, kind) => notify(key, kind));
   let prior: ThreadNotificationObservation | undefined;
   const observe = (next: ThreadNotificationObservation, options = visible) => {
     gate.observe("thread", prior, next, options);
@@ -57,7 +59,7 @@ describe("createThreadNotificationGate", () => {
   it("notifies attention once and still notifies the subsequent completion", () => {
     const { notify, observe } = harness();
     observe(working);
-    const attention = { attention: "run-1:approval", settled: false, completedAt: null };
+    const attention = { ...working, attention: "run-1:approval" };
     observe(attention);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     observe({ ...attention });
@@ -74,7 +76,7 @@ describe("createThreadNotificationGate", () => {
     const { notify, observe } = harness();
     observe(working);
     observe(completed(1));
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ ...working, attention: "run-1:limited" });
     observe(completed(1));
     expect(notify.mock.calls).toEqual([
       ["thread", "completion"],
@@ -95,6 +97,30 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(4));
     expect(notify.mock.calls).toEqual([["thread", "completion"]]);
+  });
+
+  it("notifies a newer message and a holder change, never on first sighting or when archived", () => {
+    const { notify, observe } = harness();
+    observe({ ...working, messageAt: 1, ownerId: "alice" });
+    observe({ ...working, messageAt: 1, ownerId: "alice" });
+    expect(notify).not.toHaveBeenCalled();
+    observe({ ...working, messageAt: 2, ownerId: "alice" });
+    observe({ ...working, messageAt: 2, ownerId: "bob" });
+    observe({ ...working, messageAt: 2, ownerId: "bob" });
+    expect(notify.mock.calls).toEqual([
+      ["thread", "message"],
+      ["thread", "assigned"],
+    ]);
+    observe({ ...working, messageAt: 3, ownerId: "alice" }, { ...visible, archived: true });
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies an archive only for a thread it has seen", () => {
+    const { gate, notify } = harness();
+    gate.archived("thread", undefined);
+    expect(notify).not.toHaveBeenCalled();
+    gate.archived("thread", working);
+    expect(notify.mock.calls).toEqual([["thread", "archived"]]);
   });
 
   it("forgets handled completions when a thread is removed or the gate is cleared", () => {

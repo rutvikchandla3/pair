@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MemberId,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
@@ -250,6 +251,7 @@ describe("environment shell synchronization", () => {
           sequence: 52,
           location: "active",
           threadId: ThreadId.make("thread-0"),
+          archivedBy: MemberId.make("bob"),
         },
         {
           kind: "thread.removed",
@@ -261,6 +263,23 @@ describe("environment shell synchronization", () => {
       const removedState = Option.getOrThrow(yield* Fiber.join(removedObserved));
       expect(removedState.generation).toBe(states.at(-1)!.generation);
       expect([...removedState.removedAt]).toEqual([[ThreadId.make("thread-0"), 52]]);
+      expect([...removedState.removedBy]).toEqual([[ThreadId.make("thread-0"), "bob"]]);
+
+      // Unarchived, it is back in the list and no longer reads as archived by Bob.
+      const restoredObserved = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 53,
+        ),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Queue.offer(events, {
+        kind: "thread.updated",
+        sequence: 53,
+        location: "active",
+        thread: { ...v2ThreadShell, id: ThreadId.make("thread-0") },
+      });
+      expect(Option.getOrThrow(yield* Fiber.join(restoredObserved)).removedBy.size).toBe(0);
 
       // An authoritative snapshot resets even a higher live cursor in the same batch.
       const resetRow = { ...v2ThreadShell, id: ThreadId.make("reset-row") };
@@ -301,6 +320,7 @@ describe("environment shell synchronization", () => {
       expect(resetState.status).toBe("live");
       expect(resetState.generation).toBeGreaterThan(removedState.generation);
       expect(resetState.removedAt.size).toBe(0);
+      expect(resetState.removedBy.size).toBe(0);
       expect(Option.getOrThrow(resetState.snapshot).threads).toEqual([
         { ...resetRow, title: "After completion" },
       ]);
