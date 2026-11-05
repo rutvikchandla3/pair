@@ -234,7 +234,7 @@ function CreatedApiToken({
         },
         {
           what: "CLI command",
-          text: `T3CODE_URL=${mcpOrigin!.origin} T3CODE_TOKEN=… npx t3 thread start --project <project> "…"`,
+          text: `T3CODE_URL=${mcpOrigin!.origin} T3CODE_TOKEN=… npx t3 thread start <project> "…"`,
         },
       ]
     : [];

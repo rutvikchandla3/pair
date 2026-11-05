@@ -18,6 +18,7 @@ To use Pair on another device, choose **Add a device** on your own row. An admin
 **Sign-in link** for any member. Removing a member signs out all of their devices at once; their
 threads stay and can be assigned to someone else. The same actions are available from the
 command line: see [Team members from the command line](./remote-access.md#team-members-from-the-command-line).
+For scripts, CI and outside agents, create an [API token](./outside-agents.md#api-tokens) instead.
 
 ## Who did what
 

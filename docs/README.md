@@ -22,7 +22,7 @@
 - [Team](./user/team.md)
 - [Guest links](./user/guest-links.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
-- [Outside agents (MCP)](./user/outside-agents.md)
+- [Agents and automation (MCP, API tokens, scripts)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating Pair](./user/updating.md)
 - [Triage an issue](./user/triage.md)
