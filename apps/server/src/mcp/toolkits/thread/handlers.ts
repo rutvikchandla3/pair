@@ -17,8 +17,10 @@ import {
   newCommandId,
   readCaller,
   readThread,
+  sendActorId,
   unavailable,
 } from "../../threadAccess.ts";
+import * as TeamState from "../../../team/TeamState.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -294,11 +296,19 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesThread((input) =>
       Effect.gen(function* () {
         const runId = yield* required(input.queuedRunId, "queuedRunId");
+        const { scope, threads } = yield* readCaller();
+        const actorId = yield* sendActorId(
+          threads,
+          scope,
+          yield* Effect.serviceOption(TeamState.TeamState),
+        );
+        const actor = actorId === undefined ? {} : { actorId };
         switch (input.action) {
           case "edit": {
             const text = yield* required(input.text, "text");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
+              ...actor,
               type: "queued-run.edit",
               runId,
               text,
@@ -308,6 +318,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             const beforeRunId = yield* required(input.beforeRunId, "beforeRunId");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
+              ...actor,
               type: "queued-run.reorder",
               runId,
               beforeRunId,
@@ -317,6 +328,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             const targetRunId = yield* required(input.targetRunId, "targetRunId");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
+              ...actor,
               type: "queued-message.promote-to-steer",
               queuedRunId: runId,
               targetRunId,
@@ -325,6 +337,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           default:
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
+              ...actor,
               type: "queued-run.cancel",
               runId,
             }));
