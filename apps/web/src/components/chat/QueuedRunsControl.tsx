@@ -25,7 +25,15 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
@@ -37,6 +45,7 @@ import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { MessageAuthorChip } from "../team/MessageAuthorChip";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
@@ -130,10 +139,19 @@ export function QueuedRunsControl({
     projection === undefined
       ? null
       : queuedRunLock({ projection, run, members: team.members, me: team.currentMemberId });
+  const authorIdByMessageId = team.isTeamMode
+    ? new Map((projection?.messages ?? []).map((message) => [message.id, message.authorId]))
+    : null;
+  const teammateOf = (run: Pick<(typeof queued)[number]["run"], "userMessageId">) => {
+    const authorId = authorIdByMessageId?.get(run.userMessageId);
+    if (authorId === undefined || authorId === team.currentMemberId) return null;
+    return { member: team.members.get(authorId) ?? null, name: team.nameOf(authorId) };
+  };
   const items = [
     ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
       key: run.id,
       lock: lockOf(run),
+      author: teammateOf(run),
       message,
       runId: run.id,
       messageId: run.userMessageId,
@@ -154,6 +172,7 @@ export function QueuedRunsControl({
     ...optimisticQueued.map((message) => ({
       key: message.id,
       lock: null,
+      author: null,
       message: undefined,
       runId: null,
       messageId: null,
@@ -279,6 +298,7 @@ export function QueuedRunsControl({
               <QueuedMessage
                 environmentId={props.environmentId}
                 message={item.message}
+                author={item.author}
                 previewText={previewText}
                 thumbnails={item.thumbnails}
                 isEditing={isEditing}
@@ -426,6 +446,7 @@ type QueuedRunMessage = NonNullable<ThreadQueueProjection["messages"][number]>;
 function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage | undefined;
+  readonly author: ComponentProps<typeof MessageAuthorChip> | null;
   readonly previewText: string;
   readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
   readonly isEditing: boolean;
@@ -468,6 +489,9 @@ function QueuedMessage(props: {
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}
+      {props.author !== null && attribution === null ? (
+        <MessageAuthorChip {...props.author} />
+      ) : null}
       {/* Dashed and unfilled: a turn that has not been sent yet. */}
       <div
         className={cn(
