@@ -22,6 +22,8 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 export interface ThreadViewer {
   readonly memberId: MemberId;
   readonly serverOwnerId: MemberId;
+  /** More than one member has not been removed; read per request, as members change. */
+  readonly isTeamMode: Effect.Effect<boolean>;
   readonly readMemberStates: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<
@@ -32,17 +34,25 @@ export interface ThreadViewer {
 
 export const makeThreadViewers = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const { ownerId } = yield* TeamState.TeamState;
+  const { ownerId, isTeamMode } = yield* TeamState.TeamState;
   return (memberId: MemberId | undefined): ThreadViewer | null =>
     memberId === undefined
       ? null
       : {
           memberId,
           serverOwnerId: ownerId,
+          isTeamMode,
           readMemberStates: (threadIds) =>
             projections.getMemberStatesForThreads(memberId, threadIds),
         };
 });
+
+/** The viewer, in team mode only: whose own older settled threads reads count and filter. */
+export function olderSettledReaderOf(viewer: ThreadViewer | null): Effect.Effect<ThreadViewer | null> {
+  return viewer === null
+    ? Effect.succeed(null)
+    : Effect.map(viewer.isTeamMode, (team) => (team ? viewer : null));
+}
 
 /** Reads member rows only for threads the viewer does not hold, in one batch. */
 export function overlayForViewer<T extends PersonalStateCarrier>(

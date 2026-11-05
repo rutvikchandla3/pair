@@ -2249,12 +2249,14 @@ export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettle
 /**
  * Snapshots that leave out older settled threads (`omitOlderSettled`) name the cut and count, per
  * project, every thread `isOlderSettledThreadShell` matches, sent or not. `asOfSequence` is the
- * snapshot's own sequence: the counts are exact until a later change.
+ * snapshot's own sequence: the counts are exact until a later change. On a server with more than
+ * one member, `ownCounts` counts only the reading member's threads (no owner means the server owner).
  */
 export const OrchestrationV2OlderSettledThreads = Schema.Struct({
   before: IsoDateTime,
   asOfSequence: NonNegativeInt,
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  ownCounts: Schema.optionalKey(Schema.Array(OrchestrationV2OlderSettledCount)),
 });
 export type OrchestrationV2OlderSettledThreads = typeof OrchestrationV2OlderSettledThreads.Type;
 
@@ -3851,6 +3853,8 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
+  /** Only this member's threads (no owner means the server owner); ignored with one member. */
+  ownerId: Schema.optionalKey(MemberId),
 });
 export type OrchestrationV2GetOlderSettledThreadsInput =
   typeof OrchestrationV2GetOlderSettledThreadsInput.Type;
@@ -3864,6 +3868,8 @@ export const OrchestrationV2OlderSettledThreadsPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  /** As in `OrchestrationV2OlderSettledThreads`, for a `limit: 0` read. */
+  ownCounts: Schema.optionalKey(Schema.Array(OrchestrationV2OlderSettledCount)),
 });
 export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;
