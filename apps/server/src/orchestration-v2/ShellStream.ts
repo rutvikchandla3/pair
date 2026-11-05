@@ -732,6 +732,7 @@ export function shellStreamItemFromThreadShell(input: {
         sequence: input.stored.sequence,
         location: "active",
         threadId: input.shell.id,
+        ...(input.shell.archivedBy === undefined ? {} : { archivedBy: input.shell.archivedBy }),
       };
     }
     return {

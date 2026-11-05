@@ -4329,6 +4329,106 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("shells name another member's run, message and assignment, never the holder", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const alice = MemberId.make("member-alice");
+      const bob = MemberId.make("member-bob");
+      const at = DateTime.makeUnsafe("2026-10-01T01:00:00.000Z");
+      const prompt = (threadId: ThreadId, authorId: MemberId) =>
+        Effect.gen(function* () {
+          const runId = RunId.make(`${threadId}:run`);
+          const messageId = MessageId.make(`${threadId}:message`);
+          // Dispatch order: the run is created before its prompt message is written.
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:run`),
+            type: "run.created",
+            threadId,
+            runId,
+            nodeId: NodeId.make(`${threadId}:node`),
+            driver,
+            occurredAt: at,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: messageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "running",
+              requestedAt: at,
+              startedAt: at,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${threadId}:message`),
+            type: "message.updated",
+            threadId,
+            occurredAt: at,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              authorId,
+              id: messageId,
+              threadId,
+              runId,
+              nodeId: null,
+              role: "user",
+              text: "hello",
+              attachments: [],
+              streaming: false,
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
+        });
+      const shared = ThreadId.make("thread:attribution:shared");
+      const own = ThreadId.make("thread:attribution:own");
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${shared}:created`),
+        type: "thread.created",
+        threadId: shared,
+        occurredAt: at,
+        payload: { ...memberStateThread(shared, alice), ownerUpdatedBy: bob },
+      });
+      yield* createMemberStateThread(own, alice);
+      yield* prompt(shared, bob);
+      yield* prompt(own, alice);
+
+      const shells = (yield* projectionStore.getShellSnapshot()).threads;
+      const attribution = (threadId: ThreadId) => {
+        const shell = shells.find((thread) => thread.id === threadId);
+        return {
+          latestRunAuthorId: shell?.latestRunAuthorId,
+          latestUserMessageAuthorId: shell?.latestUserMessageAuthorId,
+          ownerUpdatedBy: shell?.ownerUpdatedBy,
+          archivedBy: shell?.archivedBy,
+        };
+      };
+      assert.deepEqual(attribution(shared), {
+        latestRunAuthorId: bob,
+        latestUserMessageAuthorId: bob,
+        ownerUpdatedBy: bob,
+        archivedBy: undefined,
+      });
+      const ownShell = shells.find((thread) => thread.id === own);
+      for (const key of [
+        "latestRunAuthorId",
+        "latestUserMessageAuthorId",
+        "ownerUpdatedBy",
+        "archivedBy",
+      ]) {
+        assert.notProperty(ownShell, key);
+      }
+    }),
+  );
+
   it.effect("shows the native goal of the active provider thread on the shell", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

@@ -668,6 +668,36 @@ it.effect("owner.set hands the holder's state to the new owner and back", () =>
   }).pipe(Effect.provide(layerTeam)),
 );
 
+it.effect("records who archived a thread only when it was not the holder", () =>
+  Effect.gen(function* () {
+    const owner = (yield* serverOwner)!;
+    yield* createThread;
+    const archive = (id: string, actorId: MemberId) =>
+      Effect.gen(function* () {
+        yield* dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(id),
+          threadId,
+          actorId,
+        });
+        return (yield* readState).row.archivedBy;
+      });
+    const unarchive = (id: string) =>
+      Effect.gen(function* () {
+        yield* dispatch({ type: "thread.unarchive", commandId: CommandId.make(id), threadId });
+        return (yield* readState).row.archivedBy;
+      });
+    assert.deepEqual(
+      [
+        yield* archive("bob-archive", bob),
+        yield* unarchive("unarchive-1"),
+        yield* archive("owner-archive", owner),
+      ],
+      [bob, undefined, undefined],
+    );
+  }).pipe(Effect.provide(layerTeam)),
+);
+
 it.effect("automatic settlement rejects a member change made after its snapshot", () =>
   Effect.gen(function* () {
     yield* createThread;
