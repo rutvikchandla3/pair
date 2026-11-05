@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -46,7 +47,7 @@ const alice = MemberId.make("member:alice");
 const bob = MemberId.make("member:bob");
 const memberRecord = (id: MemberId, isOwner: boolean): MemberRecord => ({
   id,
-  name: id,
+  name: id.slice("member:".length),
   role: isOwner ? "admin" : "member",
   gitName: null,
   gitEmail: null,
@@ -403,6 +404,188 @@ it.effect("owner rules for create, fork, side chat, delegated child and owner.se
     assert.isTrue(replayed.replayed);
     assert.equal(yield* owner(parentId), bob);
   }).pipe(Effect.provide(layerTest)),
+);
+
+const carol = MemberId.make("member:carol");
+const pullRequestKey = { host: "github.com", repository: "owner/repository", number: 7 };
+const linkPullRequest = (source: "manual" | "created" | "agent" | "stack") => ({
+  type: "thread.pull-request.link" as const,
+  ...pullRequestKey,
+  url: "https://github.com/owner/repository/pull/7",
+  source,
+});
+const unlinkPullRequest = { type: "thread.pull-request.unlink" as const, ...pullRequestKey };
+const lifecycleNotices = (threadId: ThreadId) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator.getThreadProjection(threadId),
+  ).pipe(
+    Effect.map((projection) =>
+      projection.turnItems.flatMap((item) =>
+        item.type === "system_notice" ? [[item.message, item.actorId, item.runId]] : [],
+      ),
+    ),
+  );
+
+it.effect.each([
+  {
+    row: "permissions",
+    command: { type: "thread.runtime-mode.set", runtimeMode: "auto" },
+    notice: "bob set permissions to Auto",
+  },
+  {
+    row: "unchanged permissions",
+    command: { type: "thread.runtime-mode.set", runtimeMode: "full-access" },
+    notice: null,
+  },
+  {
+    row: "interaction mode",
+    command: { type: "thread.interaction-mode.set", interactionMode: "plan" },
+    notice: null,
+  },
+  {
+    row: "take over",
+    command: { type: "thread.owner.set", ownerId: bob },
+    notice: "bob took over this thread",
+  },
+  {
+    row: "assign",
+    command: { type: "thread.owner.set", ownerId: bob },
+    actorId: alice,
+    notice: "alice assigned this thread to bob",
+  },
+  {
+    row: "assign to a removed member",
+    command: { type: "thread.owner.set", ownerId: carol },
+    notice: "bob assigned this thread to a former member",
+  },
+  { row: "unchanged owner", command: { type: "thread.owner.set", ownerId: alice }, notice: null },
+  { row: "archive", command: { type: "thread.archive" }, notice: "bob archived this thread" },
+  {
+    row: "archive by a removed member",
+    command: { type: "thread.archive" },
+    actorId: carol,
+    notice: "A former member archived this thread",
+  },
+  {
+    row: "archive with no actor",
+    command: { type: "thread.archive" },
+    actorId: null,
+    notice: null,
+  },
+  {
+    row: "archive on a solo server",
+    command: { type: "thread.archive" },
+    actorId: alice,
+    solo: true,
+    notice: null,
+  },
+  {
+    row: "unarchive",
+    setup: [{ type: "thread.archive" }],
+    command: { type: "thread.unarchive" },
+    notice: "bob unarchived this thread",
+  },
+  { row: "settle", command: { type: "thread.settle" }, notice: "bob settled this thread" },
+  {
+    row: "unsettle",
+    setup: [{ type: "thread.settle" }],
+    command: { type: "thread.unsettle" },
+    notice: "bob un-settled this thread",
+  },
+  { row: "unsettle an active thread", command: { type: "thread.unsettle" }, notice: null },
+  {
+    row: "rename",
+    command: { type: "thread.metadata.update", title: "Ship it" },
+    notice: "bob renamed this thread to “Ship it”",
+  },
+  {
+    row: "same title",
+    command: { type: "thread.metadata.update", title: "thread:notice:same title" },
+    notice: null,
+  },
+  { row: "manual link", command: linkPullRequest("manual"), notice: "bob linked PR #7" },
+  { row: "created link", command: linkPullRequest("created"), notice: "bob opened PR #7" },
+  { row: "agent link", command: linkPullRequest("agent"), notice: "bob linked PR #7" },
+  { row: "stack link", command: linkPullRequest("stack"), notice: null },
+  {
+    row: "link again",
+    setup: [linkPullRequest("manual")],
+    command: linkPullRequest("manual"),
+    notice: null,
+  },
+  {
+    row: "unlink",
+    setup: [linkPullRequest("manual")],
+    command: unlinkPullRequest,
+    notice: "bob unlinked PR #7",
+  },
+  {
+    row: "unlink a stack layer",
+    setup: [linkPullRequest("stack")],
+    command: unlinkPullRequest,
+    notice: null,
+  },
+] as const)("lifecycle notice: $row", (testCase) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:notice:${testCase.row}`);
+    yield* createThread(threadId, { actorId: alice });
+    const dispatch = (id: string, command: object, actorId?: MemberId) =>
+      orchestrator.dispatch({
+        ...command,
+        commandId: CommandId.make(`${threadId}:${id}`),
+        threadId,
+        ...(actorId === undefined ? {} : { actorId }),
+      } as OrchestrationV2ServerCommand);
+    for (const [index, step] of ("setup" in testCase ? testCase.setup : []).entries()) {
+      yield* dispatch(`setup:${index}`, step);
+    }
+    const actorId = "actorId" in testCase ? testCase.actorId : bob;
+    yield* dispatch("command", testCase.command, actorId ?? undefined);
+    assert.deepEqual(
+      yield* lifecycleNotices(threadId),
+      testCase.notice === null ? [] : [[testCase.notice, actorId, null]],
+    );
+  }).pipe(Effect.provide("solo" in testCase ? layerSolo : layerTeam)),
+);
+
+it.effect(
+  "a lifecycle notice keeps its place in the timeline when the run before it rolls back",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:notice-rollback");
+      yield* createThread(threadId, { actorId: alice });
+      yield* send(threadId, "notice-rollback-first", {
+        actorId: alice,
+        dispatchMode: { type: "start_immediately" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("notice-rollback-mode"),
+        threadId,
+        runtimeMode: "auto",
+        actorId: bob,
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      yield* (yield* ProjectionStore.ProjectionStoreV2).apply({
+        id: EventId.make("event:notice-rollback"),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "rolled_back", completedAt: now },
+      });
+      yield* send(threadId, "notice-rollback-second", { actorId: alice });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.visibleTurnItems.map(({ item }) =>
+          item.type === "user_message" ? item.messageId : item.type,
+        ),
+        ["system_notice", "notice-rollback-second"],
+      );
+    }).pipe(Effect.provide(layerTeam)),
 );
 
 /** Moves the thread's first run to a running provider turn that accepts steers. */

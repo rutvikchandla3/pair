@@ -12,7 +12,10 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
+import {
+  builtInSourceControlDefinitions,
+  canonicalizeGitCafePullRequestUrl,
+} from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   normalizeThreadPullRequestKey,
@@ -76,6 +79,7 @@ import {
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
+  RUNTIME_MODE_LABELS,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { runStarterId } from "@t3tools/shared/threadCollaboration";
@@ -1374,6 +1378,122 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     return withPersonalState(row, state ?? EMPTY_MEMBER_STATE);
   });
+
+  /**
+   * The quiet timeline row a member's change leaves on a team: a runless, persisted
+   * `system_notice` naming them. Nothing for a solo server, a command without an actor, or no
+   * change. The name is baked in so old clients and MCP reads show the sentence as is.
+   */
+  const emitLifecycleNotice = Effect.fn("Orchestrator.emitLifecycleNotice")(function* (
+    command: OrchestrationV2ServerCommand & { readonly actorId?: MemberId | undefined },
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    thread: OrchestrationV2AppThread,
+    sentence: ((actor: string, nameOf: (id: MemberId) => string) => string) | null,
+  ) {
+    const actorId = command.actorId;
+    if (sentence === null || actorId === undefined || Option.isNone(team)) return;
+    if (!(yield* team.value.isTeamMode)) return;
+    const members = yield* Ref.get(team.value.members);
+    const activeName = (id: MemberId) => {
+      const member = members.get(id);
+      return member?.removedAt === null ? member.name : undefined;
+    };
+    const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+      event.type === "turn-item.updated" && event.threadId === thread.id ? [event.payload] : [],
+    );
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.lifecycleNoticeTurnItem({ commandId: command.commandId }),
+        threadId: thread.id,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: sentence(
+          activeName(actorId) ?? "A former member",
+          (id) => activeName(id) ?? "a former member",
+        ),
+        actorId,
+      },
+    });
+  });
+
+  const lifecycleSentence = (
+    command: OrchestrationV2ServerCommand,
+    before: OrchestrationV2AppThread,
+    after: OrchestrationV2AppThread,
+  ): ((actor: string, nameOf: (id: MemberId) => string) => string) | null => {
+    const wasSettled = before.settledOverride === "settled" || before.settledAt !== null;
+    const pullRequest = (url: string, number: number) =>
+      `${builtInSourceControlDefinitions.findByChangeRequestUrl(url)?.changeRequest.shortLabel ?? "PR"} #${number}`;
+    switch (command.type) {
+      case "thread.runtime-mode.set":
+        return before.runtimeMode === after.runtimeMode
+          ? null
+          : (actor) => `${actor} set permissions to ${RUNTIME_MODE_LABELS[after.runtimeMode]}`;
+      case "thread.owner.set": {
+        const { ownerId, actorId } = command;
+        if (Option.isNone(serverOwnerId) || holderOf(before, serverOwnerId.value) === ownerId) {
+          return null;
+        }
+        return actorId === ownerId
+          ? (actor) => `${actor} took over this thread`
+          : (actor, nameOf) => `${actor} assigned this thread to ${nameOf(ownerId)}`;
+      }
+      case "thread.archive":
+        return (actor) => `${actor} archived this thread`;
+      case "thread.unarchive":
+        return (actor) => `${actor} unarchived this thread`;
+      case "thread.settle":
+        return wasSettled ? null : (actor) => `${actor} settled this thread`;
+      case "thread.unsettle":
+        return wasSettled ? (actor) => `${actor} un-settled this thread` : null;
+      case "thread.metadata.update": {
+        const { title } = command;
+        return title === undefined || title === before.title
+          ? null
+          : (actor) => `${actor} renamed this thread to “${title}”`;
+      }
+      case "thread.pull-request.link":
+        // Stack layers are discovered, not chosen, so they leave no row.
+        return after === before ||
+          command.source === "stack" ||
+          command.source === "stack-dismissed"
+          ? null
+          : (actor) =>
+              `${actor} ${command.source === "created" ? "opened" : "linked"} ${pullRequest(command.url, command.number)}`;
+      case "thread.pull-request.unlink": {
+        const key = normalizeThreadPullRequestKey(command);
+        const existing = threadPullRequestsOf(before).find((link) =>
+          threadPullRequestKeysEqual(link, key),
+        );
+        return existing === undefined ||
+          existing.source === "stack" ||
+          existing.source === "stack-dismissed"
+          ? null
+          : (actor) => `${actor} unlinked ${pullRequest(existing.url, command.number)}`;
+      }
+      default:
+        return null;
+    }
+  };
 
   /** A non-holder's event leaves the shared row as it is; the holder's writes `next` to the row. */
   const memberEventFields = (
@@ -4400,6 +4520,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    yield* emitLifecycleNotice(
+      command,
+      events,
+      updatedThread,
+      lifecycleSentence(command, thread, updatedThread),
+    );
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 

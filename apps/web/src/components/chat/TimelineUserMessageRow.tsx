@@ -255,7 +255,11 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
   return (
     <>
       {modelSwitch ? (
-        <ModelSwitchRow environmentId={ctx.activeThreadEnvironmentId} modelSwitch={modelSwitch} />
+        <ModelSwitchRow
+          environmentId={ctx.activeThreadEnvironmentId}
+          modelSwitch={modelSwitch}
+          authorId={row.message.authorId}
+        />
       ) : null}
       <UserMessageContent row={row} />
     </>
