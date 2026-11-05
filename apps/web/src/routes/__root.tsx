@@ -20,6 +20,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AssignThreadDialogHost } from "../components/team/AssignThreadDialog";
 import { TeamMembersWatch } from "../components/team/TeamMembersWatch";
+import { PrimarySignOutWatch } from "../components/auth/PrimarySignOutWatch";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
@@ -200,6 +201,7 @@ function RootRouteBranch() {
         hostedStatic={authGateState.status === "hosted-static"}
       >
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
+        {primaryEnvironmentAuthenticated ? <PrimarySignOutWatch /> : null}
         {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
           <DesktopWebLinkCoordinator />
         ) : null}
