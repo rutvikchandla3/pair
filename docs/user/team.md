@@ -41,6 +41,17 @@ the owner of the thread they came from.
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
 
+## See who's around
+
+Avatars show who else has a thread open: in the thread header, and on the thread's row in the
+sidebar. A **Bob is typing** line appears above the composer while someone types in that thread.
+You never see yourself, and a hidden tab or Settings open over a thread doesn't count as viewing
+it.
+
+Someone with no input for 10 minutes is **Away**: their avatar is hollow, and **Settings → Team**
+says **Away** instead of **Online**. Members who aren't connected show no status. Presence from
+the mobile app isn't shown yet.
+
 ## What is yours and what is shared
 
 Pins and their order, the order of your active threads, unread state, and snoozes are yours.
