@@ -60,6 +60,8 @@ export class TeamMembers extends Context.Service<
 
 const OWNER_PLACEHOLDER_NAME = "Admin";
 const GIT_NAME_TIMEOUT = Duration.seconds(5);
+// Invites travel through chat, so they outlive the 5-minute device pairing default.
+const MEMBER_LINK_TTL = Duration.hours(24);
 
 /** A hue from the id, so every client renders a member in the same color. */
 const memberColor = (id: MemberId): string => {
@@ -149,7 +151,7 @@ const make = Effect.gen(function* () {
         scopes: teamRoleScopes(record.role),
         subject: "one-time-token",
         label,
-        ...(ttlMs === undefined ? {} : { ttl: Duration.millis(ttlMs) }),
+        ttl: ttlMs === undefined ? MEMBER_LINK_TTL : Duration.millis(ttlMs),
       })
       .pipe(
         Effect.catchTags({

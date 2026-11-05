@@ -2,6 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ADMIN_SCOPES, MEMBER_SCOPES, MemberId, type TeamStreamEvent } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -86,6 +88,7 @@ it.layer(layerTeam)("TeamMembers", (it) => {
       );
       expect(link).toMatchObject({ memberId: invited.member.id, label: "Invite: Alice" });
       expect(link?.permissions).toEqual(MEMBER_SCOPES);
+      expect(Duration.toHours(DateTime.distance(link!.createdAt, link!.expiresAt))).toBe(24);
 
       const { session } = yield* signIn(invited.credential.credential);
       expect(session.memberId).toBe(invited.member.id);
