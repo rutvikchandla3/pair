@@ -1,15 +1,15 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "srgb:0.06667,0.06667,0.07451,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
           "image-name": "text.svg",
-          "name": "Text",
+          "name": "Mark",
           "position": {
-            "scale": 8.5,
+            "scale": 6.4,
             "translation-in-points": [0, 0]
           }
         }

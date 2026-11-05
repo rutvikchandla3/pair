@@ -86,7 +86,7 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
   {
     scope: AuthAccessReadScope,
     title: "View access",
-    description: "Inspect pairing links and authorized clients.",
+    description: "Inspect sign-in links and authorized clients.",
   },
   {
     scope: AuthAccessWriteScope,

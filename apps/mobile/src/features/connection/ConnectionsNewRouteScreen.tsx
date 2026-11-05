@@ -233,7 +233,7 @@ function PairingForm({
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
                 label="Code"
-                placeholder="Pairing code"
+                placeholder="Sign-in code"
                 returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}

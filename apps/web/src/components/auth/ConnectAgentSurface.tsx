@@ -238,7 +238,7 @@ export function ConnectAgentSurface() {
               disabled={pending !== null}
               nativeInput
               onChange={(event) => setPairingCode(event.currentTarget.value)}
-              placeholder="Paste a one-time pairing code"
+              placeholder="Paste a one-time sign-in code"
               spellCheck={false}
               value={pairingCode}
             />

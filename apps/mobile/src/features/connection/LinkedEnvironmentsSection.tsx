@@ -49,7 +49,7 @@ export function LinkedEnvironmentsSection(props: {
           const health = peerLinkHealth(link, now);
           const status =
             health.kind === "expired"
-              ? "Expired. Link it again with a new pairing code."
+              ? "Expired. Connect it again with a new sign-in code."
               : health.kind === "unreachable"
                 ? (health.detail ?? "Not answering right now.")
                 : health.kind === "failing"

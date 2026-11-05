@@ -1,19 +1,26 @@
-# T3 Code
+# Pair
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+Your team's coding agents, on one shared server.
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, and fx. If they're set up on your computer, T3 Code can control them.
+Pair is a fork of [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools, Inc., used under the MIT License.
 
-## "Wait, what are you selling me?"
+Pair is an "agent harness control surface". It runs the coding agents on your team's server and lets everyone control them from the web, desktop, and mobile apps.
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, and fx. If they're set up on the server, Pair can control them.
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+## What Pair adds
+
+Pair adds **Team** to T3 Code, so several people can share one server ([Team](./docs/user/team.md)):
+
+- **Members and roles.** Invite people from **Settings → Team**. Admins manage settings, providers and access; members start and prompt threads, approve requests, and use terminals and source control.
+- **Sign-in links.** Each invite is a one-time sign-in link. Members add their other devices with their own links, and removing a member signs out all of their devices.
+- **The Team shelf.** Threads other members own sit on a **Team** shelf in the sidebar, with the owner's avatar on each row.
+- **Assign to…** hands a thread over to another member, from the thread's menu or the command palette.
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, Antigravity, and fx. Install and authenticate at least one provider before use:
+> Pair currently supports Codex, Claude, Cursor, Grok Build, OpenCode, Antigravity, and fx. Install and authenticate at least one provider on the server before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
@@ -21,9 +28,42 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
-> - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the T3 Code server ([setup guide](./docs/user/providers-fx.md))
+> - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the Pair server ([setup guide](./docs/user/providers-fx.md))
 
-### Command line
+### Run Pair on your team server
+
+Pair runs from this repository on the team VM. `npx t3`, t3.codes downloads, package managers and the App Store and Play Store apps install upstream T3 Code, not Pair.
+
+1. Install [`vp`](#install-vp), then build:
+
+   ```bash
+   git clone https://github.com/rutvikchandla3/t3code.git pair
+   cd pair
+   vp i
+   vp run build
+   ```
+
+2. Turn off in-app updates, or an update installs upstream T3 Code over Pair. Write `/etc/t3code/policy.json`:
+
+   ```json
+   {
+     "schemaVersion": 1,
+     "organization": "Your team",
+     "limits": { "updates": { "mode": "off" } }
+   }
+   ```
+
+   Give desktop builds you hand to teammates the same policy. See [Managed policy](./docs/user/managed-policy.md).
+
+3. Start the server with `vp run start`. `node apps/server/dist/bin.mjs up` sets up remote access and the background service; the command is `t3` in the rest of the docs.
+
+To update Pair, pull this repository, rebuild, and restart the server.
+
+## Upstream T3 Code
+
+These install upstream T3 Code, which has no Team features. It can still connect to a Pair server.
+
+### Command line (upstream)
 
 ```bash
 curl -fsSL https://t3.codes/install.sh | sh
@@ -116,7 +156,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
+- [Run Pair as a background service](./docs/user/background-service.md)
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
@@ -124,7 +164,7 @@ Building from source? Start at [docs/internals/overview.md](./docs/internals/ove
 
 ### Install `vp`
 
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+Pair uses Vite+ so you'll need to install the global `vp` command-line tool.
 
 #### macOS / Linux
 

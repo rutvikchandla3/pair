@@ -434,9 +434,16 @@
       }
 
       #boot-shell-logo {
-        width: 64px;
-        height: 64px;
-        object-fit: contain;
+        width: 96px;
+        height: 96px;
+      }
+
+      #boot-shell-logo-accent {
+        fill: #0f9d8a;
+      }
+
+      html.dark #boot-shell-logo-accent {
+        fill: #2dd4bf;
       }
 
       /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
@@ -668,13 +675,16 @@
         white-space: nowrap;
       }
     </style>
-    <title>T3 Code (Beta)</title>
+    <title>Pair (Beta)</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="Pair splash screen">
+          <svg id="boot-shell-logo" viewBox="0 0 32 32" role="img" aria-label="Pair">
+            <path d="M4 4H20V10H10V20H4Z" fill="currentColor" />
+            <path id="boot-shell-logo-accent" d="M28 28H12V22H22V12H28Z" />
+          </svg>
         </div>
       </div>
     </div>
