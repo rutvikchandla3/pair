@@ -491,11 +491,15 @@ const CODEX_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy
   interactionMode: "default",
   cwd: "/workspace",
 });
-const T3_THREAD_ENV_KEY = "shell_environment_policy.set.T3CODE_THREAD_ID";
+const SHELL_ENV_PREFIX = "shell_environment_policy.set.";
 const threadEnvOf = (params: unknown) =>
-  Predicate.hasProperty(params, "config") && Predicate.hasProperty(params.config, T3_THREAD_ENV_KEY)
-    ? params.config[T3_THREAD_ENV_KEY]
-    : undefined;
+  Predicate.hasProperty(params, "config") && Predicate.isObject(params.config)
+    ? Object.fromEntries(
+        Object.entries(params.config).flatMap(([key, value]) =>
+          key.startsWith(SHELL_ENV_PREFIX) ? [[key.slice(SHELL_ENV_PREFIX.length), value]] : [],
+        ),
+      )
+    : {};
 
 function makeCodexTestAppThread(input: {
   readonly threadId: ThreadId;
@@ -2707,17 +2711,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "thread/resume with an explicit app thread",
               frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
             },
+            withReplayRequestId(preamble[3]!, 6),
+            withReplayRequestId(preamble[4]!, 6),
           ],
         });
         const resumeThreadEnvs: Array<unknown> = [];
+        const startThreadEnvs: Array<unknown> = [];
         const harness = yield* makeCodexReplayHarness(
           transcript,
           () => Effect.void,
           (method, params) =>
             Effect.sync(() => {
               if (method === "thread/resume") resumeThreadEnvs.push(threadEnvOf(params));
+              if (method === "thread/start") startThreadEnvs.push(threadEnvOf(params));
             }),
         );
+        const authoredPolicy = {
+          ...CODEX_TEST_RUNTIME_POLICY,
+          gitAuthor: { name: "Bob", email: "bob@example.com" },
+        };
         const resumed = yield* harness.runtime.resumeThread({
           providerThread: harness.providerThread,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
@@ -2733,13 +2745,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           threadId: explicitThreadId,
           providerThread: harness.providerThread,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          runtimePolicy: authoredPolicy,
+        });
+        yield* harness.runtime.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: authoredPolicy,
         });
 
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-        assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
+        const authorEnv = { GIT_AUTHOR_NAME: "Bob", GIT_AUTHOR_EMAIL: "bob@example.com" };
+        assert.deepEqual(resumeThreadEnvs, [
+          { T3CODE_THREAD_ID: harness.threadId },
+          {},
+          { T3CODE_THREAD_ID: explicitThreadId, ...authorEnv },
+        ]);
+        assert.deepEqual(startThreadEnvs, [
+          { T3CODE_THREAD_ID: harness.threadId },
+          { T3CODE_THREAD_ID: harness.threadId, ...authorEnv },
+        ]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -8318,7 +8344,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.notEqual(forkedProviderThread.id, harness.providerThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
         assert.deepEqual(outbound.slice(-2), ["thread/turns/list", "thread/revert"]);
-        assert.deepEqual(forkThreadEnvs, ["thread-fork-paginated-fallback-target"]);
+        assert.deepEqual(forkThreadEnvs, [
+          { T3CODE_THREAD_ID: "thread-fork-paginated-fallback-target" },
+        ]);
       }).pipe(
         Effect.scoped,
         Effect.provide(

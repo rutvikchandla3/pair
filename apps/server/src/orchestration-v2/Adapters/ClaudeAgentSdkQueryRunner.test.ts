@@ -514,7 +514,7 @@ function fakeClaudeCli(script: string): string {
   return cli;
 }
 
-const openFakeCli = (cli: string) =>
+const openFakeCli = (cli: string, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
     const runner = yield* ClaudeAgentSdkQueryRunner;
     return yield* runner.open({
@@ -526,6 +526,7 @@ const openFakeCli = (cli: string) =>
         tools: [],
         permissionMode: "default",
         pathToClaudeCodeExecutable: cli,
+        ...(env === undefined ? {} : { env }),
       },
     });
   });
@@ -680,7 +681,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       const cli = fakeClaudeCli(
         [
           'dir=$(dirname "$0")',
-          `printf '%s' "$${PortScanner.AGENT_THREAD_ENV}" > "$dir/thread"`,
+          `printf '%s %s' "$${PortScanner.AGENT_THREAD_ENV}" "$GIT_AUTHOR_EMAIL" > "$dir/thread"`,
           "cat > /dev/null",
         ].join("\n"),
       );
@@ -696,8 +697,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
           .once("end", () => resolve(thread));
       });
 
-      const session = yield* openFakeCli(cli);
-      assert.equal(yield* Effect.promise(() => threadRead), "thread-fake-cli");
+      const session = yield* openFakeCli(cli, { ...process.env, GIT_AUTHOR_EMAIL: "bob@x.dev" });
+      assert.equal(yield* Effect.promise(() => threadRead), "thread-fake-cli bob@x.dev");
       assert.equal(runningAgents, 1);
       yield* session.close;
       yield* Effect.promise(() => agentReleased);
