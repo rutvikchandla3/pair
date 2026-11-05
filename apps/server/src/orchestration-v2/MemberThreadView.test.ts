@@ -80,6 +80,7 @@ const viewerWith = (
 ): ThreadViewer => ({
   memberId,
   serverOwnerId: owner,
+  isTeamMode: Effect.succeed(true),
   readMemberStates: (threadIds) =>
     Effect.sync(() => {
       reads.push(threadIds);

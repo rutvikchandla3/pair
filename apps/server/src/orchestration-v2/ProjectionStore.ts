@@ -433,7 +433,14 @@ export interface ShellSnapshotOptions {
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
 export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pinnedAt"
+  | "snoozedUntil"
+  | "ownerId"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -443,12 +450,18 @@ export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
   readonly limit: number;
+  /** Only this member's threads; a thread with no owner is the server owner's. */
+  readonly ownerId?: MemberId | undefined;
+  /** For `limit: 0`, also count this member's threads into `ownCounts`. */
+  readonly ownCountsFor?: MemberId | undefined;
 }
 
 export interface OlderSettledThreadsListing {
   readonly threadIds: ReadonlyArray<ThreadId>;
   /** Only for `limit: 0`. */
   readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+  /** Only for `limit: 0` with `ownCountsFor`. */
+  readonly ownCounts?: ReadonlyArray<OrchestrationV2OlderSettledCount>;
 }
 
 export interface ThreadMemberStateEntry {
@@ -7330,6 +7343,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
         readonly snoozed_until: string | null;
+        readonly owner_id: string | null;
         readonly may_be_live: number;
       }>`
         SELECT
@@ -7341,6 +7355,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
+          json_extract(t.payload_json, '$.ownerId') AS owner_id,
           -- Pinned or snoozed by the holder or by any member.
           (
             SELECT MIN(pinned_at) FROM (
@@ -7417,6 +7432,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
+        ownerId: row.owner_id === null ? null : MemberId.make(row.owner_id),
         mayBeLive: row.may_be_live === 1,
       }));
     }, Effect.mapError(shellSnapshotReadError));
@@ -7435,11 +7451,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
-    )(function* ({ before, projectIds, limit }) {
+    )(function* ({ before, projectIds, limit, ownerId, ownCountsFor }) {
+      const holder =
+        ownerId === undefined && ownCountsFor === undefined
+          ? sql`NULL`
+          : sql`COALESCE(json_extract(t.payload_json, '$.ownerId'), ${yield* serverOwnerId})`;
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
-          json_extract(t.payload_json, '$.settledAt') AS settled_at
+          json_extract(t.payload_json, '$.settledAt') AS settled_at,
+          ${holder} AS holder_id
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
@@ -7448,7 +7469,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
-          }
+          }${ownerId === undefined ? sql`` : sql` AND ${holder} = ${ownerId}`}
       `;
       const belowCursor =
         before.threadId === undefined
@@ -7468,9 +7489,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const countRows =
         limit !== 0
           ? []
-          : yield* sql<{ readonly project_id: string; readonly count: number }>`
+          : yield* sql<{
+              readonly project_id: string;
+              readonly count: number;
+              readonly own_count: number;
+            }>`
               WITH older AS (${older})
-              SELECT older.project_id, COUNT(*) AS count FROM older
+              SELECT older.project_id, COUNT(*) AS count,
+                COALESCE(SUM(older.holder_id = ${ownCountsFor ?? null}), 0) AS own_count
+              FROM older
               WHERE ${belowCursor}
               GROUP BY older.project_id
             `;
@@ -7480,6 +7507,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           projectId: ProjectId.make(row.project_id),
           count: row.count,
         })),
+        ...(ownCountsFor === undefined
+          ? {}
+          : {
+              ownCounts: countRows.flatMap((row) =>
+                row.own_count === 0
+                  ? []
+                  : [{ projectId: ProjectId.make(row.project_id), count: row.own_count }],
+              ),
+            }),
       };
     }, Effect.mapError(shellSnapshotReadError));
 

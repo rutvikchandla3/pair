@@ -154,6 +154,7 @@ import {
 import {
   makeThreadEventView,
   makeThreadViewers,
+  olderSettledReaderOf,
   overlayForViewer,
   type ThreadViewer,
 } from "./orchestration-v2/MemberThreadView.ts";
@@ -1171,6 +1172,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         options: {
           omitIdleSubagents: input.omitIdleSubagents === true,
           omitOlderSettled: input.omitOlderSettled === true,
+          olderSettledReader: yield* olderSettledReaderOf(viewer),
         },
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;
@@ -2216,10 +2218,23 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           getOrchestrationV2ArchivedShellSnapshot,
         [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input) => readThreadFamily(input.threadId),
-        [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: ({ ownerId, ...input }) =>
           loadOlderSettledThreadsPage({
             sql,
-            listThreads: threadManagement.listOlderSettledThreads(input),
+            listThreads: olderSettledReaderOf(threadViewer).pipe(
+              Effect.flatMap((reader) =>
+                threadManagement.listOlderSettledThreads({
+                  ...input,
+                  // One member owns everything, so the filter and own counts add nothing.
+                  ...(reader === null
+                    ? {}
+                    : {
+                        ownerId,
+                        ownCountsFor: input.limit === 0 ? reader.memberId : undefined,
+                      }),
+                }),
+              ),
+            ),
             readThreads: (threadIds) =>
               threadManagement.readShellSnapshot({ location: "active", threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
