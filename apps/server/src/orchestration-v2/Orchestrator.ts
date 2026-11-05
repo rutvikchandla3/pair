@@ -3768,17 +3768,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
-        case "thread.archive":
+        case "thread.archive": {
+          const { archivedBy: _previous, ...rest } = thread;
+          const archivedBy =
+            command.actorId !== undefined &&
+            Option.isSome(serverOwnerId) &&
+            command.actorId !== holderOf(thread, serverOwnerId.value)
+              ? command.actorId
+              : undefined;
           return {
-            ...thread,
+            ...rest,
+            ...(archivedBy === undefined ? {} : { archivedBy }),
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
-        case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+        }
+        case "thread.unarchive": {
+          const { archivedBy: _archivedBy, ...rest } = thread;
+          return { ...rest, archivedAt: null, updatedAt: now };
+        }
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -4860,6 +4871,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .pipe(mapDispatchError(command));
     const {
       ownerUpdatedBy: _ownerUpdatedBy,
+      archivedBy: _archivedBy,
       humanAuthorIds: _humanAuthorIds,
       lastRollback: _lastRollback,
       ...forkedThread

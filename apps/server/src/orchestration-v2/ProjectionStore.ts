@@ -1083,6 +1083,9 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly latest_run_author_id: string | null;
+  readonly blocking_run_author_id: string | null;
+  readonly latest_user_message_author_id: string | null;
 };
 
 type ShellRunRow = {
@@ -1833,8 +1836,27 @@ function isActivityRunForShell(
   return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
+type ShellAttribution = Pick<
+  OrchestrationV2ThreadShell,
+  "latestRunAuthorId" | "latestUserMessageAuthorId" | "ownerUpdatedBy" | "archivedBy"
+>;
+
+/** Each fact is left out when it names the holder, so single-member shells never carry one. */
+function shellAttribution(
+  holderId: MemberId | null,
+  facts: { readonly [K in keyof ShellAttribution]-?: string | null | undefined },
+): ShellAttribution {
+  const attribution: { -readonly [K in keyof ShellAttribution]?: MemberId } = {};
+  for (const key of Object.keys(facts) as Array<keyof ShellAttribution>) {
+    const memberId = facts[key];
+    if (memberId != null && memberId !== holderId) attribution[key] = MemberId.make(memberId);
+  }
+  return attribution;
+}
+
 type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
+  readonly attribution: ShellAttribution;
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
   readonly latestRunRequestedAt: DateTime.Utc | null;
@@ -1997,6 +2019,7 @@ function shellFromState(input: {
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
     ...(input.state.thread.ownerId === undefined ? {} : { ownerId: input.state.thread.ownerId }),
+    ...input.state.attribution,
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -2264,7 +2287,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 requested_at,
                 completed_at,
-                payload_json
+                payload_json,
+                author_id
               )
               VALUES (
                 ${event.payload.id},
@@ -2276,10 +2300,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${stringField(payload, "requestedAt")},
                 ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                (
+                  SELECT json_extract(prompt.payload_json, '$.authorId')
+                  FROM orchestration_v2_projection_messages prompt
+                  WHERE prompt.message_id = ${event.payload.userMessageId}
+                )
               )
               ON CONFLICT(run_id)
               DO UPDATE SET
+                author_id = COALESCE(orchestration_v2_projection_runs.author_id, excluded.author_id),
                 thread_id = excluded.thread_id,
                 ordinal = excluded.ordinal,
                 provider = excluded.provider,
@@ -2746,6 +2776,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
+              if (event.payload.role !== "user") break;
+              // Routing facts for the shell: the run's prompter, and the latest human message's author.
+              const authorId = event.payload.authorId ?? null;
+              if (authorId !== null && event.payload.runId !== null) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_runs SET author_id = ${authorId}
+                  WHERE run_id = ${event.payload.runId}
+                    AND json_extract(payload_json, '$.userMessageId') = ${event.payload.id}
+                    AND author_id IS NOT ${authorId}
+                `;
+              }
+              if (
+                event.payload.createdBy === "user" &&
+                idleCompactionOf(event.payload) === undefined
+              ) {
+                yield* sql`
+                  UPDATE orchestration_v2_projection_threads
+                  SET latest_user_message_author_id = ${authorId}
+                  WHERE thread_id = ${event.payload.threadId}
+                    AND latest_user_message_author_id IS NOT ${authorId}
+                `;
+              }
               break;
             }
             case "plan.updated": {
@@ -6337,6 +6389,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
+              presented.author_id AS latest_run_author_id,
+              t.latest_user_message_author_id,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
@@ -6394,6 +6448,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               blocked.requested_at AS blocking_run_requested_at,
               json_extract(blocked.payload_json, '$.startedAt') AS blocking_run_started_at,
               blocked.completed_at AS blocking_run_completed_at,
+              blocked.author_id AS blocking_run_author_id,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = blocked.run_id
@@ -6997,6 +7052,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? null
             : DateTime.makeUnsafe(row.latest_run_completed_at);
         let latestRunStopRequested = row.latest_run_stop_requested === 1;
+        let latestRunAuthorId = row.latest_run_author_id;
         if (row.blocking_run_id !== null && row.blocking_failure_payload_json !== null) {
           const blockingFailure = yield* decodeTurnItemPayload(
             row.blocking_failure_payload_json,
@@ -7010,6 +7066,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             terminalFailureItem = blockingFailure;
             latestRunId = RunId.make(row.blocking_run_id);
             latestRunStopRequested = row.blocking_run_stop_requested === 1;
+            latestRunAuthorId = row.blocking_run_author_id;
             latestRunStatus = "failed";
             latestRunRequestedAt =
               row.blocking_run_requested_at === null
@@ -7042,8 +7099,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pullRequests: thread.pullRequests,
           }),
         ];
+        const holderId = thread.ownerId ?? (yield* serverOwnerId);
         return {
           thread,
+          attribution: shellAttribution(holderId, {
+            latestRunAuthorId,
+            latestUserMessageAuthorId: row.latest_user_message_author_id,
+            ownerUpdatedBy: thread.ownerUpdatedBy,
+            archivedBy: thread.archivedBy,
+          }),
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,

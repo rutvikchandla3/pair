@@ -107,6 +107,7 @@ export function withActor(
       return { ...create, actorId: memberId };
     }
     case "thread.stop":
+    case "thread.archive":
     case "thread.delete":
     case "message.dispatch":
     case "run.interrupt":

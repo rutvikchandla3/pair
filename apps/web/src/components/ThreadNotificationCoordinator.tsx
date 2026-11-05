@@ -350,7 +350,7 @@ export function startThreadNotifications(
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const settled = status === "ready" && thread.latestRun?.status === "completed";
-      const messageAt = Date.parse(rawThread.latestUserAuthoredMessageAt ?? "");
+      const messageAt = Date.parse(thread.latestUserAuthoredMessageAt ?? "");
       const state: NotificationState = {
         raw: rawThread,
         subagentRequest,
