@@ -3145,7 +3145,10 @@ const make = Effect.gen(function* () {
         .sendToThread({
           ...(actorId === undefined
             ? {}
-            : { actorId, ...(mode === "steer" || mode === "restart" ? { steerOthersTurn: true } : {}) }),
+            : {
+                actorId,
+                ...(mode === "steer" || mode === "restart" ? { steerOthersTurn: true } : {}),
+              }),
           projectId: target.thread.projectId,
           commandId: stableCommandId({
             scope,

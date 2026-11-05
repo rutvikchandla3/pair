@@ -40,9 +40,28 @@ describe("resolveComposerDispatchMode", () => {
 describe("othersTurnStarterId", () => {
   it.each([
     { row: "Alice's turn, seen by Bob", authorId: alice, me: bob, members: team, starter: alice },
-    { row: "Alice's turn, seen by Alice", authorId: alice, me: alice, members: team, starter: null },
-    { row: "an agent run belongs to the holder", authorId: undefined, me: bob, members: team, starter: alice },
-    { row: "a reassigned thread's agent run", authorId: undefined, me: bob, members: team, ownerId: bob, starter: null },
+    {
+      row: "Alice's turn, seen by Alice",
+      authorId: alice,
+      me: alice,
+      members: team,
+      starter: null,
+    },
+    {
+      row: "an agent run belongs to the holder",
+      authorId: undefined,
+      me: bob,
+      members: team,
+      starter: alice,
+    },
+    {
+      row: "a reassigned thread's agent run",
+      authorId: undefined,
+      me: bob,
+      members: team,
+      ownerId: bob,
+      starter: null,
+    },
     { row: "a single-member server", authorId: bob, me: alice, members: solo, starter: null },
     { row: "an idle thread", authorId: alice, me: bob, members: team, runs: [], starter: null },
   ])("$row", ({ authorId, me, members, starter, ownerId = null, runs = running }) => {

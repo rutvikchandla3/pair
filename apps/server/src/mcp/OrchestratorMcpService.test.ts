@@ -3430,7 +3430,12 @@ describe("OrchestratorMcpService send actor", () => {
   };
 
   it.effect.each([
-    { row: "a team client's auto send acts for its member", mode: "auto", team: true, sent: { actorId: bob } },
+    {
+      row: "a team client's auto send acts for its member",
+      mode: "auto",
+      team: true,
+      sent: { actorId: bob },
+    },
     {
       row: "a team client's explicit steer is a Steer now",
       mode: "steer",
@@ -3440,7 +3445,9 @@ describe("OrchestratorMcpService send actor", () => {
     { row: "a solo server stamps no actor", mode: "steer", team: false, sent: {} },
   ] as const)("$row", ({ mode, team, sent }) =>
     Effect.gen(function* () {
-      const inputs = yield* Ref.make<ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>>([]);
+      const inputs = yield* Ref.make<
+        ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>
+      >([]);
       yield* Effect.gen(function* () {
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
         yield* mcp.sendToThread(client, { threadId: target.id, message: "hello", mode });
@@ -3449,7 +3456,9 @@ describe("OrchestratorMcpService send actor", () => {
           OrchestratorMcpService.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
-                TeamState.layerTest(team ? [record(owner, true), record(bob, false)] : [record(owner, true)]),
+                TeamState.layerTest(
+                  team ? [record(owner, true), record(bob, false)] : [record(owner, true)],
+                ),
                 Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
                 Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -3460,7 +3469,9 @@ describe("OrchestratorMcpService send actor", () => {
                   getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(target)),
                   sendToThread: (input) =>
                     Ref.update(inputs, (all) => [...all, input]).pipe(
-                      Effect.as({ run: { id: RunId.make("run:send-actor"), status: "queued" } } as never),
+                      Effect.as({
+                        run: { id: RunId.make("run:send-actor"), status: "queued" },
+                      } as never),
                     ),
                 }),
                 ServerSettings.layerTest(),
