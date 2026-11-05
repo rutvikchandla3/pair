@@ -32,6 +32,13 @@ Once two or more people have prompted the same thread, the agent sees each new m
 `Message from <name>:` so it knows who is asking. Threads only one person has prompted are sent
 to the agent unchanged.
 
+## Prompting someone else's turn
+
+While another person's turn is running, your message waits in the queue instead of changing their
+turn. Choose **Steer now** (Cmd/Ctrl-click Send) to send it into their turn anyway. A queued
+message can be sent now, reordered, or removed by the person who wrote it or by the thread's owner;
+only its author can edit the text.
+
 ## Your threads and the Team shelf
 
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to

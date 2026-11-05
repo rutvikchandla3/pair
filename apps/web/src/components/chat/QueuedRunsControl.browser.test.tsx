@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MemberId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
 import type { ComponentProps } from "react";
@@ -8,7 +8,17 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  team: null as unknown,
 }));
+
+vi.mock(import("../../state/team"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useTeamAttribution: ((environmentId: never) =>
+      state.team ?? actual.useTeamAttribution(environmentId)) as never,
+  };
+});
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -47,6 +57,7 @@ import { QueuedRunsControl } from "./QueuedRunsControl";
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.team = null;
 }
 
 const baseProps = {
@@ -202,4 +213,70 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   await expect.element(page.getByText("Later", { exact: true })).toBeInTheDocument();
   const column = screen.getByTestId("column").element();
   expect(column.scrollHeight).toBe(column.clientHeight);
+});
+
+it.each([
+  {
+    viewer: "Alice, the owner",
+    me: "alice",
+    rows: {
+      "From Alice": { send: true, edit: true, remove: true },
+      "From Bob": { send: true, edit: false, remove: true },
+    },
+    reason: "Only Bob can edit this message",
+  },
+  {
+    viewer: "Bob",
+    me: "bob",
+    rows: {
+      "From Alice": { send: false, edit: false, remove: false },
+      "From Bob": { send: true, edit: true, remove: true },
+    },
+    reason: "Only Alice or the owner can change this",
+  },
+] as const)("on a team, $viewer changes only the queued messages the rules allow", async (row) => {
+  setup();
+  const member = (id: string, isOwner: boolean) =>
+    [MemberId.make(id), { id, name: id === "alice" ? "Alice" : "Bob", isOwner, removedAt: null }] as const;
+  const members = new Map([member("alice", true), member("bob", false)]);
+  state.team = {
+    isTeamMode: true,
+    currentMemberId: MemberId.make(row.me),
+    members,
+    nameOf: (id: MemberId) => members.get(id)?.name ?? "A former member",
+  };
+  state.projection = {
+    projection: {
+      thread: { ownerId: MemberId.make("alice") },
+      messages: [
+        { id: "message:alice", authorId: MemberId.make("alice") },
+        { id: "message:bob", authorId: MemberId.make("bob") },
+      ],
+    },
+  };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: ["alice", "bob"].map((author) => ({
+      run: { id: `run:${author}`, userMessageId: `message:${author}` },
+      text: author === "alice" ? "From Alice" : "From Bob",
+      attachments: [],
+    })),
+  };
+  await using _screen = await renderQueue();
+
+  for (const [text, enabled] of Object.entries(row.rows)) {
+    const item = page.getByRole("listitem").filter({ hasText: text });
+    for (const [name, control] of [
+      ["Send now", enabled.send],
+      ["Edit queued message", enabled.edit],
+      ["Remove queued message", enabled.remove],
+    ] as const) {
+      const button = item.getByRole("button", { name, exact: true });
+      await (control ? expect.element(button).toBeEnabled() : expect.element(button).toBeDisabled());
+    }
+  }
+  const lockedRow = page.getByRole("listitem").filter({ hasText: row.me === "alice" ? "From Bob" : "From Alice" });
+  await lockedRow.getByRole("button", { name: "Edit queued message", exact: true }).hover({ force: true });
+  await expect.element(page.getByText(row.reason, { exact: true })).toBeVisible();
 });

@@ -4,7 +4,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { runStarterId } from "@t3tools/shared/threadCollaboration";
+import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollaboration";
 
 import { isTeamModeMembers, type TeamMembers } from "./team.ts";
 
@@ -37,15 +37,29 @@ export function alternateComposerDispatchAction(
 
 const ACTIVE_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 
+type ThreadProjectionForStarter = {
+  readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "ownerId">;
+  readonly messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "id" | "authorId">>;
+};
+
+function holderIdOf(
+  thread: ThreadProjectionForStarter["thread"],
+  members: TeamMembers,
+): MemberId | null {
+  let holderId = thread.ownerId ?? null;
+  if (holderId === null) {
+    for (const member of members.values()) if (member.isOwner) holderId = member.id;
+  }
+  return holderId;
+}
+
 /**
  * On a team, who started the active turn when it was not `me`: sends then queue by default and
  * steering is an explicit choice. Null for your own turn, an idle thread and single-member servers.
  */
 export function othersTurnStarterId(input: {
-  readonly projection: {
-    readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "ownerId">;
+  readonly projection: ThreadProjectionForStarter & {
     readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "userMessageId">>;
-    readonly messages: ReadonlyArray<Pick<OrchestrationV2ConversationMessage, "id" | "authorId">>;
   };
   readonly members: TeamMembers;
   readonly me: MemberId | null;
@@ -55,11 +69,28 @@ export function othersTurnStarterId(input: {
   const run = input.projection.runs.findLast((candidate) =>
     ACTIVE_RUN_STATUSES.has(candidate.status),
   );
-  let holderId = input.projection.thread.ownerId ?? null;
-  if (holderId === null) {
-    for (const member of input.members.values()) if (member.isOwner) holderId = member.id;
-  }
+  const holderId = holderIdOf(input.projection.thread, input.members);
   if (run === undefined || holderId === null) return null;
   const starter = runStarterId({ run, messages: input.projection.messages, holderId });
   return starter === input.me ? null : starter;
+}
+
+/**
+ * On a team, what `me` may do with a queued run, mirroring the server: only its author edits the
+ * text; its author or the holder sends, reorders or removes it. Null when everything is allowed.
+ */
+export function queuedRunLock(input: {
+  readonly projection: ThreadProjectionForStarter;
+  readonly run: Pick<OrchestrationV2Run, "userMessageId">;
+  readonly members: TeamMembers;
+  readonly me: MemberId | null;
+}): { readonly starterId: MemberId; readonly canEdit: boolean; readonly canControl: boolean } | null {
+  if (input.me === null || !isTeamModeMembers(input.members)) return null;
+  const holderId = holderIdOf(input.projection.thread, input.members);
+  if (holderId === null) return null;
+  const starterId = runStarterId({ run: input.run, messages: input.projection.messages, holderId });
+  const rule = { actorId: input.me, holderId, starterId, teamMode: true };
+  const canEdit = canChangeQueuedRun({ ...rule, action: "edit" });
+  const canControl = canChangeQueuedRun({ ...rule, action: "control" });
+  return canEdit && canControl ? null : { starterId, canEdit, canControl };
 }
