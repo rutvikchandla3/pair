@@ -30,6 +30,7 @@ import {
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
+  type MemberId,
   VcsStatusInput,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -54,6 +55,7 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import { PRODUCT_NAME } from "@t3tools/shared/productName";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
@@ -84,6 +86,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -98,6 +101,8 @@ export interface GitActionProgressReporter {
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /** The member who asked: their git identity authors the commit, and team PRs name them. */
+  readonly actorId?: MemberId;
 }
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
@@ -658,6 +663,19 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // CLI and test runtimes have no team, so their commits and PRs keep the server identity.
+  const teamState = yield* Effect.serviceOption(TeamState.TeamState);
+
+  const resolveActor = Effect.fnUntraced(function* (actorId: MemberId | undefined) {
+    if (Option.isNone(teamState) || actorId === undefined) {
+      return { author: undefined, requesterName: undefined };
+    }
+    const team = teamState.value;
+    const requesterName = (yield* team.isTeamMode)
+      ? (yield* Ref.get(team.members)).get(actorId)?.name
+      : undefined;
+    return { author: yield* team.gitAuthorFor(actorId), requesterName };
+  });
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
@@ -2161,6 +2179,7 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    author?: TeamState.GitAuthor,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2248,6 +2267,7 @@ export const make = Effect.gen(function* () {
       timeoutMs: COMMIT_TIMEOUT_MS,
       stage: filePaths ? { filePaths } : {},
       ...(commitProgress ? { progress: commitProgress } : {}),
+      ...(author ? { author } : {}),
     });
     if (currentHookName !== null) {
       yield* emit({
@@ -2271,6 +2291,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    requesterName: string | undefined,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2347,7 +2368,11 @@ export const make = Effect.gen(function* () {
       tempDir,
       `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
     );
-    yield* fileSystem.writeFileString(bodyFile, generated.body).pipe(
+    const body =
+      requesterName === undefined
+        ? generated.body
+        : `${generated.body}\n\n---\nRequested by ${requesterName} via ${PRODUCT_NAME}`;
+    yield* fileSystem.writeFileString(bodyFile, body).pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({
@@ -3125,6 +3150,7 @@ export const make = Effect.gen(function* () {
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
+      const actor = yield* resolveActor(options?.actorId);
       const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
 
       const runAction = Effect.fn("runStackedAction.runAction")(function* (): Effect.fn.Return<
@@ -3246,6 +3272,7 @@ export const make = Effect.gen(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  actor.author,
                 ),
               ),
             )
@@ -3280,6 +3307,7 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    actor.requesterName,
                   ),
                 ),
               )
