@@ -667,23 +667,33 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
-export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
+const OrchestrationV2RootWorkspace = Schema.Struct({
+  type: Schema.Literal("root"),
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
+const OrchestrationV2ExistingWorktreeWorkspace = Schema.Struct({
+  type: Schema.Literal("existing_worktree"),
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
+const OrchestrationV2WorktreeWorkspace = Schema.Struct({
+  type: Schema.Literal("worktree"),
+  baseRef: TrimmedNonEmptyString,
+  branch: Schema.optional(TrimmedNonEmptyString),
+  startFromOrigin: Schema.optional(Schema.Boolean),
+});
+
+/** What a run prepared. Persisted in every run, so old clients decode it strictly: never widen. */
+export const OrchestrationV2RunWorkspacePreparation = Schema.Union([
+  OrchestrationV2RootWorkspace,
+  OrchestrationV2ExistingWorktreeWorkspace,
+  OrchestrationV2WorktreeWorkspace,
 ]);
+export type OrchestrationV2RunWorkspacePreparation =
+  typeof OrchestrationV2RunWorkspacePreparation.Type;
+
+/** How a launch asks for its workspace. M1 adds `cloud` here only. */
+export const OrchestrationV2ThreadLaunchWorkspaceStrategy = OrchestrationV2RunWorkspacePreparation;
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
@@ -720,7 +730,7 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
-  workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  workspacePreparation: Schema.optional(OrchestrationV2RunWorkspacePreparation),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -3323,7 +3333,7 @@ export const OrchestrationV2Command = Schema.Union([
     dispatchMode: Schema.Union([
       Schema.Struct({
         type: Schema.Literal("defer_start"),
-        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+        workspaceStrategy: Schema.optional(OrchestrationV2RunWorkspacePreparation),
       }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),

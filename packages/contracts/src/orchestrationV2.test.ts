@@ -12,6 +12,7 @@ import {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
+  OrchestrationV2RunWorkspacePreparation,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellJson,
   OrchestrationV2SubagentJson,
@@ -37,7 +38,54 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
 
+// Keep the run vocabulary old clients decode frozen; a cloud launch must still record one of these.
+const oldRunWorkspacePreparation = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("root"), branch: Schema.optional(Schema.String) }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: Schema.String,
+    branch: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: Schema.String,
+    branch: Schema.optional(Schema.String),
+    startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+]);
+const encodeRunWorkspacePreparation = Schema.encodeSync(OrchestrationV2RunWorkspacePreparation);
+const decodeOldRunWorkspacePreparation = Schema.decodeSync(oldRunWorkspacePreparation);
+
 describe("orchestration V2 contracts", () => {
+  // A sample per member: adding a member is a type error here until it has one, and then it must decode below.
+  const runPreparationSamples: {
+    readonly [
+      K in OrchestrationV2RunWorkspacePreparation["type"]
+    ]: OrchestrationV2RunWorkspacePreparation;
+  } = {
+    root: { type: "root", branch: "main" },
+    existing_worktree: {
+      type: "existing_worktree",
+      worktreePath: "/w",
+      branch: "b",
+    },
+    worktree: {
+      type: "worktree",
+      baseRef: "main",
+      branch: "b",
+      startFromOrigin: true,
+    },
+  };
+
+  it.each(Object.values(runPreparationSamples))(
+    "keeps run preparation %o decodable by old clients",
+    (sample) => {
+      expect(decodeOldRunWorkspacePreparation(encodeRunWorkspacePreparation(sample))).toEqual(
+        sample,
+      );
+    },
+  );
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
