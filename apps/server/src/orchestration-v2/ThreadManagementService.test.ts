@@ -147,7 +147,16 @@ it("attributes client commands to the session's member, never to a member the cl
     ),
   ).toMatchObject({ actorId: alice });
   expect(
-    ThreadManagementService.withActor({ type: "thread.unarchive", commandId, threadId }, alice),
+    ThreadManagementService.withActor(
+      { type: "thread.unarchive", commandId, threadId, actorId: forged },
+      alice,
+    ),
+  ).toEqual({ type: "thread.unarchive", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.interaction-mode.set", commandId, threadId, interactionMode: "plan" },
+      alice,
+    ),
   ).not.toHaveProperty("actorId");
 });
 

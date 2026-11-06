@@ -3276,6 +3276,7 @@ export const layerWsRpc = (
                           threadId: input.threadId,
                           result,
                           commandId: serverCommandId("pr-created-link"),
+                          actorId: currentSession.memberId,
                         }).pipe(
                           Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                           Effect.provideService(ProjectService.ProjectService, projectService),
