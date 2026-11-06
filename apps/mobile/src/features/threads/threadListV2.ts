@@ -28,7 +28,18 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  resolveTeamThreadSection,
+  sortTeamThreadsByActivity,
+  teamOwnerOf,
+  type TeamViewer,
+} from "@t3tools/client-runtime/state/team";
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type ProjectId,
+  type TeamMember,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -320,15 +331,18 @@ export function getThreadListV2OrderedSection(input: {
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
+  readonly teamViewers?: ReadonlyMap<EnvironmentId, TeamViewer>;
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
     if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
-    if (
+    const settled =
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
-      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true
-    ) {
+      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true;
+    if (settled) return false;
+    const viewer = input.teamViewers?.get(thread.environmentId);
+    if (viewer !== undefined && resolveTeamThreadSection(thread, viewer, { settled }) !== "mine") {
       return false;
     }
     if (
@@ -357,6 +371,10 @@ export interface ThreadListV2Item {
   readonly pinned: boolean;
   readonly wokeAt: string | null;
   readonly isLast: boolean;
+  /** Team mode: the teammate who owns the thread; absent for mine and on solo servers. */
+  readonly owner?: Pick<TeamMember, "name" | "color">;
+  /** Listed on the Team shelf: a teammate's thread I have not pinned or followed. */
+  readonly team?: true;
 }
 
 export interface ThreadListV2Layout {
@@ -366,6 +384,8 @@ export interface ThreadListV2Layout {
   readonly listedSettledThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly workingCount: number;
   readonly workingShelfHeaderIndex: number | null;
+  readonly teamCount: number;
+  readonly teamShelfHeaderIndex: number | null;
   readonly snoozedCount: number;
   readonly snoozedShelfHeaderIndex: number | null;
   readonly settledCount: number;
@@ -406,6 +426,14 @@ export interface ThreadListV2WorkingShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2TeamShelfListItem {
+  readonly type: "v2-team-shelf";
+  readonly key: "v2-team-shelf";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly disabled: boolean;
+}
+
 export interface ThreadListV2SnoozedShelfListItem {
   readonly type: "v2-snoozed-shelf";
   readonly key: "v2-snoozed-shelf";
@@ -427,6 +455,7 @@ export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
+  | ThreadListV2TeamShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
@@ -437,6 +466,7 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
+    value.type === "v2-team-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
   );
@@ -457,6 +487,8 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
+        previous.item.owner === item.item.owner &&
+        previous.item.team === item.item.team &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -476,6 +508,13 @@ export function threadListV2ListItemsAreEqual(
     case "v2-working-shelf":
       return (
         previous.type === "v2-working-shelf" &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
+      );
+    case "v2-team-shelf":
+      return (
+        previous.type === "v2-team-shelf" &&
         previous.count === item.count &&
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
@@ -507,7 +546,7 @@ function resolveThreadListV2ItemTimeLabel(
     variant === "card" &&
     (resolveThreadListV2Status(thread) !== "ready" ||
       item.wokeAt !== null ||
-      threadHasUnseenCompletion(thread))
+      (item.team !== true && threadHasUnseenCompletion(thread)))
   )
     return "";
   const settledTimestamp =
@@ -523,6 +562,9 @@ export function buildThreadListV2ListItems(input: {
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
   readonly workingShelfHeaderIndex?: number | null;
+  readonly teamCount?: number;
+  readonly teamShelfExpanded?: boolean;
+  readonly teamShelfHeaderIndex?: number | null;
   readonly snoozedCount?: number;
   readonly snoozedShelfExpanded?: boolean;
   readonly snoozedShelfHeaderIndex?: number | null;
@@ -576,12 +618,15 @@ export function buildThreadListV2ListItems(input: {
   }));
   const workingCount = input.workingCount ?? 0;
   const workingShelfHeaderIndex = input.workingShelfHeaderIndex ?? null;
+  const teamCount = input.teamCount ?? 0;
+  const teamShelfHeaderIndex = input.teamShelfHeaderIndex ?? null;
   const snoozedCount = input.snoozedCount ?? 0;
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
   const settledCount = input.settledCount ?? 0;
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
-  const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
+  const teamEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
+  const workingEnd = teamShelfHeaderIndex ?? teamEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
   const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
   const shelfDisabled = input.shelfPreferencesLoading === true;
@@ -594,6 +639,16 @@ export function buildThreadListV2ListItems(input: {
       disabled: shelfDisabled,
     });
     result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
+  }
+  if (teamShelfHeaderIndex !== null && teamCount > 0) {
+    result.push({
+      type: "v2-team-shelf",
+      key: "v2-team-shelf",
+      count: teamCount,
+      expanded: input.teamShelfExpanded === true,
+      disabled: shelfDisabled,
+    });
+    result.push(...threadItems.slice(teamShelfHeaderIndex, teamEnd));
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -666,6 +721,7 @@ export function buildThreadListV2Items(input: {
   readonly workingShelfExpanded?: boolean;
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
+  readonly teamShelfExpanded?: boolean;
   readonly snoozedShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
   readonly selectedThreadKey?: string | null;
@@ -674,6 +730,8 @@ export function buildThreadListV2Items(input: {
   readonly isListedSettled?: (thread: EnvironmentThreadShell) => boolean;
   /** Settled threads in scope that are not local (older settled threads not loaded). */
   readonly unloadedSettledCount?: number;
+  /** Team-mode environments only: single-member environments partition as before. */
+  readonly teamViewers?: ReadonlyMap<EnvironmentId, TeamViewer>;
 }): ThreadListV2Layout {
   const now = input.now;
   const pending =
@@ -699,15 +757,43 @@ export function buildThreadListV2Items(input: {
   const working: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
+  const team: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const listedThreads = input.threads.filter(
-    (thread) =>
-      thread.archivedAt === null &&
-      isListedThreadLineage(thread.lineage) &&
-      (input.environmentId === null || thread.environmentId === input.environmentId) &&
-      (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-  );
+  const teamViewers = input.teamViewers?.size ? input.teamViewers : undefined;
+  const teamThreads = new Set<EnvironmentThreadShell>();
+  const listedThreads = input.threads.filter((thread) => {
+    if (
+      thread.archivedAt !== null ||
+      !isListedThreadLineage(thread.lineage) ||
+      (input.environmentId !== null && thread.environmentId !== input.environmentId) ||
+      (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`))
+    ) {
+      return false;
+    }
+    const viewer = teamViewers?.get(thread.environmentId);
+    if (
+      viewer === undefined ||
+      ((input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true) &&
+        effectiveSnoozed(thread, { now }))
+    ) {
+      return true;
+    }
+    // A teammate's settled thread is not listed, so search does not find it either.
+    const section = resolveTeamThreadSection(thread, viewer, {
+      settled:
+        (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
+        thread.settledOverride === "settled" &&
+        queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true,
+    });
+    if (section === "team") teamThreads.add(thread);
+    return section !== "hidden";
+  });
+  const ownerOf = (thread: EnvironmentThreadShell) => {
+    const viewer = teamViewers?.get(thread.environmentId);
+    const owner = viewer === undefined ? null : teamOwnerOf(viewer, thread.source.ownerId);
+    return owner === null ? {} : { owner };
+  };
   // The same matches as the command palette, typo fallback included. Only
   // listed threads are ranked: a hidden exact match must not turn typos off.
   const rankedMatches =
@@ -751,6 +837,8 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
+    } else if (teamThreads.has(thread)) {
+      team.push(thread);
     } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
       working.push(thread);
     } else {
@@ -782,13 +870,20 @@ export function buildThreadListV2Items(input: {
         variant: slim.has(thread) ? "slim" : "card",
         snoozed: snoozedThreads.has(thread),
         pinned: pinnedThreads.has(thread),
-        wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
+        wokeAt:
+          slim.has(thread) || teamThreads.has(thread)
+            ? null
+            : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
+        ...ownerOf(thread),
+        ...(teamThreads.has(thread) ? { team: true as const } : {}),
       })),
       hiddenSettledCount: 0,
       listedSettledThreads: [],
       workingCount: 0,
       workingShelfHeaderIndex: null,
+      teamCount: 0,
+      teamShelfHeaderIndex: null,
       snoozedCount: 0,
       snoozedShelfHeaderIndex: null,
       settledCount: 0,
@@ -811,6 +906,13 @@ export function buildThreadListV2Items(input: {
     input.workingShelfExpanded === true
       ? orderedWorking
       : orderedWorking.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
+  const orderedTeam = sortTeamThreadsByActivity(team);
+  const visibleTeam =
+    input.teamShelfExpanded === true
+      ? orderedTeam
+      : orderedTeam.filter(
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
   const visibleSnoozed =
@@ -857,6 +959,7 @@ export function buildThreadListV2Items(input: {
       pinned: true,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
+      ...ownerOf(thread),
     });
   }
   for (const thread of orderedActive) {
@@ -867,6 +970,7 @@ export function buildThreadListV2Items(input: {
       pinned: false,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
+      ...ownerOf(thread),
     });
   }
   const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
@@ -878,6 +982,20 @@ export function buildThreadListV2Items(input: {
       pinned: false,
       wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
+      ...ownerOf(thread),
+    });
+  }
+  const teamShelfHeaderIndex = orderedTeam.length > 0 ? items.length : null;
+  for (const thread of visibleTeam) {
+    items.push({
+      thread,
+      variant: "card",
+      snoozed: false,
+      pinned: false,
+      wokeAt: null,
+      isLast: false,
+      ...ownerOf(thread),
+      team: true,
     });
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
@@ -889,6 +1007,7 @@ export function buildThreadListV2Items(input: {
       pinned: false,
       wokeAt: null,
       isLast: false,
+      ...ownerOf(thread),
     });
   }
   const settledShelfHeaderIndex = settledTotal > 0 ? items.length : null;
@@ -900,6 +1019,7 @@ export function buildThreadListV2Items(input: {
       pinned: false,
       wokeAt: null,
       isLast: false,
+      ...ownerOf(thread),
     });
   }
   const last = items.at(-1);
@@ -912,6 +1032,8 @@ export function buildThreadListV2Items(input: {
     listedSettledThreads: listedSettled,
     workingCount: orderedWorking.length,
     workingShelfHeaderIndex,
+    teamCount: orderedTeam.length,
+    teamShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,
     settledCount: settledTotal,

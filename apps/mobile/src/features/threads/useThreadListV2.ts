@@ -1,3 +1,4 @@
+import type { TeamViewer } from "@t3tools/client-runtime/state/team";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
@@ -62,9 +63,11 @@ export function useThreadListV2(input: {
   readonly shelfPreferencesLoaded: boolean;
   readonly workingShelfEnabled: boolean;
   readonly workingShelfExpanded: boolean;
+  readonly teamShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  readonly teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>;
 }) {
   const { threads, workingShelfEnabled } = input;
   const layoutTime = useMemo(
@@ -97,6 +100,7 @@ export function useThreadListV2(input: {
           settlementEnvironmentIds: input.settlementEnvironmentIds,
           snoozeEnvironmentIds: input.snoozeEnvironmentIds,
           queuedThreadKeys: input.queuedThreadKeys,
+          teamViewers: input.teamViewers,
         }),
       });
     return new Map([
@@ -112,6 +116,7 @@ export function useThreadListV2(input: {
     input.settlementEnvironmentIds,
     input.snoozeEnvironmentIds,
     input.queuedThreadKeys,
+    input.teamViewers,
     workingShelfEnabled,
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
@@ -121,8 +126,9 @@ export function useThreadListV2(input: {
         environmentId: input.environmentId,
         projectRefs: input.projectRefs,
         settlementEnvironmentIds: input.settlementEnvironmentIds,
+        teamViewers: input.teamViewers,
       }),
-    [input.environmentId, input.projectRefs, input.settlementEnvironmentIds],
+    [input.environmentId, input.projectRefs, input.settlementEnvironmentIds, input.teamViewers],
   );
   const olderSettledShelf = useOlderSettledShelf({
     scopes,
@@ -149,9 +155,11 @@ export function useThreadListV2(input: {
         workingShelfExpanded: input.workingShelfExpanded,
         inboxReturnAt: inbox.returnedAt,
         isWorking: inbox.isWorking,
+        teamShelfExpanded: input.teamShelfExpanded,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
+        teamViewers: input.teamViewers,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
           threads.filter(
@@ -181,9 +189,11 @@ export function useThreadListV2(input: {
       input.workingShelfExpanded,
       inbox.returnedAt,
       inbox.isWorking,
+      input.teamShelfExpanded,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.selectedThreadKey,
+      input.teamViewers,
       isListed,
       unloadedCount,
       scopes,
@@ -217,6 +227,9 @@ export function useThreadListV2(input: {
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
         workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
+        teamCount: layout.teamCount,
+        teamShelfExpanded: input.teamShelfExpanded,
+        teamShelfHeaderIndex: layout.teamShelfHeaderIndex,
         snoozedCount: layout.snoozedCount,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
@@ -233,6 +246,7 @@ export function useThreadListV2(input: {
       layout,
       pendingTasks,
       input.workingShelfExpanded,
+      input.teamShelfExpanded,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.now,
@@ -245,19 +259,26 @@ export function useThreadListV2(input: {
   return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
 }
 
-/** The list's scope per environment: its projects there, or every project. */
+/**
+ * The list's scope per environment: its projects there, or every project. In team mode Settled
+ * lists only the viewer's threads, so pages and counts are the viewer's too.
+ */
 function olderSettledScopes(input: {
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs: LayoutInput["projectRefs"];
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly teamViewers: ReadonlyMap<EnvironmentId, TeamViewer>;
 }): ReadonlyArray<OlderSettledScope> {
   const environmentIds =
     input.environmentId === null ? [...input.settlementEnvironmentIds] : [input.environmentId];
   return environmentIds.flatMap((environmentId): ReadonlyArray<OlderSettledScope> => {
-    if (input.projectRefs == null) return [{ environmentId, projectIds: null }];
+    const viewer = input.teamViewers.get(environmentId);
+    const owner =
+      viewer === undefined ? {} : { ownerId: viewer.memberId, serverOwnerId: viewer.ownerId };
+    if (input.projectRefs == null) return [{ environmentId, projectIds: null, ...owner }];
     const projectIds = input.projectRefs.flatMap((ref) =>
       ref.environmentId === environmentId ? [ref.projectId] : [],
     );
-    return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
+    return projectIds.length === 0 ? [] : [{ environmentId, projectIds, ...owner }];
   });
 }

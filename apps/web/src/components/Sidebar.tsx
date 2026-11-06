@@ -1,5 +1,11 @@
 import { useThreadViewers } from "../state/presence";
-import { teamOwnerOf, useTeamViewers, type TeamViewer } from "../state/team";
+import { useTeamViewers } from "../state/team";
+import {
+  isSidebarThreadMine,
+  sortTeamThreadsByActivity,
+  teamOwnerOf,
+  type TeamViewer,
+} from "@t3tools/client-runtime/state/team";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -203,10 +209,8 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   buildSidebarOwnerScopeItems,
-  isSidebarThreadMine,
   matchesSidebarOwnerFilter,
   resolveSidebarThreadSection,
-  sortTeamThreadsByActivity,
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,

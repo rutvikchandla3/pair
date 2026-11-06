@@ -28,6 +28,7 @@ import { RelativeTime } from "../../components/RelativeTime";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
+import { useThreadTeamMenu } from "../../state/team";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
@@ -192,6 +193,7 @@ function ArchivedThreadRow(props: {
     props.thread.environmentId,
     AuthOrchestrationOperateScope,
   );
+  const canDelete = useThreadTeamMenu(props.thread)?.canDelete !== false;
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -258,6 +260,7 @@ function ArchivedThreadRow(props: {
       onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
+      {...(canDelete ? {} : { secondaryAction: null })}
       primaryAction={{
         accessibilityLabel: `Unarchive ${props.thread.title}`,
         icon: "arrow.uturn.backward",

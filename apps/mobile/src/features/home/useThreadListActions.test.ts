@@ -67,6 +67,9 @@ vi.mock("../../state/presentation", () => ({
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
 }));
+vi.mock("../../state/team", () => ({
+  teamViewersAtom: "team-viewers",
+}));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     set: (_atom: string, value: boolean) => {
@@ -81,22 +84,24 @@ vi.mock("../../state/atom-registry", () => ({
             ? state.shells
             : atom === "queued-thread-keys"
               ? new Set<string>()
-              : new Map(
-                  [...state.scopes.keys()].map((environmentId) => [
-                    environmentId,
-                    {
-                      environment: {
-                        capabilities: {
-                          threadSettlement: true,
-                          threadSnooze: true,
-                          threadPinning: true,
-                          threadPinReorder: true,
-                          threadTitleRegeneration: true,
+              : atom === "team-viewers"
+                ? new Map()
+                : new Map(
+                    [...state.scopes.keys()].map((environmentId) => [
+                      environmentId,
+                      {
+                        environment: {
+                          capabilities: {
+                            threadSettlement: true,
+                            threadSnooze: true,
+                            threadPinning: true,
+                            threadPinReorder: true,
+                            threadTitleRegeneration: true,
+                          },
                         },
                       },
-                    },
-                  ]),
-                ),
+                    ]),
+                  ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
