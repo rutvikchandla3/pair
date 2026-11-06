@@ -21,6 +21,7 @@ import {
   type OrchestrationV2ForceStopThreadResult,
   type ModelSelection,
   type OrchestrationV2Actor,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
@@ -45,6 +46,10 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import {
+  canSelectProviderInstance,
+  providerInstanceOwner,
+} from "@t3tools/shared/providerInstanceOwnership";
 import { runStarterId } from "@t3tools/shared/threadCollaboration";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -69,7 +74,14 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import type * as TeamState from "../team/TeamState.ts";
+import * as TeamState from "../team/TeamState.ts";
+
+/** The thread a selection-changing command continues; a new thread has no current instance. */
+interface SelectionTarget {
+  readonly projectId: ProjectId;
+  readonly ownerId: MemberId | null | undefined;
+  readonly currentInstanceId: ProviderInstanceId | undefined;
+}
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -138,6 +150,8 @@ export function withActor(
     case "thread.follow":
     case "thread.unfollow":
     case "thread.metadata.update":
+    case "thread.model-selection.set":
+    case "provider.switch":
     case "thread.runtime-mode.set":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
@@ -371,9 +385,12 @@ export class ThreadManagementProviderInstanceDisabledError extends Schema.Tagged
   {
     projectId: ProjectId,
     instanceId: ProviderInstanceId,
+    /** Set when the instance is enabled but belongs to another member. */
+    reason: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.reason !== undefined) return this.reason;
     return `Provider instance "${this.instanceId}" is disabled for project ${this.projectId}.`;
   }
 }
@@ -490,6 +507,14 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
     readonly instanceId: ProviderInstanceId;
+  }) => Effect.Effect<void, ThreadManagementProviderInstanceDisabledError>;
+  /** A launch checks this before preparing anything; `dispatch` checks it again on `thread.create`. */
+  readonly assertNewThreadProviderInstanceSelectable: (input: {
+    readonly commandId: CommandId;
+    readonly projectId: ProjectId;
+    readonly instanceId: ProviderInstanceId;
+    readonly actorId: MemberId | undefined;
+    readonly ownerId: MemberId | undefined;
   }) => Effect.Effect<void, ThreadManagementProviderInstanceDisabledError>;
   readonly isProviderInstanceEnabledForProject: (input: {
     readonly projectId: ProjectId;
@@ -655,6 +680,8 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  // CLI and test runtimes have no team, so no member owns an instance there.
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -783,25 +810,115 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
+  /**
+   * A member's own instance may be newly chosen only by its owner; continuing a thread already on
+   * it, or leaving it, is always allowed. `target` is read only once some instance has an owner.
+   */
+  const assertProviderInstanceSelectable = Effect.fn(
+    "orchestrationV2.threadManagement.assertProviderInstanceSelectable",
+  )(function* <E>(input: {
+    readonly commandId: CommandId;
+    readonly instanceId: ProviderInstanceId;
+    readonly actorId: MemberId | undefined;
+    readonly target: Effect.Effect<SelectionTarget, E>;
+  }) {
+    if (Option.isNone(team)) return;
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const ownerMemberId = providerInstanceOwner(settings, input.instanceId);
+    if (ownerMemberId === undefined) return;
+    const target = yield* input.target;
+    const selectable = canSelectProviderInstance({
+      ownerMemberId,
+      memberId: input.actorId ?? holderOf(target, team.value.ownerId),
+      currentInstanceId: target.currentInstanceId,
+      instanceId: input.instanceId,
+    });
+    if (selectable || (yield* hasReceipt(input.commandId))) return;
+    const owner = (yield* Ref.get(team.value.members)).get(ownerMemberId);
+    const instance = settings.providerInstances[input.instanceId];
+    return yield* new ThreadManagementProviderInstanceDisabledError({
+      projectId: target.projectId,
+      instanceId: input.instanceId,
+      reason: `${instance?.displayName ?? input.instanceId} belongs to ${
+        owner?.name ?? ownerMemberId
+      }. Pick another provider.`,
+    });
+  });
+
+  const threadSelectionTarget = (thread: OrchestrationV2AppThread): SelectionTarget => ({
+    projectId: thread.projectId,
+    ownerId: thread.ownerId,
+    currentInstanceId: thread.modelSelection.instanceId,
+  });
+
+  const assertNewThreadProviderInstanceSelectable: ThreadManagementServiceShape["assertNewThreadProviderInstanceSelectable"] =
+    (input) =>
+      assertProviderInstanceSelectable({
+        commandId: input.commandId,
+        instanceId: input.instanceId,
+        actorId: input.actorId,
+        target: Effect.succeed({
+          projectId: input.projectId,
+          ownerId: input.ownerId,
+          currentInstanceId: undefined,
+        }),
+      });
+
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "thread.create":
+        return assertNewThreadProviderInstanceSelectable({
+          commandId: command.commandId,
+          projectId: command.projectId,
+          instanceId: command.modelSelection.instanceId,
+          actorId: command.actorId,
+          ownerId: command.ownerId,
+        });
+      case "thread.model-selection.set":
+      case "provider.switch":
+        return assertProviderInstanceSelectable({
+          commandId: command.commandId,
+          instanceId: command.modelSelection.instanceId,
+          actorId: command.actorId,
+          target: orchestrator
+            .getThreadRecords(command.threadId, [])
+            .pipe(Effect.map((projection) => threadSelectionTarget(projection.thread))),
+        });
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
-          Effect.flatMap((projection) =>
+          Effect.tap((projection) =>
             assertProviderInstanceEnabled({
               projectId: projection.thread.projectId,
               commandId: command.commandId,
               instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
             }),
           ),
+          Effect.flatMap((projection) =>
+            command.modelSelection === undefined
+              ? Effect.void
+              : assertProviderInstanceSelectable({
+                  commandId: command.commandId,
+                  instanceId: command.modelSelection.instanceId,
+                  actorId: command.actorId,
+                  target: Effect.succeed(threadSelectionTarget(projection.thread)),
+                }),
+          ),
         );
       case "delegated_task.request":
         return orchestrator.getThreadRecords(command.parentThreadId, []).pipe(
-          Effect.flatMap((parent) =>
+          Effect.tap((parent) =>
             assertProviderInstanceEnabled({
               projectId: parent.thread.projectId,
               commandId: command.commandId,
               instanceId: command.modelSelection.instanceId,
+            }),
+          ),
+          Effect.flatMap((parent) =>
+            assertProviderInstanceSelectable({
+              commandId: command.commandId,
+              instanceId: command.modelSelection.instanceId,
+              actorId: undefined,
+              target: Effect.succeed(threadSelectionTarget(parent.thread)),
             }),
           ),
         );
@@ -1624,6 +1741,7 @@ const make = Effect.gen(function* () {
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,
+    assertNewThreadProviderInstanceSelectable,
     isProviderInstanceEnabledForProject,
     hasReceipt,
     waitForThread,

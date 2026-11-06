@@ -1,12 +1,15 @@
 import type { EnvironmentId, MemberId, TeamMember, TeamStreamEvent } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { request } from "../rpc/client.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 import {
+  createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -226,8 +229,19 @@ export function createTeamEnvironmentAtoms<R, E>(
     ),
   );
 
+  // Keyed by an ISO string: query keys are JSON, which would turn a DateTime into a string.
+  const usageSinceFamily = createEnvironmentQueryAtomFamily(runtime, {
+    label: "environment-data:team:usage",
+    idleTtlMs: 0,
+    execute: (input: { readonly since: string }) =>
+      request(WS_METHODS.teamUsage, { since: DateTime.makeUnsafe(input.since) }),
+  });
+  const teamUsageAtom = (environmentId: EnvironmentId, since: string) =>
+    usageSinceFamily({ environmentId, input: { since } });
+
   return {
     teamMembersAtom,
+    teamUsageAtom,
     membersValueAtom,
     currentMemberIdAtom,
     currentMemberAtom,
@@ -255,6 +269,26 @@ export function createTeamEnvironmentAtoms<R, E>(
     updateSelf: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:update-self",
       tag: WS_METHODS.teamUpdateSelf,
+    }),
+    mutateProviderAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:provider-accounts-mutate",
+      tag: WS_METHODS.teamProviderAccountsMutate,
+    }),
+    startGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-start",
+      tag: WS_METHODS.teamGitHubLinkStart,
+    }),
+    waitForGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-wait",
+      tag: WS_METHODS.teamGitHubLinkWait,
+    }),
+    cancelGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-cancel",
+      tag: WS_METHODS.teamGitHubLinkCancel,
+    }),
+    disconnectGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-disconnect",
+      tag: WS_METHODS.teamGitHubDisconnect,
     }),
   };
 }

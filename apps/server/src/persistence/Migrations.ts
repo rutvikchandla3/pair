@@ -88,6 +88,8 @@ import Migration0081 from "./Migrations/081_AttributionBackfill.ts";
 import Migration0082 from "./Migrations/082_ThreadMemberState.ts";
 import Migration0083 from "./Migrations/083_ThreadMemberFollow.ts";
 import Migration0084 from "./Migrations/084_ShellAttribution.ts";
+import Migration0085 from "./Migrations/085_MemberGitHub.ts";
+import Migration0086 from "./Migrations/086_ProviderTurnCompletedIndex.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -175,6 +177,8 @@ const migrationEntries = [
   [82, "ThreadMemberState", Migration0082],
   [83, "ThreadMemberFollow", Migration0083],
   [84, "ShellAttribution", Migration0084],
+  [85, "MemberGitHub", Migration0085],
+  [86, "ProviderTurnCompletedIndex", Migration0086],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

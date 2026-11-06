@@ -64,6 +64,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  KeyRoundIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -248,6 +249,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openAssignThreadDialog } from "./team/AssignThreadDialog";
+import { setAddProviderAccountDialogOpen } from "./team/providerAccountDialogState";
 import {
   useIsTeamMode,
   useSetThreadFollowed,
@@ -490,6 +492,7 @@ function OpenCommandPaletteDialog(props: {
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
   const activeThreadIsTeamMode = useIsTeamMode(activeThread?.environmentId ?? null);
+  const primaryIsTeamMode = useIsTeamMode(primaryEnvironmentId);
   const activeThreadFollowing = useThreadFollowing(activeThread);
   const setThreadFollowed = useSetThreadFollowed();
   const canOperateActiveThread = useEnvironmentScope(
@@ -1651,6 +1654,20 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
       run: async () => {
         queueWorkspaceFocusFromPalette(direction);
+      },
+    });
+  }
+
+  if (primaryIsTeamMode) {
+    actionItems.push({
+      kind: "action",
+      value: "action:add-provider-account",
+      searchTerms: ["provider account", "claude", "chatgpt", "subscription", "sign in", "my own"],
+      title: "Add your provider account",
+      icon: <KeyRoundIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setAddProviderAccountDialogOpen(true);
+        await navigate({ to: "/settings/team" });
       },
     });
   }

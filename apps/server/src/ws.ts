@@ -131,6 +131,9 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as MemberGitHub from "./team/MemberGitHub.ts";
+import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
+import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
@@ -1474,8 +1477,11 @@ export const layerWsRpc = (
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
+      const memberGitHub = yield* MemberGitHub.MemberGitHub;
       const presence = yield* Presence.Presence;
       const teamState = yield* TeamState.TeamState;
+      const memberProviderAccounts = yield* MemberProviderAccounts.MemberProviderAccounts;
+      const teamUsage = yield* TeamUsage.TeamUsage;
       const threadViewer = (yield* makeThreadViewers)(currentSession.memberId);
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2015,6 +2021,7 @@ export const layerWsRpc = (
           threadFindProgressive: true,
           threadMemberState: true,
           threadFollow: true,
+          ...(memberGitHub.enabled ? { teamGitHub: true } : {}),
           apiTokens: true,
           presence: true,
           secretProviderSettings: true,
@@ -2461,6 +2468,13 @@ export const layerWsRpc = (
         [WS_METHODS.teamRemove]: (input) => teamMembers.remove(input),
         [WS_METHODS.teamUpdateSelf]: (input) =>
           teamMembers.updateSelf(currentSession.memberId, input),
+        [WS_METHODS.teamProviderAccountsMutate]: (input) =>
+          memberProviderAccounts.mutate(currentSession.memberId, input),
+        [WS_METHODS.teamUsage]: (input) => teamUsage.summary(input),
+        [WS_METHODS.teamGitHubLinkStart]: () => memberGitHub.start(currentSession.memberId),
+        [WS_METHODS.teamGitHubLinkWait]: () => memberGitHub.wait(currentSession.memberId),
+        [WS_METHODS.teamGitHubLinkCancel]: () => memberGitHub.cancel(currentSession.memberId),
+        [WS_METHODS.teamGitHubDisconnect]: () => memberGitHub.disconnect(currentSession.memberId),
         [WS_METHODS.presenceSubscribe]: (_input, metadata) =>
           Stream.unwrap(
             presence.subscribe({
@@ -2809,9 +2823,16 @@ export const layerWsRpc = (
                 )
               : undefined;
             const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
+            const ownership = {
+              activeMemberIds: TeamState.activeMemberIds(yield* Ref.get(teamState.members)),
+            };
             const settings = yield* providerInstanceMutation === undefined
-              ? serverSettings.updateSettings(nextPatch)
-              : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
+              ? serverSettings.updateSettings(nextPatch, ownership)
+              : serverSettings.updateProviderInstance(
+                  providerInstanceMutation,
+                  nextPatch,
+                  ownership,
+                );
             return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
@@ -3604,6 +3625,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3637,13 +3659,21 @@ export const layer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
+        const ownsProviderInstance = (instanceId: ProviderInstanceId) =>
+          serverSettings.getSettings.pipe(
+            Effect.map(
+              (settings) =>
+                settings.providerInstances[instanceId]?.ownerMemberId === session.memberId,
+            ),
+            Effect.orElseSucceed(() => false),
+          );
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
-                RpcAuthorization.layer(session.scopes, (method, payload) => {
+                RpcAuthorization.layer(session.scopes, ownsProviderInstance, (method, payload) => {
                   // Anonymous product signal: the feature and its enum variant,
                   // credited to the connecting client's surface only.
                   const usage = featureUsage(method, payload);
@@ -3684,6 +3714,7 @@ export const layer = Layer.unwrap(
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),
+              Layer.provide(TeamUsage.layer),
               Layer.provide(
                 Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,

@@ -229,6 +229,12 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamSetRole]: "team",
   [WS_METHODS.teamRemove]: "team",
   [WS_METHODS.teamUpdateSelf]: "team",
+  [WS_METHODS.teamProviderAccountsMutate]: "team",
+  [WS_METHODS.teamUsage]: "team",
+  [WS_METHODS.teamGitHubLinkStart]: "team",
+  [WS_METHODS.teamGitHubLinkWait]: "team",
+  [WS_METHODS.teamGitHubLinkCancel]: "team",
+  [WS_METHODS.teamGitHubDisconnect]: "team",
   [WS_METHODS.presenceSubscribe]: "presence",
   [WS_METHODS.presenceReport]: "presence",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;

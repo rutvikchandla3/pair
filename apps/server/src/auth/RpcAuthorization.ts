@@ -6,6 +6,7 @@ import {
   AssetCreateUrlInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
+  ProviderInstanceId,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
@@ -212,6 +213,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.teamSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.teamUpdateSelf]: AuthOrchestrationReadScope,
+  [WS_METHODS.teamUsage]: AuthOrchestrationReadScope,
+  [WS_METHODS.teamGitHubLinkStart]: AuthOrchestrationReadScope,
+  [WS_METHODS.teamGitHubLinkWait]: AuthOrchestrationReadScope,
+  [WS_METHODS.teamGitHubLinkCancel]: AuthOrchestrationReadScope,
+  [WS_METHODS.teamGitHubDisconnect]: AuthOrchestrationReadScope,
   [WS_METHODS.presenceSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.presenceReport]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
@@ -278,6 +284,19 @@ const requiredScopesForRpcCall = (
   return [requiredScopeForRpcMethod(method)];
 };
 
+// A member signs their own provider account in and out without managing every provider.
+const OWNED_PROVIDER_AUTH_METHODS = new Set<string>([
+  WS_METHODS.providerAuthStart,
+  WS_METHODS.providerAuthRespond,
+  WS_METHODS.providerAuthComplete,
+  WS_METHODS.providerAuthCancel,
+  WS_METHODS.providerAuthLogout,
+  WS_METHODS.providerAuthSubscribe,
+]);
+const decodeProviderAuthTarget = Schema.decodeUnknownSync(
+  Schema.Struct({ instanceId: ProviderInstanceId }),
+);
+
 /**
  * `onAuthorized` runs once after an authorized request succeeds; for a stream
  * RPC, that is when the stream completes. Every RPC passes through here, so it
@@ -285,15 +304,30 @@ const requiredScopesForRpcCall = (
  */
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
+  ownsProviderInstance?: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    const authorized =
+      onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    if (requiredScope === undefined) return authorized;
+    if (
+      requiredScope !== AuthProvidersManageScope ||
+      ownsProviderInstance === undefined ||
+      !OWNED_PROVIDER_AUTH_METHODS.has(rpc._tag) ||
+      !scopes.includes(AuthOrchestrationOperateScope)
+    ) {
+      return Effect.fail(rpcAuthorizationError(requiredScope));
+    }
+    return ownsProviderInstance(decodeProviderAuthTarget(payload).instanceId).pipe(
+      Effect.flatMap((owns) =>
+        owns ? authorized : Effect.fail(rpcAuthorizationError(requiredScope)),
+      ),
+    );
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

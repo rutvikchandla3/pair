@@ -41,6 +41,16 @@ relay and maintenance management, but keep `terminal:operate` and
 `orchestration:operate`. By the argument above, roles guard against mistakes,
 not against a hostile teammate.
 
+Provider accounts are the one exception to `providers:manage`. A member creates,
+renames and removes only their own instances through `team.providerAccounts.mutate`
+([MemberProviderAccounts](../../apps/server/src/team/MemberProviderAccounts.ts)),
+which picks the id, home and environment so a member cannot aim one at the team's
+login or another binary. The `providerAuth*` RPCs admit a member with
+`orchestration:operate` when the instance's `ownerMemberId` is theirs
+([RpcAuthorization](../../apps/server/src/auth/RpcAuthorization.ts)); the client's
+`permissionAtom` stays scope-based, so the accounts UI calls them directly. The
+owner field is routing, not secrecy: anyone with a terminal can read the login.
+
 Any member can add a device: the pairing-credential endpoint needs only
 `access:read`, binds the link to the caller's member, and defaults to the
 caller's scopes. Without `access:write`, the access snapshot and stream show

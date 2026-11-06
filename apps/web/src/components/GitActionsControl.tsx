@@ -53,6 +53,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
+  resolveCreatedPullRequestNote,
   resolveDefaultBranchActionDialogCopy,
   resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
@@ -1241,7 +1242,9 @@ export default function GitActionsControl({
       title: createdPullRequest
         ? `Created ${changeRequestTerminology.shortLabel}`
         : actionResult.toast.title,
-      description: createdPullRequest ? null : (actionResult.toast.description ?? null),
+      description: createdPullRequest
+        ? resolveCreatedPullRequestNote(actionResult)
+        : (actionResult.toast.description ?? null),
       scopeKey: successScopeKey,
       expiresAtMs: inlineSuccessExpiresAt(),
     });

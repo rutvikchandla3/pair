@@ -1,4 +1,5 @@
 import {
+  ADMIN_SCOPES,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
@@ -6,9 +7,11 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentAuthorizationError,
   MEMBER_SCOPES,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderSetupError,
   SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -84,6 +87,11 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.teamSubscribe,
       WS_METHODS.teamUpdateSelf,
+      WS_METHODS.teamUsage,
+      WS_METHODS.teamGitHubLinkStart,
+      WS_METHODS.teamGitHubLinkWait,
+      WS_METHODS.teamGitHubLinkCancel,
+      WS_METHODS.teamGitHubDisconnect,
       WS_METHODS.presenceSubscribe,
       WS_METHODS.presenceReport,
     ]) {
@@ -247,6 +255,114 @@ describe("settings mutation authorization", () => {
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("provider sign-in on a member's own account", () => {
+  const tested = [
+    WS_METHODS.providerAuthStart,
+    WS_METHODS.providerAuthRespond,
+    WS_METHODS.providerAuthComplete,
+    WS_METHODS.providerAuthCancel,
+    WS_METHODS.providerAuthLogout,
+    WS_METHODS.providerAuthSubscribe,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const bobsClaude = ProviderInstanceId.make("claudeAgent-bob-1a2b");
+  const teamClaude = ProviderInstanceId.make("claudeAgent");
+  const idle = (instanceId: ProviderInstanceId) => ({
+    instanceId,
+    phase: "idle" as const,
+    flowId: null,
+    authorizationUrl: null,
+    expiresAt: null,
+    message: null,
+  });
+
+  it.effect.each([
+    { who: "a member on their own account", scopes: MEMBER_SCOPES, target: bobsClaude, ok: true },
+    { who: "a member on another's account", scopes: MEMBER_SCOPES, target: teamClaude, ok: false },
+    {
+      who: "a read-only session on its member's account",
+      scopes: [AuthOrchestrationReadScope],
+      target: bobsClaude,
+      ok: false,
+    },
+    { who: "an admin on any account", scopes: ADMIN_SCOPES, target: teamClaude, ok: true },
+  ])("lets $who sign in and out: $ok", ({ scopes, target, ok }) =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const handle = (method: string, instanceId: ProviderInstanceId) =>
+        Effect.sync(() => {
+          handled.push(method);
+          return idle(instanceId);
+        });
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.providerAuthStart, (input) =>
+              handle("start", input.instanceId),
+            ),
+            group.toLayerHandler(WS_METHODS.providerAuthRespond, (input) =>
+              handle("respond", input.instanceId),
+            ),
+            group.toLayerHandler(WS_METHODS.providerAuthComplete, (input) =>
+              handle("complete", input.instanceId),
+            ),
+            group.toLayerHandler(WS_METHODS.providerAuthCancel, (input) =>
+              handle("cancel", input.instanceId),
+            ),
+            group.toLayerHandler(WS_METHODS.providerAuthLogout, (input) =>
+              handle("logout", input.instanceId),
+            ),
+            group.toLayerHandler(WS_METHODS.providerAuthSubscribe, (input) =>
+              Stream.fromEffect(handle("subscribe", input.instanceId)),
+            ),
+            RpcAuthorization.layer(scopes, (instanceId) =>
+              Effect.succeed(instanceId === bobsClaude),
+            ),
+          ),
+        ),
+      );
+      const instanceId = target;
+      const flowId = "flow";
+      const calls: ReadonlyArray<
+        Effect.Effect<unknown, EnvironmentAuthorizationError | ProviderSetupError>
+      > = [
+        client[WS_METHODS.providerAuthStart]({ instanceId }),
+        client[WS_METHODS.providerAuthRespond]({
+          instanceId,
+          flowId,
+          interactionId: "interaction",
+          response: { type: "browser", action: "accept" },
+        }),
+        client[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId,
+          callbackUrl: "http://127.0.0.1/?code=c",
+        }),
+        client[WS_METHODS.providerAuthCancel]({ instanceId, flowId }),
+        client[WS_METHODS.providerAuthLogout]({ instanceId }),
+        Stream.runCollect(client[WS_METHODS.providerAuthSubscribe]({ instanceId })),
+      ];
+      for (const call of calls) {
+        const result = yield* Effect.result(call);
+        if (ok) expect(result._tag).toBe("Success");
+        else {
+          expect(result).toMatchObject({
+            failure: { _tag: "EnvironmentAuthorizationError" },
+          });
+        }
+      }
+      expect(handled).toEqual(
+        ok ? ["start", "respond", "complete", "cancel", "logout", "subscribe"] : [],
+      );
     }).pipe(Effect.scoped),
   );
 });

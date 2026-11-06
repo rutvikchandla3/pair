@@ -53,6 +53,17 @@ export function useIsTeamMode(environmentId: EnvironmentId | null): boolean {
   );
 }
 
+const teamGitHubFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) => get(serverEnvironment.configValueAtom(environmentId))?.teamGitHub === true,
+  ).pipe(Atom.withLabel(`team-github:${environmentId}`)),
+);
+
+/** Whether members can connect their own GitHub account on this server. */
+export function useTeamGitHub(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(environmentId === null ? NOT_TEAM_ATOM : teamGitHubFamily(environmentId));
+}
+
 /** The origin a copied thread link opens on: the team server itself, else the hosted app. */
 export function useThreadShareOrigin(environmentId: EnvironmentId | null): string {
   return threadShareOrigin({
