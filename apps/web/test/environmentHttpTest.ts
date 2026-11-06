@@ -101,6 +101,8 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 );
               }),
             )
+            .handle("githubSignInStart", () => unexpectedEndpoint("auth.githubSignInStart"))
+            .handle("githubSignInPoll", () => unexpectedEndpoint("auth.githubSignInPoll"))
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
             .handle("webSocketTicketFor", () => unexpectedEndpoint("auth.webSocketTicketFor"))

@@ -194,8 +194,6 @@ export interface SourceControlAppSignIn {
   /** The app's name on the forge, as the consent screen shows it. */
   readonly appName: string;
   readonly hosts: ReadonlyArray<string>;
-  /** Where an account or organization installs the app so it can reach its repositories. */
-  readonly installUrl: string;
   /** Where the user revokes the app's access entirely. */
   readonly revokeUrl: string;
 }

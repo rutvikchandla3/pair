@@ -131,6 +131,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as MemberGitHub from "./team/MemberGitHub.ts";
 import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
@@ -1475,6 +1476,7 @@ export const layerWsRpc = (
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
+      const memberGitHub = yield* MemberGitHub.MemberGitHub;
       const presence = yield* Presence.Presence;
       const teamState = yield* TeamState.TeamState;
       const memberProviderAccounts = yield* MemberProviderAccounts.MemberProviderAccounts;
@@ -2017,6 +2019,7 @@ export const layerWsRpc = (
           threadFindProgressive: true,
           threadMemberState: true,
           threadFollow: true,
+          ...(memberGitHub.enabled ? { teamGitHub: true } : {}),
           apiTokens: true,
           presence: true,
           secretProviderSettings: true,
@@ -2465,6 +2468,10 @@ export const layerWsRpc = (
           teamMembers.updateSelf(currentSession.memberId, input),
         [WS_METHODS.teamProviderAccountsMutate]: (input) =>
           memberProviderAccounts.mutate(currentSession.memberId, input),
+        [WS_METHODS.teamGitHubLinkStart]: () => memberGitHub.start(currentSession.memberId),
+        [WS_METHODS.teamGitHubLinkWait]: () => memberGitHub.wait(currentSession.memberId),
+        [WS_METHODS.teamGitHubLinkCancel]: () => memberGitHub.cancel(currentSession.memberId),
+        [WS_METHODS.teamGitHubDisconnect]: () => memberGitHub.disconnect(currentSession.memberId),
         [WS_METHODS.presenceSubscribe]: (_input, metadata) =>
           Stream.unwrap(
             presence.subscribe({

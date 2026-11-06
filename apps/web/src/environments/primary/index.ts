@@ -1,8 +1,10 @@
 export {
   peekPairingTokenFromUrl,
+  pollGitHubSignIn,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,
   resolveInitialServerAuthGateState,
+  startGitHubSignIn,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
   takePairingTokenFromUrl,

@@ -6,6 +6,7 @@ import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
+  resolveCreatedPullRequestNote,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
@@ -296,5 +297,30 @@ describe("resolveChangesTotals", () => {
       ),
       { insertions: 2, deletions: 0 },
     );
+  });
+});
+
+describe("resolveCreatedPullRequestNote", () => {
+  const created = (title: string, description: string | undefined) => ({
+    pr: { status: "created" as const, title },
+    toast: {
+      title: "Created PR #7",
+      ...(description === undefined ? {} : { description }),
+      cta: { kind: "none" as const },
+    },
+  });
+
+  it("leaves out a description that repeats the PR title, whole or truncated", () => {
+    assert.strictEqual(resolveCreatedPullRequestNote(created("Add login", "Add login")), null);
+    assert.strictEqual(
+      resolveCreatedPullRequestNote(created("Add a very long login flow", "Add a very...")),
+      null,
+    );
+    assert.strictEqual(resolveCreatedPullRequestNote(created("Add login", undefined)), null);
+  });
+
+  it("shows the note a PR that opened as the server carries", () => {
+    const note = "Opened with the server's GitHub account.";
+    assert.strictEqual(resolveCreatedPullRequestNote(created("Add login", note)), note);
   });
 });
