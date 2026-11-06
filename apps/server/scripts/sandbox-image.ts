@@ -4,12 +4,21 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { ProviderDriverKind } from "@t3tools/contracts";
+
+import packageJson from "../package.json" with { type: "json" };
 import { CODEX_RELEASES, type CodexReleaseAsset } from "../src/provider/codexReleases.ts";
+import { BUNDLED_MODEL_MANIFEST } from "../src/provider/ModelManifest.ts";
+import {
+  resolveProviderCompatibility,
+  type ProviderCompatibilityPolicy,
+} from "../src/provider/providerCompatibility.ts";
 
 export class SandboxImageCodexReleaseError extends Schema.TaggedError<SandboxImageCodexReleaseError>()(
   "SandboxImageCodexReleaseError",
@@ -26,6 +35,15 @@ export class SandboxImageDockerError extends Schema.TaggedError<SandboxImageDock
 ) {
   override get message(): string {
     return `docker build failed with exit code ${this.exitCode}.`;
+  }
+}
+
+export class SandboxImageProviderPinError extends Schema.TaggedError<SandboxImageProviderPinError>()(
+  "SandboxImageProviderPinError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -78,6 +96,88 @@ const writeContext = Effect.fn("sandboxImage.writeContext")(function* (directory
   yield* fs.writeFileString(path.join(directory, "codex.env"), env);
 });
 
+export interface ProviderPins {
+  readonly claudeAgent: string;
+  readonly codex: string;
+}
+
+const CLAUDE_PACKAGE = "@anthropic-ai/claude-code";
+
+/** The provider versions the image build installs, read from the files the build reads. */
+export const readProviderPins = Effect.fn("sandboxImage.readProviderPins")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const providersDir = path.join(yield* imageSourceDir(), "providers");
+  const readJson = (name: string) =>
+    fs.readFileString(path.join(providersDir, name)).pipe(Effect.map((text) => JSON.parse(text)));
+  const manifest = yield* readJson("package.json");
+  const lock = yield* readJson("package-lock.json");
+  const pinned: unknown = manifest.dependencies?.[CLAUDE_PACKAGE];
+  const locked: unknown = lock.packages?.[`node_modules/${CLAUDE_PACKAGE}`]?.version;
+  if (typeof pinned !== "string" || !/^\d+\.\d+\.\d+$/.test(pinned)) {
+    return yield* new SandboxImageProviderPinError({
+      detail: `${CLAUDE_PACKAGE} must be pinned to an exact version in providers/package.json, got ${String(pinned)}.`,
+    });
+  }
+  if (locked !== pinned) {
+    return yield* new SandboxImageProviderPinError({
+      detail: `providers/package-lock.json resolves ${CLAUDE_PACKAGE} to ${String(locked)}, not ${pinned}.`,
+    });
+  }
+  const codex = yield* codexEnv(CODEX_RELEASES).pipe(
+    Effect.map((env) => /^CODEX_VERSION=(.+)$/m.exec(env)?.[1] ?? ""),
+  );
+  return { claudeAgent: pinned, codex } satisfies ProviderPins;
+});
+
+/** Pins the server's model manifest does not grade `supported` for this release. */
+export const checkProviderPins = (
+  pins: ProviderPins,
+  policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
+  pairVersion: string,
+) =>
+  (["claudeAgent", "codex"] as const).flatMap((driver) => {
+    const status =
+      resolveProviderCompatibility(
+        policies,
+        ProviderDriverKind.make(driver),
+        pins[driver],
+        pairVersion,
+      )?.status ?? "no policy";
+    return status === "supported" ? [] : [{ driver, version: pins[driver], status }];
+  });
+
+const checkProvidersCommand = Command.make(
+  "check-providers",
+  {
+    version: Flag.String("version").pipe(
+      Flag.optional,
+      Flag.withDescription("Release version to grade against, with or without a leading v."),
+    ),
+  },
+  ({ version }) =>
+    Effect.gen(function* () {
+      const pairVersion = Option.match(version, {
+        onNone: () => packageJson.version,
+        onSome: (value) => value.replace(/^v/, ""),
+      });
+      const pins = yield* readProviderPins();
+      const failures = checkProviderPins(pins, BUNDLED_MODEL_MANIFEST.compatibility, pairVersion);
+      if (failures.length > 0) {
+        return yield* new SandboxImageProviderPinError({
+          detail: [
+            `The image's provider CLIs are not supported by Pair ${pairVersion}:`,
+            ...failures.map(({ driver, version, status }) => `  ${driver} ${version}: ${status}`),
+          ].join("\n"),
+        });
+      }
+    }),
+).pipe(
+  Command.withDescription(
+    "Fail unless the pinned Claude Code and Codex are supported by this release's model manifest.",
+  ),
+);
+
 const contextCommand = Command.make(
   "context",
   { directory: Argument.String("dir") },
@@ -120,7 +220,7 @@ const buildCommand = Command.make(
 
 const cli = Command.make("sandbox-image").pipe(
   Command.withDescription("Build the Pair sandbox base image."),
-  Command.withSubcommands([contextCommand, buildCommand]),
+  Command.withSubcommands([contextCommand, buildCommand, checkProvidersCommand]),
 );
 
 if (import.meta.main) {

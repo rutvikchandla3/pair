@@ -16,7 +16,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-providers:
+    name: Check pinned provider CLIs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3...
+
+      - name: Check pinned provider CLIs
+        run: node apps/server/scripts/sandbox-image.ts check-providers
+
   build:
+    needs: check-providers
     name: Build base image (${{ matrix.arch }})
     # Native runners per architecture, so no QEMU.
     runs-on: ${{ matrix.runner }}
