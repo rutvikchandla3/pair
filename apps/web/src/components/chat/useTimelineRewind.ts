@@ -12,6 +12,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { discardedTurnAuthors } from "@t3tools/client-runtime/state/composer-dispatch";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -33,6 +34,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { rewindToMessage } from "./chatViewSend";
 import { makeThreadErrorSetter } from "../ChatView.logic";
+import type { useTeamAttribution } from "../../state/team";
 interface TimelineRewindInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
@@ -41,6 +43,7 @@ interface TimelineRewindInput {
   readonly serverProjection: ThreadStructure | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
+  readonly team: ReturnType<typeof useTeamAttribution>;
   readonly phase: SessionPhase;
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
@@ -66,6 +69,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     serverProjection,
     activeThread,
     timelineMessages,
+    team,
     phase,
     isSendBusy,
     isRevertingCheckpoint,
@@ -125,7 +129,17 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      const discards =
+        serverProjection === null
+          ? []
+          : discardedTurnAuthors({
+              projection: serverProjection,
+              messages: timelineMessages.slice(timelineMessages.indexOf(message)),
+              targetTurnCount: turnCount,
+              members: team.members,
+              me: team.currentMemberId,
+            }).map(({ memberId, count }) => ({ name: team.nameOf(memberId), count }));
+      openRevertConfirm(routeThreadKey, { turnCount, messageId, discards });
       return;
     }
 
