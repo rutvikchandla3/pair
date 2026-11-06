@@ -39,6 +39,7 @@ import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   makeReplayServerConfig,
@@ -1057,6 +1058,7 @@ function layerClaudeProviderAdapterRegistryReplay(
         NodeServices.layer,
         NodeCrypto.layer,
         layerServerConfig,
+        WorkspaceHostTesting.layerFromContext.pipe(Layer.provide(NodeServices.layer)),
       ),
     ),
   );

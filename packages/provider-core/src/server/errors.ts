@@ -26,3 +26,12 @@ export class ProviderCredentialError extends Schema.TaggedError<ProviderCredenti
     return `Could not ${this.operation} stored provider credentials.`;
   }
 }
+
+export class ProviderSessionHostUnavailableError extends Schema.TaggedError<ProviderSessionHostUnavailableError>()(
+  "ProviderSessionHostUnavailableError",
+  { sandboxId: Schema.String },
+) {
+  override get message(): string {
+    return "This thread's machine is not connected.";
+  }
+}

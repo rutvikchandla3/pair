@@ -4,13 +4,15 @@ import type {
   ServerSettings,
   ServerSettingsError,
 } from "@t3tools/contracts";
+import type { AgentScopeShape } from "@t3tools/shared/AgentScope";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
-import type { ProviderCredentialError } from "./errors.ts";
+import type { ProviderCredentialError, ProviderSessionHostUnavailableError } from "./errors.ts";
 
 export interface ProviderHostPaths {
   readonly cwd: string;
@@ -27,6 +29,11 @@ export interface ProviderCredentials {
   readonly get: Effect.Effect<Option.Option<Uint8Array>, ProviderCredentialError>;
   readonly set: (credentials: Uint8Array) => Effect.Effect<void, ProviderCredentialError>;
   readonly remove: Effect.Effect<void, ProviderCredentialError>;
+}
+
+export interface ProviderSessionProcesses {
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly agentScope: AgentScopeShape;
 }
 
 export class ProviderHost extends Context.Service<
@@ -47,6 +54,10 @@ export class ProviderHost extends Context.Service<
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
+    /** The thread machine's spawner and agent scope for a session cwd. Absent: the adapter's own. */
+    readonly sessionProcesses?: (
+      cwd: string,
+    ) => Effect.Effect<ProviderSessionProcesses, ProviderSessionHostUnavailableError>;
     readonly credentials: (
       namespace: string,
       bindingId: string,

@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.6): provider sessions spawn on the thread's machine */
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -100,10 +99,11 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcess } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1578,20 +1578,33 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  | ChildProcessSpawner.ChildProcessSpawner
   | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
+  | WorkspaceHosts.WorkspaceHosts
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const agentScope = yield* AgentScope;
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const cwd = input.runtimePolicy.cwd;
+        const host =
+          cwd === null
+            ? hosts.local
+            : yield* hosts.forPath(cwd).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
         const environment = {
           ...codexAppServerEnvironment(input.environment),
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
@@ -1603,8 +1616,8 @@ export const layerAppServerClientFactory: Layer.Layer<
           ),
           env: environment,
           threadId: input.threadId,
-        }).pipe(Effect.provideService(AgentScope, agentScope));
-        const handle = yield* spawner.spawn(command).pipe(
+        }).pipe(Effect.provideService(AgentScope, host.agentScope));
+        const handle = yield* host.spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError(
             (cause) =>
@@ -1657,7 +1670,9 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const digest = yield* Digest.Digest;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments, MCP app snapshots and the shadow home
   const fileSystem = yield* FileSystem.FileSystem;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.7): base environment
   const hostEnvironment = yield* HostProcess.Environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
@@ -1678,6 +1693,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const settings = {
     ...config,
     enabled,
+    // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
     binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
   } satisfies CodexSettings;
@@ -3326,6 +3342,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
+                // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments and their extracted text live on the server
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
               ),
             resolveAttachmentPath: (attachment) =>
@@ -3946,6 +3963,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                             contents: response.contents,
                           }),
                         ),
+                        // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: MCP app snapshots are attachments
                         Effect.provideService(FileSystem.FileSystem, fileSystem),
                         // Convert failures and defects to plain tool rows; only interruption ends the capture fiber.
                         Effect.catchCauseIf(

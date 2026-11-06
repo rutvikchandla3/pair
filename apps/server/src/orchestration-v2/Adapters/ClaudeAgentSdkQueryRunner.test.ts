@@ -27,11 +27,12 @@ import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEven
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { spawnProcessGroup as spawnClaudeProcessGroup } from "../../workspaceHost/LocalWorkspaceHost.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
-  spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -73,6 +74,7 @@ const writeClaudeSession = Effect.fnUntraced(function* (
 const forkRunnerLayer = layerQueryRunner.pipe(
   Layer.provide(PortScanner.layerTest),
   Layer.provide(Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined })),
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
 );
 
 it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", () =>
@@ -210,6 +212,7 @@ const realQueryRunner = layerQueryRunner.pipe(
       canonical: undefined,
     }),
   ),
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
   Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -675,6 +678,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       Layer.provide(
         Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
       ),
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
     return Effect.gen(function* () {

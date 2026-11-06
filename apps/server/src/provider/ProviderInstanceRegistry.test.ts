@@ -49,6 +49,7 @@ import { ProviderDriverError } from "./Errors.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 
@@ -201,7 +202,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
-  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
+  const layerBase = ProviderHostLive.layer.pipe(
+    Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+    Layer.provideMerge(layerBaseDeps),
+  );
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provide(PortScanner.layerTest),
     Layer.provideMerge(layerBase),

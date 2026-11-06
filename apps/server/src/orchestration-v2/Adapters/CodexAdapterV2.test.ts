@@ -72,6 +72,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -913,6 +914,7 @@ describe("CodexAdapterV2 process exit", () => {
           canonical: undefined,
         }),
       ),
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provide(
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,

@@ -4,6 +4,8 @@ import type * as Brand from "effect/Brand";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the Claude Agent SDK's process type uses Node streams.
+import type * as NodeStream from "node:stream";
 import * as Schema from "effect/Schema";
 
 /** "local" or a sandbox id. */
@@ -24,6 +26,40 @@ export interface WorkspaceHostInfo {
   readonly executablePath: string;
 }
 
+export interface ProcessGroupSpawnInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export interface ProcessGroupHooks {
+  readonly onExit?: (() => void) | undefined;
+  readonly onStderr: (text: string) => void;
+  readonly onStderrClose: () => void;
+}
+
+type ProcessExitListener = (code: number | null, signal: NodeJS.Signals | null) => void;
+
+/** The members the Claude Agent SDK's `spawnClaudeCodeProcess` hook reads, plus stderr and pid. */
+export interface ProcessGroupProcess {
+  readonly stdin: NodeStream.Writable;
+  readonly stdout: NodeStream.Readable;
+  readonly stderr: NodeStream.Readable | null;
+  readonly pid?: number | undefined;
+  readonly killed: boolean;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  kill(signal: NodeJS.Signals): boolean;
+  on(event: "exit", listener: ProcessExitListener): void;
+  on(event: "error", listener: (error: Error) => void): void;
+  once(event: "exit", listener: ProcessExitListener): void;
+  once(event: "error", listener: (error: Error) => void): void;
+  off(event: "exit", listener: ProcessExitListener): void;
+  off(event: "error", listener: (error: Error) => void): void;
+}
+
 /** The machine a thread's workspace lives on. A value, not a layer. */
 export interface WorkspaceHost {
   readonly id: WorkspaceHostId;
@@ -36,6 +72,14 @@ export interface WorkspaceHost {
   readonly agentScope: AgentScopeShape;
   /** The calls whose flags and errno codes workspace file safety depends on. */
   readonly files: WorkspaceHostFiles;
+  /**
+   * Spawns detached with a watcher that kills the whole group when the server's pipe closes.
+   * Synchronous, unlike every other member: the Claude Agent SDK's spawn hook is synchronous.
+   */
+  readonly spawnProcessGroup: (
+    input: ProcessGroupSpawnInput,
+    hooks: ProcessGroupHooks,
+  ) => ProcessGroupProcess;
 }
 
 export type WorkspaceFileKind = "File" | "Directory" | "SymbolicLink" | "Other";

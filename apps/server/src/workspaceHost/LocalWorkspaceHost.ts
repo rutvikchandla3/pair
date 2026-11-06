@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the local host is the one place thread-scoped node:fs is allowed
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeChildProcess from "node:child_process";
 
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -12,6 +14,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import {
   LOCAL_WORKSPACE_HOST_ID,
   type WorkspaceFileKind,
+  type ProcessGroupHooks,
+  type ProcessGroupProcess,
+  type ProcessGroupSpawnInput,
   type WorkspaceHost,
   WorkspaceHostFileError,
   type WorkspaceHostFiles,
@@ -95,12 +100,69 @@ const files: WorkspaceHostFiles = {
     }),
 };
 
+const CLAUDE_GROUP_WATCH_SCRIPT = [
+  "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
+  'exec "$@" 3<&-',
+].join("\n");
+
+/**
+ * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
+ * setsid daemons. The CLI keeps working after its pipes close, so a watcher stops the group on
+ * EOF from a pipe only this server holds, including when the server crashes.
+ */
+export function spawnProcessGroup(
+  options: ProcessGroupSpawnInput,
+  onExit?: () => void,
+  onStderr: (text: string) => void = () => {},
+  onStderrClose: () => void = () => {},
+): ProcessGroupProcess {
+  const child = NodeChildProcess.spawn(
+    "/bin/sh",
+    ["-c", CLAUDE_GROUP_WATCH_SCRIPT, "t3-claude", options.command, ...options.args],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      signal: options.signal,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+      detached: true,
+    },
+  );
+  // Always drained, so a chatty CLI never blocks on a full stderr pipe.
+  child.stderr?.setEncoding("utf8").on("data", onStderr).once("close", onStderrClose);
+  child.once("exit", () => {
+    try {
+      signalProcessGroup(child.pid ?? 0, "SIGKILL");
+    } catch {}
+    onExit?.();
+  });
+  // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
+  return child as ProcessGroupProcess;
+}
+
+// Windows has no process groups to watch.
+const spawnWindowsProcess = (
+  options: ProcessGroupSpawnInput,
+  hooks: ProcessGroupHooks,
+): ProcessGroupProcess => {
+  const child = NodeChildProcess.spawn(options.command, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+    signal: options.signal,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stderr.setEncoding("utf8").on("data", hooks.onStderr).once("close", hooks.onStderrClose);
+  return child;
+};
+
 /** The server's own machine, assembled from the context's services. No I/O, no state. */
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const pty = yield* PtyAdapter.PtyAdapter;
   const agentScope = yield* AgentScope;
+  // The server's own platform, which is this host's by definition.
+  const platform = yield* HostProcess.Platform;
   // Reads the references when `info` runs, so a per-call override still applies.
   const info: Effect.Effect<WorkspaceHostInfo> = Effect.gen(function* () {
     return {
@@ -121,5 +183,9 @@ export const make = Effect.gen(function* () {
     pty,
     agentScope,
     files,
+    spawnProcessGroup: (input, hooks) =>
+      platform === "win32"
+        ? spawnWindowsProcess(input, hooks)
+        : spawnProcessGroup(input, hooks.onExit, hooks.onStderr, hooks.onStderrClose),
   } satisfies WorkspaceHost;
 });

@@ -1,5 +1,8 @@
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
+import {
+  ProviderCredentialError,
+  ProviderSessionHostUnavailableError,
+} from "@t3tools/provider-core/server/errors";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,6 +13,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as DocumentText from "./DocumentText.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
@@ -22,6 +26,7 @@ export const layer = Layer.effect(
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    const workspaceHosts = yield* WorkspaceHosts.WorkspaceHosts;
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -46,6 +51,14 @@ export const layer = Layer.effect(
         },
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       ),
+      sessionProcesses: Effect.fn("ProviderHost.sessionProcesses")(function (cwd) {
+        return workspaceHosts.forPath(cwd).pipe(
+          Effect.map((host) => ({ spawner: host.spawner, agentScope: host.agentScope })),
+          Effect.mapError(
+            (error) => new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId }),
+          ),
+        );
+      }),
       credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
         return ProviderCredentialStore.make(namespace, bindingId).pipe(
           Effect.map((store) => ({

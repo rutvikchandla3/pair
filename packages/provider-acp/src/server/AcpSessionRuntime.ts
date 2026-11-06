@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.6): provider sessions spawn on the thread's machine */
+/* oxlint-disable t3code/workspace-host-boundary -- spawns with the spawner and agent scope the adapter takes from the session host; not routed yet (0.7): base environment; not routed yet (0.9): host facts; routed in M3: the Grok cgroup lease */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

@@ -32,6 +32,7 @@ import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
 const hostPlatform = HostProcess.Platform.defaultValue();
@@ -274,6 +275,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(McpProviderSessions.layer),
 );
 const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(layerDeps),
 );

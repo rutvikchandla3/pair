@@ -42,6 +42,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
@@ -93,7 +94,10 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
-const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
+const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
+  Layer.provideMerge(layerDeps),
+);
 
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";

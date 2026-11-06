@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.6): the session spawn; client fs and terminals are routed in M3 */
 // @effect-diagnostics nodeBuiltinImport:off
 
 import {
@@ -1698,7 +1697,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   options: AcpAdapterV2Options,
 ) {
   const random = yield* SecureRandom.SecureRandom;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments live on the server
   const fileSystem = yield* FileSystem.FileSystem;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the fallback when ProviderHost has no sessionProcesses
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1732,6 +1733,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const sessionProcesses =
+          host.sessionProcesses === undefined
+            ? { spawner: childProcessSpawner, agentScope }
+            : yield* host.sessionProcesses(input.runtimePolicy.cwd ?? process.cwd());
         const readMcpContext = mcpContextReader(input.runtimePolicy);
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
@@ -1830,6 +1835,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : undefined;
                 },
               }).pipe(
+                // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M3: client terminals
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
               );
         if (clientTerminals !== undefined) {
@@ -6877,8 +6883,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             .pipe(
               Effect.provideService(Scope.Scope, runtimeScope),
               Effect.provideService(SecureRandom.SecureRandom, random),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Effect.provideService(AgentScope, agentScope),
+              Effect.provideService(
+                // oxlint-disable-next-line t3code/workspace-host-boundary -- the session host's spawner
+                ChildProcessSpawner.ChildProcessSpawner,
+                sessionProcesses.spawner,
+              ),
+              Effect.provideService(AgentScope, sessionProcesses.agentScope),
               Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
         });
@@ -6958,8 +6968,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               .pipe(
                 Effect.provideService(Scope.Scope, replacementScope),
                 Effect.provideService(SecureRandom.SecureRandom, random),
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-                Effect.provideService(AgentScope, agentScope),
+                Effect.provideService(
+                  // oxlint-disable-next-line t3code/workspace-host-boundary -- the session host's spawner
+                  ChildProcessSpawner.ChildProcessSpawner,
+                  sessionProcesses.spawner,
+                ),
+                Effect.provideService(AgentScope, sessionProcesses.agentScope),
                 Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
               );
             yield* replacementRuntime.handleSessionUpdate((notification) =>
@@ -7901,14 +7915,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const userText =
             flavor.rewriteUserText === undefined
               ? turnInput.message.text
-              : yield* flavor
-                  .rewriteUserText(turnInput.message.text, turnInput)
-                  .pipe(
-                    Effect.provideService(
-                      ChildProcessSpawner.ChildProcessSpawner,
-                      childProcessSpawner,
-                    ),
-                  );
+              : yield* flavor.rewriteUserText(turnInput.message.text, turnInput).pipe(
+                  Effect.provideService(
+                    // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M3: Grok's skill catalog query
+                    ChildProcessSpawner.ChildProcessSpawner,
+                    childProcessSpawner,
+                  ),
+                );
           const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
