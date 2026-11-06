@@ -83,6 +83,8 @@ Notifications go only to the people a thread concerns:
 
 You are never notified about your own actions, or about a thread you're looking at.
 
+On a team server, push notifications come from Pair, not T3 Connect, and need your team's own mobile build. Until that's set up, open the app to see new activity.
+
 ## Share a thread
 
 On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who

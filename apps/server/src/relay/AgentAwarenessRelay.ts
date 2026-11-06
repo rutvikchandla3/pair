@@ -48,6 +48,8 @@ import { isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as TeamMembers from "../team/TeamMembers.ts";
+import * as TeamState from "../team/TeamState.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -365,6 +367,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
   const signingKey = yield* EnvironmentSigningKey;
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
+  const teamMembers = yield* Effect.serviceOption(TeamMembers.TeamMembers);
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -424,6 +428,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let enqueueLivePublishedThreads: Effect.Effect<void> = Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
@@ -507,6 +512,22 @@ export const make = Effect.gen(function* () {
         deliveries: deliveryStats(response.deliveries),
       });
     });
+
+    // The relay keeps one state per thread and can't route per member, so a team publishes none.
+    if (Option.isSome(team) && (yield* team.value.isTeamMode)) {
+      publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
+      if (hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)) {
+        yield* publishState({ projectId: null, state: null, reason: "team-mode" }).pipe(
+          withRelayClientTracing,
+        );
+        yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+          new Map(publishedStates).set(threadId, CLEARED_PUBLISH_IDENTITY),
+        );
+      }
+      yield* enqueueLivePublishedThreads;
+      return;
+    }
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = (yield* threads.getAgentAwarenessSnapshot(threadId)).threads[0] ?? null;
@@ -667,6 +688,12 @@ export const make = Effect.gen(function* () {
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
+  enqueueLivePublishedThreads = Effect.gen(function* () {
+    const publishedStates = yield* Ref.get(publishedStateByThreadRef);
+    for (const threadId of publishedStates.keys()) {
+      if (hasLivePublishedState(publishedStates, threadId)) yield* worker.enqueue(threadId);
+    }
+  });
 
   schedulePublishRetry = Effect.fnUntraced(function* (threadId: ThreadId) {
     const attempts = publishRetries.get(threadId)?.attempts ?? 0;
@@ -827,6 +854,16 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
         }),
       );
+      if (Option.isSome(team) && Option.isSome(teamMembers)) {
+        // Clears the linked admin's cards as soon as a second member joins, not on the next event.
+        yield* forkParked(
+          Stream.runForEach(teamMembers.value.streamChanges, () =>
+            Effect.flatMap(team.value.isTeamMode, (teamMode) =>
+              teamMode ? enqueueLivePublishedThreads : Effect.void,
+            ),
+          ),
+        );
+      }
     },
   );
 
