@@ -3,8 +3,7 @@
 What Pair adds to T3 Code so a team of 8–10 can share one server, and where each piece stands.
 Every slice's last pull request updates this page when it lands.
 
-**Status:** **On main** means merged and usable. **Built** means implemented and in end-to-end
-testing. **Planned** means designed, not built. A server with one member behaves exactly like
+**Status:** **On main** means merged and usable. A server with one member behaves exactly like
 T3 Code throughout.
 
 ## On main
@@ -103,12 +102,21 @@ T3 Code throughout.
 - **Leaving the team** signs a member's accounts out and turns them off. Admins can hand an
   instance to a member with the **Owner** setting in **Settings → Providers**.
 
-## Planned
+### Mobile parity · [#38](https://github.com/rutvikchandla3/t3code/pull/38) [#39](https://github.com/rutvikchandla3/t3code/pull/39) [#40](https://github.com/rutvikchandla3/t3code/pull/40) [#41](https://github.com/rutvikchandla3/t3code/pull/41)
 
-- **Mobile parity.** Names, avatars, the Team shelf, Follow, presence and per-member push
-  notifications in the iOS and Android apps. _(In progress. Until per-member push lands, a team
-  server sends no T3 Connect push, so nobody is pinged about other people's work. The mobile model
-  picker still lists teammates' accounts, and the server refuses them.)_
+- **The team on your phone.** The iOS and Android apps show authors on messages, each thread's
+  owner and the Team shelf, with **Follow** and **Assign to…** in the thread menus.
+- **Same rules as the web.** Sending on a teammate's turn queues your message; hold Send for
+  **Steer now**. Queued messages show their author, and approvals say who answered them.
+- **Presence.** Your phone reports the thread on screen and your typing, and counts as **Away** in
+  the background. The thread header shows who else is viewing.
+- **Your own accounts.** The model picker leaves out teammates' accounts, and new tasks default to
+  your own. You add your account on the web.
+- **Push per member.** A team server pushes to the members a thread concerns, through your team's
+  own mobile build ([setup](../operations/team-push.md)). A push carries only the thread's title.
+  **Settings → Notifications** shows whether each team server notifies the device.
+- Checked end to end with mobile's own logic over the WebSocket. The phone screens still need a
+  pass on real devices.
 
 ## Not planned
 

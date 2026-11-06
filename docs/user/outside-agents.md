@@ -177,7 +177,7 @@ through OpenRouter or another router, see
 
 Pair doesn't pool or rotate teammates' personal subscriptions. They are licensed
 per person, and sharing them can break the provider's terms. Each member can
-connect their own account, or the team can use API keys, directly or through
+[connect their own account](./team.md#your-own-provider-account), or the team can use API keys, directly or through
 [a proxy such as OpenRouter](./providers-claude.md#openrouter).
 
 ## Remove an agent
