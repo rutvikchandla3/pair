@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly teamOnly?: boolean;
   readonly teamModeOnly?: boolean;
+  readonly teamGitHubOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -88,6 +89,7 @@ export interface SettingsSearchAvailability {
   readonly hasPeerLinkHost?: boolean;
   readonly hasTeamSettings?: boolean;
   readonly isTeamMode?: boolean;
+  readonly hasTeamGitHub?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -1207,6 +1209,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     teamModeOnly: true,
   },
   {
+    id: "team-github",
+    title: "GitHub",
+    to: "/settings/team",
+    targetId: "team",
+    searchTerms: ["connect github account reconnect disconnect pull requests username"],
+    teamOnly: true,
+    teamGitHubOnly: true,
+  },
+  {
     id: "secret-providers",
     title: "Secret providers",
     to: "/settings/secrets",
@@ -1382,7 +1393,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.teamOnly || availability.hasTeamSettings === true) &&
-      (!item.teamModeOnly || availability.isTeamMode === true),
+      (!item.teamModeOnly || availability.isTeamMode === true) &&
+      (!item.teamGitHubOnly || availability.hasTeamGitHub === true),
   );
 }
 

@@ -64,6 +64,7 @@ describe("V2 preview upgrade", () => {
         [82, "ThreadMemberState"],
         [83, "ThreadMemberFollow"],
         [84, "ShellAttribution"],
+        [85, "MemberGitHub"],
         [86, "ProviderTurnCompletedIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
@@ -172,6 +173,7 @@ describe("V2 preview upgrade", () => {
         [82, "ThreadMemberState"],
         [83, "ThreadMemberFollow"],
         [84, "ShellAttribution"],
+        [85, "MemberGitHub"],
         [86, "ProviderTurnCompletedIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),

@@ -77,7 +77,66 @@ still needs `user.name` and `user.email` configured.
 Agents commit as the thread's owner, from the next session after Assign. Cursor and OpenCode (v2 or
 an external server) commit as the server.
 
-In a team, pull requests Pair opens end with `Requested by <name> via Pair`.
+In a team, pull requests Pair opens with the server's GitHub account end with
+`Requested by <name> via Pair`.
+
+## GitHub
+
+Each member can connect their own GitHub account on their row in **Settings → Team**. This needs a
+GitHub App that your team owns. Until the server has one, admins see **Set up GitHub** at the top
+of **Settings → Team**.
+
+### Set up the GitHub App
+
+1. On GitHub, open your organization's **Settings → Developer settings → GitHub Apps → New GitHub
+   App**.
+2. Tick **Enable Device Flow** and leave the callback URL empty. Under **Webhook**, untick
+   **Active**.
+3. Under **Repository permissions**, set **Contents** to read and write, **Pull requests** to read
+   and write, and **Metadata** to read-only.
+4. Create the app and copy its **Client ID**. It is public: there is no secret to store.
+5. Choose **Install App** and install it on your organization. If you are not an owner of the
+   organization, GitHub sends a request that an organization owner must approve.
+
+Then give the client ID to the server as `T3CODE_GITHUB_APP_CLIENT_ID` and restart it:
+
+- For the background service, add `T3CODE_GITHUB_APP_CLIENT_ID=<client id>` to
+  [`service.env`](./background-service.md#configure-the-service-environment), then run
+  `t3 service restart`.
+- For `t3 serve` or the desktop app, set the variable in the shell environment that starts Pair,
+  then start it again.
+
+### Connect your account
+
+On your own row, choose **Connect GitHub**, copy the code, and approve it on GitHub. The row then
+shows **Connected as @you**. Each GitHub account can be connected to one member.
+
+PRs you create from Pair open as you. If GitHub refuses, they open with the server's account and
+say who requested them.
+
+Your GitHub connection is stored on this server. Anyone who can run commands here, including
+agents, could use it to act as you on GitHub.
+
+**Disconnect** deletes the connection from the server. GitHub keeps the app authorized until you
+revoke it at [github.com/settings/apps/authorizations](https://github.com/settings/apps/authorizations).
+If GitHub stops accepting the connection, for example after you revoke the app there, your row
+shows **Reconnect**.
+
+An admin can set a member's GitHub username under **Edit**. A new username or an empty one
+disconnects that member's account.
+
+### Sign in with GitHub
+
+Once the GitHub App is set up and someone on the team has added GitHub, the sign-in page offers
+**Sign in with GitHub**. Choose it on a new device, copy the code, and approve it on GitHub. You
+are signed in as your own member, and your GitHub connection is renewed.
+
+To let someone join this way, add their **GitHub username** when you invite them. They can then
+use the invite link or sign in with GitHub. A GitHub account that is not on the team cannot sign
+in.
+
+Only enter a code on GitHub that you started yourself on Pair's sign-in page. Someone who sends
+you a code is asking you to sign them in as you.
 
 ## Your threads and the Team shelf
 
@@ -108,6 +167,8 @@ Notifications go only to the people a thread concerns:
 - Following a thread marks it unread for you, without notifications.
 
 You are never notified about your own actions, or about a thread you're looking at.
+
+On a team server, push notifications come from Pair, not T3 Connect, and need your team's own mobile build. Until that's set up, open the app to see new activity.
 
 ## Share a thread
 

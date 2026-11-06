@@ -6,13 +6,10 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
-import { Check, Copy } from "lucide";
 import { CheckIcon, ExternalLinkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { MorphIcon } from "~/components/MorphIcon";
-import { T3AppIcon } from "~/components/T3AppIcon";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { SourceControlIconArtwork } from "~/components/SourceControlIconArtwork";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
@@ -20,6 +17,7 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { DeviceCodePrompt } from "./DeviceCodePrompt";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 
 type SignInState =
@@ -33,9 +31,6 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? error.message : String(error);
 };
 
-const expiryTime = (expiresAt: number) =>
-  new Date(expiresAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-
 function ExternalLink(props: { readonly href: string; readonly children: ReactNode }) {
   return (
     <InlineButton render={<a href={props.href} target="_blank" rel="noreferrer noopener" />}>
@@ -45,39 +40,20 @@ function ExternalLink(props: { readonly href: string; readonly children: ReactNo
   );
 }
 
-function AppMark(props: { readonly signedIn: boolean }) {
+function AppMark(props: {
+  readonly definition: SourceControlDefinition;
+  readonly signedIn: boolean;
+}) {
   return (
     <div className="relative size-10 shrink-0">
-      <T3AppIcon className="size-full" />
+      {props.definition.icon === null ? null : (
+        <SourceControlIconArtwork icon={props.definition.icon} className="size-full" />
+      )}
       {props.signedIn ? (
         <span className="absolute -right-1 -bottom-1 grid size-4 place-items-center rounded-full bg-success text-white ring-2 ring-card">
           <CheckIcon aria-hidden className="size-2.5" strokeWidth={3} />
         </span>
       ) : null}
-    </div>
-  );
-}
-
-/** The device code, one cell per character, as GitHub prints it. */
-function DeviceCode(props: { readonly code: string }) {
-  return (
-    <div className="flex items-center gap-1 font-mono text-lg font-medium">
-      <span className="sr-only">{props.code}</span>
-      {Array.from(props.code, (char, index) =>
-        char === "-" ? (
-          <span key={index} aria-hidden className="px-0.5 text-muted-foreground">
-            –
-          </span>
-        ) : (
-          <span
-            key={index}
-            aria-hidden
-            className="grid h-10 w-8 place-items-center rounded-md border border-border bg-background shadow-xs"
-          >
-            {char}
-          </span>
-        ),
-      )}
     </div>
   );
 }
@@ -112,10 +88,6 @@ export function SourceControlAppSignInSettings({
   const cancel = useAtomCommand(sourceControlEnvironment.cancelSignIn, { reportFailure: false });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: `sign out of ${appSignIn.appName}`,
-  });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    timeout: 1500,
-    target: "sign-in code",
   });
   const [state, setState] = useState<SignInState>({ status: "idle" });
 
@@ -216,7 +188,7 @@ export function SourceControlAppSignInSettings({
       )}
     >
       <div className="flex items-center gap-3 p-3">
-        <AppMark signedIn={signedIn} />
+        <AppMark definition={definition} signedIn={signedIn} />
         <div className="min-w-0 flex-1 space-y-0.5">
           <p className="text-sm font-medium text-foreground">{appSignIn.appName}</p>
           <div className="text-xs text-muted-foreground">{subtitle}</div>
@@ -224,44 +196,14 @@ export function SourceControlAppSignInSettings({
         <div className="shrink-0">{action}</div>
       </div>
 
-      {waiting !== null ? (
-        <div className="grid gap-4 border-t border-border bg-muted/40 px-3 py-4 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-6">
-          <div className="flex items-center gap-2">
-            <DeviceCode code={waiting.userCode} />
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Copy code"
-              onClick={() => copyToClipboard(waiting.userCode, undefined)}
-            >
-              <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
-            </Button>
-          </div>
-          <div className="grid gap-2 sm:justify-items-end">
-            <Button
-              size="sm"
-              render={
-                <a href={waiting.verificationUri} target="_blank" rel="noreferrer noopener" />
-              }
-              onClick={() => copyToClipboard(waiting.userCode, undefined)}
-            >
-              Copy code & open GitHub
-              <ExternalLinkIcon aria-hidden className="size-3.5" />
-            </Button>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-              Waiting for approval · code expires at {expiryTime(waiting.expiresAt)}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {waiting !== null ? <DeviceCodePrompt prompt={waiting} /> : null}
 
       {signedIn ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <span className="min-w-0 flex-1">
-            Reaches repositories in accounts and organizations that installed the app.
+            Reaches repositories in accounts and organizations that installed the app. Ask an admin
+            to install the team&apos;s GitHub App on an organization.
           </span>
-          <ExternalLink href={appSignIn.installUrl}>Install on an organization</ExternalLink>
           <ExternalLink href={appSignIn.revokeUrl}>Manage on GitHub</ExternalLink>
         </div>
       ) : null}

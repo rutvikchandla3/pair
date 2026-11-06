@@ -26,6 +26,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Members from "../persistence/Members.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as GitHubSignIn from "../team/GitHubSignIn.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
@@ -63,6 +64,7 @@ const makeLayerRoutes = (capture: (services: Services) => void) =>
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
+      Layer.provide(Layer.mock(GitHubSignIn.GitHubSignIn)({})),
       Layer.provide(
         McpOAuthHttp.layer.pipe(
           Layer.provide(McpOAuth.layer),

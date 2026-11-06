@@ -267,6 +267,10 @@ const inviteCommand = Command.make("invite", {
     Flag.withDescription("The email that authors the member's commits."),
     Flag.optional,
   ),
+  github: Flag.String("github").pipe(
+    Flag.withDescription("The member's GitHub username, so they can sign in with GitHub."),
+    Flag.optional,
+  ),
   ttl: ttlFlag,
   baseUrl: baseUrlFlag,
   json: jsonFlag,
@@ -276,10 +280,12 @@ const inviteCommand = Command.make("invite", {
     runWithTeam(flags, (team, livePairingBaseUrl) =>
       Effect.gen(function* () {
         const gitEmail = Option.getOrUndefined(flags.gitEmail)?.trim();
+        const githubLogin = Option.getOrUndefined(flags.github)?.trim().replace(/^@/, "");
         const result = yield* team.invite({
           name: flags.name.trim(),
           role: flags.role,
           ...(gitEmail ? { gitEmail } : {}),
+          ...(githubLogin ? { githubLogin } : {}),
           ...(Option.isSome(flags.ttl)
             ? { ttlMs: Math.max(1, Math.round(Duration.toMillis(flags.ttl.value))) }
             : {}),

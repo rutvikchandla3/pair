@@ -17,9 +17,14 @@ import {
   getPairingTokenFromUrl,
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "@t3tools/shared/remote";
+import {
+  pollRemoteGitHubSignIn,
+  startRemoteGitHubSignIn,
+} from "@t3tools/client-runtime/authorization";
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
-import { runPrimaryHttp } from "../../lib/runtime";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
+import { runPrimaryHttp, runtime } from "../../lib/runtime";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -330,6 +335,15 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
     };
   }
 }
+
+const primaryHttpBaseUrl = () => resolvePrimaryEnvironmentHttpUrl("/");
+
+/** Rejects with the server's `AuthGitHubSignInError`, whose message is written for the person. */
+export const startGitHubSignIn = () =>
+  runtime.runPromise(startRemoteGitHubSignIn({ httpBaseUrl: primaryHttpBaseUrl() }));
+
+export const pollGitHubSignIn = (attemptId: string) =>
+  runtime.runPromise(pollRemoteGitHubSignIn({ httpBaseUrl: primaryHttpBaseUrl(), attemptId }));
 
 export async function submitServerAuthCredential(credential: string): Promise<void> {
   const trimmedCredential = credential.trim();
