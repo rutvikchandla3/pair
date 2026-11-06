@@ -471,8 +471,16 @@ export function resolveTeamNewThreadModelSelection(input: {
     ownerOf(base.instanceId) === memberId
       ? undefined
       : (owned.find(isProviderInstancePickerReady) ?? owned[0]);
-  // With nothing chosen and nothing to swap, the composer resolves the default as it always has.
-  if (own === undefined) return base === selection || selection === null ? null : base;
+  if (own === undefined) {
+    if (selection !== null) return base === selection ? null : base;
+    // The composer's own default ignores owners, so it can land on a teammate's account.
+    const composerDefault = resolveProjectDefaultProviderModelSelection(
+      providers,
+      settings,
+      input.projectId,
+    );
+    return composerDefault !== null && isForeign(composerDefault.instanceId) ? base : null;
+  }
   if (own.models.some((model) => model.slug === base.model)) {
     return { ...base, instanceId: own.instanceId };
   }

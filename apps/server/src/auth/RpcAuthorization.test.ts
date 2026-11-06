@@ -87,6 +87,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.teamSubscribe,
       WS_METHODS.teamUpdateSelf,
+      WS_METHODS.teamUsage,
       WS_METHODS.teamGitHubLinkStart,
       WS_METHODS.teamGitHubLinkWait,
       WS_METHODS.teamGitHubLinkCancel,

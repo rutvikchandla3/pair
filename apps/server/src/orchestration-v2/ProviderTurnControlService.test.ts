@@ -246,6 +246,7 @@ it.effect(
           listThreadMemberStates: () => Effect.die("unused listThreadMemberStates"),
           getMemberStatesForThreads: () => Effect.die("unused getMemberStatesForThreads"),
           listFollowedThreadIds: () => Effect.die("unused listFollowedThreadIds"),
+          memberUsageSince: () => Effect.die("unused memberUsageSince"),
           findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),

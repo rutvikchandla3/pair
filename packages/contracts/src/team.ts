@@ -11,7 +11,14 @@ import {
   AuthSettingsWriteScope,
   AuthStandardClientScopes,
 } from "./auth.ts";
-import { IsoDateTime, MemberId, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  MemberId,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const MemberRole = Schema.Literals(["admin", "member"]);
 export type MemberRole = typeof MemberRole.Type;
@@ -89,6 +96,24 @@ export const TeamLinkResult = Schema.Struct({
   credential: AuthPairingCredentialResult,
 });
 export type TeamLinkResult = typeof TeamLinkResult.Type;
+
+export const TeamUsageInput = Schema.Struct({ since: Schema.DateTimeUtc });
+export type TeamUsageInput = typeof TeamUsageInput.Type;
+
+/** Provider turns per prompter and instance. Input tokens exclude cache reads. */
+export const TeamUsageRow = Schema.Struct({
+  memberId: MemberId,
+  providerInstanceId: ProviderInstanceId,
+  turns: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  /** Turns whose provider reported no token counts. */
+  unmeasuredTurns: NonNegativeInt,
+});
+export type TeamUsageRow = typeof TeamUsageRow.Type;
+
+export const TeamUsageResult = Schema.Struct({ rows: Schema.Array(TeamUsageRow) });
+export type TeamUsageResult = typeof TeamUsageResult.Type;
 
 export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
   reason: Schema.Literals([

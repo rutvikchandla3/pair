@@ -32,6 +32,7 @@ import { getProviderStatusMessage } from "../chat/ProviderStatusBanner";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { ProviderWizardAuthenticationStep } from "../settings/ProviderWizardAuthenticationStep";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { searchableSetting } from "../settings/settingsSearch";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -125,8 +126,7 @@ function ProviderAccountsList({
 
   return (
     <SettingsSection
-      id="provider-accounts"
-      title="Your provider accounts"
+      {...searchableSetting("provider-accounts")}
       headerAction={
         canOperate ? (
           <Button size="xs" variant="outline" onClick={() => setAddProviderAccountDialogOpen(true)}>

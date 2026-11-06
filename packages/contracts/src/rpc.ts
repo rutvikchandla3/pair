@@ -181,6 +181,8 @@ import {
   TeamStreamEvent,
   TeamUpdateInput,
   TeamUpdateSelfInput,
+  TeamUsageInput,
+  TeamUsageResult,
 } from "./team.ts";
 import {
   MemberProviderAccountMutation,
@@ -572,6 +574,7 @@ export const WS_METHODS = {
   teamRemove: "team.remove",
   teamUpdateSelf: "team.updateSelf",
   teamProviderAccountsMutate: "team.providerAccounts.mutate",
+  teamUsage: "team.usage",
   teamGitHubLinkStart: "team.githubLinkStart",
   teamGitHubLinkWait: "team.githubLinkWait",
   teamGitHubLinkCancel: "team.githubLinkCancel",
@@ -2032,6 +2035,12 @@ const WsTeamProviderAccountsMutateRpc = Rpc.make(WS_METHODS.teamProviderAccounts
   error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
 });
 
+const WsTeamUsageRpc = Rpc.make(WS_METHODS.teamUsage, {
+  payload: TeamUsageInput,
+  success: TeamUsageResult,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 // The GitHub link RPCs act on the caller's own member; the device flow proves the account.
 const WsTeamGitHubLinkStartRpc = Rpc.make(WS_METHODS.teamGitHubLinkStart, {
   payload: Schema.Struct({}),
@@ -2121,6 +2130,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamRemoveRpc,
   WsTeamUpdateSelfRpc,
   WsTeamProviderAccountsMutateRpc,
+  WsTeamUsageRpc,
   WsTeamGitHubLinkStartRpc,
   WsTeamGitHubLinkWaitRpc,
   WsTeamGitHubLinkCancelRpc,

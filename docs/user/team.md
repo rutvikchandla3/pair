@@ -35,6 +35,9 @@ Only you can pick your account for a thread, and new threads you start use it wh
 provider they would have used. Anyone who prompts a thread that runs on your account uses it, and
 teammates see your avatar on it in the model picker.
 
+Settings → Team shows each member's turns and tokens for the last 7 days, counted against whoever
+sent each prompt.
+
 Your sign-in is saved on this server. Anyone who can run commands here, including agents, can read
 it. Only you can pick this account for a thread, but anyone who prompts that thread uses it.
 
