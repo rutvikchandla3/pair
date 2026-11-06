@@ -1,5 +1,6 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { resolveTeamNewThreadModelSelection } from "@t3tools/client-runtime/state/provider-instance-entries";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
@@ -29,6 +30,7 @@ import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
+  filterModelOptionsForViewer,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
@@ -36,6 +38,7 @@ import {
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
+import { useTeamViewer } from "../../state/team";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useLinkedEnvironments } from "../../state/peerLinks";
@@ -331,6 +334,7 @@ export function NewTaskFlowProvider(
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const modelSelectionNow = useNowMinuteMs();
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
+  const teamViewer = useTeamViewer(selectedProject?.environmentId ?? null);
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
@@ -432,21 +436,41 @@ export function NewTaskFlowProvider(
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
+  const configuredDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
     selectedProject?.id ?? null,
   );
-  const stickyModelSelection = resolveDefaultableModelSelection(
+  const storedDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
     selectedProject?.id ?? null,
   );
-  const modelOptions = buildModelOptions(
-    selectedEnvironmentServerConfig,
-    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
-    undefined,
-    selectedProject?.id ?? null,
+  // On a team, a new task starts on the creator's own account and never on a teammate's.
+  const teamModelSelection =
+    teamViewer !== null && draftModelSelection === null && selectedEnvironmentServerConfig
+      ? resolveTeamNewThreadModelSelection({
+          selection: configuredDefaultModelSelection ?? storedDefaultModelSelection,
+          providers: selectedEnvironmentServerConfig.providers,
+          settings: selectedEnvironmentServerConfig.settings,
+          projectId: selectedProject?.id ?? null,
+          memberId: teamViewer.memberId,
+        })
+      : null;
+  const projectDefaultModelSelection = teamModelSelection ?? configuredDefaultModelSelection;
+  const stickyModelSelection = teamModelSelection === null ? storedDefaultModelSelection : null;
+  const modelOptions = filterModelOptionsForViewer(
+    buildModelOptions(
+      selectedEnvironmentServerConfig,
+      draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+      undefined,
+      selectedProject?.id ?? null,
+    ),
+    {
+      settings: selectedEnvironmentServerConfig?.settings,
+      viewer: teamViewer,
+      currentInstanceId: undefined,
+    },
   );
 
   const selectedDefaultModel = resolveNewTaskModelSelection({

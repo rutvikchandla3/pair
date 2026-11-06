@@ -68,6 +68,7 @@ import { cn } from "../../lib/cn";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   buildModelOptions,
+  filterModelOptionsForViewer,
   groupByProvider,
   type ModelOption,
   type ProviderGroup,
@@ -99,6 +100,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { useTeamViewer } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -349,15 +351,23 @@ function ThreadSettingsSessionProvider(
     new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
   );
   const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const teamViewer = useTeamViewer(props.environmentId);
   const providerGroups =
     manageHidden && config
       ? groupByProvider(
-          buildModelOptions(
-            config,
-            props.selectedModel,
-            props.lockedProviderInstanceId,
-            props.projectId,
-            true,
+          filterModelOptionsForViewer(
+            buildModelOptions(
+              config,
+              props.selectedModel,
+              props.lockedProviderInstanceId,
+              props.projectId,
+              true,
+            ),
+            {
+              settings: config.settings,
+              viewer: teamViewer,
+              currentInstanceId: props.providerInstanceId,
+            },
           ),
         )
       : props.providerGroups;
@@ -1519,6 +1529,7 @@ export function ExistingThreadSettingsRouteScreen({
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
   const draftSettings = useComposerDraftSettings(threadKey);
   const queuedRunEdit = useQueuedRunEdit(threadKey);
+  const teamViewer = useTeamViewer(route.params.environmentId);
   // A queued edit can end while the sheet is open; the prompt then belongs to the thread's draft.
   const draftKey = activeComposerDraftKey(threadKey, route.params.draftKey, queuedRunEdit);
   const prompt = useComposerDraft(draftKey).text;
@@ -1535,11 +1546,18 @@ export function ExistingThreadSettingsRouteScreen({
   })
     ? undefined
     : modelSelection.instanceId;
-  const modelOptions = buildModelOptions(
-    serverConfig,
-    modelSelection,
-    lockedProviderInstanceId,
-    selectedThread.projectId,
+  const modelOptions = filterModelOptionsForViewer(
+    buildModelOptions(
+      serverConfig,
+      modelSelection,
+      lockedProviderInstanceId,
+      selectedThread.projectId,
+    ),
+    {
+      settings: serverConfig?.settings,
+      viewer: teamViewer,
+      currentInstanceId: modelSelection.instanceId,
+    },
   );
   const currentModelOption =
     modelOptions.find(

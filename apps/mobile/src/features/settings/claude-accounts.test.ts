@@ -1,12 +1,14 @@
 import {
+  MemberId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ManagedPolicySummary,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { planClaudeAccountSave } from "./claude-accounts";
+import { listedProviderAccounts, planClaudeAccountSave } from "./claude-accounts";
 
 const claude = ProviderDriverKind.make("claudeAgent");
 const work = ProviderInstanceId.make("claudeAgent_work");
@@ -113,5 +115,28 @@ describe("planClaudeAccountSave", () => {
         draft: { name: "Work", configDir: "~/.claude-other" },
       }),
     ).toEqual({ error: "Managed by Example Corp." });
+  });
+});
+
+describe("listedProviderAccounts", () => {
+  it("lists only team accounts on a team, and every account on a solo server", () => {
+    const bobs = ProviderInstanceId.make("claudeAgent_bob");
+    const providers = [work, bobs].map(
+      (instanceId) => ({ instanceId, driver: claude }) as ServerProvider,
+    );
+    const list = (isTeamMode: boolean) =>
+      listedProviderAccounts({
+        providers,
+        policy: undefined,
+        settings: {
+          providerInstances: {
+            [bobs]: { driver: claude, ownerMemberId: MemberId.make("member-bob") },
+          },
+        },
+        isTeamMode,
+      }).map((provider) => provider.instanceId);
+
+    expect(list(true)).toEqual([work]);
+    expect(list(false)).toEqual([work, bobs]);
   });
 });

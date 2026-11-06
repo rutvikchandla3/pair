@@ -153,6 +153,7 @@ the owner of the thread they came from.
 
 The mobile app shows names, owners, the Team shelf, Follow and Assign too. On a teammate's
 running turn, Send queues your message after it; hold Send and choose **Steer now** to interrupt.
+Its model picker leaves out teammates' accounts; add your own account on the web.
 
 ## Follow threads and notifications
 
