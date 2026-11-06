@@ -2,8 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
+import { NodeId, RunAttemptId, SandboxId, TrimmedNonEmptyString } from "./index.ts";
 import {
+  isKnownOrchestrationV2EventType,
   latestProviderTurnForAttempt,
   OrchestrationV2AppThreadJson,
   OrchestrationV2Command,
@@ -55,6 +56,27 @@ const oldRunWorkspacePreparation = Schema.Union([
 ]);
 const encodeRunWorkspacePreparation = Schema.encodeSync(OrchestrationV2RunWorkspacePreparation);
 const decodeOldRunWorkspacePreparation = Schema.decodeSync(oldRunWorkspacePreparation);
+
+// Freeze the shell and thread that clients decoded before cloud threads.
+const decodePreCloudThreadShellJson = Schema.decodeSync(
+  OrchestrationV2ThreadShellJson.mapFields(
+    ({ sandbox: _sandbox, sandboxId: _sandboxId, ...fields }) => fields,
+  ),
+);
+const decodePreCloudAppThreadJson = Schema.decodeSync(
+  OrchestrationV2AppThreadJson.mapFields(({ sandboxId: _sandboxId, ...fields }) => fields),
+);
+const decodeThreadShellJson = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
+const encodeThreadShellJson = Schema.encodeSync(OrchestrationV2ThreadShellJson);
+const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+const encodeAppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+const decodeThreadStreamWireItem = Schema.decodeSync(
+  Schema.toCodecJson(OrchestrationV2RpcSchemas.subscribeThread.output),
+);
+const decodeDomainEventJson = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+const encodeDomainEventJson = Schema.encodeSync(OrchestrationV2DomainEventJson);
+const decodeClientCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
+const decodeSandboxId = Schema.decodeSync(SandboxId);
 
 describe("orchestration V2 contracts", () => {
   // A sample per member: adding a member is a type error here until it has one, and then it must decode below.
@@ -698,6 +720,137 @@ describe("member attribution", () => {
       }),
     ).toMatchObject({ actorId: "member-2" });
   });
+});
+
+describe("cloud threads on older clients", () => {
+  const sandboxId = "sbx_0123456789abcdef0123";
+  const at = "2026-11-01T00:00:00.000Z";
+  const thread = {
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Thread",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: "pair/fix",
+    worktreePath: `/t3-sandbox/${sandboxId}/worktrees/fix`,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: "thread-1", parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: at,
+    updatedAt: at,
+    archivedAt: null,
+    deletedAt: null,
+  };
+  const shell = {
+    ...thread,
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    settledOverride: null,
+    settledAt: null,
+  };
+  const summary = {
+    state: "sleeping",
+    ownerThreadId: "thread-1",
+    admission: { reason: "team-cap", since: at },
+    runnerConnected: false,
+    failureCode: "lost",
+    retryable: true,
+  };
+  const sandbox = {
+    id: sandboxId,
+    projectId: "project-1",
+    ownerThreadId: "thread-1",
+    ownerMemberId: null,
+    driverId: "docker",
+    size: "default",
+    state: "ready",
+    generation: 1,
+    driverRef: "pair-0123abcd",
+    admission: null,
+    runnerLostAt: null,
+    sleepReason: null,
+    failure: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+
+  it("decodes cloud shells and threads on pre-cloud schemas, without the sandbox", () => {
+    const cloudShell = decodeThreadShellJson({ ...shell, sandboxId, sandbox: summary });
+    expect(cloudShell.sandbox).toEqual(summary);
+    const { sandbox: _sandbox, sandboxId: _sandboxId, ...shellWithoutSandbox } = cloudShell;
+    expect(decodePreCloudThreadShellJson(encodeThreadShellJson(cloudShell))).toEqual(
+      shellWithoutSandbox,
+    );
+
+    const cloudThread = decodeAppThreadJson({ ...thread, sandboxId });
+    expect(cloudThread.sandboxId).toBe(sandboxId);
+    const { sandboxId: _threadSandboxId, ...threadWithoutSandbox } = cloudThread;
+    expect(decodePreCloudAppThreadJson(encodeAppThreadJson(cloudThread))).toEqual(
+      threadWithoutSandbox,
+    );
+  });
+
+  it("reads a machine state or admission reason from a newer server as unknown", () => {
+    expect(
+      decodeThreadShellJson({
+        ...shell,
+        sandboxId,
+        sandbox: { ...summary, state: "hibernating", admission: { reason: "budget", since: at } },
+      }).sandbox,
+    ).toMatchObject({ state: null, admission: { reason: null, since: at } });
+  });
+
+  it("streams and stores sandbox.updated as a known thread event", () => {
+    expect(isKnownOrchestrationV2EventType("sandbox.updated")).toBe(true);
+    const event = {
+      id: "event-1",
+      threadId: "thread-1",
+      occurredAt: at,
+      type: "sandbox.updated",
+      payload: sandbox,
+    };
+    expect(decodeThreadStreamWireItem({ kind: "event", sequence: 1, event })).toMatchObject({
+      kind: "event",
+      event: { type: "sandbox.updated", payload: { id: sandboxId, state: "ready" } },
+    });
+    expect(encodeDomainEventJson(decodeDomainEventJson(event))).toEqual(event);
+  });
+
+  it("lets clients send only the user sandbox commands", () => {
+    const command = { commandId: "command-1", threadId: "thread-2", sandboxId };
+    expect(
+      decodeClientCommand({ ...command, type: "sandbox.wake", actorId: "member-1" }),
+    ).toMatchObject({
+      type: "sandbox.wake",
+      sandboxId,
+    });
+    expect(() =>
+      decodeClientCommand({
+        ...command,
+        type: "sandbox.runner.attached",
+        generation: 1,
+        runnerBootId: "boot-1",
+      }),
+    ).toThrow();
+  });
+
+  it.each(["../x", "sbx_0123456789ABCDEF0123", "sbx_0123", `${sandboxId}/..`])(
+    "refuses the sandbox id %s",
+    (id) => {
+      expect(() => decodeSandboxId(id)).toThrow();
+    },
+  );
 });
 
 describe("background work kinds from older or newer servers", () => {

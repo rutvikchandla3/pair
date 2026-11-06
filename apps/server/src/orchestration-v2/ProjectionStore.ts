@@ -398,7 +398,7 @@ const inheritsForkConversation = ({
 
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
-  "thread" | "updatedAt" | "visibleTurnItems"
+  "thread" | "updatedAt" | "visibleTurnItems" | "sandbox"
 >;
 export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
   OrchestrationV2ThreadProjection,
@@ -1037,6 +1037,9 @@ export function applyToProjection(
         ...base,
         contextTransfers: upsertById(base.contextTransfers, event.payload),
       };
+    // Skips `base`: machine state must not reorder threads.
+    case "sandbox.updated":
+      return { ...projection, sandbox: event.payload };
   }
 }
 

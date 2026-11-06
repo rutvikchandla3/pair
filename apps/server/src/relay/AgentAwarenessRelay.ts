@@ -135,6 +135,7 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "context-handoff.updated":
     case "context-transfer.created":
     case "context-transfer.updated":
+    case "sandbox.updated":
       return false;
   }
 }

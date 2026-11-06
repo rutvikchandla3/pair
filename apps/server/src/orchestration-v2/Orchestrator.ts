@@ -666,6 +666,20 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interrupt.unresponsive":
     case "thread.stop":
     case "provider.switch":
+    case "sandbox.wake":
+    case "sandbox.sleep":
+    case "sandbox.retry":
+    case "sandbox.discard":
+    case "sandbox.provision":
+    case "sandbox.admit":
+    case "sandbox.created":
+    case "sandbox.runner.attached":
+    case "sandbox.runner.lost":
+    case "sandbox.stopped":
+    case "sandbox.destroyed":
+    case "sandbox.failed":
+    case "sandbox.auto-sleep":
+    case "sandbox.adopt":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -729,6 +743,23 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+
+function preparedRunProgressTitle(
+  phase: Extract<OrchestrationV2Command, { readonly type: "prepared-run.progress" }>["phase"],
+): string {
+  switch (phase) {
+    case "worktree":
+      return "Preparing worktree";
+    case "setup":
+      return "Starting setup script";
+    case "sandbox-admission":
+      return "Waiting for a machine";
+    case "sandbox-start":
+      return "Starting machine";
+    case "clone":
+      return "Cloning repository";
+  }
+}
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
   "The Pair server could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
@@ -10693,7 +10724,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: {
           ...state.preparationItem,
-          title: command.phase === "worktree" ? "Preparing worktree" : "Starting setup script",
+          title: preparedRunProgressTitle(command.phase),
           updatedAt: now,
         },
       });

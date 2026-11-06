@@ -417,5 +417,8 @@ export function applyOrchestrationV2ProjectionEvent(
     case "context-transfer.created":
     case "context-transfer.updated":
       return { ...base, contextTransfers: upsertEntity(base.contextTransfers, event.payload) };
+    // Machine state is not thread activity: skip the updatedAt bump.
+    case "sandbox.updated":
+      return { ...projection, sandbox: event.payload };
   }
 }

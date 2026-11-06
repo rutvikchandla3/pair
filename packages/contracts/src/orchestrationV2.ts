@@ -22,6 +22,7 @@ import {
   MessageId,
   EnvironmentId,
   NodeId,
+  ForwardCompatibleNullable,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
@@ -86,6 +87,15 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import {
+  ComputeDriverId,
+  SandboxAdmissionReason,
+  SandboxFailure,
+  SandboxId,
+  SandboxSize,
+  SandboxSleepReason,
+  SandboxState,
+} from "./sandbox.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -442,6 +452,47 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+export const OrchestrationV2SandboxAdmission = Schema.Struct({
+  reason: SandboxAdmissionReason,
+  since: Schema.DateTimeUtc,
+});
+export type OrchestrationV2SandboxAdmission = typeof OrchestrationV2SandboxAdmission.Type;
+
+export const OrchestrationV2Sandbox = Schema.Struct({
+  id: SandboxId,
+  projectId: ProjectId,
+  /** Its stream and outbox key; changes only by `sandbox.adopt`. */
+  ownerThreadId: ThreadId,
+  /** Null on solo servers, like a thread's `ownerId`. */
+  ownerMemberId: Schema.NullOr(MemberId),
+  driverId: ComputeDriverId,
+  size: SandboxSize,
+  state: SandboxState,
+  generation: NonNegativeInt,
+  driverRef: Schema.NullOr(Schema.String),
+  admission: Schema.NullOr(OrchestrationV2SandboxAdmission),
+  runnerLostAt: Schema.NullOr(Schema.DateTimeUtc),
+  sleepReason: Schema.NullOr(SandboxSleepReason),
+  failure: Schema.NullOr(SandboxFailure),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2Sandbox = typeof OrchestrationV2Sandbox.Type;
+
+export const OrchestrationV2SandboxJson = OrchestrationV2Sandbox.mapFields((fields) => ({
+  ...fields,
+  admission: Schema.NullOr(
+    OrchestrationV2SandboxAdmission.mapFields((admission) => ({
+      ...admission,
+      since: Schema.DateTimeUtcFromString,
+    })),
+  ),
+  runnerLostAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  createdAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
+}));
+export type OrchestrationV2SandboxJson = typeof OrchestrationV2SandboxJson.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -529,6 +580,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
       requestedAt: Schema.DateTimeUtc,
     }),
   ),
+  /** Absent on local threads; older clients drop the key. */
+  sandboxId: Schema.optionalKey(SandboxId),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -2070,6 +2123,12 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     type: Schema.Literal("context-transfer.updated"),
     payload: OrchestrationV2ContextTransfer,
   }),
+  /** On the owner's stream; `threadId` is the sandbox's `ownerThreadId`. */
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sandbox.updated"),
+    payload: OrchestrationV2Sandbox,
+  }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -2097,6 +2156,8 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
       item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
     })),
   ),
+  /** The thread's machine, shared with its side chats and forks; absent on local threads. */
+  sandbox: Schema.optionalKey(OrchestrationV2Sandbox),
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -2133,6 +2194,23 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 });
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
+
+export const OrchestrationV2ThreadShellSandbox = Schema.Struct({
+  /** A state from a newer server decodes to null: "Machine status unknown". */
+  state: ForwardCompatibleNullable(SandboxState),
+  /** Side chats and forks name the thread whose machine they share. */
+  ownerThreadId: ThreadId,
+  admission: Schema.optionalKey(
+    Schema.Struct({
+      reason: ForwardCompatibleNullable(SandboxAdmissionReason),
+      since: IsoDateTime,
+    }),
+  ),
+  runnerConnected: Schema.optionalKey(Schema.Boolean),
+  failureCode: Schema.optionalKey(Schema.String),
+  retryable: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationV2ThreadShellSandbox = typeof OrchestrationV2ThreadShellSandbox.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
@@ -2222,6 +2300,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestUserMessageAuthorId: Schema.optional(MemberId),
   ownerUpdatedBy: Schema.optional(MemberId),
   archivedBy: Schema.optional(MemberId),
+  sandboxId: Schema.optionalKey(SandboxId),
+  sandbox: Schema.optionalKey(OrchestrationV2ThreadShellSandbox),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2788,6 +2868,7 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
         item: ForwardCompatibleUnion(OrchestrationV2TurnItemJson.members, "type"),
       })),
     ),
+    sandbox: Schema.optionalKey(OrchestrationV2SandboxJson),
     updatedAt: Schema.DateTimeUtcFromString,
   }),
 );
@@ -3001,8 +3082,29 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("context-transfer.updated"),
     payload: OrchestrationV2ContextTransferJson,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sandbox.updated"),
+    payload: OrchestrationV2SandboxJson,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
+
+const SandboxClientCommandFields = {
+  actorId: Schema.optional(MemberId),
+  commandId: CommandId,
+  /** The thread the user acts from; the server routes the command to the sandbox's owner. */
+  threadId: ThreadId,
+  sandboxId: SandboxId,
+} as const;
+
+/** Server-only sandbox commands, all on the owner's stream, for the generation they observed. */
+const SandboxGenerationCommandFields = {
+  commandId: CommandId,
+  threadId: ThreadId,
+  sandboxId: SandboxId,
+  generation: NonNegativeInt,
+} as const;
 
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -3358,7 +3460,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
-    phase: Schema.Literals(["worktree", "setup"]),
+    phase: Schema.Literals(["worktree", "setup", "sandbox-admission", "sandbox-start", "clone"]),
   }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.fail"),
@@ -3537,6 +3639,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
+  Schema.Struct({ type: Schema.Literal("sandbox.wake"), ...SandboxClientCommandFields }),
+  Schema.Struct({ type: Schema.Literal("sandbox.sleep"), ...SandboxClientCommandFields }),
+  Schema.Struct({ type: Schema.Literal("sandbox.retry"), ...SandboxClientCommandFields }),
+  Schema.Struct({ type: Schema.Literal("sandbox.discard"), ...SandboxClientCommandFields }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
@@ -3734,6 +3840,53 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /** Sets the new thread's `sandboxId` and creates the record in one commit. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.provision"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    sandboxId: SandboxId,
+    projectId: ProjectId,
+    driverId: ComputeDriverId,
+    size: SandboxSize,
+  }),
+  Schema.Struct({ type: Schema.Literal("sandbox.admit"), ...SandboxGenerationCommandFields }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.created"),
+    ...SandboxGenerationCommandFields,
+    driverRef: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.runner.attached"),
+    ...SandboxGenerationCommandFields,
+    runnerBootId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.runner.lost"),
+    ...SandboxGenerationCommandFields,
+    runnerBootId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ type: Schema.Literal("sandbox.stopped"), ...SandboxGenerationCommandFields }),
+  Schema.Struct({ type: Schema.Literal("sandbox.destroyed"), ...SandboxGenerationCommandFields }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.failed"),
+    ...SandboxGenerationCommandFields,
+    failure: SandboxFailure,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.auto-sleep"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    sandboxId: SandboxId,
+    snapshotAt: Schema.DateTimeUtc,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.adopt"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    sandboxId: SandboxId,
+    previousOwnerThreadId: ThreadId,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
