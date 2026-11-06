@@ -17,6 +17,8 @@ import {
   ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
+  type SandboxDriverInstance,
+  type SandboxSettings,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -232,6 +234,41 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+function mergeSandboxPatch(
+  current: ServerSettings["sandbox"],
+  patch: NonNullable<ServerSettingsPatch["sandbox"]> | null,
+): SandboxSettings | undefined {
+  if (patch === null) return undefined;
+  const drivers = new Map<string, SandboxDriverInstance>(
+    (current?.drivers ?? []).map((driver) => [driver.id, driver]),
+  );
+  for (const [id, driver] of Object.entries(patch.drivers ?? {})) {
+    if (driver === null) drivers.delete(id);
+    else drivers.set(id, driver);
+  }
+  const patched = <Value>(value: Value | null | undefined, saved: Value | undefined) =>
+    value === undefined ? saved : (value ?? undefined);
+  const defaultDriverId = patched(patch.defaultDriverId, current?.defaultDriverId);
+  const baseImage = patched(patch.baseImage, current?.baseImage);
+  const env = patched(patch.env, current?.env);
+  // No driver and nothing else set is no key, so solo servers send nothing new.
+  if (drivers.size === 0 && !defaultDriverId && !baseImage && !env) return undefined;
+  return {
+    drivers: [...drivers.values()],
+    ...(defaultDriverId === undefined ? {} : { defaultDriverId }),
+    ...(baseImage === undefined ? {} : { baseImage }),
+    ...(env === undefined ? {} : { env }),
+  };
+}
+
+function withSandbox(
+  settings: ServerSettings,
+  sandbox: SandboxSettings | undefined,
+): ServerSettings {
+  const { sandbox: _replaced, ...rest } = settings;
+  return sandbox === undefined ? rest : { ...rest, sandbox };
+}
+
 // Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
 const byHost = (tokens: unknown) =>
   Object.fromEntries(
@@ -385,6 +422,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     secretProviders: secretProvidersPatch,
+    sandbox: sandboxPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
@@ -482,7 +520,11 @@ export function applyServerSettingsPatch(
       },
     };
   }
-  const next = deepMerge(current, patchForMerge);
+  const merged = deepMerge(current, patchForMerge);
+  const next =
+    sandboxPatch === undefined
+      ? merged
+      : withSandbox(merged, mergeSandboxPatch(current.sandbox, sandboxPatch));
   const nextWithReplacementsBase = {
     ...next,
     favorites,

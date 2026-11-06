@@ -1,4 +1,5 @@
 import {
+  ComputeDriverId,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
@@ -614,6 +615,41 @@ describe("serverSettings helpers", () => {
 
     const removed = applyServerSettingsPatch(added, { usageLimitSources: { [hubA]: null } });
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
+  });
+
+  it("upserts and removes sandbox drivers per id so concurrent edits cannot clobber", () => {
+    const docker = (id: string, label: string) => ({
+      kind: "docker" as const,
+      id: ComputeDriverId.make(id),
+      label,
+    });
+    const local = docker("local", "This machine");
+    const remote = docker("remote", "Build box");
+    const current = { ...DEFAULT_SERVER_SETTINGS, sandbox: { drivers: [local] } };
+
+    const added = applyServerSettingsPatch(current, {
+      sandbox: { drivers: { [remote.id]: remote } },
+    });
+    expect(added.sandbox?.drivers).toEqual([local, remote]);
+
+    const renamed = applyServerSettingsPatch(added, {
+      sandbox: { drivers: { [local.id]: { ...local, label: "Laptop" } } },
+    });
+    expect(renamed.sandbox?.drivers).toEqual([{ ...local, label: "Laptop" }, remote]);
+    expect(applyServerSettingsPatch(renamed, { worktreesDirectory: "/work" }).sandbox).toEqual(
+      renamed.sandbox,
+    );
+
+    const removed = applyServerSettingsPatch(renamed, {
+      sandbox: { drivers: { [local.id]: null } },
+    });
+    expect(removed.sandbox?.drivers).toEqual([remote]);
+
+    const emptied = applyServerSettingsPatch(removed, {
+      sandbox: { drivers: { [remote.id]: null } },
+    });
+    expect(emptied).not.toHaveProperty("sandbox");
+    expect(applyServerSettingsPatch(added, { sandbox: null })).not.toHaveProperty("sandbox");
   });
 
   it("upserts and removes secretProviders per entry so concurrent edits cannot clobber", () => {

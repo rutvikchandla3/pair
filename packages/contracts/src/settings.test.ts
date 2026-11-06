@@ -15,6 +15,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  keepUnknownOverrideKeys,
+  ProjectSettingsOverrides,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -38,7 +40,6 @@ const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
 );
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -450,24 +451,62 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
 
+const {
+  sandboxAllowed: _sandboxAllowed,
+  defaultsToCloud: _defaultsToCloud,
+  sandboxEnv: _sandboxEnv,
+  ...olderClientOverrideFields
+} = ProjectSettingsOverrides.fields;
+const OlderClientOverrides = keepUnknownOverrideKeys(Schema.Struct(olderClientOverrideFields));
+const decodeOlderClientOverrides = Schema.decodeUnknownSync(OlderClientOverrides);
+const encodeOlderClientOverrides = Schema.encodeSync(OlderClientOverrides);
+
 describe("ServerSettings project overrides across versions", () => {
   it("sends back an override key from a newer server when an older client edits the entry", () => {
     const projectId = ProjectId.make("project-a");
-    // As an older client reads a newer server's settings, with one key it does not know.
-    const entry = decodeServerSettings({
-      projectSettingsOverrides: {
-        [projectId]: { defaultAutoPull: true, addedByNewerServer: { mode: "kept" } },
-      },
-    }).projectSettingsOverrides[projectId];
-
-    const sent = encodeServerSettingsPatch({
-      projectSettingsOverrides: { [projectId]: { ...entry, defaultAutoPull: false } },
-    });
-
-    expect(decodeServerSettingsPatch(sent).projectSettingsOverrides?.[projectId]).toEqual({
-      defaultAutoPull: false,
+    const sandboxEnv = [{ name: "REGION", value: "eu", sensitive: false }];
+    // As an older client from before the cloud keys reads a newer server's settings.
+    const entry = decodeOlderClientOverrides({
+      defaultAutoPull: true,
+      defaultsToCloud: true,
+      sandboxEnv,
       addedByNewerServer: { mode: "kept" },
     });
+
+    const sent = encodeOlderClientOverrides({ ...entry, defaultAutoPull: false });
+
+    expect(
+      decodeServerSettingsPatch({ projectSettingsOverrides: { [projectId]: sent } })
+        .projectSettingsOverrides?.[projectId],
+    ).toEqual({
+      defaultAutoPull: false,
+      defaultsToCloud: true,
+      sandboxEnv,
+      addedByNewerServer: { mode: "kept" },
+    });
+  });
+});
+
+describe("ServerSettings sandbox", () => {
+  const driver = { kind: "docker", id: "local", label: "This machine" };
+
+  it("encodes no sandbox key until a driver is configured", () => {
+    expect(decodeServerSettings({})).not.toHaveProperty("sandbox");
+    const document = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
+    expect(document).not.toHaveProperty("sandbox");
+    expect(encodeServerSettings(decodeServerSettings(document))).toEqual(document);
+  });
+
+  it("drops a driver kind it does not know and keeps the rest of the settings", () => {
+    const decoded = decodeServerSettings({
+      worktreesDirectory: "/work",
+      sandbox: {
+        drivers: [{ kind: "aws-ec2", id: "ec2", label: "AWS", region: "us-east-1" }, driver],
+        defaultDriverId: "local",
+      },
+    });
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(decoded.sandbox).toEqual({ drivers: [driver], defaultDriverId: "local" });
   });
 });
 

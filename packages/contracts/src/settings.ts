@@ -11,6 +11,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  ForwardCompatibleArray,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -47,9 +48,11 @@ import {
 } from "./preview.ts";
 import {
   ProviderInstanceConfig,
+  ProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderDriverKind,
 } from "./providerInstance.ts";
+import { ComputeDriverId, SandboxSize } from "./sandbox.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -1092,7 +1095,20 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
-} satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
+  // Project-only keys with no same-named ServerSettings key; readers take them from the overrides.
+  /** Absent: allowed. */
+  sandboxAllowed: Schema.optionalKey(Schema.Boolean),
+  /** Absent: false. A sibling of the legacy defaultThreadEnvMode, which older clients decode strictly. */
+  defaultsToCloud: Schema.optionalKey(Schema.Boolean),
+  sandboxEnv: Schema.optionalKey(ProviderInstanceEnvironment),
+} satisfies Record<
+  | ProjectScopedServerSettingKey
+  | "providerInstances"
+  | "sandboxAllowed"
+  | "defaultsToCloud"
+  | "sandboxEnv",
+  unknown
+>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 // Whole-entry writers must round-trip unknown keys; keep the type closed to catch misspellings.
@@ -1182,6 +1198,29 @@ export const StorageCleanupSettings = Schema.Struct({
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
+
+export const DockerSandboxDriver = Schema.Struct({
+  kind: Schema.Literal("docker"),
+  id: ComputeDriverId,
+  label: TrimmedNonEmptyString,
+  /** Absent: the local socket. */
+  dockerHost: Schema.optionalKey(TrimmedNonEmptyString),
+  runnerUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  size: Schema.optionalKey(SandboxSize),
+});
+export type DockerSandboxDriver = typeof DockerSandboxDriver.Type;
+
+export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver]);
+export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
+
+export const SandboxSettings = Schema.Struct({
+  // Older clients drop a driver kind they do not know rather than fail the settings snapshot.
+  drivers: ForwardCompatibleArray(SandboxDriverInstance),
+  defaultDriverId: Schema.optionalKey(ComputeDriverId),
+  baseImage: Schema.optionalKey(TrimmedNonEmptyString),
+  env: Schema.optionalKey(ProviderInstanceEnvironment),
+});
+export type SandboxSettings = typeof SandboxSettings.Type;
 
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
@@ -1369,6 +1408,8 @@ export const ServerSettings = Schema.Struct({
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Absent until a driver is configured: its presence is what offers Cloud to clients. */
+  sandbox: Schema.optionalKey(SandboxSettings),
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1717,6 +1758,28 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
+  ),
+  /** Null removes Cloud. Drivers merge per id and null removes one, since older clients drop kinds they cannot decode. */
+  sandbox: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        drivers: Schema.optionalKey(
+          Schema.Record(ComputeDriverId, Schema.NullOr(SandboxDriverInstance)).check(
+            Schema.makeFilter(
+              (drivers) =>
+                Object.entries(drivers).every(
+                  ([id, driver]) => driver === null || driver.id === id,
+                ),
+              { expected: "each driver under its own id" },
+            ),
+          ),
+        ),
+        defaultDriverId: Schema.optionalKey(Schema.NullOr(ComputeDriverId)),
+        baseImage: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+        // The whole list, as provider environments are patched.
+        env: Schema.optionalKey(ProviderInstanceEnvironment),
+      }),
+    ),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 

@@ -5,6 +5,7 @@ import type {
   PreviewViewportSetting,
   ProviderInstanceId,
   ServerSettings,
+  ServerSettingsPatch,
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
@@ -210,7 +211,7 @@ export function buildProviderInstanceUpdatePatch(input: {
   readonly textGenerationModelSelection?:
     | ServerSettings["textGenerationModelSelection"]
     | undefined;
-}): Partial<UnifiedSettings> {
+}): ServerSettingsPatch {
   return {
     providerInstances: {
       ...input.settings.providerInstances,

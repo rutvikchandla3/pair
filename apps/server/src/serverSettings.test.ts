@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ComputeDriverId,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
@@ -1388,6 +1389,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const fs = yield* FileSystem.FileSystem;
         const store = yield* ServerSecretStore.ServerSecretStore;
         const instanceId = ProviderInstanceId.make("antigravity_secrets");
+        const projectId = ProjectId.make("project-cloud");
         const saved = yield* service.updateSettings({
           providerInstances: {
             [instanceId]: {
@@ -1423,6 +1425,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxConcurrentSessions: 2,
             },
           ],
+          sandbox: {
+            drivers: {
+              [ComputeDriverId.make("local")]: {
+                kind: "docker",
+                id: ComputeDriverId.make("local"),
+                label: "This machine",
+              },
+            },
+            env: [{ name: "SANDBOX_TOKEN", value: "sandbox-env-secret", sensitive: true }],
+          },
+          projectSettingsOverrides: {
+            [projectId]: {
+              sandboxEnv: [{ name: "PROJECT_TOKEN", value: "project-env-secret", sensitive: true }],
+            },
+          },
         });
         const values = [
           "config-secret",
@@ -1433,6 +1450,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "gitcafe-secret",
           "quota-secret",
           "expo-secret",
+          "sandbox-env-secret",
+          "project-env-secret",
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
           secretReferences: true,
@@ -1450,6 +1469,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
           easDeviceHosts: client.easDeviceHosts,
+          sandbox: { env: client.sandbox?.env ?? [] },
+          projectSettingsOverrides: client.projectSettingsOverrides,
         });
         for (const value of values) assert.include(JSON.stringify(echoed), value);
         const renamed = yield* service.updateProviderInstance({
@@ -1502,6 +1523,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           }),
           sourceControlHostSecretName({ kind: "gitcafe", field: "token", serverHost: null }),
           "usage-limit-source-aHVi",
+          "sandbox-env-U0FOREJPWF9UT0tFTg",
+          "sandbox-project-env-cHJvamVjdC1jbG91ZA-UFJPSkVDVF9UT0tFTg",
         ];
         for (const name of secretNames) {
           assert.isTrue(Option.isSome(yield* store.get(name)), name);
@@ -1534,9 +1557,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             gitcafe: { token: "" },
           },
           usageLimitSources: { [UsageLimitSourceId.make("hub")]: null },
+          sandbox: null,
+          projectSettingsOverrides: { [projectId]: null },
         });
         for (const name of secretNames) {
-          assert.isTrue(Option.isNone(yield* store.get(name)));
+          assert.isTrue(Option.isNone(yield* store.get(name)), name);
         }
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );

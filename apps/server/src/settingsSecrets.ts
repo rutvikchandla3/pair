@@ -93,18 +93,18 @@ export function mapSettingsSecrets(
     return next;
   };
 
-  return mapSecretFieldGroups(settings, mapFields, (instanceId, environment) =>
+  return mapSecretFieldGroups(settings, mapFields, (environment, secretName, providerInstanceId) =>
     environment.map((variable) => {
       const { valueRedacted: _omit, ...rest } = variable;
       // A secret reference is not itself secret; storage sees the value cleared.
       const reference = typeof variable.value === "string" ? undefined : variable.value;
       const result = map({
-        secretName: `provider-env-${encode(instanceId)}-${encode(variable.name)}`,
+        secretName: secretName(variable.name),
         kind: "environment",
         value: typeof variable.value === "string" ? variable.value : "",
         redacted: reference === undefined && variable.valueRedacted === true,
         sensitive: variable.sensitive,
-        providerInstanceId: instanceId,
+        ...(providerInstanceId === undefined ? {} : { providerInstanceId }),
         environmentVariable: variable.name,
       });
       if (reference !== undefined) return { ...rest, value: reference };
@@ -119,7 +119,7 @@ export function mapSettingsSecrets(
 
 /**
  * Maps each value a secret field holds, literal or reference, with the secret name of its slot.
- * Provider environment variables are left as they are.
+ * Environment variables are left as they are.
  */
 export function mapSettingsSecretValues(
   settings: ServerSettings,
@@ -152,10 +152,11 @@ export function mapSettingsSecretValues(
 function mapSecretFieldGroups(
   settings: ServerSettings,
   mapFields: SecretFieldsMapper,
-  mapEnvironment: (instanceId: string, environment: ProviderEnvironment) => ProviderEnvironment = (
-    _instanceId,
-    environment,
-  ) => environment,
+  mapEnvironment: (
+    environment: ProviderEnvironment,
+    secretName: (variable: string) => string,
+    providerInstanceId?: string,
+  ) => ProviderEnvironment = (environment) => environment,
 ): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => {
@@ -176,7 +177,13 @@ function mapSecretFieldGroups(
               }
             : {}),
           ...(instance.environment
-            ? { environment: mapEnvironment(instanceId, instance.environment) }
+            ? {
+                environment: mapEnvironment(
+                  instance.environment,
+                  (variable) => `provider-env-${encode(instanceId)}-${encode(variable)}`,
+                  instanceId,
+                ),
+              }
             : {}),
         },
       ];
@@ -230,6 +237,21 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(settings.projectSettingsOverrides).map(([projectId, overrides]) => [
+      projectId,
+      overrides.sandboxEnv
+        ? {
+            ...overrides,
+            sandboxEnv: mapEnvironment(
+              overrides.sandboxEnv,
+              (variable) => `sandbox-project-env-${encode(projectId)}-${encode(variable)}`,
+            ),
+          }
+        : overrides,
+    ]),
+  ) as ServerSettings["projectSettingsOverrides"];
+
   return {
     ...settings,
     providerInstances,
@@ -237,5 +259,17 @@ function mapSecretFieldGroups(
     usageLimitSources,
     easDeviceHosts,
     simlockDeviceHosts,
+    projectSettingsOverrides,
+    ...(settings.sandbox?.env
+      ? {
+          sandbox: {
+            ...settings.sandbox,
+            env: mapEnvironment(
+              settings.sandbox.env,
+              (variable) => `sandbox-env-${encode(variable)}`,
+            ),
+          },
+        }
+      : {}),
   };
 }
