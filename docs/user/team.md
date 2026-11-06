@@ -84,6 +84,11 @@ Notifications go only to the people a thread concerns:
 You are never notified about your own actions, or about a thread you're looking at.
 
 On a team server, push notifications come from Pair, not T3 Connect, and need your team's own mobile build. Until that's set up, open the app to see new activity.
+A push carries the thread's title, which passes through Expo and Apple or Google on its way to your
+phone; it never includes messages or agent output.
+
+On Android, uninstall the store T3 Code app before installing your team's Pair build. They share an
+app id, and uninstalling removes the store app's saved environments.
 
 ## Share a thread
 

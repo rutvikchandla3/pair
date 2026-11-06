@@ -1,4 +1,5 @@
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+import { installMemberPushRegistration } from "./features/agent-awareness/memberPushRegistration";
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
@@ -194,6 +195,7 @@ const appServiceDisposers = [
   installComposerAttachmentUploads(),
   startIncomingShareInbox(),
   installAgentNotificationNavigation(linkToAppPath),
+  installMemberPushRegistration(),
   installAppShortcuts(linkToAppPath),
   installAppUpdateChecks(),
   installShowcaseCapture(rootPathnameFromState),

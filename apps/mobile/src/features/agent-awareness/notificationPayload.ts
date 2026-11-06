@@ -81,9 +81,15 @@ export function threadDeepLinkOnScreen(pathname: string): string | null {
   return `/threads/${match[1]}/${match[2]}`;
 }
 
+// A team server's archive push opens Archived threads, since an archived thread has no route.
+const ARCHIVED_THREADS_DEEP_LINK = "/settings/archive";
+
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
+  if (deepLink === ARCHIVED_THREADS_DEEP_LINK) {
+    return deepLink;
+  }
   if (typeof deepLink === "string") {
     const normalizedDeepLink = normalizeThreadDeepLink(deepLink);
     if (normalizedDeepLink) {

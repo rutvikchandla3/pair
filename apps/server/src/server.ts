@@ -90,6 +90,7 @@ import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -97,6 +98,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
+import * as MemberPushNotifier from "./notifications/MemberPushNotifier.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -630,6 +632,12 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const notifier = yield* MemberPushNotifier.MemberPushNotifier;
+      yield* notifier.start();
+    }),
+  ).pipe(Layer.provide(MemberPushNotifier.layer)),
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -724,6 +732,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
+  Layer.provideMerge(MemberPushDevices.layer),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),
   Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),

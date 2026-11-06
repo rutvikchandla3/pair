@@ -86,6 +86,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.teamUpdateSelf,
       WS_METHODS.presenceSubscribe,
       WS_METHODS.presenceReport,
+      WS_METHODS.pushRegister,
+      WS_METHODS.pushUnregister,
     ]) {
       expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
     }

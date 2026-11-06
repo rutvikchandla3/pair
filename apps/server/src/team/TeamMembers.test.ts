@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -166,15 +167,22 @@ it.layer(layerTeam)("TeamMembers", (it) => {
     }),
   );
 
-  it.effect("remove revokes sessions and unconsumed links", () =>
+  it.effect("remove revokes sessions, unconsumed links and push devices", () =>
     Effect.gen(function* () {
       const team = yield* TeamMembers.TeamMembers;
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sql = yield* SqlClient.SqlClient;
       const invited = yield* team.invite({ name: "Cleo", role: "member" });
-      const { authenticate } = yield* signIn(invited.credential.credential);
+      const { session, authenticate } = yield* signIn(invited.credential.credential);
       yield* team.signInLink({ memberId: invited.member.id });
+      yield* sql`
+        INSERT INTO member_push_devices (device_id, member_id, session_id, token, platform, updated_at)
+        VALUES ('phone', ${invited.member.id}, ${session.sessionId}, 'ExponentPushToken[cleo]', 'ios', '2026-11-01T00:00:00.000Z')
+      `;
 
       const removed = yield* team.remove({ memberId: invited.member.id });
+
+      expect(yield* sql`SELECT device_id FROM member_push_devices`).toEqual([]);
 
       expect(removed.removedAt).not.toBeNull();
       expect((yield* Effect.flip(authenticate))._tag).toBe("ServerAuthInvalidCredentialError");

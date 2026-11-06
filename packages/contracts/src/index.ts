@@ -7,6 +7,7 @@ export * from "./acpRegistry.ts";
 export * from "./auth.ts";
 export * from "./team.ts";
 export * from "./presence.ts";
+export * from "./push.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";

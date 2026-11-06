@@ -34,6 +34,8 @@ export class Presence extends Context.Service<
     }) => Effect.Effect<Stream.Stream<PresenceUpdate>, never, Scope.Scope>;
     /** Ignored for a connection that has not subscribed. */
     readonly report: (connectionId: string, input: PresenceReportInput) => Effect.Effect<void>;
+    /** Whether the member views the thread on a connection that is not idle. */
+    readonly isViewing: (memberId: MemberId, threadId: ThreadId) => Effect.Effect<boolean>;
   }
 >()("t3/team/Presence") {}
 
@@ -276,7 +278,17 @@ const make = Effect.gen(function* () {
     if (changed) yield* scheduleFlush;
   });
 
-  return Presence.of({ subscribe, report });
+  const isViewing: Presence["Service"]["isViewing"] = (memberId, threadId) =>
+    Effect.sync(() =>
+      [...connections.values()].some(
+        (connection) =>
+          connection.memberId === memberId &&
+          connection.viewingThreadId === threadId &&
+          !connection.idle,
+      ),
+    );
+
+  return Presence.of({ subscribe, report, isViewing });
 });
 
 export const layer = Layer.effect(Presence, make);

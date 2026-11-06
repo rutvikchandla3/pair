@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   shouldNotifyMember,
+  threadNotificationTitle,
   type ThreadNotificationEvent,
   type ThreadNotificationKind,
 } from "./threadNotificationRouting.ts";
@@ -109,5 +110,23 @@ describe("shouldNotifyMember", () => {
       );
       expect(solo).toEqual([...AGENT_KINDS, "request"]);
     }
+  });
+});
+
+describe("threadNotificationTitle", () => {
+  it("names the archiver, or another member when unknown", () => {
+    expect(threadNotificationTitle("archived", "Alice")).toBe("Archived by Alice");
+    expect(threadNotificationTitle("archived", null)).toBe("Archived by another member");
+    expect(ALL_KINDS.map((kind) => threadNotificationTitle(kind, "Alice"))).toEqual([
+      "Thread completed",
+      "Thread failed",
+      "Usage limit reached",
+      "Approval needed",
+      "Input needed",
+      "Guest request",
+      "New message",
+      "Assigned to you",
+      "Archived by Alice",
+    ]);
   });
 });

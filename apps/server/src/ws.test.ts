@@ -90,6 +90,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
@@ -740,9 +741,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(TeamMembers.TeamMembers)({}),
   Layer.mock(Presence.Presence)({}),
+  Layer.mock(MemberPushDevices.MemberPushDevices)({}),
   Layer.mock(TeamState.TeamState)({
     ownerId: MemberId.make("member-test"),
     members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(new Map()),
+    isTeamMode: Effect.succeed(false),
   }),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),

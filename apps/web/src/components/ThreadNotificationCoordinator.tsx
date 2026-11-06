@@ -16,6 +16,7 @@ import type {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import {
   shouldNotifyMember,
+  threadNotificationTitle,
   type ThreadNotificationKind as RoutedNotificationKind,
 } from "@t3tools/shared/threadNotificationRouting";
 import * as Option from "effect/Option";
@@ -194,24 +195,7 @@ export function startThreadNotifications(
         ? (registry.get(teamEnvironment.membersValueAtom(environmentId)).get(state.archivedBy)
             ?.name ?? "Former member")
         : null;
-    const title =
-      kind === "completion"
-        ? "Thread completed"
-        : kind === "message"
-          ? "New message"
-          : kind === "assigned"
-            ? "Assigned to you"
-            : kind === "archived"
-              ? `Archived by ${archiverName ?? "another member"}`
-              : status === "approval"
-                ? "Approval needed"
-                : status === "limited"
-                  ? "Usage limit reached"
-                  : status === "failed"
-                    ? "Thread failed"
-                    : status === "request"
-                      ? "Guest request"
-                      : "Input needed";
+    const title = threadNotificationTitle(routedKind(kind, status), archiverName);
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind === "completion" ? "completion" : "input", () =>
         hasNotificationSound(getClientSettings().notificationMode),

@@ -19,6 +19,13 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
+// A team's own push-capable build signs with its Apple team and EAS project. Unset, today's values.
+const teamIosBundleIdentifier = repoEnv.T3CODE_IOS_BUNDLE_ID?.trim() || undefined;
+const appleTeamId = repoEnv.T3CODE_IOS_TEAM_ID?.trim() || "ARK85ZXQ4Z";
+const easProjectId =
+  repoEnv.T3CODE_EAS_PROJECT_ID?.trim() || "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim() || "pingdotgg";
+
 // Compiled into the native project. Without a relay, Observe's native side could dispatch to
 // Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
 const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
@@ -27,6 +34,12 @@ const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
+
+if (teamIosBundleIdentifier && !IOS_BUNDLE_IDENTIFIER_PATTERN.test(teamIosBundleIdentifier)) {
+  throw new Error(
+    "T3CODE_IOS_BUNDLE_ID must be a reverse-DNS identifier such as com.example.pair.",
+  );
+}
 
 if (
   isIosPersonalTeamBuild &&
@@ -125,7 +138,7 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+  : (teamIosBundleIdentifier ?? variant.iosBundleIdentifier);
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -251,7 +264,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: `https://u.expo.dev/${easProjectId}`,
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -261,14 +274,16 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    appleTeamId,
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
       `applinks:${HOSTED_APP_HOST}`,
     ],
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [
+        `$(AppIdentifierPrefix)${teamIosBundleIdentifier ?? variant.iosBundleIdentifier}`,
+      ],
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -485,11 +500,11 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: easProjectId,
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
-  owner: "pingdotgg",
+  owner: easOwner,
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

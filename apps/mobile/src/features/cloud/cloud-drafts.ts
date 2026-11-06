@@ -6,6 +6,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { archiveCloudComposerDrafts } from "../../state/use-composer-drafts";
+import { unregisterMemberPush } from "../agent-awareness/memberPushRegistration";
 
 export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchiveError>()(
   "CloudDraftArchiveError",
@@ -44,6 +45,7 @@ export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntim
           cause,
         }),
     });
+    yield* Effect.promise(() => unregisterMemberPush(environmentIds));
     yield* registry.removeRelayEnvironments();
   }),
 });
