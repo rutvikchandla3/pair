@@ -1,0 +1,62 @@
+name: Sandbox image
+
+on:
+  pull_request:
+    paths:
+      - infra/sandbox-image/**
+      - apps/server/src/provider/codexReleases.ts
+      - apps/server/scripts/sandbox-image.ts
+      - .github/workflows/sandbox-image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-image-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build base image (${{ matrix.arch }})
+    # Native runners per architecture, so no QEMU.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3...
+
+      - name: Assemble build context
+        run: node apps/server/scripts/sandbox-image.ts context "$RUNNER_TEMP/ctx"
+
+      - name: Build base image
+        run: docker buildx build --target base --load -t t3-sandbox:ci "$RUNNER_TEMP/ctx"
+
+      - name: Smoke test
+        run: |
+          docker run --rm --user t3 --entrypoint bash t3-sandbox:ci -lc \
+            'claude --version && codex --version && node --version && gh --version && sudo -n true'
+          pinned() {
+            docker run --rm --user t3 --entrypoint jq t3-sandbox:ci -r ".providers.$1" /etc/pair-image.json
+          }
+          claude_version="$(pinned claudeAgent)"
+          codex_version="$(pinned codex)"
+          docker run --rm --user t3 --entrypoint claude t3-sandbox:ci --version | grep -qF "$claude_version"
+          docker run --rm --user t3 --entrypoint codex t3-sandbox:ci --version | grep -qF "$codex_version"
