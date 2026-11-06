@@ -182,6 +182,17 @@ export function BranchRestoreConfirmHost(props: {
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
+  /** Teammates whose turns the revert discards; empty when they are all yours. */
+  readonly discards: ReadonlyArray<{ readonly name: string; readonly count: number }>;
+}
+
+/** "Discards 2 turns by Alice and 1 by Carol". */
+function discardsLine(discards: PendingRevert["discards"]): string {
+  const parts = discards.map(({ name, count }, index) =>
+    index === 0 ? `${count} ${count === 1 ? "turn" : "turns"} by ${name}` : `${count} by ${name}`,
+  );
+  const last = parts.pop();
+  return `Discards ${parts.length === 0 ? last : `${parts.join(", ")} and ${last}`}`;
 }
 
 const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
@@ -195,6 +206,7 @@ export function RevertConfirmHost(props: {
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  const discards = pending?.discards ?? [];
   const confirm = (restoreFiles: boolean) => {
     if (pending === null) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -213,6 +225,11 @@ export function RevertConfirmHost(props: {
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
             “Revert files too” also undoes your own edits.
+            {discards.length > 0 && (
+              <span className="mt-2 block font-medium text-destructive">
+                {discardsLine(discards)}
+              </span>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -220,7 +237,12 @@ export function RevertConfirmHost(props: {
           <Button variant="destructive-outline" onClick={() => confirm(true)}>
             Revert files too
           </Button>
-          <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
+          <Button
+            variant={discards.length > 0 ? "destructive" : "default"}
+            onClick={() => confirm(false)}
+          >
+            Revert and keep changes
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

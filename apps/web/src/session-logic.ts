@@ -728,7 +728,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
-    if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
+    // A member's lifecycle change is a quiet divider; other notices stay warnings.
+    if (
+      STANDALONE_V2_ITEM_TYPES.has(item.type) ||
+      (item.type === "system_notice" && item.actorId !== undefined)
+    ) {
       entries.push({
         id: item.id,
         kind: "event",

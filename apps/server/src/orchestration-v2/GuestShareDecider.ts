@@ -199,6 +199,8 @@ export function decideGuestMessageSend(input: {
   readonly thread: OrchestrationV2AppThread;
   readonly guestMessageId: GuestMessageId;
   readonly now: DateTime.Utc;
+  /** On a team, the member who sent it; solo servers say "the owner". */
+  readonly senderName?: string;
 }): Result.Result<
   {
     readonly thread: OrchestrationV2AppThread;
@@ -214,7 +216,7 @@ export function decideGuestMessageSend(input: {
   const guestText = message?.text ?? "";
   return Result.map(resolveMessage(share, input.guestMessageId, "sent"), (next) => ({
     thread: { ...input.thread, guestShare: next, updatedAt: input.now },
-    text: `Message from guest ${name}, sent by the owner:\n\n${guestText}`,
+    text: `Message from guest ${name}, sent by ${input.senderName ?? "the owner"}:\n\n${guestText}`,
     guest: { guestMessageId: input.guestMessageId, name, text: guestText, shareId: share.id },
   }));
 }
