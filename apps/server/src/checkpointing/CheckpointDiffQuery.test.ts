@@ -1,7 +1,15 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  CheckpointScopeId,
+  ProjectId,
+  RunId,
+  SandboxId,
+  ThreadId,
+  type OrchestrationV2AppThread,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,7 +18,10 @@ import * as Path from "effect/Path";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
+import * as MirrorCheckpointReader from "../sandbox/mirror/MirrorCheckpointReader.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
@@ -51,8 +62,15 @@ function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   readonly authoredPaths?: ReadonlySet<string>;
+  readonly placement?: Layer.Layer<never>;
 }) {
+  const placement =
+    input.placement ??
+    Layer.succeed(MirrorCheckpointReader.CheckpointDiffPlacement, {
+      readerFor: () => Effect.succeedNone,
+    });
   return CheckpointDiffQuery.layer.pipe(
+    Layer.provide(placement),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -302,6 +320,170 @@ it.effect("shares the turn and full-thread diff budget across real Git batches",
     );
   }).pipe(Effect.provide(layerTest), Effect.scoped),
 );
+
+const mirrorProjectId = ProjectId.make("project:mirror-diff");
+const mirrorSandboxThread = {
+  projectId: mirrorProjectId,
+  sandboxId: SandboxId.make("sbx_00000000000000000001"),
+} as OrchestrationV2AppThread;
+
+// The mirror reader's own dependencies; each test says what its mirror holds.
+function layerMirrorPlacement(input: {
+  readonly gitDir: string;
+  readonly thread?: OrchestrationV2AppThread;
+  readonly heldRefs: ReadonlySet<string>;
+  readonly store: CheckpointStore.CheckpointStore["Service"];
+}) {
+  return MirrorCheckpointReader.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointMirror.CheckpointMirror)({
+          gitDir: () => input.gitDir,
+          tips: (_projectId, refs) =>
+            Effect.succeed(
+              new Map(
+                refs.filter((ref) => input.heldRefs.has(ref)).map((ref) => [ref, "0".repeat(40)]),
+              ),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThread: () => Effect.succeed(input.thread ?? mirrorSandboxThread),
+        }),
+        Layer.succeed(CheckpointStore.CheckpointStore, input.store),
+      ),
+    ),
+    Layer.provide(layerVcsProcess),
+    Layer.provide(NodeServices.layer),
+    Layer.provide(NodeCrypto.layer),
+  );
+}
+
+it.effect("reads a cloud thread's turn and full-thread diffs from the mirror, not the scope", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const process = yield* VcsProcess.VcsProcess;
+    const store = yield* CheckpointStore.CheckpointStore;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-diff-mirror-source-" });
+    const mirrorDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-diff-mirror-" });
+    const git = (dir: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+      process.run({
+        operation: "CheckpointDiffQuery.test.git",
+        command: "git",
+        cwd: dir,
+        args,
+        ...(env === undefined ? {} : { env }),
+      });
+    yield* git(cwd, ["init"]);
+    yield* git(cwd, ["config", "user.email", "test@test.com"]);
+    yield* git(cwd, ["config", "user.name", "Test"]);
+    yield* fs.writeFileString(path.join(cwd, "README.md"), "initial\n");
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "initial"]);
+
+    const threadId = ThreadId.make("thread:mirror-runtime");
+    const runId = RunId.make("run:mirror-runtime");
+    const scopeId = CheckpointScopeId.make("scope:mirror-runtime");
+    const fromCheckpointRef = yield* checkpointRefForScopeOrdinal({
+      scopeId,
+      ordinalWithinScope: 0,
+    });
+    const toCheckpointRef = CheckpointRef.make("refs/t3/test/mirror-after");
+    yield* store.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+    // An old commit models files imported by a pull after the baseline; the mirror must still filter them.
+    yield* fs.writeFileString(path.join(cwd, "upstream.ts"), "imported\n");
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "imported"], {
+      ...globalThis.process.env,
+      GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+    });
+    yield* fs.writeFileString(path.join(cwd, "own.ts"), "authored\n");
+    yield* store.captureCheckpoint({ cwd, checkpointRef: toCheckpointRef });
+
+    yield* git(mirrorDir, ["init", "--bare", "--quiet", mirrorDir]);
+    yield* git(mirrorDir, [
+      `--git-dir=${mirrorDir}`,
+      "fetch",
+      "--quiet",
+      cwd,
+      `${fromCheckpointRef}:${fromCheckpointRef}`,
+      `${toCheckpointRef}:${toCheckpointRef}`,
+    ]);
+
+    const context = (scopeCwd: string) =>
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getCheckpointContext: () =>
+          Effect.succeed({
+            runs: [{ id: runId, ordinal: 1, status: "completed" }],
+            checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: scopeCwd }],
+            checkpoints: [
+              {
+                scopeId,
+                runId,
+                ordinalWithinScope: 1,
+                appRunOrdinal: 1,
+                status: "ready",
+                ref: toCheckpointRef,
+              },
+            ],
+          }),
+      });
+    const queryFor = (
+      scopeCwd: string,
+      placement: MirrorCheckpointReader.CheckpointDiffPlacementShape,
+    ) =>
+      CheckpointDiffQuery.make.pipe(
+        Effect.provide(context(scopeCwd)),
+        Effect.provideService(MirrorCheckpointReader.CheckpointDiffPlacement, placement),
+      );
+
+    const local = yield* queryFor(cwd, yield* MirrorCheckpointReader.CheckpointDiffPlacement);
+    const expected = yield* local.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 });
+    assert.include(expected.diff, "own.ts");
+    assert.notInclude(expected.diff, "upstream.ts");
+
+    const placement = yield* MirrorCheckpointReader.CheckpointDiffPlacement.pipe(
+      Effect.provide(
+        layerMirrorPlacement({
+          gitDir: mirrorDir,
+          heldRefs: new Set([fromCheckpointRef, toCheckpointRef]),
+          store,
+        }),
+      ),
+    );
+    const remote = yield* queryFor("/t3-sandbox/sbx_00000000000000000001/worktrees/x", placement);
+    const turn = yield* remote.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 1 });
+    const fullThread = yield* remote.getFullThreadDiff({ threadId, toTurnCount: 1 });
+    assert.strictEqual(turn.diff, expected.diff);
+    assert.strictEqual(fullThread.diff, expected.diff);
+  }).pipe(Effect.provide(layerTest), Effect.scoped),
+);
+
+it.effect("falls back to the scope's checkpoint store when the mirror lacks a ref", () => {
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("from the sandbox"),
+  );
+  const store = {
+    diffCheckpoints,
+    listAuthoredPaths: () => Effect.succeed(null),
+  } as unknown as CheckpointStore.CheckpointStore["Service"];
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints,
+    placement: layerMirrorPlacement({
+      // A pending sync: the mirror holds neither ref, and reading this directory would fail.
+      gitDir: "/nonexistent/mirror.git",
+      heldRefs: new Set(),
+      store,
+    }),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+    assert.strictEqual(result.diff, "from the sandbox");
+    assert.isTrue(diffCheckpoints.mock.calls.every(([input]) => input.cwd === "/repo"));
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("truncates a storage-cut UTF-8 character without replacement text", () => {
   const prefix = "x".repeat(9_999_985);

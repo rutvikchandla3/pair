@@ -125,6 +125,7 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
+import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -587,7 +588,9 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
 );
 
 const layerOrchestrationApplication = Layer.merge(
-  CheckpointDiffQuery.layer,
+  CheckpointDiffQuery.layer.pipe(
+    Layer.provide(MirrorCheckpointReader.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  ),
   NativeChildWorkQuery.layer,
 ).pipe(Layer.provideMerge(layerCheckpointStore), Layer.provideMerge(layerOrchestrationV2Runtime));
 

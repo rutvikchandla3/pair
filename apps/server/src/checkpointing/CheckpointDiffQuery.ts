@@ -10,8 +10,10 @@ import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { CheckpointDiffPlacement } from "../sandbox/mirror/MirrorCheckpointReader.ts";
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
 import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -85,6 +87,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const digest = yield* Digest.Digest;
+  const placement = yield* CheckpointDiffPlacement;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -209,13 +212,18 @@ export const make = Effect.gen(function* () {
         fallbackFromToHead: false,
         ignoreWhitespace,
       };
-      const authoredPaths = yield* checkpointStore
+      // Cloud threads read the mirror; everything else reads the scope's checkout.
+      const reader = Option.getOrElse(
+        yield* placement.readerFor(input.threadId),
+        () => checkpointStore,
+      );
+      const authoredPaths = yield* reader
         .listAuthoredPaths(comparison)
         .pipe(Effect.orElseSucceed(() => null));
       const files =
         authoredPaths === null
           ? []
-          : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
+          : yield* reader.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
               Effect.map(parseTurnDiffFilesFromNumstat),
               Effect.orElseSucceed(() => []),
             );
@@ -226,7 +234,7 @@ export const make = Effect.gen(function* () {
       let diff = "";
       let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
       for (const filePaths of pathBatches) {
-        const patch = yield* checkpointStore
+        const patch = yield* reader
           .diffCheckpoints({
             ...comparison,
             ...(filePaths === undefined ? {} : { filePaths }),
