@@ -1036,7 +1036,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ),
             input.stdin === undefined
               ? Effect.void
-              : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+              : Stream.run(
+                  typeof input.stdin === "string"
+                    ? Stream.encodeText(Stream.make(input.stdin))
+                    : input.stdin,
+                  child.stdin,
+                ).pipe(
                   Effect.mapError(
                     (cause) =>
                       new GitCommandError({

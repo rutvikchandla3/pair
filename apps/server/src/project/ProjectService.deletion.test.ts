@@ -33,6 +33,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const layerEventPersistence = EventSink.layer.pipe(
@@ -156,12 +157,25 @@ it.effect("retries a partial project deletion without repeating child events or 
           return yield* eventSink.commitCommand(input);
         }),
       });
+      const removedMirrors: ProjectId[] = [];
+      const unused = () => Effect.die("unused");
+      const recordingMirror = CheckpointMirror.CheckpointMirror.of({
+        gitDir: () => "",
+        ensure: unused,
+        tips: unused,
+        importBundle: unused,
+        deleteRefs: unused,
+        deleteThreadNamespace: unused,
+        remove: (id) => Effect.sync(() => void removedMirrors.push(id)),
+      });
       const service = yield* ProjectService.make.pipe(
         Effect.provideService(EventSink.EventSinkV2, failingEventSink),
+        Effect.provideService(CheckpointMirror.CheckpointMirror, recordingMirror),
       );
       const input = { commandId, projectId, force: true };
       const failure = yield* service.delete(input).pipe(Effect.flip);
       assert.instanceOf(failure, ProjectService.ProjectOperationError);
+      assert.deepEqual(removedMirrors, []);
       if (failure._tag !== "ProjectOperationError") return assert.fail("Expected a child failure");
       assert.equal(failure.operation, "delete-thread");
       assert.lengthOf(attempts, 2);
@@ -213,6 +227,9 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.isNotNull(deletedProject.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
       assert.deepEqual(attempts, [firstThreadId, failedThreadId, failedThreadId]);
+      assert.deepEqual(removedMirrors, [projectId]);
+      yield* service.delete(input);
+      assert.deepEqual(removedMirrors, [projectId, projectId]);
       for (const threadId of threadIds) {
         assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       }

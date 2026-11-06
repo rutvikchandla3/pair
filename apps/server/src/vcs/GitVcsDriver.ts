@@ -8,7 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
+import type * as Stream from "effect/Stream";
 
 import {
   GitCommandError,
@@ -49,7 +51,7 @@ export interface ExecuteGitInput {
   readonly operation: string;
   readonly cwd: string;
   readonly args: ReadonlyArray<string>;
-  readonly stdin?: string;
+  readonly stdin?: string | Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number | null;
