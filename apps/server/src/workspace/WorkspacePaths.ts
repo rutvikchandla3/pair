@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.4): workspace files on the thread's machine */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -105,6 +104,7 @@ export class WorkspacePaths extends Context.Service<
 >()("t3/workspace/WorkspacePaths") {}
 
 const make = Effect.gen(function* () {
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: project roots live on the server
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -135,6 +135,7 @@ const make = Effect.gen(function* () {
     "WorkspacePaths.normalizeWorkspaceRoot",
   )(function* (workspaceRoot, options) {
     const normalizedWorkspaceRoot = path.resolve(
+      // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: project roots live on the server
       expandHomePath(workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
     );
     let workspaceStat = yield* statWorkspaceRoot(

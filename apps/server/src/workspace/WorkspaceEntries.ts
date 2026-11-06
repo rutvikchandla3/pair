@@ -1,12 +1,9 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.4): workspace files on the thread's machine */
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFSP from "node:fs/promises";
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -22,12 +19,13 @@ import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import type { WorkspaceHost, WorkspaceHostFileError } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -128,8 +126,9 @@ const SYMLINK_RESOLVE_BATCH_SIZE = 64;
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
+  host: WorkspaceHost,
 ): Effect.fn.Return<string, WorkspaceEntriesBrowseError> {
-  const platform = yield* HostProcess.Platform;
+  const { platform, homeDirectory } = yield* host.info;
   if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
     return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
       cwd: input.cwd,
@@ -139,7 +138,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   }
 
   if (!isExplicitRelativePath(input.partialPath)) {
-    return path.resolve(expandHomePath(input.partialPath, yield* HostProcess.HomeDirectory));
+    return path.resolve(expandHomePath(input.partialPath, homeDirectory));
   }
 
   if (!input.cwd) {
@@ -147,14 +146,12 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
       partialPath: input.partialPath,
     });
   }
-  return path.resolve(
-    expandHomePath(input.cwd, yield* HostProcess.HomeDirectory),
-    input.partialPath,
-  );
+  return path.resolve(expandHomePath(input.cwd, homeDirectory), input.partialPath);
 });
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
@@ -165,6 +162,20 @@ export const make = Effect.gen(function* () {
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
+
+  // Fails closed before the native search index scans a folder on the wrong machine.
+  const hostForRoot = (cwd: string, normalizedCwd: string) =>
+    hosts.forPath(normalizedCwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceEntriesReadDirectoryError({
+            cwd: normalizedCwd,
+            partialPath: cwd,
+            parentPath: normalizedCwd,
+            cause,
+          }),
+      ),
+    );
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
@@ -208,27 +219,39 @@ export const make = Effect.gen(function* () {
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
-      const resolvedInputPath = yield* resolveBrowseTarget(input, path);
+      // Without a project, browsing picks a project root, and those live on the server.
+      const host =
+        input.cwd === undefined
+          ? hosts.local
+          : yield* hosts.forPath(path.resolve(input.cwd)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorkspaceEntriesReadDirectoryError({
+                    cwd: input.cwd,
+                    partialPath: input.partialPath,
+                    parentPath: input.partialPath,
+                    cause,
+                  }),
+              ),
+            );
+      const resolvedInputPath = yield* resolveBrowseTarget(input, path, host);
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
-      const dirents = yield* Effect.tryPromise({
-        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
-        catch: (cause) =>
-          new WorkspaceEntriesReadDirectoryError({
-            cwd: input.cwd,
-            partialPath: input.partialPath,
-            parentPath,
-            cause,
-          }),
-      }).pipe(
+      const dirents = yield* host.files.readDirectory(parentPath).pipe(
         Effect.catchIf(
-          (error) => {
-            const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
-            return code === "EACCES" || code === "EPERM";
-          },
+          (error) => error.code === "EACCES" || error.code === "EPERM",
           () => Effect.succeed([]),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceEntriesReadDirectoryError({
+              cwd: input.cwd,
+              partialPath: input.partialPath,
+              parentPath,
+              cause,
+            }),
         ),
       );
 
@@ -237,7 +260,7 @@ export const make = Effect.gen(function* () {
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
+          dirent.kind === "Directory" &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
           (showHidden || !dirent.name.startsWith("."))
         ) {
@@ -258,6 +281,7 @@ export const make = Effect.gen(function* () {
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      yield* hostForRoot(input.cwd, normalizedCwd);
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
@@ -278,6 +302,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.searchContents",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    yield* hostForRoot(input.cwd, normalizedCwd);
     return yield* Effect.gen(function* () {
       const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
       return yield* searchIndex.searchContents(input);
@@ -293,6 +318,7 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      const host = yield* hostForRoot(input.cwd, normalizedCwd);
       if (input.directoryPath !== undefined) {
         const directoryPath = input.directoryPath;
         const toError = (cause: unknown) =>
@@ -311,105 +337,103 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
-          try: async () => {
-            const root = await NodeFSP.realpath(normalizedCwd);
-            const directory = await NodeFSP.realpath(target.absolutePath);
-            const relative = path.relative(root, directory);
-            if (
-              relative === ".." ||
-              relative.startsWith(`..${path.sep}`) ||
-              path.isAbsolute(relative) ||
-              relative.split(path.sep).includes(".git") ||
-              target.relativePath.split("/").includes(".git")
-            ) {
-              throw new Error("Directory must be inside the workspace and outside .git.");
-            }
-            const children = await NodeFSP.readdir(directory, { withFileTypes: true });
-            const isSameOrInside = (parent: string, child: string) => {
-              const relativeChild = path.relative(parent, child);
-              return (
-                relativeChild !== ".." &&
-                !relativeChild.startsWith(`..${path.sep}`) &&
-                !path.isAbsolute(relativeChild)
-              );
-            };
-            // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
-            let visitedFolders: Promise<ReadonlyArray<string>> | undefined;
-            const loadVisitedFolders = () =>
-              (visitedFolders ??= (async () => {
-                const folders = [root];
-                let current = normalizedCwd;
-                for (const segment of target.relativePath.split("/").filter(Boolean)) {
-                  current = path.join(current, segment);
-                  folders.push(await NodeFSP.realpath(current));
-                }
-                return folders;
-              })());
-            const resolveSymlinkKind = async (
-              name: string,
-            ): Promise<ProjectEntry["kind"] | undefined> => {
-              const resolved = await NodeFSP.realpath(path.join(directory, name)).catch(
-                () => undefined,
-              );
-              if (
-                resolved === undefined ||
-                !isSameOrInside(root, resolved) ||
-                path.relative(root, resolved).split(path.sep).includes(".git")
-              ) {
-                return undefined;
+        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.gen(function* () {
+          const root = yield* host.files.realPath(normalizedCwd);
+          const directory = yield* host.files.realPath(target.absolutePath);
+          const relative = path.relative(root, directory);
+          if (
+            relative === ".." ||
+            relative.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relative) ||
+            relative.split(path.sep).includes(".git") ||
+            target.relativePath.split("/").includes(".git")
+          ) {
+            return yield* toError(
+              new Error("Directory must be inside the workspace and outside .git."),
+            );
+          }
+          const children = yield* host.files.readDirectory(directory);
+          const isSameOrInside = (parent: string, child: string) => {
+            const relativeChild = path.relative(parent, child);
+            return (
+              relativeChild !== ".." &&
+              !relativeChild.startsWith(`..${path.sep}`) &&
+              !path.isAbsolute(relativeChild)
+            );
+          };
+          // Reject canonical ancestors so "Expand all folders" cannot follow a cycle.
+          const loadVisitedFolders = yield* Effect.cached(
+            Effect.gen(function* () {
+              const folders = [root];
+              let current = normalizedCwd;
+              for (const segment of target.relativePath.split("/").filter(Boolean)) {
+                current = path.join(current, segment);
+                folders.push(yield* host.files.realPath(current));
               }
-              const stat = await NodeFSP.stat(resolved).catch(() => undefined);
-              if (stat?.isFile()) return "file";
-              if (!stat?.isDirectory()) return undefined;
-              const folders = await loadVisitedFolders();
-              return folders.some((folder) => isSameOrInside(resolved, folder))
-                ? undefined
-                : "directory";
-            };
-            // Bound filesystem work for directories such as pnpm node_modules.
-            const kinds: Array<ProjectEntry["kind"] | undefined> = [];
-            for (let offset = 0; offset < children.length; offset += SYMLINK_RESOLVE_BATCH_SIZE) {
-              kinds.push(
-                ...(await Promise.all(
-                  children
-                    .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
-                    .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
-                      if (child.name === ".git") return undefined;
-                      if (child.isDirectory()) return "directory";
-                      if (child.isFile()) return "file";
-                      return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;
-                    }),
-                )),
-              );
+              return folders;
+            }),
+          );
+          const resolveSymlinkKind = Effect.fnUntraced(function* (name: string) {
+            const resolved = yield* host.files
+              .realPath(path.join(directory, name))
+              .pipe(Effect.orElseSucceed(() => undefined));
+            if (
+              resolved === undefined ||
+              !isSameOrInside(root, resolved) ||
+              path.relative(root, resolved).split(path.sep).includes(".git")
+            ) {
+              return undefined;
             }
-            const nestedGitRoots: Array<string> = [];
-            const segments = target.relativePath.split("/").filter(Boolean);
-            for (let index = 1; index <= segments.length; index += 1) {
-              const candidate = segments.slice(0, index).join("/");
-              const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
-                () => null,
-              );
-              if (dotGit) nestedGitRoots.push(candidate);
-            }
-            return {
-              nestedGitRoots,
-              entries: children.flatMap((child, index): ProjectEntry[] => {
-                const kind = kinds[index];
-                if (kind === undefined) return [];
-                return [
-                  {
-                    path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
-                    kind,
-                  },
-                ];
-              }),
-              // Git refuses to classify paths beyond a symbolic link.
-              throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
-            };
-          },
-          catch: toError,
-        });
+            const stat = yield* host.fileSystem
+              .stat(resolved)
+              .pipe(Effect.orElseSucceed(() => undefined));
+            if (stat?.type === "File") return "file" as const;
+            if (stat?.type !== "Directory") return undefined;
+            const folders = yield* loadVisitedFolders;
+            return folders.some((folder) => isSameOrInside(resolved, folder))
+              ? undefined
+              : ("directory" as const);
+          });
+          // Bound filesystem work for directories such as pnpm node_modules.
+          const kinds = yield* Effect.forEach(
+            children,
+            (child): Effect.Effect<ProjectEntry["kind"] | undefined, WorkspaceHostFileError> => {
+              if (child.name === ".git") return Effect.undefined;
+              if (child.kind === "Directory") return Effect.succeed("directory");
+              if (child.kind === "File") return Effect.succeed("file");
+              return child.kind === "SymbolicLink"
+                ? resolveSymlinkKind(child.name)
+                : Effect.undefined;
+            },
+            { concurrency: SYMLINK_RESOLVE_BATCH_SIZE },
+          );
+          const nestedGitRoots: Array<string> = [];
+          const segments = target.relativePath.split("/").filter(Boolean);
+          for (let index = 1; index <= segments.length; index += 1) {
+            const candidate = segments.slice(0, index).join("/");
+            const dotGit = yield* Effect.result(
+              host.files.lstat(path.join(normalizedCwd, candidate, ".git")),
+            );
+            if (Result.isSuccess(dotGit)) nestedGitRoots.push(candidate);
+          }
+          return {
+            nestedGitRoots,
+            entries: children.flatMap((child, index): ProjectEntry[] => {
+              const kind = kinds[index];
+              if (kind === undefined) return [];
+              return [
+                {
+                  path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
+                  kind,
+                },
+              ];
+            }),
+            // Git refuses to classify paths beyond a symbolic link.
+            throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
+          };
+        }).pipe(
+          Effect.catchTags({ WorkspaceHostFileError: (cause) => Effect.fail(toError(cause)) }),
+        );
         let gitRoot = "";
         let gitPrefix = "";
         // stdin avoids argument limits; ignore classification is optional without git/repositories.
@@ -479,6 +503,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.listIgnoredFiles",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const host = yield* hostForRoot(input.cwd, normalizedCwd);
     // `--directory` reports a folder holding nothing but ignored files as one
     // `name/` entry, which is how `node_modules` and build output drop out.
     const result = yield* vcsProcess
@@ -507,16 +532,17 @@ export const make = Effect.gen(function* () {
       .split("\0")
       .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
       .toSorted();
-    const files = yield* Effect.promise(() =>
-      Promise.all(
-        paths.slice(0, IGNORED_FILES_LIMIT).map(async (relativePath) => {
-          // lstat: a symlink usually points outside the workspace, where reads refuse to go.
-          const stat = await NodeFSP.lstat(path.join(normalizedCwd, relativePath)).catch(
-            () => null,
-          );
-          return stat?.isFile() ? { path: relativePath, byteLength: stat.size } : null;
-        }),
-      ),
+    const files = yield* Effect.forEach(
+      paths.slice(0, IGNORED_FILES_LIMIT),
+      (relativePath) =>
+        // lstat: a symlink usually points outside the workspace, where reads refuse to go.
+        host.fileSystem.lstat(path.join(normalizedCwd, relativePath)).pipe(
+          Effect.map((stat) =>
+            stat.type === "File" ? { path: relativePath, byteLength: Number(stat.size) } : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ),
+      { concurrency: "unbounded" },
     );
     return {
       files: files.filter((file) => file !== null),

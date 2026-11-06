@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -30,6 +31,7 @@ const layerTest = Layer.empty.pipe(
       prefix: "t3-workspace-entries-test-",
     }),
   ),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(NodeServices.layer),
 );
 

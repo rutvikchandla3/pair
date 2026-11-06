@@ -13,6 +13,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ReviewService from "./ReviewService.ts";
 
 function layer(input: {
@@ -91,6 +92,7 @@ function layer(input: {
       }),
     ),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(NodeServices.layer),
   );
 }

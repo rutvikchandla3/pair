@@ -34,6 +34,61 @@ export interface WorkspaceHost {
   readonly fileSystem: FileSystem.FileSystem;
   readonly pty: PtyAdapter.PtyAdapter["Service"];
   readonly agentScope: AgentScopeShape;
+  /** The calls whose flags and errno codes workspace file safety depends on. */
+  readonly files: WorkspaceHostFiles;
+}
+
+export type WorkspaceFileKind = "File" | "Directory" | "SymbolicLink" | "Other";
+
+export interface WorkspaceHostFiles {
+  /** Native realpath: Windows `\\?\` paths and POSIX `link/..` resolve as the OS does. */
+  readonly realPath: (path: string) => Effect.Effect<string, WorkspaceHostFileError>;
+  readonly lstat: (
+    path: string,
+  ) => Effect.Effect<{ readonly kind: WorkspaceFileKind }, WorkspaceHostFileError>;
+  readonly readDirectory: (
+    path: string,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly name: string; readonly kind: WorkspaceFileKind }>,
+    WorkspaceHostFileError
+  >;
+  /** Opens O_RDONLY|O_NONBLOCK (no FIFO hang), checks it is a file, reads at most `maxBytes`. */
+  readonly readFile: (
+    path: string,
+    maxBytes: number,
+  ) => Effect.Effect<
+    | { readonly kind: "file"; readonly size: number; readonly bytes: Uint8Array }
+    | { readonly kind: "not-file" },
+    WorkspaceHostFileError
+  >;
+  /** O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW: a symlink swapped in after the check is not followed. */
+  readonly writeNoFollow: (
+    path: string,
+    contents: Uint8Array | string,
+  ) => Effect.Effect<void, WorkspaceHostFileError>;
+}
+
+export class WorkspaceHostFileError extends Schema.TaggedError<WorkspaceHostFileError>()(
+  "WorkspaceHostFileError",
+  {
+    operation: Schema.Literals([
+      "realpath",
+      "lstat",
+      "open",
+      "stat",
+      "read",
+      "close",
+      "write",
+      "readdir",
+    ]),
+    /** The errno code, such as "ENOENT"; callers branch on it. */
+    code: Schema.optional(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Workspace file ${this.operation} failed.`;
+  }
 }
 
 export class WorkspaceHostUnavailableError extends Schema.TaggedError<WorkspaceHostUnavailableError>()(

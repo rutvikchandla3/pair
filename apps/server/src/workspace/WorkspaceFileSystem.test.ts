@@ -18,6 +18,7 @@ import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { vi } from "vite-plus/test";
@@ -67,6 +68,7 @@ const layerTest = Layer.empty.pipe(
       prefix: "t3-workspace-files-test-",
     }),
   ),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -196,6 +198,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 26,
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("refuses a path under the sandbox root without touching local disk", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const realpath = vi.mocked(NodeFSP.realpath).mockClear();
+        const open = vi.mocked(NodeFSP.open).mockClear();
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd: "/t3-sandbox/sbx_x", relativePath: "a.txt" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(KnownWorkspaces.UnknownWorkspaceError);
+        expect(realpath).not.toHaveBeenCalled();
+        expect(open).not.toHaveBeenCalled();
       }),
     );
 

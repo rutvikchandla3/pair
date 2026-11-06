@@ -1,10 +1,7 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.4): workspace files on the thread's machine */
 // Client-supplied worktrees count only under managed folders or when Git lists them for the project.
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -14,6 +11,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
 
 export class UnknownWorkspaceError extends Schema.TaggedError<UnknownWorkspaceError>()(
@@ -50,18 +48,21 @@ export class KnownWorkspaces extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const settings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
-  // Missing roots keep lexical paths; other resolution failures and filesystem roots grant nothing.
+  // Missing roots keep lexical paths; other resolution failures, unavailable hosts and
+  // filesystem roots grant nothing.
   const resolveRoot = (value: string) => {
     const resolvedPath = path.resolve(value);
-    return fileSystem.realPath(resolvedPath).pipe(
+    return hosts.forPath(resolvedPath).pipe(
+      Effect.flatMap((host) => host.fileSystem.realPath(resolvedPath)),
       Effect.catchTags({
+        WorkspaceHostUnavailableError: () => Effect.succeed(null),
         PlatformError: (cause) =>
           Effect.succeed(cause.reason._tag === "NotFound" ? resolvedPath : null),
       }),
@@ -75,7 +76,8 @@ export const make = Effect.gen(function* () {
       const worktreeSettings = yield* settings.getSettings.pipe(
         Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),
       );
-      const home = yield* HostProcess.HomeDirectory;
+      // Managed worktrees live on the server.
+      const home = (yield* hosts.local.info).homeDirectory;
       const managedDirectories = managedWorktreesDirectories(
         worktreeSettings,
         config.worktreesDir,
@@ -139,9 +141,11 @@ export const make = Effect.gen(function* () {
     "KnownWorkspaces.assertContains",
   )(function* (cwd) {
     // `..` collapses on the path as named before symlinks resolve, as the write does.
-    const realCwd = yield* fileSystem
-      .realPath(path.resolve(cwd))
-      .pipe(Effect.mapError((cause) => new UnknownWorkspaceError({ cwd, cause })));
+    const resolvedCwd = path.resolve(cwd);
+    const realCwd = yield* hosts.forPath(resolvedCwd).pipe(
+      Effect.flatMap((host) => host.fileSystem.realPath(resolvedCwd)),
+      Effect.mapError((cause) => new UnknownWorkspaceError({ cwd, cause })),
+    );
     if (!(yield* contains(realCwd))) return yield* new UnknownWorkspaceError({ cwd });
   });
 
