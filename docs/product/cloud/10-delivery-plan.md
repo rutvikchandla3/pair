@@ -76,9 +76,9 @@ Three tracks start once 0.1 merges: runner (R), lifecycle and driver (L), image 
 | 1.4 | `feat(server): add the ComputeDriver service, driver instances, fake driver and contract suite` (with `deleteImage`) | 04 §6, §10 #5; README decision 8 | 1.2, 1.36 | L, with 1.3 |
 | 1.5 | `feat(server): decide sandbox commands and run driver effects by generation` (each effect replay safe and bounded at 60 s in the effect worker; was 1.5a) | 04 §10 #3, #4; README decision 6 | 1.3, 1.4 | L |
 | 1.6 | `feat(server): add the runner with process, PTY, file and watch handlers` | 03 §11 #2 | 1.1 | R, critical |
-| 1.7 | `feat(server): accept runners on /runner/v1/connect with per-boot sandbox tokens` (`sandbox.runner.attached`, `sandbox.runner.lost`) | 03 §7, §11 #3; 06 §7 | 1.1, 1.5 | R |
+| 1.7 | `feat(server): accept runners on /runner/v1/connect with per-boot sandbox tokens` (`sandbox.runner.attached`, `sandbox.runner.lost`) | 03 §7, §11 #3; 06 §7 | 1.1, 1.5, 1.6 | R |
 | 1.8 | `feat(server): resume runner streams and bound them with flow control` | 03 §11 #4 | 1.6, 1.7 | R, critical |
-| 1.9 | `build(server): pack the runner bundle, serve it by runnerBuildId, add t3 runner prefetch` (history worker built unsplit; a dev bundle built from source carries the Replay agent) | 03 §11 #5 | 1.6 | R |
+| 1.9 | `build(server): pack the runner bundle, serve it by runnerBuildId, add t3 runner prefetch` (history worker built unsplit; a dev bundle built from source carries the Replay agent) | 03 §11 #5 | 1.6, 1.7 | R |
 | 1.10 | `feat(server): run search, process table, port listing and checkpoint capture in the runner` (search refresh; baseline, capture and file summary as one call) | 03 §11 #6; 02 §5; 07 §10 #7, #11 | 1.6 | R, with 1.8 |
 | 1.11 | `feat(server): add SandboxWorkspaceHost and sandbox root registration` (and the loopback test host) | 02 §6 PR 9; §2, §3, §7 | M0, 1.8, 1.10 | Critical |
 | 1.12 | `feat(server): run ACP (Replay), Codex and Claude sessions on sandbox hosts` (history calls and `resolveSettings` through the worker; a Codex home per session) | 02 §6 PR 10; §4 | 1.9, 1.11, 1.13 | Critical |
@@ -93,26 +93,26 @@ Three tracks start once 0.1 merges: runner (R), lifecycle and driver (L), image 
 | 1.21 | `ci: publish the base sandbox image to the GHCR of the repo running the workflow` (on release tags; decision 15, D6) | 05 §9 1.2 | 1.9, 1.20 | I |
 | 1.22 | `ci: fail a release whose pinned provider CLIs are unsupported` | 05 §9 1.3 | 1.20 | I |
 | 1.23 | `feat(server): pull the base image matching the exact server version, with a sandbox.baseImage override, shown as Pair base` | 05 §9 1.4; D6 | 1.14, 1.21 | I |
-| 1.24 | `feat(server): run cloud setup scripts with sandbox paths` | 05 §5, §9 1.5 | 1.11 | Yes |
-| 1.25 | `feat(server): build sandbox process environments from an allowlist and cloud env` (team, project, reserved names) | 06 §3, §6 | 1.11 | C |
-| 1.26 | `feat(server): give cloud threads their account's headless credential` (setup token, API key, managed Codex; "Local only") | 06 §3 | 1.13, 1.25 | C |
+| 1.24 | `feat(server): run cloud setup scripts with sandbox paths` | 05 §5, §9 1.5 | 1.11, 1.16 | Yes |
+| 1.25 | `feat(server): build sandbox process environments from an allowlist and cloud env` (team, project, reserved names) | 06 §3, §6 | 1.3, 1.11, 1.36 | C |
+| 1.26 | `feat(server): give cloud threads their account's headless credential` (setup token, API key, managed Codex; "Local only") | 06 §3 | 1.12, 1.13, 1.25 | C |
 | 1.27 | `feat(server): store the team's GitHub App private key under Source Control` (optional; adds the App ID and key settings, which don't exist yet) | 06 §5 | — | C, from day one |
-| 1.28 | `feat(server): push from sandboxes with one-hour GitHub App tokens` (helper, `gh` shim, committer) | 06 §5 | 1.13, 1.20, 1.27 | C |
+| 1.28 | `feat(server): push from sandboxes with one-hour GitHub App tokens` (helper, `gh` shim, committer) | 06 §5 | 1.13, 1.20, 1.25, 1.27 | C |
 | 1.28a | `feat(server,web): push cloud threads with the owner's own GitHub when no App key is set` (member token store and RPC, **Use a token instead** on the member's row in Settings → Team, the credential order in the git-credential path, "Connect GitHub to push") | 06 §5; 08 §2, §4; D1 | 1.28 | C |
 | 1.29 | `feat(server): revoke sandbox credentials on stop and destroy and audit git tokens` (with the fork warning) | 06 §2, §7 | 1.19, 1.28 | C |
 | 1.30 | `feat(server): keep a bare checkpoint mirror per project` | 07 §1, §10 #2 | 0.1 | D, from M0 |
-| 1.31 | `feat(server): pull checkpoint bundles into the mirror at capture` | 07 §1, §10 #3 | 1.10, 1.30 | D |
-| 1.32 | `feat(server): read cloud thread diffs from the mirror` | 07 §1, §10 #4 | 1.30 | D |
-| 1.33 | `feat(server): read stopped cloud threads from the mirror and refuse their writes` (terminals show exited; live terminals and files ride 1.10 and 1.11) | 07 §1, §10 #6, #7, #11 | 1.11, 1.32 | D |
+| 1.31 | `feat(server): pull checkpoint bundles into the mirror at capture` | 07 §1, §10 #3 | 1.10, 1.11, 1.30 | D |
+| 1.32 | `feat(server): read cloud thread diffs from the mirror` | 07 §1, §10 #4 | 1.30 (lands before 1.31) | D |
+| 1.33 | `feat(server): read stopped cloud threads from the mirror and refuse their writes` (terminals show exited; live terminals and files ride 1.10 and 1.11) | 07 §1, §10 #6, #7, #11 | 1.11, 1.31, 1.32 | D |
 | 1.34 | `feat(server): stage attachments into the sandbox` | 07 §6, §10 #8; 02 §1 | 1.12 | D |
-| 1.35 | `feat(server): push and open GitHub PRs from cloud threads` | 07 §3, §10 #9 | 1.28, 1.31 | D |
-| 1.36 | `feat(contracts): add ServerSettings.sandbox driver instances and the project sandboxAllowed and defaultsToCloud overrides` | 08 §2, §9 | 0.1 | S; before 1.4 |
+| 1.35 | `feat(server): push and open GitHub PRs from cloud threads` | 07 §3, §10 #9 | 1.28, 1.28a, 1.31 | D |
+| 1.36 | `feat(contracts,server): add ServerSettings.sandbox driver instances and the project sandboxAllowed and defaultsToCloud overrides` | 08 §2, §9 | 1.2 | S; before 1.4 |
 | 1.37 | `feat(client-runtime): present machine status and gate cloud commands with permission atoms` (with `cloudAvailability`, was 0.13) | 08 §8, §9 | 1.2, 1.36 | S |
 | 1.38 | `feat(web): offer Cloud in the mode picker, drafts and sidebar` | 08 §4, §9; [01](./01-product.md) §3 | 1.16, 1.37 | S, critical |
-| 1.39 | `feat(web): show the machine in the header, banners, thread menu and palette` (`chat.newCloud`) | 08 §4, §9 | 1.37 | S |
-| 1.40 | `feat(web): add Settings → Cloud with the Docker driver, cloud env, and a Test button` (caps read-only) | 08 §4, §9; 01 §6, J1 | 1.14, 1.25, 1.36 | S |
-| 1.41 | `feat(mobile): start cloud threads, show machine status and add a read-only machines screen` (and D1's token row and push notice) | 08 §5, §9 | 1.28a, 1.37 | S |
-| 1.42 | `feat(server): launch cloud threads from MCP tools and t3 thread start --cloud` (evals) | 08 §6, §9 | 1.16 | S |
+| 1.39 | `feat(web): show the machine in the header, banners, thread menu and palette` (`chat.newCloud`) | 08 §4, §9 | 1.37, 1.38 | S |
+| 1.40 | `feat(server,web): add Settings → Cloud with the Docker driver, cloud env, and a Test button` (caps read-only) | 08 §4, §9; 01 §6, J1 | 1.14, 1.16, 1.18, 1.23, 1.25, 1.30, 1.36 | S |
+| 1.41 | `feat(mobile): start cloud threads, show machine status and add a read-only machines screen` (and D1's token row and push notice) | 08 §5, §9 | 1.28a, 1.37, 1.38, 1.40 | S |
+| 1.42 | `feat(server): launch cloud threads from MCP tools and t3 thread start --cloud` (evals) | 08 §6, §9 | 1.16, 1.37 | S |
 | 1.43 | `feat(server): notify the prompter and owner when a machine fails` | 01 §5; 08 §9 | 1.16 | S |
 | 1.44 | `perf(server): measure runner latency and check the startup budget` | 03 §9, §11 #9 | 1.8, 1.9 | Yes |
 | 1.45 | `docs: add the cloud threads guide` | 05 §9 1.6; §5 here | 1.38 | Last |
@@ -269,12 +269,12 @@ What can overlap:
 
 - **Inside M0,** 0.3–0.8 and 0.10 are independent once the lint rule lands. The contract row
   0.11 touches no workspace code and can land any time.
-- **M0 and M1.** M1's contracts (1.1, 1.2, 1.36), the driver interface (1.4), the base image (1.20), the
+- **M0 and M1.** M1's contracts (1.1, 1.2 after 0.11, then 1.36), the driver interface (1.4), the base image (1.20), the
   GitHub App key (1.27) and the mirror store (1.30) need only 0.1's fixed interfaces. They can be
   built while M0's routing PRs land. Nothing that calls `WorkspaceHosts.register` merges before M0
   is done.
 - **Inside M1,** the runner track (1.1–1.13) and the driver track (1.2–1.5, 1.14–1.19) meet only at
-  1.16. Client rows 1.37 and 1.39 can start once 1.2 and 1.36 land, and 1.41 once 1.28a does too. The image track
+  1.16. Client row 1.37 can start once 1.2 and 1.36 land. The image track
   (1.20–1.23) meets at the integrated pass.
 - **M1 into M2.** The hosted driver (2.5) needs only the driver interface and contract suite (1.4),
   so it can start as soon as the maintainers pick a vendor. It must not ship before sleep (2.1).
@@ -470,7 +470,7 @@ needs watching, or "open" when it stays a property of the product.
 | Side chats and forks read each other's credentials through `/proc`. | M | M | 06 §2 | Warn on fork; per-thread users only if asked. | Open |
 | A stolen sandbox token yields future credentials of that boot. | L | H | 03 §6 | Per-boot tokens in tmpfs, one socket per sandbox, revocation on sleep and destroy. | Open |
 | Runner protocol handlers on the server become an attack surface. | M | H | 06 §1 | Server checks every frame against its own sandbox; fuzz the handlers. | M1 |
-| The mirror parses objects from an agent-controlled machine. | M | M | 07 §1; 06 §10 | Server pulls; `git fsck` after each fetch; bare repo, never checked out, no diff or filter drivers. | M1 |
+| The mirror parses objects from an agent-controlled machine. | M | M | 07 §1; 06 §10 | Server pulls; `index-pack --strict` on import; bare repo, never checked out, no diff or filter drivers. | M1 |
 | Hosted sandboxes cannot reach a Tailscale-only server. | H | M | Decision 4; 03 §3.2 | Settings says so before offering a vendor; T3 Connect route; BYOC with a subnet router. | Open |
 | T3 Connect routes sandbox bytes through a third party. | M | M | 09 §1 | The BYOC kit keeps runners on the VPC route. | M5 |
 | Conductor refugees choose another product before M2. | H | M | 01 §1 | Ship M1 on Docker quickly; publish migration notes; stress BYOC and open source. | M2 |

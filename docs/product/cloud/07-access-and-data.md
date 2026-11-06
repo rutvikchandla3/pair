@@ -78,7 +78,7 @@ carries only what the sandbox added if its bundle names a commit the mirror has,
 sandbox's starting commit, as a prerequisite; with none it carries the full history. Don't use
 `alternates`. A `git gc` in the user's checkout could then prune objects the mirror still points
 to. The mirror's input comes from an agent-controlled machine, but Git 2.43 skips
-`transfer.fsckObjects` when fetching a bundle (tested), so check the new objects with `git fsck`.
+`transfer.fsckObjects` when fetching a bundle (tested), so import with `git index-pack --strict`.
 
 ### Push from the sandbox, or pull by the server?
 
@@ -233,13 +233,13 @@ Where each step runs today, and in a cloud thread:
 | Push | `pushCurrentBranch` with `git push` in `cwd` | Sandbox. The credential helper asks the server for a one-hour GitHub App token, or the owner's own GitHub credential (plan D1, [06](./06-credentials-and-security.md)). Then sync the branch ref to the mirror. **GitHub only until the server's git proxy lands in M3** (plan decision 10). Other hosts can commit but not push. |
 | PR text | `readRangeContext`, the template, then text generation | Git reads in the sandbox. Generation on the server. |
 | Create the PR | `createChangeRequest` is a REST POST from the server ([GitHubSourceControlProvider.ts](../../../packages/source-control-github/src/server/GitHubSourceControlProvider.ts)). The body file is in the server's temp dir. | The POST runs on the server as the connected member or the server. Its `resolveRepository` reads `git remote -v` in `cwd`, so in the sandbox. |
-| Agent runs `gh pr create` | In the agent's shell | Sandbox, with the agent's git credential, never the owner's GitHub token |
+| Agent runs `gh pr create` | In the agent's shell | Sandbox, with the thread's git credential (the owner's own GitHub when no App key is set, D1) |
 | Discovery and linking ([ThreadPullRequestService.ts](../../../apps/server/src/orchestration-v2/ThreadPullRequestService.ts)) | `branchPullRequest` reads `for-each-ref`, remotes and config in `cwd`, then asks the forge | Awake: unchanged. Asleep: see below. |
 
 **Discovery must never wake a sandbox.** The service sweeps unsettled threads every minute. It
 checks `<worktreePath>/.git` on the server's own disk and, when that is missing, silently runs git
 in the project root instead, which is wrong for a sandbox. A sleeping sandbox's git state can't
-change, so each mirror sync also stores what `branchPullRequest` reads: remote names and URLs, the
+change, so the sync before sleep (M2) also stores what `branchPullRequest` reads: remote names and URLs, the
 branch's upstream and tip (`for-each-ref`), and the default branch. Discovery for a sleeping cloud
 thread uses that record and asks only the forge. The `.git` check moves behind the workspace host.
 
@@ -531,8 +531,8 @@ Each row is about one pull request.
 | # | Milestone | Work |
 | - | --------- | ---- |
 | 1 | M0 | Route the direct local-disk checks behind the workspace host. That covers `realPath` in `CheckpointRestoreSafety`, `exists(worktreePath)` in rollback, and the `.git` existence check in `ThreadPullRequestService`. No behavior change. |
-| 2 | M1 | Mirror store: create and seed a bare repo per project, `git fsck` after each fetch, delete it with the project. Tests for seeding and deletion. |
-| 3 | M1 | Mirror sync: the bundle pull inside `CheckpointCaptureService`, with prerequisites, the size cap, the retry worker, ref deletion after rollback, and the head-context record. Tests: a missing prerequisite falls back, refs outside the request are ignored, and a rollback prunes. |
+| 2 | M1 | Mirror store: create and seed a bare repo per project, `index-pack --strict` on import, delete it with the project. Tests for seeding and deletion. |
+| 3 | M1 | Mirror sync: the bundle pull inside `CheckpointCaptureService`, with prerequisites, the size cap, the retry worker, and ref deletion after rollback. Tests: a missing prerequisite falls back, refs outside the request are ignored, and a rollback prunes. |
 | 4 | M1 | `MirrorCheckpointReader`, and diff queries that resolve the git dir by placement. Tests on a bare repo. |
 | 5 | M1 | Side chats and forks reference their source's sandbox in the rollback, restore-safety and file flows here, comparing by sandbox id. The shared record is [04](./04-sandbox-lifecycle.md)'s. |
 | 6 | M1 | Terminals over the runner PTY channel: spawn, flow control, and process-table inspection through the runner. |
@@ -545,7 +545,7 @@ Each row is about one pull request.
 | 13 | M2 | Asleep reads from the sleep snapshot: the file browser and search, labeled. |
 | 14 | M2 | Terminals asleep: `stoppedBy`, read-only errors, the wake divider, restart on attach. |
 | 15 | M2 | Restore, revert and rewind wake the sandbox and wait. Tests drain the effect worker through `waking` to `ready`. |
-| 16 | M2 | Status and PR discovery never wake: frozen VCS status and a forge-only lookup from the head context. |
+| 16 | M2 | Status and PR discovery never wake: the head-context record stored at sleep, frozen VCS status, and a forge-only lookup from it. |
 | 17 | M2 | Stopping listed servers through the runner, and preview tabs from `ports.listeners`. |
 | 18 | M2 | The loopback preview proxy, per-sandbox browser contexts, and desktop cloud tabs streamed. Spike first: `<-loopback>` through Playwright's context proxy, and seeding storage state. |
 | 19 | M2 | Retention: the worktree rules applied to disks with 04's defaults. |

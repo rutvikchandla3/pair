@@ -406,7 +406,7 @@ starts the runner with one detached command. A used or expired secret is harmles
 
 The driver talks to the Engine API at `DOCKER_HOST`, so the daemon can be the team server's machine
 or another host. `create` makes a container named and labeled by us, with CPU, memory and PID
-limits, a named volume `pair-<sandboxId>` for the checkout and runner home, on a `pair-sandboxes`
+limits, a named volume with the container's name for the checkout and homes, on a `pair-sandboxes`
 network, then starts it. `start` writes the new generation's bootstrap to the volume (env is fixed at
 create) and starts. `stop` frees CPU and memory and keeps the volume. `destroy` removes the
 container and volume. `list` filters by the `pair.install` label. `imageBuild` is `snapshot`:

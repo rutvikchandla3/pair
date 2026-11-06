@@ -110,7 +110,7 @@ Vendors that pause with memory also capture what is only in memory (inferred for
 | Provider credential (`CLAUDE_CODE_OAUTH_TOKEN`, API key) | Provider process env | Process lifetime | No (memory: yes). A sleep kills the process. |
 | Codex access token | Codex process memory, fetched by its auth command | Token lifetime (unverified) | No |
 | Thread MCP token | Claude: SDK options. Codex: per-thread JSON-RPC config (`mcp_servers.t3-code.http_headers`, [CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts)) | Provider session | No, for Claude and Codex. Check other adapters. |
-| Git installation token | Runner memory cache; git asks per operation | Up to one hour | No. Helper never writes; Pair sets no `credential.helper store`. |
+| Git installation token | Server memory cache; git asks per operation through the runner | Up to one hour | No. Helper never writes; Pair sets no `credential.helper store`. |
 | Team, project, member env vars | Process env of agents, terminals and scripts | Process lifetime | No by Pair. Yes if a script writes them (`.npmrc`, `.env`). |
 | Repo checkout, `.git/config`, checkpoint refs | Workspace | Sandbox lifetime | Yes. Remote URLs carry no credentials. |
 | Provider transcripts | `CLAUDE_CONFIG_DIR/projects`, `CODEX_HOME/sessions` | Sandbox lifetime | Yes. They contain whatever the agent read, secrets included. |
@@ -322,7 +322,7 @@ sequenceDiagram
   S->>GH: POST /app/installations/{id}/access_tokens {repositories:[repo], permissions}
   GH-->>S: token, expires in 1h
   S-->>H: username=x-access-token, password=token, expiry
-  H-->>G: credential (cached in runner memory until 5 min before expiry)
+  H-->>G: credential (the server caches it until 5 min before expiry)
 ```
 
 - **Configuration in the image.** `credential.helper` is set to `!t3 runner git-credential` with
@@ -489,7 +489,7 @@ cloud threads useless for most teams. What they never need is the inside of the 
 
 | Driver | Mechanism | Allowlist possible |
 | ------ | --------- | ------------------ |
-| Docker (local or `DOCKER_HOST`) | Per-sandbox bridge network, inter-container traffic off, `DOCKER-USER` rules dropping the Docker host, private ranges and metadata, except the route to the team server | Yes, through an egress proxy container on an internal network (M3) |
+| Docker (local or `DOCKER_HOST`) | One bridge network per install (one per sandbox would exhaust Docker's address pools), inter-container traffic off, `DOCKER-USER` rules dropping the Docker host, private ranges and metadata, except the route to the team server | Yes, through an egress proxy container on an internal network (M3) |
 | Vercel Sandbox | Network policy, allow lists, credential brokering | Yes |
 | Other hosted vendors | Varies; check per vendor in M2 | Unverified |
 | VMs in the customer's cloud (M5) | Security groups, no public IP plus NAT, firewall rules | Yes |
@@ -538,7 +538,7 @@ then can membership stop meaning "shell on the server". Every row must be closed
 | Text generation (titles, summaries) | Spawns provider CLIs on the server | No tools, no project MCP or hooks, empty `cwd`; or run in a sandbox | [textGeneration](../../../apps/server/src/textGeneration) |
 | `filesystem:read` | Any file the server user can read, including the secret store | Confined to sandboxes and the checkpoint mirror | [environment auth](../../internals/environment-auth.md#the-environment-is-the-filesystem-boundary), [AssetAccess.ts](../../../apps/server/src/assets/AssetAccess.ts) |
 | Workspace file writes | Workspace path rules on the server | Sandbox only | [WorkspaceFileSystem.ts](../../../apps/server/src/workspace/WorkspaceFileSystem.ts) |
-| Checkpoint mirror and diffs | Git on the server reads repo content | Bare repo, `git fsck` on every fetched bundle, server-owned hooks only, never checked out, no diff or filter drivers in server git config | [07 Access and data](./07-access-and-data.md) |
+| Checkpoint mirror and diffs | Git on the server reads repo content | Bare repo, `git index-pack --strict` on every bundle, server-owned hooks only, never checked out, no diff or filter drivers in server git config | [07 Access and data](./07-access-and-data.md) |
 | Provider logins and probes | CLIs run on the server for login and status | Allowed: admin and owner flows, no project `cwd` | [ProviderAuthService.ts](../../../apps/server/src/provider/ProviderAuthService.ts) |
 | Member scopes | Roles guard mistakes only ([team.ts](../../../packages/contracts/src/team.ts)) | Re-audit every RPC that executes or reads on the host; then member scopes become a real boundary | [RpcAuthorization.ts](../../../apps/server/src/auth/RpcAuthorization.ts) |
 | Model proxy | Optional | On for every API-key account | Section 4 |
