@@ -107,7 +107,7 @@ vi.mock("../../state/workspace", () => ({
   useWorkspaceEnvironments: () => [],
 }));
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
-vi.mock("../../state/team", () => ({ useIsTeamMode: () => false }));
+vi.mock("../../state/team", () => ({ useIsTeamMode: () => false, useTeamViewer: () => null }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";

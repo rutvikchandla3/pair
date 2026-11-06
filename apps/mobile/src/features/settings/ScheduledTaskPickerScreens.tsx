@@ -3,10 +3,15 @@ import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  filterModelOptionsForViewer,
+  groupByProvider,
+} from "../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
+import { useTeamViewer } from "../../state/team";
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -26,9 +31,15 @@ export function ScheduledTaskModelPickerRouteScreen() {
   const config = useEnvironmentServerConfig(editor?.environmentId ?? null);
   const selectedModel = editor?.draft.modelSelection ?? null;
   const projectId = editor?.draft.projectId ?? null;
+  const teamViewer = useTeamViewer(editor?.environmentId ?? null);
   const models = useMemo(
-    () => buildModelOptions(config, selectedModel, undefined, projectId),
-    [config, selectedModel, projectId],
+    () =>
+      filterModelOptionsForViewer(buildModelOptions(config, selectedModel, undefined, projectId), {
+        settings: config?.settings,
+        viewer: teamViewer,
+        currentInstanceId: selectedModel?.instanceId,
+      }),
+    [config, selectedModel, projectId, teamViewer],
   );
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   const selectedOption = models.find(

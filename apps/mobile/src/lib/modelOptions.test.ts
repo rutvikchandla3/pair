@@ -1,18 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { teamViewerOf } from "@t3tools/client-runtime/state/team";
 import {
   DEFAULT_SERVER_SETTINGS,
+  MemberId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ModelSelection,
   type ServerConfig,
   type ServerSettings,
+  type TeamMember,
 } from "@t3tools/contracts";
 
 import {
   buildModelOptions,
   describeUnavailableModelSelection,
+  filterModelOptionsForViewer,
   groupByProvider,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
@@ -245,6 +249,54 @@ describe("mobile model options", () => {
         null,
       )[0]?.providerBadge?.showBadge,
     ).toBe(false);
+  });
+
+  it("leaves teammates' accounts out on a team, keeping the one in use disabled", () => {
+    const alice = MemberId.make("member-alice");
+    const bob = MemberId.make("member-bob");
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const config = {
+      providers: [
+        { instanceId: "claudeAgent", driver: "claudeAgent" },
+        { instanceId: "claude_bob", driver: "claudeAgent", displayName: "Bob's Claude" },
+      ].map((provider) => ({
+        ...provider,
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug: "sonnet", name: "Sonnet", capabilities: null }],
+      })),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("claude_bob")]: { driver: claude, ownerMemberId: bob },
+        },
+      },
+    } as unknown as ServerConfig;
+    const options = buildModelOptions(config, null, undefined, null);
+    const members = new Map(
+      [alice, bob].map((id) => [
+        id,
+        { id, name: id === bob ? "Bob" : "Alice", removedAt: null } as TeamMember,
+      ]),
+    );
+    const filter = (viewer: ReturnType<typeof teamViewerOf>, current?: string) =>
+      filterModelOptionsForViewer(options, {
+        settings: config.settings,
+        viewer,
+        currentInstanceId: current === undefined ? undefined : ProviderInstanceId.make(current),
+      });
+
+    expect(filter(null)).toBe(options);
+    expect(filter(teamViewerOf(members, alice)).map((option) => option.key)).toEqual([
+      "claudeAgent:sonnet",
+    ]);
+    expect(filter(teamViewerOf(members, alice), "claude_bob")[1]).toMatchObject({
+      key: "claude_bob:sonnet",
+      isUnavailable: true,
+      subtitle: "Bob's Claude belongs to Bob.",
+    });
+    expect(filter(teamViewerOf(members, bob))).toEqual(options);
   });
 
   it("only badges ACP accounts that share the same agent", () => {
