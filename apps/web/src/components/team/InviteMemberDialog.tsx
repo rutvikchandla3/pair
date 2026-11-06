@@ -189,6 +189,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
       <DialogPopup className="max-w-lg">
         {created === null ? (
           <form
+            className="flex min-h-0 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               void submit();
