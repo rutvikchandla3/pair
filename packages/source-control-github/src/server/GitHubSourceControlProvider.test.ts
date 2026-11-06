@@ -1032,6 +1032,8 @@ it("reports every gh login and leads with the account Settings pin", () => {
     hosts: { "github.com": { account: "work", enabled: true } },
     tokens: {},
     signIns: {},
+    appId: "",
+    appPrivateKey: "",
   });
   assert.deepStrictEqual(auth.account, Option.some("work"));
   assert.deepStrictEqual(auth.accounts, [
@@ -1046,6 +1048,8 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
     hosts: { "github.com": { enabled: false } },
     tokens: {},
     signIns: {},
+    appId: "",
+    appPrivateKey: "",
   });
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
@@ -1065,7 +1069,13 @@ it("names the environment token that overrides the Settings choice", () => {
         tokenSource: "GH_TOKEN",
       },
     ]),
-    { hosts: { "github.com": { account: "work", enabled: true } }, tokens: {}, signIns: {} },
+    {
+      hosts: { "github.com": { account: "work", enabled: true } },
+      tokens: {},
+      signIns: {},
+      appId: "",
+      appPrivateKey: "",
+    },
   );
   assert.deepStrictEqual(auth.account, Option.some("bot"));
   assert.deepStrictEqual(

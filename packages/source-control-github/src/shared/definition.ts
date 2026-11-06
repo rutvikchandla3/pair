@@ -1,4 +1,12 @@
-import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  secretSetting,
+  SettingsSecretValue,
+  SourceControlProviderKind,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
@@ -51,7 +59,20 @@ export const APP_SIGN_IN: SourceControlAppSignIn = {
   revokeUrl: "https://github.com/settings/apps/authorizations",
 };
 
-export const settings = makeProviderSettingsSchema(hostCredentialSettingsFields);
+export const settings = makeProviderSettingsSchema({
+  ...hostCredentialSettingsFields,
+  /** The team's GitHub App ID for cloud threads, from its settings page. github.com only. */
+  appId: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  /** That App's private key, PEM as GitHub downloads it (PKCS#1). */
+  appPrivateKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
 export type GitHubSettings = typeof settings.Type;
 
 export const definition = defineSourceControl({

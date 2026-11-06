@@ -34,6 +34,7 @@ import { SourceControlHostSettings } from "./SourceControlHostSettings";
 import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
 import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
 import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
+import { GitHubAppKeySettings } from "./GitHubAppKeySettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -420,6 +421,7 @@ export function SourceControlSettingsPanel() {
               credentials={credentials}
               onSaved={handleScan}
             />
+            {item.kind === "github" ? <GitHubAppKeySettings environmentId={environmentId} /> : null}
             {item.status === "available" ? (
               <SourceControlAccountSettings
                 key={environmentId}

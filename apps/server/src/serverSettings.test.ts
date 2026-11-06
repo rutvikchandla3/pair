@@ -1400,7 +1400,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             },
           },
           sourceControlHosts: {
-            github: { tokens: { "github.com": "github-secret" } },
+            github: { tokens: { "github.com": "github-secret" }, appPrivateKey: "github-app-key" },
             bitbucket: { email: "me@example.test", accessToken: "bitbucket-secret" },
             gitcafe: { token: "gitcafe-secret" },
           },
@@ -1428,6 +1428,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "config-secret",
           "env-secret",
           "github-secret",
+          "github-app-key",
           "bitbucket-secret",
           "gitcafe-secret",
           "quota-secret",
@@ -1493,6 +1494,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             field: "tokens",
             serverHost: "github.com",
           }),
+          sourceControlHostSecretName({ kind: "github", field: "appPrivateKey", serverHost: null }),
           sourceControlHostSecretName({
             kind: "bitbucket",
             field: "accessToken",
@@ -1527,7 +1529,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         yield* service.updateSettings({
           providerInstances: {},
           sourceControlHosts: {
-            github: { tokens: {} },
+            github: { tokens: {}, appPrivateKey: "" },
             bitbucket: { accessToken: "" },
             gitcafe: { token: "" },
           },
