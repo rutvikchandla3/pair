@@ -41,6 +41,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -271,7 +272,6 @@ const createManager = (
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         historyLineLimit,
-        ptyAdapter,
         ...(options.historyByteLimit !== undefined
           ? { historyByteLimit: options.historyByteLimit }
           : {}),
@@ -300,7 +300,10 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
+        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
+      );
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -939,7 +942,7 @@ it.layer(
         expect(ptyAdapter.processes[0]!.resizeCalls).toEqual([{ cols: 80, rows: 30 }]);
         expect(ptyAdapter.processes[0]!.killed).toBe(false);
         yield* manager.close({ threadId: "thread-1" });
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerWithHostPlatform(platform)))),
   );
 
   it.effect("keeps terminals that get input or output while closeIdle checks them", () =>
@@ -1660,21 +1663,18 @@ it.layer(
           Path: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
         },
-      }).pipe(
-        Effect.provide(
-          Layer.merge(
-            layerWithHostPlatform("win32"),
-            Layer.succeed(HostProcess.Architecture, "x64"),
-          ),
-        ),
-      );
+      });
 
       yield* manager.open(openInput());
 
       const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
       expect(spawnEnv?.PATH).toBeUndefined();
       expect(spawnEnv?.Path).toBe(`C:\\Windows\\System32;${installBin}`);
-    }),
+    }).pipe(
+      Effect.provide(
+        Layer.merge(layerWithHostPlatform("win32"), Layer.succeed(HostProcess.Architecture, "x64")),
+      ),
+    ),
   );
 
   it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
@@ -1688,7 +1688,7 @@ it.layer(
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
         },
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      });
       ptyAdapter.spawnFailures.push(
         new Error("spawn custom-shell.exe ENOENT"),
         new Error("spawn pwsh.exe ENOENT"),
@@ -1703,7 +1703,7 @@ it.layer(
       ]);
       expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
       expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
-    }),
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
   );
 
   it.effect("closes an idle cmd fallback before rejecting its completion wrapper", () =>
@@ -1716,7 +1716,7 @@ it.layer(
             childCommand: null,
             processIds: [],
           }),
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      });
       ptyAdapter.spawnFailures.push(
         new Error("spawn pwsh ENOENT"),
         new Error("spawn WindowsPowerShell ENOENT"),
@@ -1759,7 +1759,7 @@ it.layer(
       expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
       expect(ptyAdapter.processes[0]?.writes).toEqual([]);
       expect(ptyAdapter.processes[0]?.killed).toBe(true);
-    }),
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
   );
 
   it.effect("turns off fish terminal queries unless the user chose query-term", () =>
@@ -1821,16 +1821,18 @@ it.layer(
           { FISH_FEATURES: "qmark-noglob,query-term" },
         ],
       ] as const) {
-        const { manager, ptyAdapter } = yield* createManager(5, {
-          env,
+        yield* Effect.gen(function* () {
+          const { manager, ptyAdapter } = yield* createManager(5, { env });
+          yield* manager.open(openInput({ env: runtimeEnv }));
+          const fishFeatures = Object.fromEntries(
+            Object.entries(ptyAdapter.spawnInputs[0]!.env).filter(
+              ([key]) => key.toLowerCase() === "fish_features",
+            ),
+          );
+          expect
+            .soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv }))
+            .toEqual(expected);
         }).pipe(Effect.provide(layerWithHostPlatform(platform)));
-        yield* manager.open(openInput({ env: runtimeEnv }));
-        const fishFeatures = Object.fromEntries(
-          Object.entries(ptyAdapter.spawnInputs[0]!.env).filter(
-            ([key]) => key.toLowerCase() === "fish_features",
-          ),
-        );
-        expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
       }
     }),
   );
