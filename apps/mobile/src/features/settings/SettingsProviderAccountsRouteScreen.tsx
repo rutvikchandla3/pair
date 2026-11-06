@@ -26,6 +26,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
+import { useIsTeamMode } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
@@ -35,7 +36,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
-import { CLAUDE_DRIVER } from "./claude-accounts";
+import { CLAUDE_DRIVER, listedProviderAccounts } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -69,7 +70,7 @@ export function SettingsProviderAccountsRouteScreen() {
                 ) : (
                   <EnvironmentProviders
                     environment={environment}
-                    providers={managedProviders(environment, providersByEnvironment)}
+                    providers={providersByEnvironment.get(environment.environmentId) ?? []}
                   />
                 )}
               </SettingsSection>
@@ -88,9 +89,16 @@ function EnvironmentProviders({
   readonly environment: SettingsTarget;
   readonly providers: ReadonlyArray<ServerProvider>;
 }) {
-  const accounts = providers.filter(canManageProvider);
+  const isTeamMode = useIsTeamMode(environment.environmentId);
+  const listed = listedProviderAccounts({
+    providers,
+    policy: environment.serverConfig.managedPolicy,
+    settings: environment.serverConfig.settings,
+    isTeamMode,
+  });
+  const accounts = listed.filter(canManageProvider);
   // Claude has no in-app sign-in; each account is its own instance on a signed-in config folder.
-  const claudeAccounts = providers.filter(
+  const claudeAccounts = listed.filter(
     (provider) => provider.driver === CLAUDE_DRIVER && !canManageProvider(provider),
   );
   const canAddClaude = isManagedDriverAllowed(
@@ -117,16 +125,6 @@ function EnvironmentProviders({
       ))}
       {canAddClaude ? <AddClaudeAccount environment={environment} /> : null}
     </>
-  );
-}
-
-/** Providers the environment's managed policy allows; the rest cannot run or sign in. */
-function managedProviders(
-  environment: SettingsTarget,
-  providersByEnvironment: ReadonlyMap<string, ReadonlyArray<ServerProvider>>,
-) {
-  return (providersByEnvironment.get(environment.environmentId) ?? []).filter((provider) =>
-    isManagedDriverAllowed(environment.serverConfig.managedPolicy, provider.driver),
   );
 }
 

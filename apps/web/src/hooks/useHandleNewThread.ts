@@ -46,7 +46,7 @@ import { getClientSettings } from "./useSettings";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
-import { resolveTeamNewThreadModelSelection } from "../modelSelection";
+import { resolveTeamNewThreadModelSelection } from "@t3tools/client-runtime/state/provider-instance-entries";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 interface NewThreadWorkspaceOptions {

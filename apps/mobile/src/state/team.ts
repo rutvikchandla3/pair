@@ -96,6 +96,20 @@ const NO_VIEWER_ATOM = Atom.make<TeamViewer | null>(null).pipe(
   Atom.withLabel("mobile-team-viewer:none"),
 );
 
+const teamViewerFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    teamViewerOf(
+      get(teamEnvironment.membersValueAtom(environmentId)),
+      get(teamEnvironment.currentMemberIdAtom(environmentId)),
+    ),
+  ).pipe(Atom.withLabel("mobile-team-viewer")),
+);
+
+/** Me and the roster in a team-mode environment; null on solo servers. */
+export function useTeamViewer(environmentId: EnvironmentId | null): TeamViewer | null {
+  return useAtomValue(environmentId === null ? NO_VIEWER_ATOM : teamViewerFamily(environmentId));
+}
+
 /** The roster and the signed-in member, for an environment that may not be chosen yet. */
 export function useTeamRoster(environmentId: EnvironmentId | null) {
   const members = useAtomValue(

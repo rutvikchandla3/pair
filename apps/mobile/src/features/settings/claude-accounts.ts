@@ -4,17 +4,38 @@ import {
 } from "@t3tools/client-runtime/provider-instance-ids";
 import {
   defaultInstanceIdForDriver,
+  isManagedDriverAllowed,
   isManagedSettingPath,
   ProviderDriverKind,
   ProviderInstanceId,
   type ManagedPolicySummary,
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
 
 export const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 export const DEFAULT_CLAUDE_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER);
+
+/**
+ * The accounts Provider Accounts lists: those the managed policy allows. On a team, a member's own
+ * account is theirs to manage on the web, so only team accounts are listed.
+ */
+export function listedProviderAccounts(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly policy: ManagedPolicySummary | undefined;
+  readonly settings: Pick<ServerSettings, "providerInstances">;
+  readonly isTeamMode: boolean;
+}): ReadonlyArray<ServerProvider> {
+  return input.providers.filter(
+    (provider) =>
+      isManagedDriverAllowed(input.policy, provider.driver) &&
+      (!input.isTeamMode ||
+        providerInstanceOwner(input.settings, provider.instanceId) === undefined),
+  );
+}
 
 export interface ClaudeAccountDraft {
   readonly name: string;

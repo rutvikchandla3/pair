@@ -8,8 +8,10 @@ import type {
   ModelCapabilities,
   ModelSelection,
   ProjectId,
+  ProviderInstanceId,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  ServerSettings,
 } from "@t3tools/contracts";
 import {
   disallowedProviderMessage,
@@ -22,6 +24,11 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { memberDisplayName, type TeamViewer } from "@t3tools/client-runtime/state/team";
+import {
+  canSelectProviderInstance,
+  providerInstanceOwner,
+} from "@t3tools/shared/providerInstanceOwnership";
 
 export type ModelOption = {
   readonly key: string;
@@ -456,6 +463,37 @@ export function buildModelOptions(
   }
 
   return [...options.values()];
+}
+
+/**
+ * On a team server, other members' accounts leave the picker. The instance in use stays listed when
+ * it is a teammate's, disabled and naming its owner, as on web. `viewer` is null on solo servers.
+ */
+export function filterModelOptionsForViewer(
+  options: ReadonlyArray<ModelOption>,
+  input: {
+    readonly settings: Pick<ServerSettings, "providerInstances"> | undefined;
+    readonly viewer: TeamViewer | null;
+    readonly currentInstanceId: ProviderInstanceId | undefined;
+  },
+): ReadonlyArray<ModelOption> {
+  const { settings, viewer } = input;
+  if (viewer === null || settings === undefined) return options;
+  return options.flatMap((option) => {
+    const instanceId = option.selection.instanceId;
+    const ownerMemberId = providerInstanceOwner(settings, instanceId);
+    if (ownerMemberId === undefined || ownerMemberId === viewer.memberId) return [option];
+    const selectable = canSelectProviderInstance({
+      ownerMemberId,
+      memberId: viewer.memberId,
+      currentInstanceId: input.currentInstanceId,
+      instanceId,
+    });
+    if (!selectable) return [];
+    const name = option.providerBadge?.displayName ?? option.providerLabel;
+    const owner = memberDisplayName(viewer.members, ownerMemberId);
+    return [{ ...option, isUnavailable: true, subtitle: `${name} belongs to ${owner}.` }];
+  });
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {

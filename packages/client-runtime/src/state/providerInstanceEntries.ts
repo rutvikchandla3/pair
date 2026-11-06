@@ -1,0 +1,275 @@
+import { pipe } from "effect/Function";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  defaultInstanceIdForDriver,
+  resolveProjectProviderInstanceEnabled,
+  type MemberId,
+  type ModelSelection,
+  type ProjectId,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderModel,
+  type ServerSettings,
+  type ServerProviderState,
+} from "@t3tools/contracts";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+} from "./providerInstanceDisplay.ts";
+
+export interface ProviderInstanceEntry {
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly accentColor?: string | undefined;
+  readonly acpRegistryAgentId?: string | undefined;
+  readonly acpRegistryIconUrl?: string | undefined;
+  readonly continuationGroupKey?: string | undefined;
+  readonly ownerMemberId?: MemberId | undefined;
+  readonly enabled: boolean;
+  readonly installed: boolean;
+  readonly status: ServerProviderState;
+  readonly isDefault: boolean;
+  readonly isAvailable: boolean;
+  readonly snapshot: ServerProvider;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+/** Disabled instances may retain ready status until reconciliation. */
+export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled && entry.isAvailable && entry.status === "ready";
+}
+
+export function deriveProviderInstanceEntries(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return providers.map((snapshot) => {
+    const instanceId = snapshot.instanceId;
+    const driverKind = snapshot.driver;
+    const defaultId = defaultInstanceIdForDriver(driverKind);
+    const isDefault = instanceId === defaultId;
+    return {
+      instanceId,
+      driverKind,
+      displayName: resolveProviderInstanceDisplayName(snapshot),
+      accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      ...(driverKind === "acpRegistry" && snapshot.iconUrl
+        ? { acpRegistryIconUrl: snapshot.iconUrl }
+        : {}),
+      continuationGroupKey: snapshot.continuation?.groupKey,
+      enabled: snapshot.enabled,
+      installed: snapshot.installed,
+      status: snapshot.status,
+      isDefault,
+      isAvailable: snapshot.availability !== "unavailable",
+      snapshot,
+      models: snapshot.models,
+    } satisfies ProviderInstanceEntry;
+  });
+}
+
+// The snapshot includes instances enabled by any project; machine settings alone do not.
+export function brandProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.map((entry) => applyProviderInstanceBranding(entry, settings));
+}
+
+/** projectId applies project overrides; explicit null uses machine settings. */
+export function applyProviderInstanceSettings(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.map((entry) => {
+    const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
+    return applyProviderInstanceBranding(
+      enabled === entry.enabled ? entry : { ...entry, enabled },
+      settings,
+    );
+  });
+}
+
+function applyProviderInstanceBranding(
+  entry: ProviderInstanceEntry,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ProviderInstanceEntry {
+  const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
+    ? settings.providerInstances[entry.instanceId]
+    : undefined;
+  const ownerMemberId = explicitInstance?.ownerMemberId;
+  if (ownerMemberId !== undefined && entry.ownerMemberId !== ownerMemberId) {
+    return applyProviderInstanceBranding({ ...entry, ownerMemberId }, settings);
+  }
+  if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) return entry;
+  const config =
+    explicitInstance.config !== null && typeof explicitInstance.config === "object"
+      ? (explicitInstance.config as Readonly<Record<string, unknown>>)
+      : null;
+  if (config?.source === "local") {
+    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+  }
+  const agentId = config?.agentId;
+  const iconUrl = config?.registryIconUrl;
+  return {
+    ...entry,
+    ...(typeof agentId === "string" && agentId.trim()
+      ? { acpRegistryAgentId: agentId.trim() }
+      : {}),
+    ...(typeof iconUrl === "string" && iconUrl.trim()
+      ? { acpRegistryIconUrl: iconUrl.trim() }
+      : {}),
+  };
+}
+
+/** Picker order: each driver's default instance first, then its custom instances. */
+export function providerInstanceEntriesFor(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return pipe(
+    deriveProviderInstanceEntries(providers),
+    (entries) => applyProviderInstanceSettings(entries, settings, projectId),
+    sortProviderInstanceEntries,
+  );
+}
+
+function sortProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
+  for (const entry of entries) {
+    const bucket = byKind.get(entry.driverKind);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      byKind.set(entry.driverKind, [entry]);
+    }
+  }
+  const sorted: ProviderInstanceEntry[] = [];
+  for (const bucket of byKind.values()) {
+    const defaults = bucket.filter((entry) => entry.isDefault);
+    const customs = bucket.filter((entry) => !entry.isDefault);
+    sorted.push(...defaults, ...customs);
+  }
+  return sorted;
+}
+
+function getProviderInstanceEntry(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): ProviderInstanceEntry | undefined {
+  return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
+}
+
+export function getDefaultProviderInstanceModel(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): string | undefined {
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  if (!entry) return undefined;
+  return (
+    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry.models.find((model) => !model.isCustom)?.slug ??
+    entry.models[0]?.slug ??
+    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+  );
+}
+
+const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
+  entry.enabled && entry.isAvailable;
+
+export function resolveSelectableProviderInstanceEntry(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  instanceId: ProviderInstanceId | undefined,
+): ProviderInstanceEntry | undefined {
+  if (instanceId !== undefined) {
+    const requested = entries.find((entry) => entry.instanceId === instanceId);
+    if (requested && isSelectableProviderInstanceEntry(requested)) {
+      return requested;
+    }
+  }
+  return (
+    entries.find(isProviderInstancePickerReady) ??
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+  );
+}
+
+export function resolveProjectDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  // Matches resolveComposerProviderSelection: the first driver group wins before any other.
+  const entry =
+    resolveSelectableProviderInstanceEntry(
+      entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
+      undefined,
+    ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
+  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  return entry && model ? { instanceId: entry.instanceId, model } : null;
+}
+
+/**
+ * A new team thread defaults to the creator's own account: the resolved selection (carried,
+ * sticky, or the project default) moves to the viewer's enabled instance of the same driver.
+ * Another member's instance is never a default, so it falls back to the project default.
+ * Returns null when the selection stands; `memberId` is null outside team mode.
+ */
+export function resolveTeamNewThreadModelSelection(input: {
+  readonly selection: ModelSelection | null;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly settings: ServerSettings;
+  readonly projectId: ProjectId | null;
+  readonly memberId: MemberId | null;
+}): ModelSelection | null {
+  const { selection, providers, settings, memberId } = input;
+  if (memberId === null) return null;
+  const ownerOf = (instanceId: ProviderInstanceId) => providerInstanceOwner(settings, instanceId);
+  const isForeign = (instanceId: ProviderInstanceId) => {
+    const owner = ownerOf(instanceId);
+    return owner !== undefined && owner !== memberId;
+  };
+  const base =
+    selection !== null && !isForeign(selection.instanceId)
+      ? selection
+      : resolveProjectDefaultProviderModelSelection(
+          providers.filter((provider) => !isForeign(provider.instanceId)),
+          settings,
+          input.projectId,
+        );
+  if (base === null) return null;
+  const entries = providerInstanceEntriesFor(providers, settings, input.projectId);
+  const driver = entries.find((entry) => entry.instanceId === base.instanceId)?.driverKind;
+  const owned = entries.filter(
+    (entry) =>
+      entry.driverKind === driver &&
+      ownerOf(entry.instanceId) === memberId &&
+      entry.enabled &&
+      entry.isAvailable,
+  );
+  const own =
+    ownerOf(base.instanceId) === memberId
+      ? undefined
+      : (owned.find(isProviderInstancePickerReady) ?? owned[0]);
+  if (own === undefined) {
+    if (selection !== null) return base === selection ? null : base;
+    // The composer's own default ignores owners, so it can land on a teammate's account.
+    const composerDefault = resolveProjectDefaultProviderModelSelection(
+      providers,
+      settings,
+      input.projectId,
+    );
+    return composerDefault !== null && isForeign(composerDefault.instanceId) ? base : null;
+  }
+  if (own.models.some((model) => model.slug === base.model)) {
+    return { ...base, instanceId: own.instanceId };
+  }
+  const model = getDefaultProviderInstanceModel(providers, own.instanceId);
+  return model === undefined ? base : { instanceId: own.instanceId, model };
+}
