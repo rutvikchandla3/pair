@@ -25,9 +25,20 @@ For scripts, CI and outside agents, create an [API token](./outside-agents.md#ap
 Messages from other people show their name. Resolved requests say **Approved by**, **Declined
 by**, or **Answered by**, and stops and reverts say who did them.
 
+The thread also gets a quiet line when someone renames, archives, settles, or reassigns it, changes
+its permissions, switches its model, or links or opens a pull request from it. These lines start
+when your server has a second member; earlier changes are not filled in.
+
 Once two or more people have prompted the same thread, the agent sees each new message as
 `Message from <name>:` so it knows who is asking. Threads only one person has prompted are sent
 to the agent unchanged.
+
+## Prompting someone else's turn
+
+While another person's turn is running, your message waits in the queue instead of changing their
+turn. Choose **Steer now** (Cmd/Ctrl-click Send) to send it into their turn anyway. A queued
+message can be sent now, reordered, or removed by the person who wrote it or by the thread's owner;
+only its author can edit the text.
 
 ## Commits and pull requests
 
@@ -114,6 +125,8 @@ Notifications go only to the people a thread concerns:
 
 You are never notified about your own actions, or about a thread you're looking at.
 
+On a team server, push notifications come from Pair, not T3 Connect, and need your team's own mobile build. Until that's set up, open the app to see new activity.
+
 ## Share a thread
 
 On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
@@ -137,7 +150,8 @@ Nobody else sees them change.
 
 Everything else is shared. Settling a thread settles it for everyone and removes everyone's pin
 and snooze. A thread that anyone has pinned or snoozed doesn't settle automatically. Sending a
-message to a snoozed thread wakes it only for you.
+message to a snoozed thread wakes it only for you. Anyone can choose **Edit from here**, and it
+warns first when that would discard someone else's turns.
 
 ## New threads use a worktree
 

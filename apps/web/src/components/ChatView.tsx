@@ -227,7 +227,8 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { useIsTeamMode, useThreadShareOrigin } from "~/state/team";
+import { useIsTeamMode, useTeamAttribution, useThreadShareOrigin } from "~/state/team";
+import { othersTurnStarterId } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -1316,6 +1317,17 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
+  const team = useTeamAttribution(environmentId);
+  const othersTurnStarter =
+    serverProjection === null
+      ? null
+      : othersTurnStarterId({
+          projection: serverProjection,
+          members: team.members,
+          me: team.currentMemberId,
+        });
+  // Sends on someone else's running turn queue unless the sender picks Steer now.
+  const othersTurnName = othersTurnStarter === null ? null : team.nameOf(othersTurnStarter);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
   const setThreadError = makeThreadErrorSetter({
@@ -2803,6 +2815,7 @@ export default function ChatView(props: ChatViewProps) {
       serverProjection,
       activeThread,
       timelineMessages,
+      team,
       phase,
       isSendBusy,
       isRevertingCheckpoint,
@@ -2939,6 +2952,7 @@ export default function ChatView(props: ChatViewProps) {
     activePendingProgress,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
+    othersTurn: othersTurnName !== null,
     beginLocalDispatch,
     resetLocalDispatch,
     beginWorktreeSetup,
@@ -3610,6 +3624,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
+                              othersTurnName={phase === "running" ? othersTurnName : null}
                               isCompacting={isCompacting}
                               canInterrupt={canInterruptRunningThread}
                               isSendBusy={

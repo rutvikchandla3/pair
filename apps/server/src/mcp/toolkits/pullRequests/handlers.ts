@@ -25,8 +25,10 @@ import {
   threadPullRequestsOf,
   visibleThreadPullRequests,
 } from "../../../sourceControl/threadPullRequests.ts";
+import * as TeamState from "../../../team/TeamState.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { sendActorId } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -201,6 +203,16 @@ const make = Effect.gen(function* () {
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
+
+  /** On a team, links and unlinks are the caller's member's; a missing actor only drops the row. */
+  const actorFields = Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    const actorId = yield* sendActorId(engine, scope, team).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    return actorId === undefined ? {} : { actorId };
+  });
 
   const commandId = (tag: string, threadId: ThreadId) =>
     random.uuidV4().pipe(
@@ -383,6 +395,7 @@ const make = Effect.gen(function* () {
             number: target.number,
             url: target.url,
             source: "agent",
+            ...(yield* actorFields),
           })
           .pipe(
             Effect.as(false),
@@ -410,6 +423,7 @@ const make = Effect.gen(function* () {
           );
         const fresh = targets.filter((target) => !isLinked(target));
         const alreadyLinked = targets.filter(isLinked);
+        const actor = fresh.length === 0 ? {} : yield* actorFields;
         yield* Effect.forEach(fresh, (target) =>
           Effect.gen(function* () {
             yield* engine.dispatch({
@@ -421,6 +435,7 @@ const make = Effect.gen(function* () {
               number: target.number,
               url: target.url,
               source: "agent",
+              ...actor,
             });
           }).pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError))),
         );
@@ -465,6 +480,7 @@ const make = Effect.gen(function* () {
             host: target.host,
             repository: target.repository,
             number: target.number,
+            ...(yield* actorFields),
           })
           .pipe(
             Effect.as(true),
@@ -489,6 +505,7 @@ const make = Effect.gen(function* () {
             ? [{ ...normalizeThreadPullRequestKey(link), state }]
             : [];
         });
+        const actor = matching.length === 0 ? {} : yield* actorFields;
         yield* Effect.forEach(matching, ({ host, repository, number }) =>
           Effect.gen(function* () {
             yield* engine.dispatch({
@@ -498,6 +515,7 @@ const make = Effect.gen(function* () {
               host,
               repository,
               number,
+              ...actor,
             });
           }).pipe(Effect.catchCause(dispatchFailure(PullRequestUnlinkFailedError))),
         );

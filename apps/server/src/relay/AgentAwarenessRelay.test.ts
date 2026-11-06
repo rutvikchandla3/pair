@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  type TeamStreamEvent,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -40,9 +41,12 @@ import {
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { EMPTY_MEMBER_STATE } from "../orchestration-v2/MemberThreadState.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import type { MemberRecord } from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as TeamMembers from "../team/TeamMembers.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
@@ -94,6 +98,24 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
     ...overrides,
   };
 }
+
+const OWNER: MemberRecord = {
+  id: MemberId.make("member-owner"),
+  name: "Owner",
+  role: "admin",
+  gitName: null,
+  gitEmail: null,
+  isOwner: true,
+  createdAt: NOW,
+  updatedAt: null,
+  removedAt: null,
+};
+const BOB: MemberRecord = {
+  ...OWNER,
+  id: MemberId.make("member-bob"),
+  name: "Bob",
+  isOwner: false,
+};
 
 const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
@@ -148,6 +170,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly members?: ReadonlyArray<MemberRecord>;
+    readonly memberChanges?: Stream.Stream<TeamStreamEvent>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -279,8 +303,26 @@ const makeTestRelay = Effect.fnUntraced(function* (
     updatedAt: NOW,
     deletedAt: null,
   };
+  const teamState = yield* TeamState.TeamState.pipe(
+    Effect.provide(TeamState.layerTest(options.members)),
+  );
   const relay = yield* AgentAwarenessRelay.make.pipe(
     Effect.provide(EnvironmentKeys.layer),
+    Effect.provideService(TeamState.TeamState, teamState),
+    Effect.provideService(
+      TeamMembers.TeamMembers,
+      TeamMembers.TeamMembers.of({
+        list: unused(),
+        invite: unused,
+        signInLink: unused,
+        update: unused,
+        updateSelf: unused,
+        setRole: unused,
+        setGitHub: unused,
+        remove: unused,
+        streamChanges: options.memberChanges ?? Stream.empty,
+      }),
+    ),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -302,7 +344,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return {
+    relay,
+    secrets,
+    secretReads,
+    currentShell,
+    shellReads,
+    publications,
+    catchUp,
+    teamState,
+  };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -463,6 +514,60 @@ describe("AgentAwarenessRelay", () => {
         ["running", "completed"],
       );
     }),
+  );
+
+  it.effect("publishes nothing for a completion on a team server", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        members: [OWNER, BOB],
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(publications, []);
+    }),
+  );
+
+  it.effect("clears live states when a second member joins and resumes once solo again", () =>
+    Effect.gen(function* () {
+      const changes = yield* Queue.unbounded<TeamStreamEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, currentShell, publications, teamState } = yield* makeTestRelay({
+        memberChanges: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(changes))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      yield* relay.publishThread(THREAD_ID);
+
+      yield* Ref.update(teamState.members, (members) => new Map(members).set(BOB.id, BOB));
+      yield* Queue.offer(changes, { _tag: "snapshot", members: [] });
+      yield* Queue.take(pulls);
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", null],
+      );
+
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+
+      yield* Ref.update(teamState.members, (members) =>
+        new Map(members).set(BOB.id, { ...BOB, removedAt: NOW }),
+      );
+      yield* Ref.set(currentShell, shell());
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["running", null, "running"],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("still publishes a completion when the thread settles during the hold", () =>
