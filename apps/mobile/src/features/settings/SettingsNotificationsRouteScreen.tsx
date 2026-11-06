@@ -44,6 +44,8 @@ import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useTeamViewers } from "../../state/team";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -140,6 +142,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const teamEnvironmentIds = [...useTeamViewers().keys()];
   const notificationStatus = useAtomValue(notificationStatusAtom);
   const setNotificationStatus = useAtomSet(notificationStatusAtom);
   // A write in progress or a failed one shows its own status until the auth or
@@ -484,6 +487,18 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             />
           ) : null}
         </SettingsSection>
+        {teamEnvironmentIds.length > 0 ? (
+          <SettingsSection title="Team servers">
+            {teamEnvironmentIds.map((environmentId) => (
+              <ListRowLayout
+                key={environmentId}
+                icon="person.2"
+                label={savedConnectionsById[environmentId]?.environmentLabel ?? "Team server"}
+                description="This team server doesn't send push notifications yet. Open the app to catch up."
+              />
+            ))}
+          </SettingsSection>
+        ) : null}
       </ScrollView>
     </SettingsScreen>
   );

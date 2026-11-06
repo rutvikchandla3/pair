@@ -25,7 +25,11 @@ import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentMachineKind,
+  type TeamMember,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -39,6 +43,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { MemberAvatar } from "../../components/MemberAvatar";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
@@ -47,6 +52,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
+import { useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -77,6 +83,7 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { buildThreadTeamMenuItems, resolveThreadAssignMenuSelection } from "./thread-team-menu";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -166,6 +173,9 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
   { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
+
+const DELETE_MENU_ACTIONS: MenuAction[] = [LEGACY_MENU_ACTIONS[1]!];
+const NO_MENU_ACTIONS: MenuAction[] = [];
 
 function ThreadListV2Section(props: {
   readonly label: string;
@@ -259,7 +269,12 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
+const SHELF_LABEL = {
+  working: "Working",
+  team: "Team",
+  snoozed: "Snoozed",
+  settled: "Settled",
+} as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
@@ -285,6 +300,12 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
+});
+
+export const ThreadListV2TeamShelfHeader = memo(function ThreadListV2TeamShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="team" />;
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
@@ -628,6 +649,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
   readonly wokeAt: string | null;
+  /** Team mode: the teammate who owns the thread. */
+  readonly owner?: Pick<TeamMember, "name" | "color">;
+  /** On the Team shelf: no unread marker, since the thread is not mine. */
+  readonly team?: boolean;
   readonly snoozeWakeLabelText?: string;
   readonly timeLabel: string;
   readonly snoozePresetMinute: string;
@@ -737,7 +762,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
-  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isUnread = status === "ready" && props.team !== true && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
@@ -767,6 +792,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
+  const teamMenu = useThreadTeamMenu(thread);
+  const teamActions = useThreadTeamActions();
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const handleRegenerateTitle = useCallback(
@@ -888,6 +915,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
+  const teamMenuItems = useMemo<MenuAction[]>(
+    () => (teamMenu === null ? [] : buildThreadTeamMenuItems(teamMenu)),
+    [teamMenu],
+  );
+  const deleteMenuItems = teamMenu?.canDelete === false ? NO_MENU_ACTIONS : DELETE_MENU_ACTIONS;
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
@@ -929,12 +961,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         nested,
         direct: [...direct, SNOOZED_MENU_ACTIONS[0]!],
         reorder: [],
-        pin: [],
+        pin: teamMenuItems,
         secondary: [
           ...titleMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
-          SNOOZED_MENU_ACTIONS[1]!,
+          ...deleteMenuItems,
         ],
       });
     }
@@ -943,8 +975,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         nested,
         direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
         reorder: reorderMenuItems,
-        pin: pinMenuItems,
-        secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
+        pin: [...pinMenuItems, ...teamMenuItems],
+        secondary: [...titleMenuItems, ...deleteMenuItems],
       });
     }
     if (canUnsettle) {
@@ -954,12 +986,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         reorder: reorderMenuItems.filter(
           (action) => action.id !== "move-up" && action.id !== "move-down",
         ),
-        pin: pinMenuItems,
+        pin: [...pinMenuItems, ...teamMenuItems],
         secondary: [
           ...titleMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
-          SLIM_MENU_ACTIONS[1]!,
+          ...deleteMenuItems,
         ],
       });
     }
@@ -973,18 +1005,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           : []),
       ],
       reorder: reorderMenuItems,
-      pin: pinMenuItems,
+      pin: [...pinMenuItems, ...teamMenuItems],
       secondary: [
         ...titleMenuItems,
         ...autoSettleMenuItems,
         LEGACY_MENU_ACTIONS[0]!,
-        CARD_MENU_ACTIONS[1]!,
+        ...deleteMenuItems,
       ],
     });
   }, [
     autoSettleMenuItems,
     canUnsettle,
+    deleteMenuItems,
     pinMenuItems,
+    teamMenuItems,
     props.settlementSupported,
     reorderMenuItems,
     snoozePresetActions,
@@ -1023,6 +1057,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event === "follow") void teamActions.setFollowed(thread, true);
+      if (nativeEvent.event === "unfollow") void teamActions.setFollowed(thread, false);
+      const assignee = resolveThreadAssignMenuSelection(nativeEvent.event, teamMenu);
+      if (assignee !== null) void teamActions.assign(thread, assignee);
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
         return;
@@ -1061,6 +1099,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
+      teamActions,
+      teamMenu,
     ],
   );
   const primaryAction = useMemo(() => {
@@ -1297,6 +1337,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        {props.owner ? <MemberAvatar member={props.owner} size="sm" /> : null}
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into
@@ -1461,6 +1502,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {props.owner ? <MemberAvatar member={props.owner} size="sm" /> : null}
           <Text
             className={cn(
               "text-sm tabular-nums",

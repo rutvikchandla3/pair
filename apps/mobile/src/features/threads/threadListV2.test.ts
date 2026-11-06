@@ -18,13 +18,16 @@ import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settl
 import {
   CommandId,
   EnvironmentId,
+  MemberId,
   MessageId,
   OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
+  type TeamMember,
 } from "@t3tools/contracts";
+import type { TeamViewer } from "@t3tools/client-runtime/state/team";
 import type { MenuAction } from "@react-native-menu/menu";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -517,6 +520,76 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
     expect(layout.settledCount).toBe(2);
     expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  describe("on a team server", () => {
+    const me = MemberId.make("member-me");
+    const alice = MemberId.make("member-alice");
+    const member = (id: MemberId, name: string, isOwner: boolean): TeamMember => ({
+      id,
+      name,
+      role: isOwner ? "admin" : "member",
+      color: `color-${name}`,
+      isOwner,
+      createdAt: NOW,
+      removedAt: null,
+    });
+    const viewer: TeamViewer = {
+      memberId: me,
+      ownerId: me,
+      members: new Map([
+        [me, member(me, "Me", true)],
+        [alice, member(alice, "Alice", false)],
+      ]),
+    };
+    const teammate = (id: string, overrides: Partial<EnvironmentThreadShell> = {}) => {
+      const thread = makeThread({ id: ThreadId.make(id), title: id, ...overrides });
+      return { ...thread, source: { ...thread.source, ownerId: alice } };
+    };
+    const threads = [
+      makeThread({ id: ThreadId.make("mine"), title: "mine" }),
+      teammate("team-active"),
+      teammate("team-pinned", { pinnedAt: NOW }),
+      teammate("team-followed", { followedAt: NOW }),
+      teammate("team-settled", { settledOverride: "settled", settledAt: NOW }),
+    ];
+    const input = { threads, environmentId: null, searchQuery: "", now: NOW };
+
+    it("shelves teammates' active threads, keeps pinned and followed ones, and drops settled ones", () => {
+      const expanded = buildThreadListV2Items({
+        ...input,
+        teamViewers: new Map([[environmentId, viewer]]),
+        teamShelfExpanded: true,
+      });
+
+      expect(
+        expanded.items.map((item) => [item.thread.id, item.team === true, item.owner?.name]),
+      ).toEqual([
+        ["team-pinned", false, "Alice"],
+        ["mine", false, undefined],
+        ["team-followed", false, "Alice"],
+        ["team-active", true, "Alice"],
+      ]);
+      expect(expanded.teamCount).toBe(1);
+      expect(expanded.teamShelfHeaderIndex).toBe(3);
+      expect(expanded.settledCount).toBe(0);
+
+      const collapsed = buildThreadListV2Items({
+        ...input,
+        teamViewers: new Map([[environmentId, viewer]]),
+      });
+      expect(collapsed.items.map((item) => item.thread.id)).not.toContain("team-active");
+      expect(collapsed.teamCount).toBe(1);
+    });
+
+    it("lists a solo server exactly as before", () => {
+      const solo = buildThreadListV2Items({ ...input, teamViewers: new Map() });
+
+      expect(solo).toEqual(buildThreadListV2Items(input));
+      expect(solo.items.some((item) => "owner" in item || "team" in item)).toBe(false);
+      expect(solo.settledCount).toBe(1);
+      expect(solo.teamShelfHeaderIndex).toBeNull();
+    });
   });
 
   it("keeps settled threads in the tail and filters by search query", () => {

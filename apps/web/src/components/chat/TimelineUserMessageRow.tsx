@@ -76,6 +76,7 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
 import { useTeamAttribution } from "~/state/team";
+import { otherMessageAuthorId } from "@t3tools/client-runtime/state/team";
 import { MessageAuthorChip } from "../team/MessageAuthorChip";
 import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -457,13 +458,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userMessage = resolveUserMessagePresentation(row.message);
   const team = useTeamAttribution(ctx.activeThreadEnvironmentId);
-  const otherAuthorId =
-    team.isTeamMode &&
-    userMessage.attribution === null &&
-    row.message.authorId !== undefined &&
-    row.message.authorId !== team.currentMemberId
-      ? row.message.authorId
-      : undefined;
+  const otherAuthorId = otherMessageAuthorId({
+    isTeamMode: team.isTeamMode,
+    currentMemberId: team.currentMemberId,
+    message: row.message,
+    attribution: userMessage.attribution,
+  });
   const authorName = otherAuthorId === undefined ? "You" : team.nameOf(otherAuthorId);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
   const folded = userMessage.attribution === "agent";

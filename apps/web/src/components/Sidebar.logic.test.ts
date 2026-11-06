@@ -34,11 +34,9 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
-  isSidebarThreadMine,
   matchesSidebarOwnerFilter,
   buildSidebarOwnerScopeItems,
   resolveSidebarThreadSection,
-  sortTeamThreadsByActivity,
   reuseThreadViewers,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -57,7 +55,7 @@ import {
   type TeamMember,
   ThreadId,
 } from "@t3tools/contracts";
-import type { TeamViewer } from "../state/team";
+import { isSidebarThreadMine, type TeamViewer } from "@t3tools/client-runtime/state/team";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1483,29 +1481,6 @@ describe("Team shelf", () => {
   };
 
   it.each([
-    ["a thread I own stays Active", { ownerId: me }, "active"],
-    ["a thread without an owner belongs to the server owner", {}, "team"],
-    ["another member's active thread goes to Team", { ownerId: bob }, "team"],
-    ["another member's thread I follow is Active", { ownerId: bob, followedAt: "t" }, "active"],
-    [
-      "another member's thread I unfollowed goes back to Team",
-      { ownerId: bob, followedAt: null },
-      "team",
-    ],
-    ["another member's thread I pinned stays Pinned", { ownerId: bob, pinnedAt: "t" }, "pinned"],
-    ["another member's snoozed thread stays Snoozed", { ownerId: bob, snoozed: true }, "snoozed"],
-    ["my settled thread is Settled", { ownerId: me, settled: true }, "settled"],
-    ["another member's settled thread is not listed", { ownerId: bob, settled: true }, null],
-    [
-      "a followed settled thread is Settled",
-      { ownerId: bob, followedAt: "t", settled: true },
-      "settled",
-    ],
-  ] as const)("team mode: %s", (_name, thread, expected) => {
-    expect(sectionOf(thread)).toBe(expected);
-  });
-
-  it.each([
     ["Anyone keeps everything", undefined, ["active", "team", "settled", "snoozed"]],
     ["Me keeps only my own threads, and my Settled", "me", ["active", null, "settled", null]],
     ["a member keeps only theirs, and my Settled", bob, [null, "team", "settled", "snoozed"]],
@@ -1580,35 +1555,6 @@ describe("Team shelf", () => {
       );
     }
     expect(sectionOf({ ownerId: bob }, null)).toBe("active");
-  });
-
-  it("sorts the Team bucket by the latest message, run or update", () => {
-    const shell = (
-      id: string,
-      input: { message?: string; completed?: string; updated: string },
-    ) => ({
-      id: ThreadId.make(id),
-      environmentId: localEnvironmentId,
-      latestUserMessageAt: input.message ?? null,
-      latestRun:
-        input.completed === undefined
-          ? null
-          : { ...makeLatestRun({ completedAt: input.completed }), startedAt: null },
-      updatedAt: input.updated,
-    });
-    const sorted = sortTeamThreadsByActivity([
-      shell("stale", { updated: "2026-03-01T00:00:00.000Z" }),
-      shell("messaged", {
-        message: "2026-03-09T09:00:00.000Z",
-        updated: "2026-03-02T00:00:00.000Z",
-      }),
-      shell("finished", {
-        completed: "2026-03-09T12:00:00.000Z",
-        updated: "2026-03-03T00:00:00.000Z",
-      }),
-      shell("touched", { updated: "2026-03-09T10:00:00.000Z" }),
-    ]);
-    expect(sorted.map((entry) => entry.id)).toEqual(["finished", "touched", "messaged", "stale"]);
   });
 
   it("rejects drops into Team, and follows a Team row dropped into Active or Pinned", () => {

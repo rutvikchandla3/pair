@@ -151,6 +151,8 @@ the owner of the thread they came from.
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
 
+The mobile app shows names, owners, the Team shelf, Follow and Assign too.
+
 ## Follow threads and notifications
 
 **Follow** a teammate's thread to keep it in your own sections and count its unread state; choose

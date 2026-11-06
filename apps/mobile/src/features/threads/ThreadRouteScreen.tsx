@@ -61,6 +61,8 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useThreadOwner, useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
+import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -501,7 +503,18 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  const threadOwner = useThreadOwner(selectedThread);
+  const threadTeamMenu = useThreadTeamMenu(selectedThread);
+  const threadTeamActions = useThreadTeamActions();
+  const teamHeaderMenu =
+    selectedThread !== null && threadTeamMenu !== null && canOperateThread
+      ? buildThreadTeamHeaderMenu(threadTeamMenu, {
+          setFollowed: (following) => void threadTeamActions.setFollowed(selectedThread, following),
+          assign: (ownerId) => void threadTeamActions.assign(selectedThread, ownerId),
+        })
+      : null;
   const headerSubtitle = [
+    threadOwner === null ? null : `${threadOwner.name}'s thread`,
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
@@ -972,6 +985,7 @@ function ThreadRouteContent(
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
+                teamMenu={teamHeaderMenu}
                 hasThreadCwd={selectedThreadCwd !== null}
                 hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
                 fileInspectorSupported={fileInspector.supported}

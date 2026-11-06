@@ -38,6 +38,7 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   ChatAttachment,
+  MemberId,
   MessageId,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -133,6 +134,7 @@ export interface ThreadFeedMessage {
   readonly streaming: boolean;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
   readonly createdBy?: OrchestrationV2Actor;
+  readonly authorId?: MemberId;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
@@ -2136,6 +2138,7 @@ export function buildThreadFeed(
             ? {
                 inputIntent: item.inputIntent,
                 createdBy: item.createdBy,
+                ...(item.authorId !== undefined ? { authorId: item.authorId } : {}),
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
                 ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
