@@ -104,6 +104,7 @@ vi.mock("react-native", () => ({
     ),
 }));
 vi.mock("../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
+vi.mock("../features/threads/MessageAuthorName", () => ({ MessageAuthorName: () => null }));
 vi.mock("../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
 }));
