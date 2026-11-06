@@ -90,6 +90,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as MemberGitHub from "./team/MemberGitHub.ts";
 import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
@@ -741,6 +742,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(TeamMembers.TeamMembers)({}),
   Layer.mock(MemberProviderAccounts.MemberProviderAccounts)({}),
+  Layer.mock(MemberGitHub.MemberGitHub)({ enabled: false }),
   Layer.mock(Presence.Presence)({}),
   Layer.mock(TeamState.TeamState)({
     ownerId: MemberId.make("member-test"),

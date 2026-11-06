@@ -8,11 +8,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { ActingSourceControlCredential } from "@t3tools/source-control-core/server/ActingSourceControlCredential";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -154,6 +156,8 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
 function harness(input: {
   readonly remotes: string;
   readonly api?: Partial<GitHubRest.GitHubRest["Service"]>;
+  /** Answers REST through the real client and request policy, in place of `api`. */
+  readonly restHttp?: HttpClient.HttpClient;
   readonly graphql?: GraphQlRespond;
   readonly credential?: (
     host: string,
@@ -240,7 +244,12 @@ function harness(input: {
   const layer = Layer.mergeAll(
     host,
     appSignedOut,
-    Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
+    input.restHttp === undefined
+      ? Layer.mock(GitHubRest.GitHubRest)(input.api ?? {})
+      : Layer.effect(GitHubRest.GitHubRest, GitHubRest.make).pipe(
+          Layer.provide(policy),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, input.restHttp)),
+        ),
     policy,
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
@@ -551,6 +560,58 @@ describe("GitHubSourceControlProvider writes", () => {
       });
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
   });
+
+  it.effect.each([
+    { actingHost: "github.com", authorizations: ["Bearer member-token"] },
+    { actingHost: "acme.ghe.com", authorizations: [] },
+  ])(
+    "opens a pull request with an acting $actingHost credential strictly",
+    ({ actingHost, authorizations }) => {
+      const sent: Array<string | undefined> = [];
+      const { layer } = harness({
+        remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+        restHttp: HttpClient.make((request) =>
+          Effect.sync(() => {
+            sent.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ number: 1 }), { status: 201 }),
+            );
+          }),
+        ),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+        yield* fs.writeFileString(bodyFile, "Body");
+        const gh = yield* GitHubSourceControlProvider.make;
+        const created = yield* gh
+          .createChangeRequest({
+            cwd: "/repo",
+            baseRefName: "main",
+            headSelector: "feature",
+            title: "Title",
+            bodyFile,
+          })
+          .pipe(
+            Effect.provideService(ActingSourceControlCredential, {
+              kind: SourceControlProviderKind.make("github"),
+              host: actingHost,
+              token: Redacted.make("member-token"),
+            }),
+            Effect.result,
+          );
+        assert.strictEqual(Result.isSuccess(created), authorizations.length > 0);
+        if (Result.isFailure(created)) {
+          assert.strictEqual(
+            (created.failure.cause as { readonly _tag?: string })._tag,
+            "GitHubApiAuthenticationError",
+          );
+        }
+        assert.deepStrictEqual(sent, authorizations);
+      }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+    },
+  );
 
   it.effect("creates a repository under an organization the viewer is not", () => {
     const requests: Array<string> = [];

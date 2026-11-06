@@ -3,14 +3,11 @@ import {
   readHostCredentialSettings,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import { ExternalLinkIcon } from "lucide-react";
-
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
-import { T3AppIcon } from "./T3AppIcon";
-import { InlineButton } from "./ui/button";
+import { SourceControlIconArtwork } from "./SourceControlIconArtwork";
 
 /**
  * Says when the server's forge app sign-in cannot reach `repository`, so requests there fall back
@@ -40,7 +37,13 @@ export function SourceControlAppAccessNotice(props: {
         })
       : null,
   );
-  if (appSignIn === undefined || access.data?.status !== "not-covered") return null;
+  if (
+    definition === undefined ||
+    appSignIn === undefined ||
+    access.data?.status !== "not-covered"
+  ) {
+    return null;
+  }
   const owner = props.repository.split("/")[0] ?? props.repository;
 
   return (
@@ -51,18 +54,14 @@ export function SourceControlAppAccessNotice(props: {
         props.className,
       )}
     >
-      <T3AppIcon className="size-4 shrink-0" />
+      {definition.icon === null ? null : (
+        <SourceControlIconArtwork icon={definition.icon} className="size-4 shrink-0" />
+      )}
       <p className="min-w-0 flex-1">
         {appSignIn.appName} isn't installed on <span className="text-foreground">{owner}</span>, so
-        requests here use your own GitHub login and its lower rate limit.
+        requests here use your own GitHub login and its lower rate limit. Ask an admin to install
+        the team&apos;s GitHub App on {owner}.
       </p>
-      <InlineButton
-        className="shrink-0"
-        render={<a href={appSignIn.installUrl} target="_blank" rel="noreferrer noopener" />}
-      >
-        Install on {owner}
-        <ExternalLinkIcon aria-hidden className="size-3" />
-      </InlineButton>
     </div>
   );
 }

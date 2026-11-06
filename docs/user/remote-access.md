@@ -455,7 +455,7 @@ screenshots, logs, or bug reports.
 `t3 member` manages who can use a server, the same as **Settings → Team**:
 
 ```sh
-npx t3 member invite "Ada Lovelace" --role admin --git-email ada@example.com
+npx t3 member invite "Ada Lovelace" --role admin --git-email ada@example.com --github ada-gh
 npx t3 member list
 npx t3 member signin-link "ada lovelace"
 npx t3 member remove "ada lovelace"
@@ -463,8 +463,9 @@ npx t3 member remove "ada lovelace"
 
 Name a member by id or by name, in any case. `invite` and `signin-link` print a
 one-time link that signs the member in on one device. With Pair stopped they
-print only the token; pass `--base-url` for a full link. Members get every
-permission except settings, providers, access, T3 Connect, and environment
+print only the token; pass `--base-url` for a full link. `--github` lets the
+member [sign in with GitHub](./team.md#sign-in-with-github) instead. Members get
+every permission except settings, providers, access, T3 Connect, and environment
 maintenance; admins get all of them. Removing a member signs out all of their
 devices.
 
