@@ -205,6 +205,11 @@ describe("orchestration V2 contracts", () => {
       kind: "event",
       event: { type: "turn-item.updated", payload: { id: "item-known", type: "system_notice" } },
     });
+    // Notices from servers before member attribution carry no actor.
+    expect(knownEvent?.kind === "event" && knownEvent.event.payload).not.toHaveProperty("actorId");
+    expect(
+      decodeWireItems([turnItemEvent(5, { ...known, actorId: "member:bob" })])[0],
+    ).toMatchObject({ kind: "event", event: { payload: { actorId: "member:bob" } } });
     expect(
       decodeHistoryPage({
         snapshotSequence: 1,

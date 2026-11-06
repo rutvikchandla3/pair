@@ -30,10 +30,10 @@ export function decideHumanAuthorship(
   >,
 ): HumanAuthorship {
   const authorId = command.actorId;
+  if (command.createdBy !== "user" || authorId === undefined) return {};
+  // The member who sends a guest's message starts its turn, but the words stay the guest's.
+  if (command.context?.guest !== undefined) return { authorId };
   if (
-    command.createdBy !== "user" ||
-    authorId === undefined ||
-    command.context?.guest !== undefined ||
     command.notification !== undefined ||
     command.delegatedCompletion !== undefined ||
     command.scheduledTaskId !== undefined ||

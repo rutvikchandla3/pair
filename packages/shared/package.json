@@ -283,6 +283,10 @@
       "types": "./src/threadNotificationRouting.ts",
       "import": "./src/threadNotificationRouting.ts"
     },
+    "./threadCollaboration": {
+      "types": "./src/threadCollaboration.ts",
+      "import": "./src/threadCollaboration.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

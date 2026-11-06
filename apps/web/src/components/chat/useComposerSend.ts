@@ -221,6 +221,8 @@ interface ComposerSendInput {
   readonly activePendingProgress: PendingThreadRequests["activePendingProgress"];
   readonly onAdvanceActivePendingUserInput: PendingThreadRequests["onAdvanceActivePendingUserInput"];
   readonly onRespondToApproval: PendingThreadRequests["onRespondToApproval"];
+  /** The running turn is another member's, so only an explicit steer or restart redirects it. */
+  readonly othersTurn: boolean;
   readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
   readonly resetLocalDispatch: LocalDispatchState["resetLocalDispatch"];
   readonly beginWorktreeSetup: ReturnType<typeof useWorktreeSetup>["begin"];
@@ -316,6 +318,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activePendingProgress,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
+    othersTurn,
     beginLocalDispatch,
     resetLocalDispatch,
     beginWorktreeSetup,
@@ -546,10 +549,15 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
-    const approvalFeedbackTarget = pendingApprovalsRef.current.find(
-      (approval) =>
-        approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
-    );
+    const steersOthersTurn = othersTurn && (dispatchMode === "steer" || dispatchMode === "restart");
+    // A plain send queues behind another member's turn and leaves their approvals alone.
+    const redirectsAgent = !othersTurn || steersOthersTurn;
+    const approvalFeedbackTarget = redirectsAgent
+      ? pendingApprovalsRef.current.find(
+          (approval) =>
+            approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
+        )
+      : undefined;
     const multipleModelBlock =
       multipleModelSelections === null
         ? null
@@ -1033,7 +1041,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // drafts leave them alone. After navigating away during an upload, the shown approvals
     // are another thread's, so this send leaves them alone too.
     const approvalsToDecline =
-      currentRouteThreadKeyRef.current === routeThreadKey
+      redirectsAgent && currentRouteThreadKeyRef.current === routeThreadKey
         ? pendingApprovalsRef.current.filter((approval) =>
             sendCtx?.shownPendingApprovalIds.includes(approval.requestId),
           )
@@ -1364,6 +1372,7 @@ export function useComposerSend(input: ComposerSendInput) {
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
+          ...(steersOthersTurn ? { steerOthersTurn: true } : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
