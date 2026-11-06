@@ -102,6 +102,15 @@ describe("extractAgentNotificationDeepLink", () => {
     ).toBeNull();
     expect(extractAgentNotificationDeepLink({})).toBeNull();
   });
+
+  it("opens Archived threads from a team archive push", () => {
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/settings/archive" })),
+    ).toBe("/settings/archive");
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/settings/archive/x" })),
+    ).toBeNull();
+  });
 });
 
 describe("routeAgentNotificationResponseOnce", () => {

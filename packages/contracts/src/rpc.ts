@@ -189,6 +189,7 @@ import {
   MemberProviderAccountResult,
 } from "./memberProviderAccount.ts";
 import { PresenceReportInput, PresenceUpdate } from "./presence.ts";
+import { MemberPushError, MemberPushRegisterInput, MemberPushUnregisterInput } from "./push.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -581,6 +582,8 @@ export const WS_METHODS = {
   teamGitHubDisconnect: "team.githubDisconnect",
   presenceSubscribe: "presence.subscribe",
   presenceReport: "presence.report",
+  pushRegister: "push.register",
+  pushUnregister: "push.unregister",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -2078,6 +2081,16 @@ const WsPresenceReportRpc = Rpc.make(WS_METHODS.presenceReport, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsPushRegisterRpc = Rpc.make(WS_METHODS.pushRegister, {
+  payload: MemberPushRegisterInput,
+  error: Schema.Union([MemberPushError, EnvironmentAuthorizationError]),
+});
+
+const WsPushUnregisterRpc = Rpc.make(WS_METHODS.pushUnregister, {
+  payload: MemberPushUnregisterInput,
+  error: Schema.Union([MemberPushError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -2137,6 +2150,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamGitHubDisconnectRpc,
   WsPresenceSubscribeRpc,
   WsPresenceReportRpc,
+  WsPushRegisterRpc,
+  WsPushUnregisterRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

@@ -92,6 +92,7 @@ import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as MemberGitHub from "./team/MemberGitHub.ts";
 import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
+import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
@@ -746,9 +747,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(TeamUsage.TeamUsage)({}),
   Layer.mock(MemberGitHub.MemberGitHub)({ enabled: false }),
   Layer.mock(Presence.Presence)({}),
+  Layer.mock(MemberPushDevices.MemberPushDevices)({}),
   Layer.mock(TeamState.TeamState)({
     ownerId: MemberId.make("member-test"),
     members: Ref.makeUnsafe<ReadonlyMap<MemberId, Members.MemberRecord>>(new Map()),
+    isTeamMode: Effect.succeed(false),
   }),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),

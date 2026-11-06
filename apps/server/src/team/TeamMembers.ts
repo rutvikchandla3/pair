@@ -35,6 +35,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as Members from "../persistence/Members.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as MemberPushDevices from "./MemberPushDevices.ts";
 import * as TeamState from "./TeamState.ts";
 
 export class TeamMembers extends Context.Service<
@@ -120,6 +121,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
+  const pushDevices = yield* MemberPushDevices.MemberPushDevices;
   const changes = yield* PubSub.unbounded<TeamMember>();
 
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -333,6 +335,7 @@ const make = Effect.gen(function* () {
       yield* pairingLinks
         .revokeUnconsumedForMember(record.id)
         .pipe(Effect.catch(internalError("Could not revoke the member's links.")));
+      yield* pushDevices.removeMember(record.id);
       yield* forgetGitHubToken(record.id);
       return member;
     },
@@ -413,4 +416,4 @@ const make = Effect.gen(function* () {
 });
 
 /** Requires a ProcessRunner, for reading git's user.name. */
-export const layer = Layer.effect(TeamMembers, make);
+export const layer = Layer.effect(TeamMembers, make).pipe(Layer.provide(MemberPushDevices.layer));

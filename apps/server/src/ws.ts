@@ -133,6 +133,7 @@ import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as MemberGitHub from "./team/MemberGitHub.ts";
 import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
+import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
@@ -1479,6 +1480,7 @@ export const layerWsRpc = (
       const teamMembers = yield* TeamMembers.TeamMembers;
       const memberGitHub = yield* MemberGitHub.MemberGitHub;
       const presence = yield* Presence.Presence;
+      const pushDevices = yield* MemberPushDevices.MemberPushDevices;
       const teamState = yield* TeamState.TeamState;
       const memberProviderAccounts = yield* MemberProviderAccounts.MemberProviderAccounts;
       const teamUsage = yield* TeamUsage.TeamUsage;
@@ -2024,6 +2026,7 @@ export const layerWsRpc = (
           ...(memberGitHub.enabled ? { teamGitHub: true } : {}),
           apiTokens: true,
           presence: true,
+          ...((yield* teamState.isTeamMode) ? { memberPush: true as const } : {}),
           secretProviderSettings: true,
           secretReferences: true,
           ...Option.match(scratchWorkspaceRoot, {
@@ -2484,6 +2487,14 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.presenceReport]: (input, metadata) =>
           presence.report(rpcClientKey(metadata), input),
+        [WS_METHODS.pushRegister]: (input) =>
+          pushDevices.register({
+            ...input,
+            memberId: currentSession.memberId,
+            sessionId: currentSession.sessionId,
+          }),
+        [WS_METHODS.pushUnregister]: (input) =>
+          pushDevices.unregister({ deviceId: input.deviceId, memberId: currentSession.memberId }),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),

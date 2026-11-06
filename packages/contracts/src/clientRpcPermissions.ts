@@ -75,6 +75,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamUpdate]: AuthAccessWriteScope,
   [WS_METHODS.teamSetRole]: AuthAccessWriteScope,
   [WS_METHODS.teamRemove]: AuthAccessWriteScope,
+  [WS_METHODS.pushRegister]: AuthOrchestrationReadScope,
+  [WS_METHODS.pushUnregister]: AuthOrchestrationReadScope,
   // Ownership, not a scope, limits which accounts a member can change.
   [WS_METHODS.teamProviderAccountsMutate]: AuthOrchestrationOperateScope,
 } as const;

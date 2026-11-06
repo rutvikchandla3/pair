@@ -237,6 +237,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamGitHubDisconnect]: "team",
   [WS_METHODS.presenceSubscribe]: "presence",
   [WS_METHODS.presenceReport]: "presence",
+  [WS_METHODS.pushRegister]: "push",
+  [WS_METHODS.pushUnregister]: "push",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

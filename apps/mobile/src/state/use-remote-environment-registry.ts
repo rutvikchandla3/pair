@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 
+import { unregisterMemberPush } from "../features/agent-awareness/memberPushRegistration";
 import { hasCloudPublicConfig } from "../features/cloud/publicConfig";
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
@@ -186,7 +187,9 @@ export function useRemoteConnections() {
       text: "Remove",
       style: "destructive",
       onPress: () => {
-        void controller.removeEnvironment(environmentId);
+        void unregisterMemberPush([environmentId]).then(() =>
+          controller.removeEnvironment(environmentId),
+        );
       },
     } as const;
     if (environment.isRelayManaged) {

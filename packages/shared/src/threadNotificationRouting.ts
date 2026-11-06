@@ -55,3 +55,30 @@ export function shouldNotifyMember(
       return event.ownerId === me;
   }
 }
+
+/** The notification's title; its body is the thread title. Web and Pair-sent push share it. */
+export function threadNotificationTitle(
+  kind: ThreadNotificationKind,
+  archiverName: string | null,
+): string {
+  switch (kind) {
+    case "completion":
+      return "Thread completed";
+    case "failed":
+      return "Thread failed";
+    case "limited":
+      return "Usage limit reached";
+    case "approval":
+      return "Approval needed";
+    case "input":
+      return "Input needed";
+    case "request":
+      return "Guest request";
+    case "message":
+      return "New message";
+    case "assigned":
+      return "Assigned to you";
+    case "archived":
+      return `Archived by ${archiverName ?? "another member"}`;
+  }
+}
