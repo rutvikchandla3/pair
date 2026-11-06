@@ -15,6 +15,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
+  requestResolutionLabel,
   resolveViewedImageAsset,
   toolGroupAction,
   workEntryViewedImagePath,
@@ -67,7 +68,6 @@ import {
   workEntryIconName,
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
-  requestResolutionLabel,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {

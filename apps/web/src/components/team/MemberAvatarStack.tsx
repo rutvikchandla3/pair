@@ -1,5 +1,5 @@
 import { cn } from "~/lib/utils";
-import type { PresentMember } from "~/state/presence";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 import { MemberAvatar } from "./MemberAvatar";
 
 /** Overlapping avatars, then "+n" for the rest. */

@@ -96,6 +96,17 @@ const NO_VIEWER_ATOM = Atom.make<TeamViewer | null>(null).pipe(
   Atom.withLabel("mobile-team-viewer:none"),
 );
 
+/** The roster and the signed-in member, for an environment that may not be chosen yet. */
+export function useTeamRoster(environmentId: EnvironmentId | null) {
+  const members = useAtomValue(
+    environmentId === null ? NO_MEMBERS_ATOM : teamEnvironment.membersValueAtom(environmentId),
+  );
+  const me = useAtomValue(
+    environmentId === null ? NO_MEMBER_ID_ATOM : teamEnvironment.currentMemberIdAtom(environmentId),
+  );
+  return { members, me };
+}
+
 /** Follow, Assign and Delete availability for a thread's menu; null outside team mode. */
 export function useThreadTeamMenu(thread: TeamThreadRef | null): ThreadTeamMenu | null {
   const environmentId = thread?.environmentId ?? null;

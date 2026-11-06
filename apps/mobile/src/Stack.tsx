@@ -96,6 +96,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import { SettingsTeamRouteScreen } from "./features/settings/SettingsTeamRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
@@ -346,6 +347,14 @@ const SETTINGS_SCREENS = {
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       title: "Microphone",
+    },
+  }),
+  SettingsTeam: createNativeStackScreen({
+    screen: SettingsTeamRouteScreen,
+    linking: "settings/team",
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      title: "Team",
     },
   }),
   SettingsFollowUp: createNativeStackScreen({

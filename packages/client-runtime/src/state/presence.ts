@@ -3,6 +3,7 @@ import type {
   MemberId,
   PresenceStatus,
   PresenceUpdate,
+  TeamMember,
   ThreadId,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { subscribeDynamicWithSession } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import type { TeamMembers } from "./team.ts";
 
 /** Other members only: the server never includes the viewer's own member. */
 export interface PresenceState {
@@ -30,6 +32,39 @@ export const EMPTY_PRESENCE: PresenceState = {
   viewers: new Map(),
   typing: new Map(),
 };
+
+export interface PresentMember extends Pick<TeamMember, "name" | "color"> {
+  readonly id: MemberId;
+  readonly away: boolean;
+}
+
+/** Roster members for these ids, with away flags; members not on the roster are skipped. */
+export function presentMembers(
+  members: TeamMembers,
+  presence: PresenceState,
+  memberIds: ReadonlyArray<MemberId> | undefined,
+): PresentMember[] {
+  return (memberIds ?? []).flatMap((id) => {
+    const member = members.get(id);
+    return member === undefined
+      ? []
+      : [
+          {
+            id,
+            name: member.name,
+            color: member.color,
+            away: presence.members.get(id) === "away",
+          },
+        ];
+  });
+}
+
+/** The composer's typing line for the members typing in a thread. */
+export function presenceTypingText(names: ReadonlyArray<string>): string {
+  if (names.length === 1) return `${names[0]} is typing`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+  return `${names.length} people are typing`;
+}
 
 const sameIds = (left: ReadonlyArray<MemberId>, right: ReadonlyArray<MemberId>) =>
   left.length === right.length && left.every((id, index) => id === right[index]);

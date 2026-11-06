@@ -4,7 +4,6 @@ import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
 } from "@t3tools/client-runtime/work-log/presentation";
-import type { MemberId, OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
@@ -242,18 +241,3 @@ export function remarkThoughtPreview(fallback: string) {
 
 export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
 export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];
-
-/** Names the member who settled an approval or question; null while it is open or unattributed. */
-export function requestResolutionLabel(
-  item: OrchestrationV2TurnItem | undefined,
-  nameOf: (id: MemberId) => string,
-): string | null {
-  if (item?.type !== "approval_request" && item?.type !== "user_input_request") return null;
-  if (item.resolvedBy === undefined) return null;
-  const who = nameOf(item.resolvedBy);
-  if (item.type === "user_input_request") {
-    return item.status === "completed" ? `Answered by ${who}` : null;
-  }
-  if (item.status === "completed") return `Approved by ${who}`;
-  return item.status === "cancelled" ? `Declined by ${who}` : null;
-}

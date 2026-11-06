@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { queuedRunLock } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
@@ -36,6 +37,8 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useTeamAttribution } from "../../state/team";
+import { MessageAuthorName } from "./MessageAuthorName";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
@@ -139,6 +142,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
   const queuedRuns = workflow?.queuedRuns ?? [];
+  const team = useTeamAttribution(target.environmentId);
+  const projection = useAtomValue(environmentThreadDetails.quietThreadAtom(target))?.projection;
 
   const hadQueuedRuns = useRef(queuedRuns.length > 0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator once the server-side queue empties after it had runs
@@ -149,6 +154,14 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     }
     if (hadQueuedRuns.current) navigation.goBack();
   }, [navigation, queuedRuns.length]);
+
+  const lockForRun = (run: (typeof queuedRuns)[number]["run"]) => {
+    const lock =
+      projection === undefined
+        ? null
+        : queuedRunLock({ projection, run, members: team.members, me: team.currentMemberId });
+    return lock === null ? null : { ...lock, starterName: team.nameOf(lock.starterId) };
+  };
 
   const act = async (runId: RunId, action: QueueAction) => {
     if (busyRef.current) return;
@@ -244,7 +257,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
           text,
+          lock: lockForRun(run),
         });
+        const lockedReason = controls.controlLockedReason ?? controls.editLockedReason;
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
         return (
@@ -265,6 +280,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                           {
                             id: "steer",
                             title: "Send now",
+                            ...(controls.controlLockedReason === null
+                              ? {}
+                              : { subtitle: controls.controlLockedReason }),
                             attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
                           },
@@ -273,12 +291,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     {
                       id: "edit",
                       title: "Edit",
+                      ...(controls.editLockedReason === null
+                        ? {}
+                        : { subtitle: controls.editLockedReason }),
                       attributes: { disabled: !controls.canEdit },
                       image: Platform.OS === "ios" ? "pencil" : "edit",
                     },
                     {
                       id: "remove",
                       title: "Remove",
+                      ...(controls.controlLockedReason === null
+                        ? {}
+                        : { subtitle: controls.controlLockedReason }),
                       attributes: { disabled: !controls.canDismiss, destructive: true },
                     },
                   ]}
@@ -292,7 +316,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityHint={
                       controls.canEdit
                         ? "Opens this message in the composer for editing"
-                        : (editBlockedReason ?? undefined)
+                        : (lockedReason ?? editBlockedReason ?? undefined)
                     }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}
@@ -303,6 +327,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       attachments={attachments}
                     />
                     <View className="min-w-0 flex-1 gap-0.5">
+                      {message?.authorId !== undefined ? (
+                        <MessageAuthorName
+                          environmentId={target.environmentId}
+                          authorId={message.authorId}
+                          attribution={resolveUserMessagePresentation(message).attribution}
+                        />
+                      ) : null}
                       {message ? (
                         <QueuedRunSender environmentId={target.environmentId} message={message} />
                       ) : null}
@@ -321,6 +352,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         )}
                         {title}
                       </Text>
+                      {lockedReason !== null ? (
+                        <Text numberOfLines={1} className="text-2xs text-foreground-muted">
+                          {lockedReason}
+                        </Text>
+                      ) : null}
                     </View>
                     {controls.isEditing ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
@@ -334,6 +370,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Send now, queued message ${index + 1}`}
+                    accessibilityHint={controls.controlLockedReason ?? undefined}
                     disabled={!controls.canSend}
                     onPress={() => void act(run.id, "steer")}
                     className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
