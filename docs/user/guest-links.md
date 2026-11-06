@@ -19,6 +19,7 @@ expired work again when you turn it back on.
 3. When they send a message, it appears at the end of the thread and the sidebar shows **Request**.
    Choose **Send** to run it as a normal turn, or **Dismiss**. Files they attached show with the
    message, and **Send** includes them.
+   On a team, anyone viewing the thread can send or dismiss it, and the agent is told who sent it.
 
 Choose **Stop sharing** to end the link at once. Archiving the thread, creating a new link, or
 unlinking the machine from T3 Connect also ends it. You can send or dismiss guest messages from the mobile app.

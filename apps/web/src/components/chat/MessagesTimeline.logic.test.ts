@@ -375,6 +375,46 @@ describe("deriveMessagesTimelineRows", () => {
     },
   );
 
+  it("shows a member's lifecycle notice as a divider row, outside any run", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source: OrchestrationV2ProjectedTurnItem = {
+      ...fixture.visibleTurnItems[0]!,
+      sourceItemId: TurnItemId.make("lifecycle-notice"),
+      item: {
+        id: TurnItemId.make("lifecycle-notice"),
+        threadId: fixture.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        startedAt: DateTime.makeUnsafe(fixture.time(1)),
+        completedAt: DateTime.makeUnsafe(fixture.time(1)),
+        updatedAt: DateTime.makeUnsafe(fixture.time(1)),
+        type: "system_notice",
+        message: "Bob archived this thread",
+        actorId: MemberId.make("member:bob"),
+        title: null,
+        status: "completed",
+      },
+    };
+    const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [source],
+      optimisticMessages: [],
+    });
+    expect(timelineEntries).toMatchObject([{ kind: "event", projectedItem: source }]);
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows).toMatchObject([{ kind: "event", projectedItem: source }]);
+  });
+
   it.each([false, true])(
     "gives live compaction the activity slot and restores Thinking (runless: %s)",
     (runless) => {

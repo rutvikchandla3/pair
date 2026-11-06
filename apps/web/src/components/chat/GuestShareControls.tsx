@@ -214,7 +214,7 @@ function GuestShareStatus({ share }: { readonly share: ThreadGuestShare }) {
 }
 
 /**
- * A guest's messages wait at the end of the timeline until the owner sends or dismisses each one.
+ * A guest's messages wait at the end of the timeline until a member sends or dismisses each one.
  * Sent ones then show in the timeline as normal user messages with the guest's name.
  */
 export function GuestPendingMessages({

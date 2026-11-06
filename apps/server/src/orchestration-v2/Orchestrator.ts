@@ -12,7 +12,10 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
+import {
+  builtInSourceControlDefinitions,
+  canonicalizeGitCafePullRequestUrl,
+} from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   normalizeThreadPullRequestKey,
@@ -76,8 +79,10 @@ import {
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
+  RUNTIME_MODE_LABELS,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollaboration";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -1125,10 +1130,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   // CLI and test runtimes have no team: every actor is the holder and events carry no member.
-  const serverOwnerId = Option.map(
-    yield* Effect.serviceOption(TeamState.TeamState),
-    (team) => team.ownerId,
-  );
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
+  const serverOwnerId = Option.map(team, (state) => state.ownerId);
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -1375,6 +1378,165 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     return withPersonalState(row, state ?? EMPTY_MEMBER_STATE);
   });
+
+  /** On a team, a member's current name; nothing on a solo server or for an actorless command. */
+  const teamMemberName = Effect.fn("Orchestrator.teamMemberName")(function* (
+    memberId: MemberId | undefined,
+  ) {
+    if (memberId === undefined || Option.isNone(team)) return undefined;
+    if (!(yield* team.value.isTeamMode)) return undefined;
+    const member = (yield* Ref.get(team.value.members)).get(memberId);
+    return member?.removedAt === null ? member.name : "a former member";
+  });
+
+  /** Fails unless the command's actor may edit or otherwise change this queued run. */
+  const ensureMayChangeQueuedRun = Effect.fn("Orchestrator.ensureMayChangeQueuedRun")(function* (
+    command: {
+      readonly type: OrchestrationV2Command["type"];
+      readonly commandId: CommandId;
+      readonly actorId?: MemberId | undefined;
+    },
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+    run: Pick<OrchestrationV2Run, "userMessageId">,
+    action: "edit" | "control",
+  ) {
+    if (command.actorId === undefined || Option.isNone(team)) return;
+    const holderId = holderOf(projection.thread, team.value.ownerId);
+    const starterId = runStarterId({ run, messages: projection.messages, holderId });
+    const allowed = canChangeQueuedRun({
+      action,
+      actorId: command.actorId,
+      holderId,
+      starterId,
+      teamMode: yield* team.value.isTeamMode,
+    });
+    if (allowed) return;
+    const name = (yield* teamMemberName(starterId)) ?? "its author";
+    return yield* new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause:
+        action === "edit"
+          ? `Only ${name} can edit this queued message.`
+          : `Only ${name} or the thread owner can change this queued message.`,
+    });
+  });
+
+  /**
+   * The quiet timeline row a member's change leaves on a team: a runless, persisted
+   * `system_notice` naming them. Nothing for a solo server, a command without an actor, or no
+   * change. The name is baked in so old clients and MCP reads show the sentence as is.
+   */
+  const emitLifecycleNotice = Effect.fn("Orchestrator.emitLifecycleNotice")(function* (
+    command: OrchestrationV2ServerCommand & { readonly actorId?: MemberId | undefined },
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    thread: OrchestrationV2AppThread,
+    sentence: ((actor: string, nameOf: (id: MemberId) => string) => string) | null,
+  ) {
+    const actorId = command.actorId;
+    if (sentence === null || actorId === undefined || Option.isNone(team)) return;
+    if (!(yield* team.value.isTeamMode)) return;
+    const members = yield* Ref.get(team.value.members);
+    const activeName = (id: MemberId) => {
+      const member = members.get(id);
+      return member?.removedAt === null ? member.name : undefined;
+    };
+    const pendingItems = (yield* Ref.get(events)).flatMap((event) =>
+      event.type === "turn-item.updated" && event.threadId === thread.id ? [event.payload] : [],
+    );
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.lifecycleNoticeTurnItem({ commandId: command.commandId }),
+        threadId: thread.id,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: pendingItems }),
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: sentence(
+          activeName(actorId) ?? "A former member",
+          (id) => activeName(id) ?? "a former member",
+        ),
+        actorId,
+      },
+    });
+  });
+
+  const lifecycleSentence = (
+    command: OrchestrationV2ServerCommand,
+    before: OrchestrationV2AppThread,
+    after: OrchestrationV2AppThread,
+  ): ((actor: string, nameOf: (id: MemberId) => string) => string) | null => {
+    const wasSettled = before.settledOverride === "settled" || before.settledAt !== null;
+    const pullRequest = (url: string, number: number) =>
+      `${builtInSourceControlDefinitions.findByChangeRequestUrl(url)?.changeRequest.shortLabel ?? "PR"} #${number}`;
+    switch (command.type) {
+      case "thread.runtime-mode.set":
+        return before.runtimeMode === after.runtimeMode
+          ? null
+          : (actor) => `${actor} set permissions to ${RUNTIME_MODE_LABELS[after.runtimeMode]}`;
+      case "thread.owner.set": {
+        const { ownerId, actorId } = command;
+        if (Option.isNone(serverOwnerId) || holderOf(before, serverOwnerId.value) === ownerId) {
+          return null;
+        }
+        return actorId === ownerId
+          ? (actor) => `${actor} took over this thread`
+          : (actor, nameOf) => `${actor} assigned this thread to ${nameOf(ownerId)}`;
+      }
+      case "thread.archive":
+        return (actor) => `${actor} archived this thread`;
+      case "thread.unarchive":
+        return (actor) => `${actor} unarchived this thread`;
+      case "thread.settle":
+        return wasSettled ? null : (actor) => `${actor} settled this thread`;
+      case "thread.unsettle":
+        return wasSettled ? (actor) => `${actor} un-settled this thread` : null;
+      case "thread.metadata.update": {
+        const { title } = command;
+        return title === undefined || title === before.title
+          ? null
+          : (actor) => `${actor} renamed this thread to “${title}”`;
+      }
+      case "thread.pull-request.link":
+        // Stack layers are discovered, not chosen, so they leave no row.
+        return after === before ||
+          command.source === "stack" ||
+          command.source === "stack-dismissed"
+          ? null
+          : (actor) =>
+              `${actor} ${command.source === "created" ? "opened" : "linked"} ${pullRequest(command.url, command.number)}`;
+      case "thread.pull-request.unlink": {
+        const key = normalizeThreadPullRequestKey(command);
+        const existing = threadPullRequestsOf(before).find((link) =>
+          threadPullRequestKeysEqual(link, key),
+        );
+        return existing === undefined ||
+          existing.source === "stack" ||
+          existing.source === "stack-dismissed"
+          ? null
+          : (actor) => `${actor} unlinked ${pullRequest(existing.url, command.number)}`;
+      }
+      default:
+        return null;
+    }
+  };
 
   /** A non-holder's event leaves the shared row as it is; the holder's writes `next` to the row. */
   const memberEventFields = (
@@ -3292,7 +3454,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const now = yield* DateTime.now;
-    const decided = decideGuestMessageSend({ thread, guestMessageId, now });
+    const senderName = yield* teamMemberName(command.actorId);
+    const decided = decideGuestMessageSend({
+      thread,
+      guestMessageId,
+      now,
+      ...(senderName === undefined ? {} : { senderName }),
+    });
     if (Result.isFailure(decided)) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3310,7 +3478,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: decided.success.thread,
     });
-    return decided.success;
+    return { ...decided.success, sentByMember: senderName !== undefined };
   });
 
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
@@ -4401,6 +4569,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    yield* emitLifecycleNotice(
+      command,
+      events,
+      updatedThread,
+      lifecycleSentence(command, thread, updatedThread),
+    );
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
@@ -6121,6 +6295,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         dispatchMode = { type: "queue_after_active" };
       }
+    }
+    // On a team, another member's turn is steered or stopped only by an explicit Steer now.
+    const steeredRunId =
+      dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active"
+        ? dispatchMode.targetRunId
+        : goalStopRunId;
+    const steeredRun =
+      steeredRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === steeredRunId);
+    if (
+      steeredRun !== undefined &&
+      command.actorId !== undefined &&
+      command.steerOthersTurn !== true &&
+      Option.isSome(team) &&
+      (yield* team.value.isTeamMode) &&
+      runStarterId({
+        run: steeredRun,
+        messages: projection.messages,
+        holderId: holderOf(projection.thread, team.value.ownerId),
+      }) !== command.actorId
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+      goalStopRunId = undefined;
     }
     if (
       command.notification !== undefined &&
@@ -9770,7 +9968,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           attachments: [],
           createdBy: "user" as const,
           creationSource: "server" as const,
-          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
+          // Any member may answer an agent's question in anyone's turn.
+          ...(command.actorId === undefined
+            ? {}
+            : { actorId: command.actorId, steerOthersTurn: true }),
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);
@@ -9936,6 +10137,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${command.queuedRunId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "control");
     const queuedRootNode =
       queuedRun.rootNodeId === null
         ? undefined
@@ -10127,6 +10329,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, moving, "control");
     const movingMessage = projection.messages.find(
       (candidate) => candidate.id === moving.userMessageId,
     );
@@ -10214,6 +10417,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "control");
     const queuedMessage = projection.messages.find(
       (candidate) => candidate.id === queuedRun.userMessageId,
     );
@@ -10322,6 +10526,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is not queued.`,
       });
     }
+    yield* ensureMayChangeQueuedRun(command, projection, queuedRun, "edit");
     const queuedMessage = projection.messages.find(
       (candidate) => candidate.id === queuedRun.userMessageId,
     );
@@ -13703,11 +13908,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.guestMessageId === undefined
             ? undefined
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+        const { actorId: _soloActorId, ...withoutActor } = command;
         const dispatched =
           guestSend === undefined
             ? withoutGuestAttribution(command)
             : {
-                ...command,
+                // On a team the sending member authors the guest's turn; solo stays authorless.
+                ...(guestSend.sentByMember ? command : withoutActor),
                 text: guestSend.text,
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
@@ -13813,6 +14020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause: "A queued user message can only be sent now while the thread is stopped.",
             });
           }
+          yield* ensureMayChangeQueuedRun(command, projection, selectedRun, "control");
         }
         const nextRun = selectedRun ?? queuedRunsInDeliveryOrder(projection)[0];
         if (

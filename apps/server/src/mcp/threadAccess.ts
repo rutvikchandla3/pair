@@ -11,9 +11,11 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type * as TeamState from "../team/TeamState.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -59,6 +61,25 @@ export const dispatchFailure = (
           message: Array.from(error.cause).slice(0, 1000).join(""),
         })
       : unavailable();
+
+/**
+ * On a team, the member an MCP send acts for: the client's member, or for an agent, the member
+ * whose turn it runs in. Solo servers stamp no actor.
+ */
+export const sendActorId = Effect.fn("mcp.sendActorId")(function* (
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadRecords">,
+  scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "client">,
+  team: Option.Option<TeamState.TeamState["Service"]>,
+) {
+  if (scope.thread === undefined) {
+    return Option.isSome(team) && (yield* team.value.isTeamMode)
+      ? scope.client?.memberId
+      : undefined;
+  }
+  return yield* ThreadManagement.currentRunStarterId(threads, scope.thread.threadId, team).pipe(
+    Effect.mapError(unavailable),
+  );
+});
 
 export interface CallerLimits {
   readonly runtimeMode: RuntimeMode;

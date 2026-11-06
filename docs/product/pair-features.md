@@ -70,16 +70,14 @@ T3 Code throughout.
 - **`t3 thread` from anywhere** with a token, acting as its member, and one guide to agents and
   automation: [Agents and automation](../user/outside-agents.md).
 
-## Built
-
-### Collaborative control
+### Collaborative control · [#23](https://github.com/rutvikchandla3/t3code/pull/23) [#24](https://github.com/rutvikchandla3/t3code/pull/24) [#25](https://github.com/rutvikchandla3/t3code/pull/25) [#26](https://github.com/rutvikchandla3/t3code/pull/26)
 
 - **No hijacking a teammate's turn.** Sending while someone else's turn runs queues your message
   and leaves their approvals alone. **Steer now** redirects on purpose.
 - **The timeline records who changed what:** renames, archive, settle, permission changes,
   assignments and pull request links, each naming the member.
-- **Queued messages belong to their author.** Only the author or the thread owner can send, remove
-  or reorder one, and only the author can edit its text.
+- **Queued messages belong to their author** and show who wrote them. Only the author or the
+  thread owner can send, remove or reorder one, and only the author can edit its text.
 - **Revert warns** when it would discard a teammate's turns: "Discards 2 turns by Alice".
 
 ## Planned
