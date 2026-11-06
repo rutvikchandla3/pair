@@ -100,7 +100,7 @@ servers), M2 (hosted vendor).
 5. **Test** boots one sandbox from Pair's published base image (`t3-sandbox:<version>`; a
    `sandbox.baseImage` setting points at a mirror), connects the runner, runs `git --version`
    and the project's setup script, then discards it. The result shows each step's time.
-6. On save, members' composers offer **Cloud** next to Local and New worktree.
+6. On save, members' composers offer **Cloud** next to Current checkout and New worktree.
 
 On a solo server the same page works. The owner is the admin.
 
@@ -291,7 +291,7 @@ milestone named in each one lands, not before.
 ### "Membership is the trust boundary" (amend at M4)
 
 Today a member who can run agents or terminals has a shell as the server's user. The invite dialog
-says so ([InviteMemberDialog.tsx](../../../apps/web/src/components/team/InviteMemberDialog.tsx)).
+says "Members can run commands as this server's user" ([InviteMemberDialog.tsx](../../../apps/web/src/components/team/InviteMemberDialog.tsx)).
 Cloud changes where that shell is, not whether members are trusted.
 
 Proposed text:
@@ -407,7 +407,7 @@ would fill timelines with noise.
 
 Recommend a new top-level **Settings → Cloud**, not a subsection of Team. Cloud works on solo
 servers, it is about machines rather than people, and builds and logs need room. The Team page is
-already dense, and it is hidden from members on a solo server
+already dense, and non-admins see it only once the server has a second member
 ([team.ts](../../../apps/web/src/state/team.ts), `useTeamSettingsVisible`). The nav lives in
 [SettingsSidebarNav.tsx](../../../apps/web/src/components/settings/SettingsSidebarNav.tsx).
 

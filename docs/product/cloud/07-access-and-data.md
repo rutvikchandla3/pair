@@ -27,30 +27,31 @@ Statements marked (inferred) are our reading, not something verified in code or 
 A checkpoint is a commit object on a hidden ref. It is not on the user's branch.
 
 - [GitVcsDriver.ts](../../../apps/server/src/vcs/GitVcsDriver.ts) `captureCheckpoint` builds a temp
-  index in the repo's common git dir and adds the whole working tree to it, including untracked
-  files that aren't ignored. Then it runs `write-tree`, `commit-tree -p HEAD`, and `update-ref`. With
-  HEAD as the parent, `listAuthoredPaths` can tell the agent's edits from a pull or a rebase.
+  index in the repo's common git dir, seeded from the user's index or HEAD, and adds the `cwd` tree
+  (`add -A -- .`), including untracked files that aren't ignored. Then it runs `write-tree`,
+  `commit-tree -p HEAD`, and `update-ref`, and returns nothing. With HEAD as the parent,
+  `listAuthoredPaths` can tell the agent's edits from a pull or a rebase.
 - [CheckpointService.ts](../../../apps/server/src/orchestration-v2/CheckpointService.ts) names the
   refs `refs/t3/orchestration-v2/checkpoints/<scope key>/ordinal/<n>`. The scope key is a hash of the
-  scope id. It serializes all work on one `cwd` with a keyed lock and computes each turn's file
-  summary (numstat minus git imports) when it captures.
+  scope id, which embeds the thread id. It serializes all work on one `cwd` with an in-memory keyed
+  lock and computes each turn's file summary (numstat minus git imports) when it captures.
 - [CheckpointCaptureService.ts](../../../apps/server/src/orchestration-v2/CheckpointCaptureService.ts)
   is an effect-worker step. It runs after the provider turn ends, then commits `checkpoint.captured`
-  and marks the run completed. The file summary travels in the event, so the timeline's file list
-  never needs git again.
+  and marks the run completed in one command. The file summary travels in the event, so the
+  timeline's file list never needs git again. Side chats capture nothing (`forceMissing`).
 - [CheckpointDiffQuery.ts](../../../apps/server/src/checkpointing/CheckpointDiffQuery.ts) serves
   turn and full-thread diffs. It finds the two refs from the projection, then runs `diff` and `log`
-  on the two commits with the scope's `cwd`. It needs no working tree.
+  on the two commits with the scope's `cwd`. Those arguments need no working tree, but they go
+  through `CheckpointStore`, whose `VcsDriverRegistry` lookup does.
 - [CheckpointRollbackService.ts](../../../apps/server/src/orchestration-v2/CheckpointRollbackService.ts)
   rolls the provider conversation back, runs `restoreCheckpoint` (`git restore --source`, `git
   clean -fd`, `git reset`) in the working tree, deletes the now-stale refs, and marks them `stale`.
 - [CheckpointRestoreSafety.ts](../../../apps/server/src/orchestration-v2/CheckpointRestoreSafety.ts)
-  refuses a file restore when another thread shares the checkout. It decides that by calling
-  `realPath` on local paths.
+  refuses a file restore when another thread shares the checkout, at admission in the orchestrator
+  and again in rollback. It decides that by calling `realPath` on local paths.
 
-Worktree threads write their refs into the project's shared object store. Nothing deletes a
-thread's refs except a rollback, so they pile up for good (verified: `deleteCheckpointRefs` has no
-other caller).
+Worktree threads write refs into the project's shared object store. Only a rollback deletes them
+(`deleteCheckpointRefs` has no other caller; thread deletion leaves them), so they pile up for good.
 
 In a cloud thread, the same code runs on the server, and its git commands run in the sandbox
 through the workspace host ([02](./02-workspace-host.md)). The refs and objects then live only on
@@ -67,16 +68,17 @@ userdata folder that holds `attachments` and the database ([config.ts](../../../
 | `refs/t3/sandbox/<threadId>/branch` | After each capture and each push | Bring it local, rebuilding a sandbox, PR head context |
 | `refs/t3/sandbox/<threadId>/snapshot` | Before sleep, and at "Continue locally" | The read-only file browser, bring it local, rebuild |
 
-Checkpoint refs keep their original names. Scope keys are already unique per scope, so threads can't
-collide, and the diff code can use the names it computes today. Branches go under the thread's own
-namespace because two threads can use the same branch name.
+Checkpoint refs keep their original names. Scope ids embed the thread id, and a fork gets its own
+scope, so threads can't collide, and the diff code can use the names it computes today. Branches go
+under the thread's own namespace because two threads can use the same branch name.
 
 Seed a new mirror with `git clone --bare --local` from the project's checkout on the server. That
-hardlinks the existing objects, so the first sync from a sandbox carries only what the sandbox
-added (inferred: true for any repo cloned from the same origin). Don't use `alternates`. A `git gc`
-in the user's checkout could then prune objects the mirror still points to. Set
-`transfer.fsckObjects=true` in the mirror, because its input comes from an agent-controlled
-machine.
+hardlinks the existing objects (and copies only branches and tags). The first sync from a sandbox
+carries only what the sandbox added if its bundle names a commit the mirror has, such as the
+sandbox's starting commit, as a prerequisite; with none it carries the full history. Don't use
+`alternates`. A `git gc` in the user's checkout could then prune objects the mirror still points
+to. The mirror's input comes from an agent-controlled machine, but Git 2.43 skips
+`transfer.fsckObjects` when fetching a bundle (tested), so check the new objects with `git fsck`.
 
 ### Push from the sandbox, or pull by the server?
 
@@ -86,25 +88,25 @@ machine.
 | Server surface | A receive-pack endpoint, auth by sandbox token, and a hook that keeps each sandbox in its own ref namespace. | None. The runner's existing channels carry the bundle. |
 | Trust | An agent-controlled machine writes refs into server storage. | The server picks which refs to take. The sandbox only produces bytes. |
 | Negotiation | Native have/want. | The server passes the mirror's tips as prerequisites (`^<oid>`). It knows them because it owns the mirror. |
-| Runner work | A git transport on the runner socket, or a git URL on the server for the sandbox to push to. | Part of the checkpoint capture coarse operation (plan decision 2). |
+| Runner work | A git transport on the runner socket, or a git URL on the server for the sandbox to push to. | None: `process.run` streams the bundle after the capture coarse operation (plan decision 2). |
 
 Pull wins on every row except negotiation. Negotiation is easy here: the server knows exactly what
 the mirror has for this thread.
 
 The sync, in order:
 
-1. Checkpoint capture is a coarse runner operation from M1 (plan decision 2). It runs today's
-   capture code in the sandbox, returns the commit oid, then streams
-   `git bundle create - <checkpoint refs of this capture> <branch> ^<mirror tips>`. `-` writes the
-   bundle to stdout
-   ([git-bundle](https://git-scm.com/docs/git-bundle)). The prerequisites are the previous checkpoint
-   of each scope and the branch tip the mirror already holds.
+1. Checkpoint capture is a coarse runner operation from M1 (plan decision 2). It runs
+   `CheckpointStore.captureCheckpoint` in the sandbox and also returns the commit oid, which that
+   method doesn't today. The server then runs `git bundle create - <checkpoint refs of this capture>
+   <branch> ^<mirror tips>` through `process.run` ([03](./03-runner.md#46-coarse-operations)); `-`
+   writes to stdout ([git-bundle](https://git-scm.com/docs/git-bundle)). The prerequisites are the
+   previous checkpoint of each scope and the branch tip the mirror already holds.
 2. Stream stdout into a temp file on the server, with a size cap (default 512 MiB).
-3. `git bundle verify` against the mirror. If a prerequisite is missing, for example after a
-   rollback deleted refs and the sandbox pruned objects, retry once with fewer prerequisites, then
-   with none.
-4. `git fetch <file> <explicit refspecs>` into the mirror. Use `--prune` only within the thread's
-   own checkpoint names, which the server computes from the projection.
+3. If `bundle create` fails because the sandbox lacks a prerequisite (`bad object`), for example
+   after a rollback deleted refs and the sandbox pruned objects, retry once with fewer
+   prerequisites, then with none. Then `git bundle verify` in the mirror.
+4. `git fetch <file> <explicit refspecs>` into the mirror. No `--prune`: a bundle holds only this
+   capture's refs. Deletions come from rollback, below.
 
 ```mermaid
 sequenceDiagram
@@ -123,28 +125,30 @@ sequenceDiagram
   EW->>EW: commit checkpoint.captured and run completed
 ```
 
-**The sync runs inside the capture effect, before `checkpoint.captured` commits**, with a 15-second
-bound. A client that sees a checkpoint can then read its diff from the mirror. If the sync fails or
-times out, the checkpoint still commits as `ready`. A drainable retry worker syncs it later, and the
-diff reader falls back to the sandbox if it is awake. The wait happens after the provider turn has
-ended, so the recorded provider duration doesn't grow
-([overview](../../internals/overview.md#turn-completion-and-checkpoints)). It does delay the
-`completed` status by the sync time. Measure it in M1. If p95 goes over one second, commit first and
-sync after.
+**The sync runs inside the capture effect, before `checkpoint.captured` commits**: in
+`CheckpointCaptureService.execute`, between `checkpoints.capture` and `eventSink.commitCommand`. The
+effect worker bounds no capture today, so the sync carries its own 15-second timeout. A client that
+sees a checkpoint can then read its diff from the mirror. If the sync fails or times out, the
+checkpoint still commits as `ready`. A drainable retry worker syncs it later, and the diff reader
+falls back to the sandbox if it is awake. The wait comes after the provider turn ends, so the
+recorded provider duration doesn't grow ([overview](../../internals/overview.md#turn-completion-and-checkpoints)).
+It does delay `completed`, and the thread's next effect (such as the next turn's start), by the sync
+time. Measure it in M1. If p95 goes over one second, sync after the commit, in `RunFinalizationService`.
 
 Rollback also syncs: after `deleteStaleRefs`, the server deletes the same refs in the mirror.
 
 ### Which reads use the mirror
 
 Rule: **for a cloud thread, checkpoint reads resolve the git directory from where the thread runs
-now, not from `scope.cwd`.** A thread with a `sandboxId` (plan decision 7) reads the mirror. Local and worktree threads read the
-thread's worktree or the project root, which share one object store. Moving a thread copies its refs
-across (section 8), so this rule needs no new field on checkpoint scopes.
+now, not from `scope.cwd`.** A thread with a `sandboxId` (plan decision 7) reads the mirror. Local
+and worktree threads read the worktree or the project root, which share one object store. Moving a
+thread copies its refs across (section 8), so this rule needs no new field on checkpoint scopes.
 
-Today's checkpoint store finds a repo with `rev-parse --is-inside-work-tree --show-toplevel`, which
-fails in a bare repo. Add a `MirrorCheckpointReader` that runs the same `diff` and `log` arguments
-with `git --git-dir=<mirror>`. `diffCheckpoints`, `listAuthoredPaths` and `hasCheckpointRef` only
-compare commits, so the arguments don't change.
+Today's checkpoint store finds a repo through `VcsDriverRegistry`, whose
+`rev-parse --is-inside-work-tree --show-toplevel --git-common-dir` fails in a bare repo. The git
+driver itself runs `git -C <cwd>`, and its `diffCheckpoints`, `listAuthoredPaths` and
+`hasCheckpointRef` only compare commits, so they work unchanged with the mirror as `cwd` (tested).
+Add a `MirrorCheckpointReader` that calls those driver methods directly, skipping the registry.
 
 | Read | Source today | Cloud, awake | Cloud, asleep |
 | ---- | ------------ | ------------ | ------------- |
@@ -167,17 +171,14 @@ through `sandbox.sleep`, once every attached thread is settled or archived ([04]
 While it is stopped, diffs read the mirror, file reads use the mirror's latest checkpoint ("As of
 turn 7"), writes are refused, and terminals show exited.
 
-Pull request views already read through the forge with the project's own checkout on the server.
-They never touched a thread's worktree, so they need nothing new.
-
 **Cloud-only mode (M4) still keeps a git checkout per project on the server.** PR views, the review
-guide and repository identity run git in `project.workspaceRoot`
+guide and repository identity run git in `project.workspaceRoot`, never a thread's worktree
 ([PullRequestService.ts](../../../apps/server/src/pullRequest/PullRequestService.ts),
 [PullRequestReviewGuideService.ts](../../../apps/server/src/pullRequest/PullRequestReviewGuideService.ts)).
 "No agent runs on the team server's machine" therefore doesn't mean "no repo on it". Recommend
 keeping the project checkout as data that no agent writes to. Making the mirror serve those reads
-instead is possible but touches every PR code path. Previews follow section 5 from M2; whether the server's browser may load
-agent-served pages in cloud-only mode is a maintainer decision at M4.
+instead is possible but touches every PR code path. Previews follow section 5 from M2; whether the
+server's browser may load agent-served pages in cloud-only mode is a maintainer decision at M4.
 
 ## 2. Restore, revert and fork
 
@@ -191,20 +192,22 @@ run unchanged through the workspace host. The only addition is a guard in front:
 - If it is `failed` or `destroyed`, fail with "The machine is gone. Retry or discard it first."
 
 "Rewind the conversation without restoring files" (`restoreFiles: false`) also wakes the sandbox.
-The provider session it rolls back, such as Claude's session file under `~/.claude`, lives in the
-sandbox (inferred from where the adapter spawns the CLI).
+Rollback opens the provider session first (`sessions.open`), and Codex rolls back by forking its
+thread through its app-server, which runs in the sandbox. Claude's rollback only records a resume
+point on the server, but one rule is simpler.
 
 Two server-side checks in the rollback path touch the local disk directly. Plan decision 3 puts
 them behind the workspace host in M0:
 
-- `isCheckpointRestoreIsolated` calls `fileSystem.realPath` on `scope.cwd` and on other threads'
-  worktrees. For cloud threads, it should compare sandbox ids first, then paths inside that sandbox.
+- `isCheckpointRestoreIsolated` calls `fileSystem.realPath` on `scope.cwd`, and on the worktree, scope
+  cwds, live session cwds and project root of every other thread in `getShellSnapshot`. For cloud
+  threads, it should compare sandbox ids first, then paths inside that sandbox.
 - Re-creating a missing worktree (`fileSystem.exists(worktreePath)`) means nothing for a sandbox.
   If the checkout is gone, the sandbox is rebuilt from the mirror (section 9).
 
-**Fork.** Today a fork copies the source's `worktreePath` and `branch` and runs in the same checkout
-([ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts); its test
-asserts `targetThread.worktreePath === sourceThread.worktreePath`). A side chat exists precisely to
+**Fork.** Today a fork copies the source's thread record, `worktreePath` and `branch` included, and
+runs in the same checkout ([ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts);
+its test asserts `targetThread.worktreePath === sourceThread.worktreePath`). A side chat exists precisely to
 share the parent's worktree (the `orchestrationV2WorktreePending` guard in
 [Orchestrator.ts](../../../apps/server/src/orchestration-v2/Orchestrator.ts)).
 
@@ -227,18 +230,18 @@ Where each step runs today, and in a cloud thread:
 | Step | Code | Cloud thread |
 | ---- | ---- | ------------ |
 | Commit (UI "Commit") | `GitManager.runStackedAction` with git in `cwd` ([GitManager.ts](../../../apps/server/src/git/GitManager.ts)) | Sandbox, through the workspace host. Authorship follows [decisions](../decisions.md#git-and-github). |
-| Push | `pushCurrentBranch` with `git push` in `cwd` | Sandbox. The credential helper asks the server for a one-hour GitHub App token ([06](./06-credentials-and-security.md)). Then sync the branch ref to the mirror. **GitHub only until the server's git proxy lands in M3** (plan decision 10). Other hosts can commit but not push. |
+| Push | `pushCurrentBranch` with `git push` in `cwd` | Sandbox. The credential helper asks the server for a one-hour GitHub App token, or the owner's own GitHub credential (plan D1, [06](./06-credentials-and-security.md)). Then sync the branch ref to the mirror. **GitHub only until the server's git proxy lands in M3** (plan decision 10). Other hosts can commit but not push. |
 | PR text | `readRangeContext`, the template, then text generation | Git reads in the sandbox. Generation on the server. |
-| Create the PR | `createChangeRequest` is a REST POST from the server ([GitHubSourceControlProvider.ts](../../../packages/source-control-github/src/server/GitHubSourceControlProvider.ts)). The body file is in the server's temp dir. | Unchanged. Runs on the server as the connected member or the server. |
+| Create the PR | `createChangeRequest` is a REST POST from the server ([GitHubSourceControlProvider.ts](../../../packages/source-control-github/src/server/GitHubSourceControlProvider.ts)). The body file is in the server's temp dir. | The POST runs on the server as the connected member or the server. Its `resolveRepository` reads `git remote -v` in `cwd`, so in the sandbox. |
 | Agent runs `gh pr create` | In the agent's shell | Sandbox, with the agent's git credential, never the owner's GitHub token |
 | Discovery and linking ([ThreadPullRequestService.ts](../../../apps/server/src/orchestration-v2/ThreadPullRequestService.ts)) | `branchPullRequest` reads `for-each-ref`, remotes and config in `cwd`, then asks the forge | Awake: unchanged. Asleep: see below. |
 
-**Discovery must never wake a sandbox.** The service sweeps unsettled threads every minute, and it
-also checks whether `<worktreePath>/.git` exists with the server's own filesystem. Neither works for
-a sandbox. While a sandbox sleeps, its git state can't change. So at each mirror sync, also store the
-thread's head context: branch, upstream, remote URLs and head sha. Discovery for a sleeping cloud
-thread uses that record and asks only the forge. The `.git` existence check moves behind the
-workspace host.
+**Discovery must never wake a sandbox.** The service sweeps unsettled threads every minute. It
+checks `<worktreePath>/.git` on the server's own disk and, when that is missing, silently runs git
+in the project root instead, which is wrong for a sandbox. A sleeping sandbox's git state can't
+change, so each mirror sync also stores what `branchPullRequest` reads: remote names and URLs, the
+branch's upstream and tip (`for-each-ref`), and the default branch. Discovery for a sleeping cloud
+thread uses that record and asks only the forge. The `.git` check moves behind the workspace host.
 
 ## 4. Terminals
 
@@ -259,8 +262,8 @@ The [terminal manager](../../../apps/server/src/terminal/Manager.ts) owns sessio
 **While asleep.** Sleep kills the PTYs. The manager marks each session exited, with a reason the
 client can show: "Stopped when the machine slept at 14:02". Attaching with `resume` shows the
 scrollback. `write` and `resize` fail with a typed `SandboxAsleep` error, and the client shows a
-read-only banner, "This machine is asleep", with **Wake**. Conductor's cloud terminals are read-only while asleep too.
-Contract: today's `TerminalSessionStatus` is a strict literal union
+read-only banner, "This machine is asleep", with **Wake**. Conductor's cloud terminals are
+read-only while asleep too. Contract: today's `TerminalSessionStatus` is a strict literal union
 ([terminal.ts](../../../packages/contracts/src/terminal.ts)). Add an optional `stoppedBy` field, not
 a new status, so older clients still decode it ([08](./08-clients-and-contracts.md)).
 
@@ -282,13 +285,13 @@ the server's own headless browser ([ServerBrowser.ts](../../../apps/server/src/p
 its own environment's tabs in an Electron view over CDP
 ([DesktopBrowserChannel.ts](../../../apps/server/src/preview/DesktopBrowserChannel.ts)).
 
-**Detection.** Port listing (`ports.listeners`) is a coarse runner operation that lands in M1
-(plan decision 2). Previews and stopping servers use it from M2. The runner pushes listener changes (port, pid,
-command) on a watch channel, so an idle sandbox sends nothing. Every listener in a sandbox belongs to
-that sandbox's threads, so the environment-variable trick isn't needed there. Stopping a listed
-server signals its process group through the runner. A sleeping sandbox lists no ports. A preview
-that was open shows "Stopped while asleep" with **Restart**, which wakes the sandbox and reruns the
-project script that started it.
+**Detection.** Port listing (`ports.listeners`) is a coarse runner operation that lands in M1 (plan
+decision 2); previews and stopping servers use it from M2. The runner pushes listener changes (port,
+pid, command) on a watch channel, so an idle sandbox sends nothing. Every listener in a sandbox
+belongs to that sandbox's threads, so the environment-variable trick isn't needed there. Stopping a
+listed server signals its process group through the runner. A sleeping sandbox lists no ports. A
+preview that was open shows "Stopped while asleep" with **Restart**, which wakes the sandbox and
+reruns the project script that started it.
 
 **Reaching the port. Clients never connect to a sandbox, and the sandbox never connects to a
 client.** Tunnel bytes ride the runner's own outbound connection to the team server (plan decision
@@ -304,18 +307,16 @@ client.** Tunnel bytes ride the runner's own outbound connection to the team ser
    The page keeps `http://localhost:3000` as its URL, so the app sees the Host header and origin it
    expects. OAuth callbacks registered for localhost keep working.
 3. Persistent contexts are per profile, but `contextFor(profileId, isolationKey)` already creates
-   isolated, non-persistent contexts
-   ([ServerBrowserContexts.ts](../../../apps/server/src/preview/ServerBrowserContexts.ts), used by
-   [ServerBrowser.ts](../../../apps/server/src/preview/ServerBrowser.ts)). Cloud tabs pass the
-   `sandboxId` as the isolation key, and `createContext` adds the proxy option for them. Seeding
-   that context from the profile's storage state is optional (inferred workable; try it in the M2
-   spike).
+   isolated, non-persistent contexts ([ServerBrowserContexts.ts](../../../apps/server/src/preview/ServerBrowserContexts.ts),
+   used by [ServerBrowser.ts](../../../apps/server/src/preview/ServerBrowser.ts) per tab today).
+   Cloud tabs pass the `sandboxId` as the isolation key, and `createContext` adds the proxy option
+   for them. Seeding that context from the profile's storage state is optional (inferred
+   workable; try it in the M2 spike).
 4. The desktop app shows cloud tabs the way other devices do: streamed from the server browser. A
    per-partition proxy in Electron could come later. It isn't needed for parity.
 
-Agents get the same tabs through the existing MCP preview tools, so "agent preview tools" need no
-cloud-specific code. An agent's own `curl localhost:3000` runs inside the sandbox and needs nothing
-at all.
+Agents get the same tabs through the existing MCP preview tools, so they need no cloud-specific
+code. An agent's own `curl localhost:3000` runs inside the sandbox and needs nothing at all.
 
 **Ports on a member's own machine** (Conductor's "forward ports") come with SSH in M4:
 `ssh -L 3000:localhost:3000 t3-<thread>`, or the editor's port forwarding. There are no public
@@ -328,12 +329,13 @@ reads and writes through the workspace host's file channel. [WorkspaceSearchInde
 scans with the native `fff-node` finder, which watches files and holds up to 25,000 entries. Walking
 that over the socket file by file is plainly too slow. The index runs in the runner as a coarse
 operation from M1 (plan decision 2): `search.entries`, `search.contents` and `entries.browse`
-([03](./03-runner.md#46-coarse-operations)). The runner's index watches files itself, so refresh
-needs no separate operation. The runner bundle carries `fff-node`'s Linux binary
-([03](./03-runner.md#21-same-build-slim-entry)). These RPCs are keyed by `cwd`
-([KnownWorkspaces.ts](../../../apps/server/src/workspace/KnownWorkspaces.ts)), which stays unique
-because sandbox checkouts live under 02's reserved root, `/t3-sandbox/<sandboxId>/`
-([02](./02-workspace-host.md#3-how-a-thread-finds-its-host)).
+([03](./03-runner.md#46-coarse-operations)). The server also forces a rescan
+(`WorkspaceEntries.refresh`) after a write that adds a file and at run finalization, so the runner
+needs a refresh call too. The runner bundle carries `fff-node`'s Linux binary
+([03](./03-runner.md#21-same-build-slim-entry)). These RPCs are keyed by `cwd`, unique because
+sandbox checkouts live under `/t3-sandbox/<sandboxId>/` ([02](./02-workspace-host.md#3-how-a-thread-finds-its-host)).
+[KnownWorkspaces.ts](../../../apps/server/src/workspace/KnownWorkspaces.ts) `assertContains` checks
+each `cwd` with `realPath` on the server's disk, another check for the seam.
 
 **Asleep.** The server reads the mirror's `refs/t3/sandbox/<threadId>/snapshot` tree:
 
@@ -348,17 +350,15 @@ because sandbox checkouts live under 02's reserved root, `/t3-sandbox/<sandboxId
 The header says "As of 14:02, when the machine slept". If no snapshot exists, because sleep came
 from a crash or a driver timeout, it uses the latest checkpoint and says "As of turn 7".
 
-**Attachments.** Uploads land on the server under `attachmentsDir`
-([attachmentStore.ts](../../../apps/server/src/attachmentStore.ts)), and
-[AttachmentClaims.ts](../../../apps/server/src/orchestration-v2/AttachmentClaims.ts) moves them to
-the thread. Adapters give the provider two things: image bytes, read on the server, and a text line
-with the file's server path ([attachmentPrompt.ts](../../../packages/provider-core/src/server/attachmentPrompt.ts)).
-Claude also gets `attachmentsDir` as an extra directory
-([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)).
+**Attachments.** Uploads land on the server under `attachmentsDir` ([attachmentStore.ts](../../../apps/server/src/attachmentStore.ts)),
+and [AttachmentClaims.ts](../../../apps/server/src/orchestration-v2/AttachmentClaims.ts) moves them
+to the thread. Adapters give the provider image bytes, read on the server, and a text line with the
+file's server path ([attachmentPrompt.ts](../../../packages/provider-core/src/server/attachmentPrompt.ts)).
+Claude also gets `attachmentsDir` as an extra directory ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)).
 An agent in a sandbox can't open a server path. So:
 
 - Before the provider turn starts, the turn-start effect copies the message's attachments, and their
-  extracted `.txt` files, into the sandbox at `$HOME/.t3/attachments/<thread segment>/<file>`. The
+  extracted `.txt` files, into `/t3-sandbox/<sandboxId>/attachments/<thread segment>/<file>`, under the reserved root so the server's writes route to the sandbox (not `$HOME`). The
   copy is idempotent: skip a file whose id and size already match.
 - For cloud threads, `resolveAttachmentPath` returns the sandbox path, and Claude's extra directory
   is the sandbox's attachments folder. Image bytes are still read on the server.
@@ -401,11 +401,10 @@ sequenceDiagram
   per-team CA. They need a signing step on every computer, and live lookup already gives revocation.
 - **Open in editor.** [editor.ts](../../../packages/contracts/src/editor.ts) already builds
   `vscode://vscode-remote/ssh-remote+<host><path>`, Cursor and Zed URLs, and JetBrains Gateway URLs
-  for remote environments (`RemoteOpenTarget` is `tailscale` or `mdns`). Add a `sandbox` target
-  (the menu says "Open machine in VS Code") whose host is `t3-<thread id>` and whose path is the
-  thread's checkout. Gateway reading
-  `ProxyCommand` from the SSH config is inferred, so test it in M4. Mobile shows "Open on a
-  computer".
+  for remote environments (`RemoteOpenTarget` is `tailscale` or `mdns`, sent in a forward-compatible
+  array). Add a `sandbox` target (the menu says "Open machine in VS Code") whose host is
+  `t3-<thread id>` and whose path is the thread's checkout. Gateway reading `ProxyCommand` from the
+  SSH config is inferred, so test it in M4. Mobile shows "Open on a computer".
 - **Server role.** Every SSH byte crosses the server, so the server can cut a member's tunnels when
   they are removed, when the sandbox sleeps or is discarded, or when an admin turns SSH off.
 - **Activity.** An open SSH tunnel counts as terminal activity for the idle policy
@@ -417,8 +416,8 @@ sequenceDiagram
   ([06](./06-credentials-and-security.md)).
 
 **Who may SSH into whose thread.** Any active member, into any cloud thread's sandbox. Anyone may
-already prompt any thread and open its terminal ([decisions](../decisions.md#threads)), so SSH adds
-no new reach. Admins get one team switch, "Allow SSH into machines", on by default. Guests,
+already prompt any thread ([decisions](../decisions.md#threads)) and so run commands in it, so SSH
+adds no new reach. Admins get one team switch, "Allow SSH into machines", on by default. Guests,
 guest links, API tokens and the sandbox token can never open a tunnel. An open SSH session shows in
 presence as viewing the thread. It gets no timeline row.
 
@@ -532,7 +531,7 @@ Each row is about one pull request.
 | # | Milestone | Work |
 | - | --------- | ---- |
 | 1 | M0 | Route the direct local-disk checks behind the workspace host. That covers `realPath` in `CheckpointRestoreSafety`, `exists(worktreePath)` in rollback, and the `.git` existence check in `ThreadPullRequestService`. No behavior change. |
-| 2 | M1 | Mirror store: create and seed a bare repo per project, set `fsckObjects`, delete it with the project. Tests for seeding and deletion. |
+| 2 | M1 | Mirror store: create and seed a bare repo per project, `git fsck` after each fetch, delete it with the project. Tests for seeding and deletion. |
 | 3 | M1 | Mirror sync: the bundle pull inside `CheckpointCaptureService`, with prerequisites, the size cap, the retry worker, ref deletion after rollback, and the head-context record. Tests: a missing prerequisite falls back, refs outside the request are ignored, and a rollback prunes. |
 | 4 | M1 | `MirrorCheckpointReader`, and diff queries that resolve the git dir by placement. Tests on a bare repo. |
 | 5 | M1 | Side chats and forks reference their source's sandbox in the rollback, restore-safety and file flows here, comparing by sandbox id. The shared record is [04](./04-sandbox-lifecycle.md)'s. |

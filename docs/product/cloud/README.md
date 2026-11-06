@@ -111,8 +111,9 @@ them.
    An agent's authority to edit or build comes from the humans who wrote the current run, checked
    on every call, never from whose thread it is. Each project's setup script still runs on every
    new cloud thread, with its paths (such as `T3CODE_PROJECT_ROOT`) pointing into the sandbox. A
-   build belongs to no thread, but outbox rows are keyed by thread today. So M3 makes one additive
-   change to orchestration: outbox rows gain an aggregate key, and thread effects behave as before.
+   build belongs to no thread, but outbox rows are keyed by thread today. So M3 makes one change to
+   orchestration: outbox rows gain an aggregate key (a table rebuild, since `thread_id` is required),
+   receipts and event streams gain a `team-image` kind, and thread effects behave as before.
 10. **Credentials arrive in memory, never on disk.** A turn runs on the thread's provider account,
     whoever prompts it, as today. Credentials reach a process from an allowlisted environment when
     it starts. Pair writes no credential to a sandbox's disk or image, and sleep never keeps memory.

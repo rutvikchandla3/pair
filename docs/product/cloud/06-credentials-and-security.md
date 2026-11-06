@@ -109,7 +109,7 @@ Vendors that pause with memory also capture what is only in memory (inferred for
 | Runner session credential | Runner memory | One socket | No (memory snapshots: yes) |
 | Provider credential (`CLAUDE_CODE_OAUTH_TOKEN`, API key) | Provider process env | Process lifetime | No (memory: yes). A sleep kills the process. |
 | Codex access token | Codex process memory, fetched by its auth command | Token lifetime (unverified) | No |
-| Thread MCP token | Provider MCP config passed in args or SDK options | Provider session | No, for Claude and Codex. Check per adapter (inferred). |
+| Thread MCP token | Claude: SDK options. Codex: per-thread JSON-RPC config (`mcp_servers.t3-code.http_headers`, [CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts)) | Provider session | No, for Claude and Codex. Check other adapters. |
 | Git installation token | Runner memory cache; git asks per operation | Up to one hour | No. Helper never writes; Pair sets no `credential.helper store`. |
 | Team, project, member env vars | Process env of agents, terminals and scripts | Process lifetime | No by Pair. Yes if a script writes them (`.npmrc`, `.env`). |
 | Repo checkout, `.git/config`, checkpoint refs | Workspace | Sandbox lifetime | Yes. Remote URLs carry no credentials. |
@@ -134,8 +134,8 @@ process's environment through `/proc`.
 
 - **Credentials stay per process,** but an agent can read a sibling's token from `/proc`. The UI
   says so when someone forks a teammate's cloud thread; they could prompt it anyway.
-- **Authorship stays per process.** Each provider process gets `GIT_AUTHOR_*` for its own thread's
-  owner, so commits author as that owner. The sandbox's git config sets no `user.name` or
+- **Authorship stays per thread.** Each thread's agent gets `GIT_AUTHOR_*` for that thread's owner
+  (Codex through per-thread `shell_environment_policy.set`, since one app-server serves many threads). The sandbox's git config sets no `user.name` or
   `user.email`, so a commit from a terminal or a script has no Pair-chosen author.
 - **Git credentials follow the thread.** The helper sends its process's thread; an installation
   token serves every thread, an owner's token only that owner's, though siblings can read it.
@@ -158,9 +158,9 @@ token becomes `CLAUDE_CODE_OAUTH_TOKEN` (prefix `sk-ant-oat`) or `ANTHROPIC_API_
 account is `setupMode: "managed"`. Claude processes get the server's whole environment plus
 the instance's, with `CLAUDE_CONFIG_DIR` pointing at the account's home
 ([ClaudeHome.ts](../../../apps/server/src/provider/Drivers/ClaudeHome.ts)). Managed Codex runs with a
-custom model provider whose `auth.command` is `t3 __managed-chatgpt-token`; that command asks
-[CodexManagedTokenBroker.ts](../../../apps/server/src/provider/CodexManagedTokenBroker.ts) over a
-private Unix socket for a fresh access token, and the refresh token stays in the server's secret
+custom model provider whose `auth.command` runs the server's own CLI as `__managed-chatgpt-token
+<socket> <instance> <environment> <profile key>`; that asks [CodexManagedTokenBroker.ts](../../../apps/server/src/provider/CodexManagedTokenBroker.ts)
+over a private Unix socket for a fresh access token, and the refresh token stays in the server's secret
 store ([CodexManagedRuntime.ts](../../../apps/server/src/provider/CodexManagedRuntime.ts),
 [CodexChatGptAuth.ts](../../../apps/server/src/provider/CodexChatGptAuth.ts)).
 
@@ -194,7 +194,7 @@ store ([CodexManagedRuntime.ts](../../../apps/server/src/provider/CodexManagedRu
 
 | Question | Answer |
 | -------- | ------ |
-| Mechanism in a sandbox | Managed ChatGPT: keep the `auth.command`, pointed at the runner bundle's `__managed-chatgpt-token` entry, which reaches the existing broker through the runner's named forward. API key: `OPENAI_API_KEY` in env, as the managed runtime already strips it for ChatGPT accounts. |
+| Mechanism in a sandbox | Managed ChatGPT: keep the `auth.command`, pointed at the runner bundle's `__managed-chatgpt-token` entry, which reaches the existing broker through the runner's named forward. The socket path is its first argument, so only that argument changes; the broker checks the environment id and the instance's profile key. API key: `OPENAI_API_KEY` in env; the managed runtime strips it, with `OPENAI_BASE_URL`, only for ChatGPT accounts. |
 | Refresh writes to disk | No. The broker refreshes on the server and serializes rotation. Rollouts land in `CODEX_HOME/sessions`. |
 | Inference-only | The ChatGPT access token is the account's token, scoped as OpenAI scopes it (unverified). API key: full API access for its project. |
 | Terms | OpenAI recommends API keys for automation and calls access tokens for "trusted" private runners. A team's own sandbox fits that reading (inferred). |
@@ -221,7 +221,7 @@ These answer the same five questions, one row per adapter, because none is cloud
 | Kiro | `KIRO_API_KEY`, documented for headless mode and already detected by [status.ts](../../../packages/provider-kiro/src/server/status.ts). Only Pro, Pro+ and Power plans can create keys. | No for keys (inferred). | Unknown; headless mode is meant for CI. | **M3** |
 | Antigravity | None. Sign-in is a Google login stored as files in a per-instance profile, and launch strips ambient Google credentials ([antigravityAuthSupport.ts](../../../apps/server/src/provider/antigravityAuthSupport.ts)). | Yes. | No; terms not researched. | Not yet |
 | Pi | The user's own `pi` install with its own keys and extensions ([provider-pi](../../../packages/provider-pi/src/server)). Pair would ship them blind. | Pi's business. | Unknown. | Not supported in cloud |
-| fx | Vercel AI Gateway: `fx login` or `AI_GATEWAY_API_KEY` ([status.ts](../../../packages/provider-fx/src/server/status.ts)). Every fx instance on a machine shares one login. | Yes for login. | Gateway key. | Not yet; API key only when it comes |
+| fx | Vercel AI Gateway: `fx login`, `fx setup` or `AI_GATEWAY_API_KEY`, per fx's own message ([status.test.ts](../../../packages/provider-fx/src/server/status.test.ts)); the adapter reads `fx status --json` ([status.ts](../../../packages/provider-fx/src/server/status.ts)). Every fx instance on a machine shares one login ([settings.ts](../../../packages/provider-fx/src/settings.ts)). | Yes for login. | Gateway key. | Not yet; API key only when it comes |
 | Muse | `META_API_KEY` or `muse login` ([driver.ts](../../../packages/provider-muse/src/server/driver.ts)). Runs inside the server process. | Yes for login. | Unknown. | Not supported in cloud (decision 2) |
 | ACP registry (Copilot, Devin, Droid, Claude via ACP) | Each agent's own auth, brokered by [auth.ts](../../../packages/provider-acp-registry/src/server/auth.ts). | Varies. | Varies. | Not yet |
 
@@ -302,7 +302,8 @@ read, which is the honest residual risk to show in Settings.
 - The server's own "GitHub App" credential is a device-flow **user** token for whoever signed the
   server in ([GitHubAppSignIn.ts](../../../packages/source-control-github/src/server/GitHubAppSignIn.ts),
   [GitHubAppAccess.ts](../../../packages/source-control-github/src/server/GitHubAppAccess.ts)).
-  Pair holds the app's client ID, not its private key, so it cannot mint installation tokens.
+  Pair holds only the app's client ID (`T3CODE_GITHUB_APP_CLIENT_ID`); with no App ID or private
+  key setting, it cannot mint installation tokens. The session is the secret `signIns` setting.
 
 ### Design
 
@@ -417,8 +418,8 @@ keeps no copy. Agents, terminals and scripts get the same set. Changes apply to 
 
 ### Redaction
 
-Today redaction is by pattern: URL credential parameters and `Bearer` values in logs and provider
-failures ([observability.ts](../../../packages/shared/src/observability.ts),
+Today redaction is by pattern: URL credential parameters in logs and spans, plus `Bearer`/`Basic`
+values and `token=`-style pairs in provider failures ([observability.ts](../../../packages/shared/src/observability.ts),
 [failure.ts](../../../packages/provider-core/src/server/failure.ts)). Cloud adds value masking,
 because the server knows exactly which sensitive values it injected:
 
@@ -431,8 +432,8 @@ because the server knows exactly which sensitive values it injected:
 
 ### Token
 
-- The server mints a sandbox credential at create. Store only its hash, like
-  [McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts) and auth sessions do.
+- The server mints a sandbox credential at create. Store only its SHA-256 hash, as
+  [McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts) does in memory (auth sessions are signed instead).
 - **It never enters `SessionStore`.** Guest tokens set the pattern
   ([environment auth](../../internals/environment-auth.md#guest-links-are-not-sessions)): a
   credential outside the session store cannot be accepted by any RPC, WebSocket or `/mcp` path. The
@@ -453,14 +454,14 @@ because the server knows exactly which sensitive values it injected:
 | ------- | ------------ |
 | Process, PTY, file and watch replies | Only for operations the server started on this sandbox. The runner cannot originate spawns on the server. |
 | Port tunnels | Only ports the server asked to forward. |
-| Named forward: MCP | The runner serves a loopback HTTP listener and forwards to `/mcp`. The server accepts only thread MCP tokens from `McpSessionRegistry`, and only for threads bound to this sandbox. Member API tokens and `mcp-client` sessions are refused here. |
+| Named forward: MCP | The runner serves a loopback HTTP listener and forwards to `/mcp`. `RunnerForwards` checks each request's bearer with `McpSessionRegistry.resolve`, whose scope names the thread and provider session, and passes only thread tokens of threads bound to this sandbox ([03](./03-runner.md) section 8). Member API tokens and `mcp-client` sessions are refused here. |
 | Named forwards: Codex token broker, git credential helper (M1); model proxy (M2) | Only for this sandbox's threads, their accounts and their project remote. |
 | Checkpoint bundles | The server pulls them; the runner has no way to write refs to the mirror ([07](./07-access-and-data.md)). |
 
-The registry's endpoint is `http://127.0.0.1:<port>/mcp`, which a sandbox cannot reach; only the
-runner can reach the team server. Hooks and `canUseTool` callbacks travel over the provider's stdio,
-so they need no forward (inferred from
-[ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)).
+The registry's endpoint is `/mcp` at the server's listen address (`127.0.0.1` when it listens on all
+interfaces), which a sandbox cannot reach; only the runner can reach the team server. Hooks and
+`canUseTool` are Agent SDK options carried over the CLI's stdio, so they need no forward
+([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)).
 
 [agentScope.ts](../../../apps/server/src/process/agentScope.ts) is cgroup limits, not auth; sandbox
 limits replace it in cloud.
@@ -471,8 +472,9 @@ A shared sandbox is destroyed only when no thread uses it; archiving one thread 
 token at once. On `destroyed`, in one effect: close the socket, delete the sandbox credential, call
 `McpSessionRegistry.revokeThread` for each bound thread, revoke git installation tokens, drop model
 proxy grants, and ask the driver to delete disks and snapshots. On sleep, do the same except disks.
-On member removal, nothing changes for the sandbox itself; their provider accounts are already
-retired by `retireOrphans`, which stops sessions.
+On member removal, nothing changes for the sandbox itself. `retireOrphans` signs their provider
+accounts out, wipes their homes, drops secret variables and disables them, so their threads refuse
+new turns; a running sandbox process keeps the token it started with until it exits.
 
 ### Audit
 
@@ -528,7 +530,7 @@ then can membership stop meaning "shell on the server". Every row must be closed
 | Threads without a `sandboxId` | Run on the server | Launches must be cloud; existing local threads are read-only | [environment.ts](../../../packages/contracts/src/environment.ts) |
 | Terminals | PTYs on the server | Only sandbox PTYs | [Manager.ts](../../../apps/server/src/terminal/Manager.ts) |
 | Setup and project scripts, `t3.json` | Run on the server | Run in sandboxes; the server only parses `t3.json` | [ProjectSetupScriptRunner.ts](../../../apps/server/src/project/ProjectSetupScriptRunner.ts), [T3ProjectFileLoader.ts](../../../apps/server/src/project/T3ProjectFileLoader.ts) |
-| MCP launches (`t3_thread_launch`, `create_threads`, `delegate_task`) and scheduled tasks | Can start local full-access threads | Forced to cloud | [toolkits/project/tools.ts](../../../apps/server/src/mcp/toolkits/project/tools.ts), [scheduledTasks](../../../apps/server/src/scheduledTasks) |
+| MCP launches (`t3_thread_launch`, `delegate_task`, and `create_threads`, which shares its caller's checkout) and scheduled tasks | Can start local full-access threads | Forced to cloud; `create_threads` refused for local callers | [toolkits/project/tools.ts](../../../apps/server/src/mcp/toolkits/project/tools.ts), [orchestrator/tools.ts](../../../apps/server/src/mcp/toolkits/orchestrator/tools.ts), [scheduledTasks](../../../apps/server/src/scheduledTasks) |
 | `t3_project_clone`, `t3_project_create` | Clone and create folders on the server | Clone in the sandbox, or on the server with hardened git config (no hooks, `protocol.allow` limited) | [toolkits/project](../../../apps/server/src/mcp/toolkits/project) |
 | Device tools (`device_open` and friends) | Run simulators and SSH device hosts from the server | Admin-configured device hosts only; never local | [DeviceHost.ts](../../../apps/server/src/device/DeviceHost.ts) |
 | Preview tools | A browser on the server loads agent-served pages | From M2 the server browser reaches previews through the proxy ([07](./07-access-and-data.md)). Whether it may load agent pages in this mode is a maintainer decision at M4 | [preview](../../../apps/server/src/preview), [PortScanner.ts](../../../apps/server/src/preview/PortScanner.ts) |
@@ -536,7 +538,7 @@ then can membership stop meaning "shell on the server". Every row must be closed
 | Text generation (titles, summaries) | Spawns provider CLIs on the server | No tools, no project MCP or hooks, empty `cwd`; or run in a sandbox | [textGeneration](../../../apps/server/src/textGeneration) |
 | `filesystem:read` | Any file the server user can read, including the secret store | Confined to sandboxes and the checkpoint mirror | [environment auth](../../internals/environment-auth.md#the-environment-is-the-filesystem-boundary), [AssetAccess.ts](../../../apps/server/src/assets/AssetAccess.ts) |
 | Workspace file writes | Workspace path rules on the server | Sandbox only | [WorkspaceFileSystem.ts](../../../apps/server/src/workspace/WorkspaceFileSystem.ts) |
-| Checkpoint mirror and diffs | Git on the server reads repo content | Bare repo, `receive.fsckObjects`, server-owned hooks only, never checked out, no diff or filter drivers in server git config | [07 Access and data](./07-access-and-data.md) |
+| Checkpoint mirror and diffs | Git on the server reads repo content | Bare repo, `git fsck` on every fetched bundle, server-owned hooks only, never checked out, no diff or filter drivers in server git config | [07 Access and data](./07-access-and-data.md) |
 | Provider logins and probes | CLIs run on the server for login and status | Allowed: admin and owner flows, no project `cwd` | [ProviderAuthService.ts](../../../apps/server/src/provider/ProviderAuthService.ts) |
 | Member scopes | Roles guard mistakes only ([team.ts](../../../packages/contracts/src/team.ts)) | Re-audit every RPC that executes or reads on the host; then member scopes become a real boundary | [RpcAuthorization.ts](../../../apps/server/src/auth/RpcAuthorization.ts) |
 | Model proxy | Optional | On for every API-key account | Section 4 |

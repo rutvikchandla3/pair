@@ -50,7 +50,7 @@ run as `dist/bin.mjs`. Never npm (decision 5): the `t3` package there downloads 
 | --- | --- |
 | `runner.mjs` | One file: the runner, plus the `acp-mcp-bridge`, `acp-mcp-call` and `__managed-chatgpt-token` fast paths that agents in the sandbox spawn as `t3 ...` |
 | `node_modules/node-pty/` | The pinned node-pty with its `linux-x64` and `linux-arm64` prebuilds. The npm tarball for `1.2.0-beta.15` ships both ([source](#sources)); only the release archive prunes them |
-| `claude-history-worker.mjs` | The worker `runClaudeWorker` spawns for `forkSession` when the host is not a single executable ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)). It must run where `~/.claude` lives, in the sandbox. `__claude-history` is not a `bin.ts` fast path, so `runner.mjs` cannot stand in. Doc 02 points the spawn at this file |
+| `claude-history-worker.mjs` | The worker `runClaudeWorker` spawns for `forkSession` when the host is not a single executable ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)). It must run where `~/.claude` lives, in the sandbox. `__claude-history` is not a `bin.ts` fast path, so `runner.mjs` cannot stand in. Doc 02 points the spawn at this file. Built unsplit with `runner.mjs`: today's build splits chunks, so `dist/claude-history-worker.mjs` imports shared chunks and cannot be copied alone |
 | Claude Agent SDK | `@anthropic-ai/claude-agent-sdk`'s session functions, bundled into the worker as `vp pack` already does (not an external) |
 | `t3` | A POSIX shim: `exec node "$(dirname "$0")/runner.mjs" "$@"` |
 | `MANIFEST.json` | `runnerBuildId` (sha256 of the tree), `protocolVersion`, Node range |
@@ -146,25 +146,26 @@ A new route, `GET /runner/v1/connect`, joins [server.ts](../../../apps/server/sr
 `RpcAuthorization` scopes. It authenticates the header, then runs an RPC client over the socket with
 the `acquireUseRelease` shape [ws.ts](../../../apps/server/src/ws.ts) uses.
 
-The runner dials with `Socket.makeWebSocket` and `NodeSocket.layerWebSocketConstructor`, as
-[DeviceHubProxy.ts](../../../apps/server/src/device/DeviceHubProxy.ts) does for upstream sockets,
-including its fix for the `error` that `ws` emits after Effect drops listeners. Node can set
-upgrade headers, so the runner sends its token in `Authorization` and needs no WebSocket ticket.
+The runner dials with `Socket.makeWebSocket` and `NodeWS.layerWebSocketConstructor` (the `ws`
+package), not the `NodeSocket` one [DeviceHubProxy.ts](../../../apps/server/src/device/DeviceHubProxy.ts)
+uses: in Effect 4.1.2 that wraps Node's global `WebSocket`, which cannot pause reads, does not
+compress what it sends and has no `ws+unix:` URLs. It keeps DeviceHubProxy's no-op `error` listener,
+and sends its token in an `Authorization` upgrade header, so it needs no WebSocket ticket.
 
 - **Timers:** every runner timer is in the table below and stated nowhere else. The heartbeat sits
   well under T3 Connect's roughly 100 s idle cut ([remote](../../internals/remote.md)).
 - **Frames:** at most 256 KiB; large file transfers stream in 64 KiB chunks.
-- **Compression:** `perMessageDeflate` over a WAN (provider JSON compresses well); not offered on
-  loopback or a Unix socket, where it is wasted CPU.
+- **Compression:** the server accepts `perMessageDeflate` on every WebSocket ([server.ts](../../../apps/server/src/server.ts)).
+  The runner offers it over a WAN, not on loopback or a Unix socket, where it is wasted CPU.
 - **TLS and proxies:** `wss://` with the system trust store plus `NODE_EXTRA_CA_CERTS` (M5).
-  `HTTPS_PROXY`/`NO_PROXY` apply to the download and upgrade, as
-  [outboundHttp.ts](../../../apps/server/src/outboundHttp.ts) does for the server. Whether `ws`
-  follows `NODE_USE_ENV_PROXY` is unverified (inferred); if not, M5 adds an explicit agent.
+  `HTTPS_PROXY`/`NO_PROXY` reach the server's fetches only through Node's `NODE_USE_ENV_PROXY`,
+  which [outboundHttp.ts](../../../apps/server/src/outboundHttp.ts) preserves. Whether `ws` follows
+  it is unverified; if not, M5 adds an explicit agent.
 
 | Timer | Value | Owner |
 | --- | --- | --- |
-| Heartbeat ping | 15 s | RPC client on the server |
-| Dead socket | 45 s without any frame | Both ends |
+| Heartbeat ping | 15 s | RPC client on the server (`pingInterval`) |
+| Dead socket | 45 s without any frame | Both ends: `pingTimeout` on the server; the runner keeps its own frame timer, since `RpcServer` has none |
 | Redial backoff | 250 ms, doubling, cap 10 s, full jitter | Runner |
 | Lease (processes survive a drop) | 120 s, per-driver setting | `RunnerHub`, mirrored by the runner |
 | Drain grace (SIGTERM to SIGKILL) | 10 s | Runner |
@@ -194,16 +195,16 @@ override it per driver (`runnerUrl`) for reverse proxies and split DNS.
 
 The protocol is an Effect `RpcGroup` in `packages/contracts/src/runner.ts`, exported as the subpath
 `@t3tools/contracts/runner` so web and mobile bundles never import it. The server runs
-`RpcClient.makeProtocolSocket` over the upgraded socket with retries off (the server cannot redial).
-The runner runs the group's handlers over the socket it dialed, using the socket-protocol core that
-`RpcServer.makeProtocolSocketServer` wraps ([RpcServer.ts](../../../.repos/effect/packages/effect/src/rpc/RpcServer.ts))
-fed with a single socket. That internal piece is not exported, so M1's first protocol PR adds a small
-one-socket `Protocol` adapter (inferred effort: under 150 lines).
+`RpcClient.makeProtocolSocket` over the upgraded socket with a `retryPolicy` that never retries (the
+default reruns the socket forever; `retryTransientErrors` covers only open errors). The runner runs
+the handlers through the exported `RpcServer.makeProtocolSocketServer` ([RpcServer.ts](../../../.repos/effect/packages/effect/src/rpc/RpcServer.ts)),
+which takes any `SocketServer.SocketServer`. Its socket core (`makeSocketProtocol`) is internal, so
+M1's first protocol PR adds a one-socket `SocketServer` whose `run` hands each dialed socket to the handler (about 20 lines).
 
 Effect RPC rather than a custom multiplexer, because request ids, interrupts, typed errors, pings and
 per-stream acks (`supportsAck`) already exist; [OutputProtocol.ts](../../../apps/server/src/terminal/OutputProtocol.ts)
 already widens the acks into a window (`withTerminalOutputWindow`); `layerSchemaBinary` sends
-`Uint8Array` as raw bytes; and tests get `RpcTest.makeClient`, as in
+`Uint8Array` as raw bytes (set `maxFrameSize`; the default is 16 MiB); and tests get `RpcTest.makeClient`, as in
 [RpcAuthorization.test.ts](../../../apps/server/src/auth/RpcAuthorization.test.ts).
 
 Effect RPC has no client-to-server streams and runs concurrent requests in separate fibers, so
@@ -240,7 +241,7 @@ pressure) is an element of a stream the server subscribed to: one RPC client, on
 
 `process.spawn` mirrors Effect's `ChildProcessSpawner` handle, extra fds included
 ([ChildProcessSpawner.ts](../../../.repos/effect/packages/effect/src/process/ChildProcessSpawner.ts)):
-the Claude adapter's `spawnClaudeProcessGroup` passes a fourth pipe to its group watcher.
+`spawnClaudeProcessGroup` passes a fourth pipe (fd 3) to its watcher, via `node:child_process`.
 
 ### 4.3 Schema sketch
 
@@ -306,10 +307,10 @@ base64 anywhere.
 
 Every byte the runner sends is lossless. The rules:
 
-1. **Per-stream window.** At most 256 KiB or 16 chunks unacked per output stream. The window wrapper
-   is `withTerminalOutputWindow` from [OutputProtocol.ts](../../../apps/server/src/terminal/OutputProtocol.ts),
-   generalized from terminal methods to every `stream: true` method of the runner group and moved
-   to `packages/shared`. That wrapper sizes a chunk with `JSON.stringify(response)`, which is wrong
+1. **Per-stream window.** At most 256 KiB or 16 chunks unacked per output stream (terminals use 64
+   KiB or 8). The wrapper is `withTerminalOutputWindow` from [OutputProtocol.ts](../../../apps/server/src/terminal/OutputProtocol.ts),
+   which wraps an `RpcServer.Protocol` (here the runner's), generalized to every `stream: true`
+   method of the runner group and moved to `packages/shared`. That wrapper sizes a chunk with `JSON.stringify(response)`, which is wrong
    for binary frames; the runner's version counts the encoded SchemaBinary frame length.
 2. **Batching.** A stream takes everything queued (up to 64 KiB) per chunk, as `terminalOutputStream`
    does, so a chatty process sends few large frames instead of many small ones.
@@ -485,9 +486,9 @@ What agents in a sandbox actually call on the server today:
 | Callback | How it works locally | Needs a route from the sandbox? |
 | --- | --- | --- |
 | Claude and Codex hooks | Claude SDK callbacks over the CLI's stdio ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)); Codex `hook/completed` over app-server stdio ([CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts)) | No. They ride `process.output` and `process.write` |
-| MCP tools | HTTP to `http://127.0.0.1:<server port>/mcp` with a per-provider-session bearer token ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts)) | Yes |
+| MCP tools | HTTP to `/mcp` at the server's listen address (`127.0.0.1` when it listens on all interfaces) with a per-provider-session bearer token ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts)) | Yes |
 | ACP agents' MCP | The agent spawns `t3 acp-mcp-bridge`, which calls the same HTTP endpoint ([AcpMcpStdioBridge.ts](../../../apps/server/src/mcp/AcpMcpStdioBridge.ts)) | Yes, plus `t3` on the sandbox's `PATH` (the bundle's shim) |
-| Codex managed ChatGPT token | Codex's `auth.command` runs `t3 __managed-chatgpt-token <socket>`, which asks a local IPC socket ([managedChatGptToken.ts](../../../apps/server/src/cli/managedChatGptToken.ts), [CodexManagedTokenProtocol.ts](../../../apps/server/src/provider/CodexManagedTokenProtocol.ts)) | Yes, if doc 06 keeps this path |
+| Codex managed ChatGPT token | Codex's `auth.command` runs the server's own CLI as `__managed-chatgpt-token <socket> <instance> <environment> <profile key>`, which asks a local IPC socket ([managedChatGptToken.ts](../../../apps/server/src/cli/managedChatGptToken.ts), [CodexManagedTokenProtocol.ts](../../../apps/server/src/provider/CodexManagedTokenProtocol.ts)) | Yes, if doc 06 keeps this path |
 | Git credential helper | Doc 06 | Yes |
 | [AgentAwarenessRelay.ts](../../../apps/server/src/relay/AgentAwarenessRelay.ts), [HeldHooksWaker.ts](../../../apps/server/src/relay/HeldHooksWaker.ts) | Server to T3 Connect relay | No; unchanged on the server |
 
@@ -500,7 +501,7 @@ has several forwards; when a session ends, its forward closes:
 
 | Forward | In the sandbox | Server-side target |
 | --- | --- | --- |
-| `mcp` | `127.0.0.1:<auto>` | The server's own HTTP listener on loopback, the address `McpSessionRegistry` uses today |
+| `mcp` | `127.0.0.1:<auto>` | The server's own HTTP listener, at the address `McpSessionRegistry` uses today. An HTTP proxy, not a splice: `/mcp` also accepts member API tokens and cannot tell a forwarded connection from a local one, so `RunnerForwards` passes only a bearer that `McpSessionRegistry.resolve` maps to a thread token whose `providerSessionId` is the forward's `ownerKey` (doc 06) |
 | `codex-token` | Unix socket under `/run/pair-runner/` | The Codex managed token broker's socket |
 | `git-credential` | Unix socket under `/run/pair-runner/` | The git credential service doc 06 defines (M1) |
 
@@ -585,9 +586,9 @@ buffer size, bytes delivered equal bytes written, no duplicates.
 5. **Is the 256 KiB window right?** Measure in PR 9 first; raise it for hosted sandboxes if terminal
    throughput at 100 ms RTT disappoints.
 6. **Does the Codex token forward need its own secret in a shared sandbox?** Agents in one sandbox
-   share a uid, so any of them can reach any forward, and a broker request names its instance and
-   profile, which are not secrets. Recommend `RunnerForwards` rejects requests whose instance does
-   not match the forward's `ownerKey`; doc 06 confirms.
+   share a uid, so any of them can reach any forward, and a broker request is one JSON line naming
+   its instance, environment and profile key, none secret. Recommend `RunnerForwards` rejects
+   requests whose instance is not the `ownerKey` session's; doc 06 confirms.
 
 ## Challenges to the plan
 

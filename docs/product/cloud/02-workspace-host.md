@@ -35,20 +35,20 @@ and fixtures (1,031 files). Grep patterns: `ChildProcessSpawner`, `node:child_pr
 
 | Signal | Files | Note |
 | --- | ---: | --- |
-| Spawns a process or PTY (union of the spawn patterns) | 109 | 25 thread-scoped, 15 both, 2 transport-only, 67 server-scoped (25 of those are provider probes) |
-| Imports `node:child_process` directly | 10 | Only 2 are thread-scoped: [ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) and [shell.ts](../../../packages/shared/src/shell.ts). The research doc's "about 23" is an overcount. |
+| Spawns a process or PTY (union of the spawn patterns) | 109 | 25 thread-scoped, 15 both, 2 transport-only, 67 server-scoped (25 of those are provider probes). A raw grep matches about 125; some matches only import VCS error types or wire layers. |
+| Imports `node:child_process` directly | 10 | Only 2 are thread-scoped: [ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) and [shell.ts](../../../packages/shared/src/shell.ts). |
 | Uses `ChildProcessSpawner` | 75 | Effect's injectable spawner. Most spawns already go through it. |
 | Uses `FileSystem.FileSystem` | 206 | About 76 sit in thread-relevant folders (listed in the appendix). |
-| Imports `node:fs` directly | 45 | 77 files opt out of Effect's `nodeBuiltinImport` diagnostic ([tsconfig.effect.json](../../../tsconfig.effect.json)). |
+| Imports `node:fs` directly | 45 | 80 files opt out of Effect's `nodeBuiltinImport` diagnostic (an error in [tsconfig.effect.json](../../../tsconfig.effect.json)) with a file-level comment. |
 | File watches | 4 | 3 are server settings files; 1 is the Git trace2 progress file in [GitVcsDriverCore.ts](../../../apps/server/src/vcs/GitVcsDriverCore.ts). |
 | Imports `node:net` | 20 | Thread-relevant: the Codex token broker socket and preview channels. |
-| Reads `HostProcess.HomeDirectory` / `Environment` | 48 / 60 | `HostProcess.Platform` is read 375 times overall. |
+| Reads `HostProcess.HomeDirectory` / `Environment` | 48 / 60 | `HostProcess.Platform` appears 124 times (375 counting tests). |
 
 ### Thread-scoped: must move behind the seam (25 spawn files plus file-only modules)
 
 | Category | File | What it does on the thread's machine |
 | --- | --- | --- |
-| Provider spawn | [ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) | Spawns `claude` through the Agent SDK's `spawnClaudeCodeProcess` hook as a detached process group with an fd 3 watch script (`spawnClaudeProcessGroup`), runs a history worker (`__claude-history` in [claudeHistory.ts](../../../apps/server/src/cli/claudeHistory.ts) when `HostProcess.IsExecutable`, otherwise `claude-history-worker.mjs`), reads Claude settings and skill files, calls the SDK's `getSessionMessages`, `forkSession` and `getSubagentMessages` in process (these read `~/.claude/projects`). |
+| Provider spawn | [ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts) | Spawns `claude` through the Agent SDK's `spawnClaudeCodeProcess` hook with `node:child_process` (not Effect's spawner), as a detached process group with an fd 3 watch script (`spawnClaudeProcessGroup`), runs a history worker (`__claude-history` in [claudeHistory.ts](../../../apps/server/src/cli/claudeHistory.ts) when `HostProcess.IsExecutable`, otherwise `claude-history-worker.mjs`), reads Claude settings and skill files, calls the SDK's `resolveSettings`, `getSessionMessages`, `forkSession` and `getSubagentMessages` in process (these read settings files and `~/.claude/projects`). |
 | Provider spawn | [CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) | Spawns `codex app-server` through `ChildProcessSpawner`, one per provider session. |
 | Provider spawn | [AntigravityAcpSupport.ts](../../../apps/server/src/provider/acp/AntigravityAcpSupport.ts) and the `provider/acp/Antigravity*` files | Spawns the agent, then reads its profile, session and child-work files with `node:fs`. |
 | Provider spawn | [AcpSessionRuntime.ts](../../../packages/provider-acp/src/server/AcpSessionRuntime.ts), [adapter.ts](../../../packages/provider-acp/src/server/adapter.ts), [clientTerminals.ts](../../../packages/provider-acp/src/server/clientTerminals.ts), [clientPolicy.ts](../../../packages/provider-acp/src/server/clientPolicy.ts) | Spawns ACP agents inside a cgroup v2 lease, serves the agent's `fs/read_text_file` and `terminal/create` requests from the server's disk and processes. |
@@ -107,7 +107,7 @@ Effect's [`ChildProcessSpawner`](../../../.repos/effect/packages/effect/src/proc
 returns a scoped `ChildProcessHandle`: `pid`, `exitCode`, `isRunning`, `kill`, a `stdin` sink,
 `stdout`, `stderr`, `all`, extra fds, `unref`. Closing the scope kills the process with
 `killSignal` and `forceKillAfter`. [`FileSystem`](../../../.repos/effect/packages/effect/src/FileSystem.ts)
-has about 30 methods, including `stream`, `sink`, `watch`, `realPath`, `open` with a `File` handle.
+has 32 methods, including `stream`, `sink`, `watch`, `realPath`, `open` with a `File` handle.
 The repo already has [`PtyAdapter`](../../../packages/shared/src/PtyAdapter.ts) as a service and
 [`HostProcess`](../../../packages/shared/src/HostProcess.ts) facts as `Context.Reference`s.
 
@@ -133,18 +133,18 @@ Appealing because nothing changes at call sites. It does not work here:
    locally and spawns PTYs on the thread's machine through the same captured `FileSystem`. Git
    checkpoint capture writes a temp index under `.git` and runs `git` against it; both must land
    on the same host.
-4. **Rebuilding graphs per host changes behavior.** `VcsProcess` holds global semaphores (8 git, 4
-   forge). Per-host copies would change concurrency limits on local threads. That breaks M0's "no
+4. **Rebuilding graphs per host changes behavior.** `VcsProcess` holds global semaphores (8
+   processes, at most 4 of them forge CLIs). Per-host copies would change concurrency limits on local threads. That breaks M0's "no
    behavior change".
 
 `LayerMap` keyed by host id is right for a few genuinely machine-wide services (port discovery,
-process table, search index, which already uses `LayerMap` keyed by cwd). It is not right for the
+process table, search index, which already uses `LayerMap` keyed by cwd and variant). It is not right for the
 whole graph.
 
 ### Option B (recommended): a host value that reuses Effect's interfaces
 
 Call sites change from `spawner.spawn(cmd)` to `(yield* hosts.forPath(cwd)).spawner.spawn(cmd)`.
-The interfaces stay Effect's, so the about 74 test files that build fakes with
+The interfaces stay Effect's, so the about 60 test files that build fakes with
 `ChildProcessSpawner.make(...)` keep working: the local host is built from whatever spawner and
 file system the test provides.
 
@@ -176,7 +176,7 @@ export interface WorkspaceHost {
   readonly kind: "local" | "sandbox";
   readonly info: WorkspaceHostInfo;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  readonly fileSystem: FileSystem.FileSystem["Service"];
+  readonly fileSystem: FileSystem.FileSystem; // an interface plus a tag, not a Service class
   readonly pty: PtyAdapter.PtyAdapter["Service"];
   readonly agentScope: AgentScopeShape;
   // Gaps in Effect's FileSystem that WorkspaceFileSystem relies on for safety.
@@ -235,7 +235,8 @@ in M1; while it is stopped, 07 serves reads from the mirror instead of calling t
   day one of M1: a macOS desktop acting as the team server running Linux Docker sandboxes would
   otherwise apply macOS `git` resolution, `F_FULLFSYNC` retries and `/tmp` defaults (see
   [ClaudeTaskOutputTail.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts))
-  to a Linux box. Thread-scoped folders read `HostProcess` about 110 times.
+  to a Linux box. The lint rule's folders read `HostProcess` about 90 times, about 140 with
+  `provider/` and `preview/`.
 - **The host owns the base environment.** `spawner.spawn` with `extendEnv` extends
   `host.info.environment`, not the server's env, and adapters build provider env from
   `host.info.environment`. Today `makeClaudeEnvironment`, `codexLaunchArgs` and
@@ -251,8 +252,8 @@ today's behavior bit for bit.
 ## 3. How a thread finds its host
 
 Every thread-scoped call site already has a **cwd string**, not a thread id. Clients send cwds to
-git RPCs (`refreshStatus(input.cwd)` in `ws.ts`); `VcsProcess.run` takes `cwd`; the terminal
-manager keys sessions on `cwd`; `RuntimePolicyV2.resolve` puts `cwd` on the policy every adapter
+git RPCs (`refreshStatus(input.cwd)` in `ws.ts`); `VcsProcess.run` takes `cwd`; each terminal
+session carries its `cwd` (sessions are keyed by thread and terminal id); `RuntimePolicyV2.resolve` puts `cwd` on the policy every adapter
 receives ([RuntimePolicy.ts](../../../apps/server/src/orchestration-v2/RuntimePolicy.ts));
 [threadWorkspaceRoot.ts](../../../apps/server/src/project/threadWorkspaceRoot.ts) turns a thread
 into a path. So route by path.
@@ -284,8 +285,10 @@ flowchart LR
   The path's sandbox id always matches the thread's `sandboxId`; a mismatch is a bug.
 - [KnownWorkspaces.ts](../../../apps/server/src/workspace/KnownWorkspaces.ts) must accept
   registered sandbox roots, or client file reads in cloud threads are refused. It is also the
-  place that stops a client from naming another sandbox's path it should not see (inferred: today
-  the check is environment-wide, and member scoping is [06](./06-credentials-and-security.md)'s).
+  place that stops a client from naming another sandbox's path it should not see. Today the check
+  is environment-wide: any project root, managed worktree folder or thread worktree that `git
+  worktree list` confirms passes for every caller. Member scoping is
+  [06](./06-credentials-and-security.md)'s.
 
 Where each subsystem resolves:
 
@@ -305,15 +308,15 @@ sites.
 
 | Adapter | Spawns | Reads or writes on the agent's machine | Verdict |
 | --- | --- | --- | --- |
-| Claude | `claude` via the SDK hook; the history worker (`__claude-history` or `claude-history-worker.mjs`) | Claude settings (`settings.json`, `.claude/settings*.json` up to the repo root, `.git` and `commondir`), skills dirs, `~/.claude/projects` through in-process SDK calls, task output under `/tmp/claude-<uid>`, workflow files, `attachmentsDir` | **Medium, M1.** The SDK hook takes any object shaped like a Node child process; build it from a host handle. On a sandbox host, run history calls through the worker on that host. [claudeHistoryWorker.ts](../../../apps/server/src/claudeHistoryWorker.ts) supports `getSessionMessages` and `forkSession` but not `getSubagentMessages`; add it in M1. The runner bundle must include the worker and the Claude Agent SDK (decision 5; [03](./03-runner.md) owns the bundle table). Settings reads go through `host.fileSystem`. Replace the 250 ms task-output poll with `host.fileSystem.watch` on sandbox hosts. |
+| Claude | `claude` via the SDK hook; the history worker (`__claude-history` or `claude-history-worker.mjs`) | Claude settings (`settings.json`, `.claude/settings*.json` up to the repo root, `.git` and `commondir`), skills dirs, `~/.claude/projects` and settings through in-process SDK calls, task output under `/tmp/claude-<uid>`, workflow files, `attachmentsDir` | **Medium, M1.** The SDK hook takes any object matching its `SpawnedProcess` interface (`stdin`, `stdout`, `killed`, `exitCode`, `kill`, `on`, `once`, `off`); tests already pass plain objects. Build it from a host handle. On a sandbox host, run history calls through the worker on that host. [claudeHistoryWorker.ts](../../../apps/server/src/claudeHistoryWorker.ts) supports `getSessionMessages` and `forkSession` but not `getSubagentMessages`; add it in M1. `resolveSettings` also reads disk in process and needs the same treatment. The runner bundle must include the worker and the Claude Agent SDK (decision 5; [03](./03-runner.md) owns the bundle table). Settings reads go through `host.fileSystem`. Replace the 250 ms task-output poll with `host.fileSystem.watch` on sandbox hosts. |
 | Codex | `codex app-server` | `CODEX_HOME` shadow home with symlinks and `auth.json`; token broker socket | **Easy to medium, M1.** Spawn already uses `ChildProcessSpawner` and the client takes a handle. Home layout runs against `host.fileSystem`; the broker uses `exposeServerEndpoint`. Images already go as data URLs. |
 | ACP runtime (Grok, Kiro, Fx, ACP registry agents) | Agent binaries, client terminals | cgroup v2 leases, agent `fs/read_text_file` via `realpathSync`, registry-managed binaries in the server cache | **Medium, M3.** One runtime covers all of them. Containment becomes the host's `agentScope`; client fs and terminals route through the host. Registry binaries must exist in the image. |
-| Antigravity | ACP agent | Many `node:fs` reads of its profile, session meta and child-work files, `lstat` polling | **Hard. "Not supported in cloud yet."** Revisit after M3. |
+| Antigravity | ACP agent | Many `node:fs` reads of its profile, session meta and child-work files, `lstat` path checks, `node:sqlite` reads of its session log | **Hard. "Not supported in cloud yet."** Revisit after M3. |
 | OpenCode (v1, v2) | `opencode serve --hostname --port` | `/proc` ledger, usage auth file | **Medium, M3.** Needs `ports.connect` (M2) to reach its HTTP server, and a per-host ledger. |
 | Pi | `pi --mode rpc` | Writes an MCP extension file and passes the path | **"Not supported in cloud."** Routable later: spawn is spawner-based and the extension file can be written with `host.fileSystem`. |
-| Muse | Inside `@muse-code/sdk`'s `spawnMspConnection` (inferred: no custom spawn hook) | `node:fs` realpath | **"Not supported in cloud"** (decision 2). The SDK spawns inside the server process. |
+| Muse | Inside `@muse-code/sdk`'s `spawnMspConnection` (`createMuseSdkHost` accepts a replacement, which would have to reimplement the SDK's connection) | `node:fs` realpath | **"Not supported in cloud"** (decision 2). The SDK spawns inside the server process. |
 | Cursor | None; `@cursor/sdk` runs the agent in the server process with a local cwd | Everything | **"Not supported in cloud"** (decision 2). It cannot move behind a server-side seam. |
-| Replay (dev) | `git` in [replayWorkspace.ts](../../../packages/provider-testing/src/replayWorkspace.ts) | Writes the replayed file edits | **Easy, M1, and first.** It is the free way to test cloud threads, so route it before Claude. |
+| Replay (dev) | [dev-replay-agent.ts](../../../apps/server/scripts/dev-replay-agent.ts), an ACP agent run with the server's Node through the `acpRegistry` driver; seeded only on dev servers run from source ([ProviderInstanceRegistryHydration.ts](../../../apps/server/src/provider/ProviderInstanceRegistryHydration.ts)) | Nothing: it replays recorded ACP frames and asks only for permissions and answers. No file edits, no git. | **Easy, M1, and first.** It is the free way to test cloud threads, so route it before Claude. Routing it routes the ACP runtime's spawn early (not its client fs or terminals), and the sandbox needs Node and the script. |
 
 Only the Claude and Codex adapters call `PortDiscovery.trackAgent` and inject `T3CODE_THREAD_ID`.
 They keep working because discovery becomes per host. Other adapters need both added when they
@@ -324,17 +327,20 @@ run in a sandbox (M3).
 ### What a typical turn does
 
 Counted from the code for a warm Claude or Codex session in a git checkout. Counts are the
-sequential round trips on the critical path; parallel calls count once.
+sequential round trips on the critical path; parallel calls count once. Every `CheckpointStore`
+call re-runs VCS detection ([VcsDriverRegistry.ts](../../../apps/server/src/vcs/VcsDriverRegistry.ts)):
+3 `exists` checks that validate the cached repository, plus, without a requested kind, one `exists`
+per ancestor directory looking for `.t3code/vcs.json` (about 4). All of them run one after another.
 
 | Phase | Operations | Spawns | File ops | Sequential trips |
 | --- | --- | ---: | ---: | ---: |
-| Turn start: `captureBaseline` ([CheckpointService.ts](../../../apps/server/src/orchestration-v2/CheckpointService.ts)) | detection cache re-stat, `rev-parse` for the ref | 1 | 2 | 3 |
+| Turn start: `captureBaseline` ([CheckpointService.ts](../../../apps/server/src/orchestration-v2/CheckpointService.ts)) | detection twice (`isGitRepository`, then `hasCheckpointRef`), `rev-parse` for the ref | 1 | ~10 | ~11 |
 | Provider stream | stdout events one way; approvals and hooks | 0 | 0 | 1 per approval |
-| Turn end: capture ([GitVcsDriver.ts](../../../apps/server/src/vcs/GitVcsDriver.ts)) | `rev-parse`, `config`, `read-tree`, `ls-files -v`, diff, `update-index`, `ls-files --cached`, `add -A`, `write-tree`, `commit-tree`, `update-ref`; `stat`, `copyFile`, `utimes` x2, cleanup | ~10 (17 call sites) | ~6 | ~16 |
-| Turn end: files changed | `diffCheckpoints` numstat and `listAuthoredPaths` in parallel, previous-ref check | ~4 | 2 | ~4 |
+| Turn end: capture ([GitVcsDriver.ts](../../../apps/server/src/vcs/GitVcsDriver.ts)) | detection twice; `rev-parse`, `config`, `stat`, `copyFile`, `read-tree`, `utimes`, `ls-files -v`, `check-ignore`, `add -A`, `write-tree`, `commit-tree`, `update-ref`, temp index cleanup x2 | ~9 (17 call sites) | ~15 | ~24 |
+| Turn end: files changed | previous-ref `rev-parse`, then `diffCheckpoints` numstat and `listAuthoredPaths` (`log`) in parallel; detection before each | ~3 | ~21 | ~16 |
 | Finalization ([RunFinalizationService.ts](../../../apps/server/src/orchestration-v2/RunFinalizationService.ts)) | `WorkspaceEntries.refresh` (search rescan) and local status: `rev-parse`, lock `exists`, repository paths, then `status`, `diff-index`, default branch, remote in parallel | ~6 | 1 | ~5 |
 | PR status | Forge CLI or API | 1–3 | 0 | network-bound anyway |
-| **Per turn** | | **~22–25** | **~11** | **~28** |
+| **Per turn** | | **~20–22** | **~47** | **~56** |
 
 A cold session adds the provider spawn and roughly 6–10 settings and skill reads (inferred from
 `resolveSettings` and `userInvocableSkills` in the Claude adapter). Background work adds, per
@@ -345,17 +351,19 @@ without `lsof`), and Claude task-output polls every 250 ms while background task
 ### What that costs over a WebSocket
 
 If every primitive is one round trip (an exec frame carries command, stdin and close; the runner
-streams output and exit back), the turn-end path costs:
+streams output and exit back), a turn costs:
 
-| RTT | Added to turn-end follow-up | With coarse capture and status |
+| RTT | Added per turn | With coarse capture and status |
 | ---: | ---: | ---: |
-| 50 ms | ~1.4 s | ~0.4 s |
-| 100 ms | ~2.8 s | ~0.8 s |
+| 50 ms | ~2.8 s | ~0.65 s |
+| 100 ms | ~5.6 s | ~1.3 s |
 
-Local git calls cost a few milliseconds each (inferred), so today's turn end is a few hundred
-milliseconds. The provider turn's own duration is unaffected
-([overview](../../internals/overview.md) keeps run finalization separate), but the diff and
-"files changed" arrive seconds late. Users notice a lying spinner.
+The last column assumes `checkpoint.capture` covers files changed too (see below); 11 of its 13
+trips are the turn-start baseline check. Local git calls cost a few milliseconds each (inferred),
+so today's turn end is a few hundred milliseconds. The baseline check runs before the provider
+turn starts, so it delays the first token. Run finalization is separate
+([overview](../../internals/overview.md)), but the diff and "files changed" arrive seconds late.
+Users notice a lying spinner.
 
 If a primitive takes more than one trip (spawn, then write stdin, then read), the numbers double.
 So the exec frame shape is a hard requirement on [03](./03-runner.md).
@@ -369,8 +377,9 @@ are streams or one-shot calls. It fails in two ways:
    - the search index is a native library that scans its own disk;
    - port discovery reads `/proc` and maps PIDs, which are meaningless off the host;
    - the terminal process table is the same.
-2. **Checkpoint capture is a long sequential chain**, about 16 trips. It is coarse from M1 by
-   decision, not after a measurement. Local status (about 5 trips) waits for one.
+2. **Checkpoint capture is a long sequential chain**, about 24 trips, 40 with files changed. It
+   is coarse from M1 by decision, not after a measurement. Local status (about 5 trips) and the
+   turn-start baseline check (about 11, almost all detection) wait for one.
 
 Coarse operations for M1 (README decision 2):
 
@@ -379,7 +388,7 @@ Coarse operations for M1 (README decision 2):
 | `search.entries`, `search.contents`, `entries.browse` | `WorkspaceSearchIndex`, `WorkspaceEntries.list/browse` | Native index; recursive `readdir`. Structural. |
 | `processes.table` | `ps` polling in the terminal manager | PIDs are host-local. Structural. Better as a stream the runner pushes on change. |
 | `ports.listeners` | `PortScanner` scan | `/proc` and PIDs. Structural. Lands in M1; previews and stopping servers use it in M2. |
-| `checkpoint.capture` | ~16 trips | Sequential chain. Turn end drops to about 4–6 trips. |
+| `checkpoint.capture` | ~24 trips, ~40 with files changed | Sequential chain. Run as `CheckpointServiceV2.capture`, it covers files changed and turn end drops to about 6 trips; the driver's capture alone leaves about 25. |
 
 `vcs.localStatus` is the first candidate to join later: the loopback host with injected latency
 (section 7) measures it in M1, and it joins if it adds more than 300 ms at 75 ms RTT.
@@ -545,8 +554,10 @@ one and record the decision as a `server-scoped:` lint reason.
    would turn `/t3-sandbox/...` into `C:\t3-sandbox\...`. Supporting it means using `path.posix`
    for sandbox paths everywhere, which is a separate refactor.
 3. **Should host facts be read through `HostProcess` overrides instead of `host.info`?**
-   Recommended: no. They are `Context.Reference`s, but services capture them at construction, so
-   overriding them per call does nothing, which is the same reason Option A fails.
+   Recommended: no. They are `Context.Reference`s. Some code reads them per call
+   (`resolveSpawnCommand`, `executeRaw`'s environment), but `VcsProcess.make`,
+   `makeGitVcsDriverCore`, the terminal manager and the adapters capture them at construction, so a
+   per-call override reaches only some reads. That is the same reason Option A fails.
 4. **Cover Effect's whole `FileSystem` on the sandbox host, or a subset?** Recommended: the whole
    interface, with `open` returning a remote `File` handle. Methods nobody calls on thread paths
    (`chown`, `link`) can fail with `PlatformError` "unsupported" until someone needs them.

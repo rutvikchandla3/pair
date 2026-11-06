@@ -4,11 +4,10 @@ Status: proposal, 2026-11-06. Part of the [Pair Cloud plan](./README.md). Audien
 building M1 and M2, and the maintainers choosing the first hosted vendor.
 
 This doc covers how a sandbox is recorded, created, shared, slept, woken, capped, metered and
-reconciled, and how each compute driver maps onto a real backend. The runner is in
-[03](./03-runner.md), team image builds in [05](./05-team-images.md), egress and credentials in
-[06](./06-credentials-and-security.md), forks, mirrors and retention in
-[07](./07-access-and-data.md), and BYOC deployment in [09](./09-byoc.md). Statements marked
-(inferred) are our reading, not something the code or a vendor documents.
+reconciled, and how each compute driver maps onto a real backend. The runner is in [03](./03-runner.md),
+team image builds in [05](./05-team-images.md), egress and credentials in [06](./06-credentials-and-security.md),
+forks, mirrors and retention in [07](./07-access-and-data.md), and BYOC in [09](./09-byoc.md).
+Statements marked (inferred) are our reading, not something the code or a vendor documents.
 
 ## 1. The sandbox record in orchestration
 
@@ -16,9 +15,9 @@ reconciled, and how each compute driver maps onto a real backend. The runner is 
 
 | Fact in the code | Consequence |
 | ---------------- | ----------- |
-| The [orchestrator](../../../apps/server/src/orchestration-v2/Orchestrator.ts) decides events and effects for one thread under its lock, without I/O. [EventSink](../../../apps/server/src/orchestration-v2/EventSink.ts) commits events, projections, the receipt and outbox effects in one transaction. | Sandbox decisions are pure functions over the owning thread and the sandbox row. A transition and its driver effect commit together. |
-| The outbox is keyed by `thread_id` ([Foundation.ts](../../../apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts)), and [EffectOutbox.ts](../../../apps/server/src/orchestration-v2/EffectOutbox.ts) runs one effect per thread at a time, in order. A pending effect with a later `available_at` still blocks newer ones. | Driver effects serialize per sandbox on the owner's queue. Timers must not be delayed effects. |
-| The [effect worker](../../../apps/server/src/orchestration-v2/EffectWorker.ts) runs 4 effects at once and retries up to 5 attempts with backoff capped at 30 s; only `delegated-tasks.stop` has a timeout today, because a running effect's lease "is never reclaimed in-process". After a crash, `reconcileAfterProcessLoss` requeues only replay-safe effect types. | Effects return on acceptance. Each sandbox effect type gets a 60 s bound in the worker's `boundExecution` switch, or a stuck driver call blocks its thread's queue. Every sandbox effect is replay safe and idempotent. |
+| The [orchestrator](../../../apps/server/src/orchestration-v2/Orchestrator.ts) decides events and effects for one thread under its lock, without provider or filesystem I/O. It reads projections, other threads' included, under no other lock. [EventSink](../../../apps/server/src/orchestration-v2/EventSink.ts) commits events, projections, the receipt and outbox effects in one transaction. | Sandbox decisions read the owning thread and the sandbox row. Rules across threads (caps, idle) need one more lock (section 4). A transition and its driver effect commit together. |
+| The outbox is keyed by `thread_id` ([Foundation.ts](../../../apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts)), and [EffectOutbox.ts](../../../apps/server/src/orchestration-v2/EffectOutbox.ts) runs one effect per thread at a time, in order (title generation has its own lane). A pending effect with a later `available_at` still blocks newer ones. | Driver effects serialize per sandbox on the owner's queue. Timers must not be delayed effects. |
+| The [effect worker](../../../apps/server/src/orchestration-v2/EffectWorker.ts) runs 4 effects at once and makes up to 5 attempts, with backoff from 100 ms doubling (capped at 30 s, but five attempts end within 2 s); only `delegated-tasks.stop` has a timeout today (30 s), because a running effect's lease "is never reclaimed in-process". After a crash, `reconcileAfterProcessLoss` requeues running effects of replay-safe types, cancels process-bound ones, and leaves any other type `running` for good. | Effects return on acceptance. Each sandbox effect type gets a 60 s bound in `boundExecution`, or a stuck driver call blocks its thread's queue. Every sandbox effect is idempotent and on the replay-safe list. |
 | Worktree preparation parks a run in `preparing`; `prepared-run.release` moves it to `starting` ([ThreadLaunchService.ts](../../../apps/server/src/orchestration-v2/ThreadLaunchService.ts)). Forks copy the source's `worktreePath` ([ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts)). [ProjectionMaintenance](../../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) prunes events after a day. | Waiting reuses `preparing`. Side chats and forks share the sandbox from M1. Sandbox minutes need their own ledger. |
 
 ### Record
@@ -63,10 +62,10 @@ later attach clears it. A separate **boot deadline** covers "no hello since boot
 
 ### Commands, events and effects
 
-Client commands are guarded in
-[clientRpcPermissions.ts](../../../packages/contracts/src/clientRpcPermissions.ts). A client may send
-them from any thread using the sandbox; the server routes them to the owner's stream. **Sleep now**
-and **Discard** need the owning thread's owner or an admin.
+Clients send them through `dispatchCommand` (`orchestration:operate`), from any thread using the
+sandbox; the server routes them to the owner's stream. **Sleep now** and **Discard** need the owning
+thread's owner or an admin, checked where `thread.delete` is (`assertTeamPermission` in
+[ThreadMessageIntake.ts](../../../apps/server/src/orchestration-v2/ThreadMessageIntake.ts)).
 
 | Command | Allowed from | Effect |
 | ------- | ------------ | ------ |
@@ -75,10 +74,11 @@ and **Discard** need the owning thread's owner or an admin.
 | `sandbox.retry` | `failed` | `sandbox.start` if `driverRef` exists, else `sandbox.create` |
 | `sandbox.discard` | `failed`, `sleeping`, or `ready` with no active run; owner or admin | `sandbox.destroy` (after `sandbox.stop` if `ready`); the next prompt provisions anew |
 
-Internal commands use deterministic ids (`sandbox-created:<id>:<generation>`), so a replayed
-effect's report is dropped by its receipt, as
+Internal commands join `OrchestrationV2InternalCommand` and use deterministic ids
+(`sandbox-created:<id>:<generation>`), so a replayed effect's report is dropped by its receipt, as
 [UsageLimitRecoveryWorker.ts](../../../apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts)
-does with `limit-arm:<identity>`.
+does with `limit-arm:<identity>`. A rejection keeps its receipt too, so a guarded command a worker
+may resend takes a fresh id, as `thread.auto-settle` does.
 
 | Command | Sent by | Result |
 | ------- | ------- | ------ |
@@ -141,41 +141,41 @@ stateDiagram-v2
    `streamStoredEventsFrom` pattern it already uses for interruption, clones and runs the setup
    script through the workspace host (doc 02), then dispatches `prepared-run.release`.
 
-`prepared-run.progress` moves the preparation item through "Waiting for a machine", "Starting
-machine", "Cloning repository" and "Running setup script", so every client shows persisted status.
+`prepared-run.progress` (today `worktree` and `setup`) gains phases for "Waiting for a machine",
+"Starting machine", "Cloning repository" and "Running setup script", so clients show persisted status.
 A later prompt to a cloud thread whose sandbox is not `ready` also uses `defer_start`, and prompts
 after it queue as today. On the owning thread a sleeping sandbox wakes in the same commit, and
 `sandbox.runner.attached` releases the waiting run (a wake needs no clone). If the sandbox fails,
 the run fails with `workspace_preparation_failed`, and `prepared-run.retry` retries both.
 
 Trap: [ProviderRuntimeRecoveryService](../../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts)
-retires `preparing` runs at startup. A run waiting on a sandbox still `provisioning` or `waking` must
-be re-armed instead. M1 adds that case and its test.
+cancels every `preparing` run at startup, since the preparation fiber lived in memory. A run waiting
+on a sandbox still `provisioning` or `waking` is skipped there and re-armed with
+`ThreadLaunchService.prepareRun`, as delegated tasks use it. M1 adds a row to the recovery test table.
 
 ### Shared sandboxes: side chats and forks
 
-A side chat or fork of a cloud thread takes its source's `sandboxId` and checkout path, matching
-local worktree semantics ([07](./07-access-and-data.md#2-restore-revert-and-fork)). "Fork to a new
-machine" (M2, doc 07) provisions a new sandbox. Starting an unrelated thread in an existing sandbox is
-out of scope.
+A side chat or fork of a cloud thread keeps its source's `sandboxId` and checkout path, matching local
+worktree semantics ([07](./07-access-and-data.md#2-restore-revert-and-fork)): ThreadForkService spreads
+the source thread. "Fork to a new machine" (M2) overrides it. Unrelated threads never join a sandbox.
 
 **Who uses a sandbox.** Membership is a projection of each thread's own events, not a counter on the
-sandbox row: `orchestration_v2_projection_sandbox_threads (sandbox_id, thread_id, attached_at,
-archived)` gains a row when a thread is created or forked with a `sandboxId`, updates on archive and
-unarchive, and loses it on delete. No command writes across streams. The orchestrator reads the live
-set when deciding a deletion, archive or idle sleep.
+sandbox row: `orchestration_v2_projection_sandbox_threads (sandbox_id, thread_id, attached_at, archived)`
+gains a row when a thread is created or forked with a `sandboxId`, updates on archive and unarchive,
+and loses it on delete. The orchestrator reads the live set when deciding a deletion, archive or sleep.
 
 **An attached thread's prompt.** Its decision runs on its own stream. If the sandbox is not `ready`,
 the run parks in `preparing` and the commit enqueues `sandbox.request-wake` on that thread. Its
-executor dispatches `sandbox.wake` to the owner's stream with id `sandbox-wake:<id>:<generation>`,
-so any number of attached prompts make one wake. When the owner's stream records `ready` or
+executor dispatches `sandbox.wake` to the owner's stream with id `sandbox-wake:<id>:<owner>:<generation>`
+(a receipt matches only its own thread, so the id names the owner), and many prompts make one wake. When the owner's stream records `ready` or
 `failed`, the same commit enqueues `sandbox.release-waiters`, which dispatches `prepared-run.release`
 or `prepared-run.fail` to each attached thread with a run waiting on that sandbox (id
 `sandbox-release:<runId>:<generation>`). Both hops are outbox effects, so a restart loses nothing.
 
 **When the owning thread goes away, ownership moves to the oldest remaining attached thread.**
-Refusing the deletion would let a side chat stop owners deleting their own threads, and doc 07
-already says delete destroys the sandbox "unless a fork or side chat still uses it".
+Refusing the deletion would let a side chat stop owners deleting their own threads, and doc 07 says
+delete destroys the sandbox "only when no thread uses it". Deleting a thread deletes its side chats
+in the same commit (`liveSideChatIds` in the orchestrator), so only forks and theirs can adopt.
 
 - **Delete.** If no other thread uses the sandbox, enqueue `sandbox.destroy`. Otherwise enqueue
   `sandbox.hand-over` on the old owner's queue, where FIFO order runs it after every sandbox effect
@@ -183,18 +183,17 @@ already says delete destroys the sandbox "unless a fork or side chat still uses 
   `sandbox-adopt:<id>:<oldOwner>`), which writes `sandbox.updated` with the new owner on that
   thread's stream; its queue carries the sandbox's effects from then on. If that thread was deleted
   meanwhile, it picks the next, or destroys when none remain. Commands for the sandbox during the
-  hand-over are rejected as retryable and resent. Both effects sit beside the `terminal.cleanup` and
-  `preview.cleanup` effects of [ResourceCleanupService](../../../apps/server/src/orchestration-v2/ResourceCleanupService.ts).
-  A fork racing the last deletion sees `destroyed` and provisions from the mirror.
+  hand-over are refused without a receipt, as mode-limit refusals are, and resent. Both effects sit
+  beside the cleanup effects [ThreadDeletion.ts](../../../apps/server/src/orchestration-v2/ThreadDeletion.ts)
+  enqueues. A fork racing the last deletion sees `destroyed` and provisions from the mirror.
 - **Archive.** Ownership stays, since archive is reversible. An archived owner stops counting as an
   idle input, so the sandbox sleeps at once only when every attached thread is archived or idle, and
   the 7-day retention destroy waits until all are archived.
 - **Reassign.** Reassigning the owning thread changes `ownerMemberId` in the same commit (doc 07).
   Reassigning an attached thread changes nothing on the sandbox.
 
-**Counting once.** A shared sandbox is one running sandbox against the team cap (and the owner's
-member cap, if an admin sets one in M2). Usage bills to the owner member and the owning thread;
-attached threads show "Shares the machine of <thread>". Tokens still count against whoever prompted.
+**Counting once.** A shared sandbox counts once against caps. Machine time bills to the owner member
+and owning thread (others show "Shares the machine of <thread>"); tokens, to whoever prompted.
 
 ## 2. Idle policy and wake triggers
 
@@ -221,27 +220,26 @@ sandboxes are destroyed after 7 days, any sandbox asleep 30 days is destroyed (s
 `diskRetentionDays` is shorter), and the mirror keeps history usable afterwards.
 
 `idleDecision(inputs, now) -> "busy" | { sleepAt }` is pure and table-tested. A
-`SandboxLifecycleWorker` computes the next deadline from the projection (like
-`getLimitRecoveryWakeAt`), registers with [Scheduler](../../../apps/server/src/scheduling/Scheduler.ts),
-and dispatches `sandbox.auto-sleep`, which the orchestrator rejects if an input became live.
+`SandboxLifecycleWorker` registers with [Scheduler](../../../apps/server/src/scheduling/Scheduler.ts)
+(a 5 s tick), keeps the next deadline from the projection in a `DueHint` as
+`UsageLimitRecoveryWorker` does with `getLimitRecoveryWakeAt`, and dispatches `sandbox.auto-sleep`,
+which the orchestrator rejects if an input became live.
 
 **M1 subset.** The worker ships in M1 with only its settle rule: a Docker sandbox stops (through
 `sandbox.sleep`) once every attached thread is settled or archived. While stopped, reads fall back to
-the mirror's latest checkpoint and terminals show exited; snapshot-backed browsing and idle-time
-sleep are M2.
+the mirror's latest checkpoint and terminals show exited; snapshot browsing and idle sleep are M2.
 
 **Wake triggers.** In M1: a prompt from the owner or an attached thread. In M2: opening the thread
 (one `sandbox.wake` when the view mounts visible and focused), typing in a sleeping terminal or
 pressing its **Wake** (viewing it does not wake), MCP or `t3 thread` CLI calls that send messages,
 run commands or read files, scheduled tasks, checkpoint restore (decision 11), and opening a preview.
-Never: the sidebar, the shell stream, search, push, mirror diffs, `subscribeThread` itself, or MCP
-list tools.
+Never: the sidebar, the shell stream, search, push, mirror diffs, `subscribeThread`, or MCP lists.
 
 **Avoiding wake storms.** A wake is always an explicit command, never a side effect of a
 subscription, so a sidebar of 40 threads sends nothing. Waking a `waking` or `ready` sandbox is an
-accepted no-op with a deterministic id. Wakes pass through the admission queue, and a per-team token
-bucket (10 starts a minute) sets `admission.reason = "rate-limit"`. Vendors meter starts too: boat's
-$20 plan includes 12 a minute, and a resume counts.
+accepted no-op (on dispatch's no-event allow list, like `thread.follow`) with a deterministic id.
+Wakes pass through the admission queue, and a per-team token bucket (10 starts a minute) sets
+`admission.reason = "rate-limit"`. Vendors meter starts too: boat's $20 plan includes 12 a minute.
 
 ## 3. Lifetime caps
 
@@ -258,8 +256,8 @@ worker:
 
 **Provider session continuity.** Sleep never keeps memory (decision 10), so drivers that could keep
 it (E2B's default pause, EC2 hibernation) are configured not to, and every wake cold-starts
-processes. Claude Code and Codex keep sessions under the home directory (inferred:
-`~/.claude/projects/...`, `~/.codex/sessions/...`), and Claude keys them by working directory
+processes. Claude Code and Codex keep sessions under the home directory (`~/.claude/projects`,
+`~/.codex/sessions`, which the usage readers scan), and Claude keys them by working directory
 (inferred). So the runner's home and the checkout live on the kept disk at a stable path, and the
 adapter's normal `resume` ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts))
 works after any sleep or recycle. When the disk is lost, the checkout comes back from the mirror
@@ -277,10 +275,14 @@ Open question 2 avoids that loss.
 | Starts per minute per team | 10 | A guard against runaway agent fan-out, wake storms and vendor start quotas. |
 | Size | `large` (8 vCPU, 16 GB) hosted, `default` on Docker | Conductor's machine; Docker shares one box. |
 
-"Running" means `ready`, or `provisioning`/`waking` without `admission`. As in the EAS host, a
-create with an unknown outcome counts until the reconciler resolves it (`UNCERTAIN_CREATE_MS` in
-[EasDeviceHost.ts](../../../apps/server/src/device/EasDeviceHost.ts)). M1 enforces defaults from
-server config and Settings → Cloud shows them read-only; M2 makes them editable.
+"Running" means `ready`, or `provisioning`/`waking` without `admission`. A create with an unknown
+outcome counts until the reconciler resolves it (the EAS host counts one until a listing finds it or
+`UNCERTAIN_CREATE_MS`, 5 minutes, passes: [EasDeviceHost.ts](../../../apps/server/src/device/EasDeviceHost.ts)).
+M1 enforces defaults from server config and Settings → Cloud shows them read-only; M2 edits them.
+
+Thread locks do not serialize counts across threads: two threads deciding at once would both see a
+free slot. So commands that take a slot (`provision`, `wake`, `retry`, `admit`, `recycle`) also take
+one process-wide admission lock, chosen in the dispatch wrapper as forks and deletes add locks there.
 
 At the cap the sandbox waits with `admission`, and the thread says why in [01](./01-product.md)'s
 copy: "Waiting for a machine: 20 of 20 running" (the member's count once an admin sets a member cap).
@@ -329,10 +331,11 @@ anything we did not tag. It also runs every 10 minutes, because a leak costs mon
 | `request-wake`, `release-waiters`, `hand-over` | Deterministic ids on the commands they send. |
 
 Inside an effect, transient errors retry 3 times, 2 s apart, like the EAS host's `TRANSIENT_RETRY`.
-Across attempts the outbox's backoff applies, and vendor hints (boat's `out_of_capacity` says 120 s)
-travel as `retryAfterMs`. When attempts run out, the executor dispatches `sandbox.failed` with
-`retryable` from the error. The boot deadline (no hello since boot) is 10 minutes from
-`provisioning` and 5 from `waking`; missing it dispatches `sandbox.failed` and enqueues `sandbox.stop`.
+Across attempts the outbox's backoff applies (under 2 s in all), so vendor hints (boat's 120 s
+`out_of_capacity`) travel as `retryAfterMs`. On the last attempt (`willRetry: false`) the executor
+dispatches `sandbox.failed`, `retryable` from the error, outside the bound, whose timeout interrupts
+it. The boot deadline (no hello since boot) is 10 minutes from `provisioning` and 5 from `waking`;
+missing it dispatches `sandbox.failed` and enqueues `sandbox.stop`.
 
 ## 6. The ComputeDriver interface
 
@@ -393,10 +396,9 @@ provider instances. Methods are `Effect.fn("ComputeDriver.<operation>")`. The co
 `apps/server/src/sandbox/` (decisions 7 and 14).
 
 **Bootstrap hand-off.** `start` takes a bootstrap because each wake is a new generation with a fresh
-enrollment secret. The driver passes it as environment variables to the image's entrypoint, which
-runs `t3 runner` (doc 05 owns the entrypoint, doc 03 enrollment). Where a backend has no entrypoint
-on resume (Vercel), the driver starts the runner with one detached command. A used or expired secret
-is harmless in a snapshot or in `docker inspect`.
+enrollment secret, passed as environment variables to the image's entrypoint, which runs `t3 runner`
+(doc 05 owns the entrypoint, doc 03 enrollment). With no entrypoint on resume (Vercel), the driver
+starts the runner with one detached command. A used or expired secret is harmless if it leaks.
 
 ## 7. Driver designs
 
@@ -413,8 +415,8 @@ a team build is a `docker commit` of a build container.
 **Reaching the server** follows [03 §3.2](./03-runner.md#32-what-url-the-runner-dials). On the local
 Docker host, the server opens one runner-only Unix socket in its state directory, and the driver
 bind-mounts it into each container; the runner authenticates with its sandbox token. That works
-whatever the server's bind host is (a desktop server binds loopback unless network access is on,
-inferred from [DesktopBackendConfiguration.ts](../../../apps/desktop/src/backend/DesktopBackendConfiguration.ts))
+whatever the server's bind host is (a desktop server binds loopback unless network access is on:
+[DesktopServerExposure.ts](../../../apps/desktop/src/backend/DesktopServerExposure.ts))
 and exposes no port. A remote `DOCKER_HOST` cannot bind-mount a socket on the server's machine, so
 there the runner dials the server's URL over the network, which must be reachable from that host
 (decision 4). `DOCKER-USER` rules block the host and metadata addresses; doc 06 owns the policy.
@@ -434,10 +436,9 @@ starts the runner. `start` is `Sandbox.get({ name, resume: true })` plus the run
 snapshots, which otherwise keep billing. `list` filters by tags. `imageBuild` is `snapshot`.
 
 Gaps: no memory kept (decision 10 wants that anyway); 24 h sessions (recycle); custom images live in
-Vercel's registry; snapshot storage at $0.08 per GB-month, expiring 30 days after last use; an access
-token outside Vercel's platform. Strengths: Firecracker microVMs, 8 vCPU and 16 GB on Pro, Active CPU
-pricing that does not bill time spent waiting on models, 19 regions, a firewall that allowlists
-domains and injects credentials into requests (useful to doc 06), and Docker inside.
+Vercel's registry; snapshots at $0.08 per GB-month, expiring 30 days after last use; an access token
+outside Vercel. Strengths: Firecracker microVMs, 8 vCPU and 16 GB on Pro, Active CPU pricing that skips
+model waits, 19 regions, a firewall that allowlists domains and injects credentials, and Docker inside.
 
 ### E2B (runner-up)
 
@@ -475,12 +476,12 @@ volume; `snapshot` is `CreateImage` (`imageBuild: "snapshot"`); `destroy` is `Te
 off. A stopped instance restarts in its own zone, so a capacity error on wake falls back to
 relaunching from a snapshot elsewhere. GCE follows with the same shape.
 
-Kubernetes waits until a customer asks. It maps to a Pod plus a PersistentVolumeClaim (stop deletes
-the Pod and keeps the claim) with a gVisor or Kata RuntimeClass, or to the SIG Apps `agent-sandbox`
-resource. Of the rest: Daytona moved its code to a private repository in June 2026 (secondary
-sources, unverified); Modal sandboxes cap at 24 h and continue through filesystem snapshots; Fly
-Machines restart "well under a second" with volumes but no egress brokering (unverified); Morph
-claims sub-250 ms branching with unclear pricing (unverified). None beats the four above for M2.
+Kubernetes waits until a customer asks: a Pod plus a PersistentVolumeClaim (stop deletes the Pod,
+keeps the claim) with a gVisor or Kata RuntimeClass, or the SIG Apps `agent-sandbox`. Of the rest:
+Daytona moved its code to a private repository in June 2026 (secondary sources, unverified); Modal
+sandboxes cap at 24 h and continue through filesystem snapshots; Fly Machines restart "well under a
+second" with volumes but no egress brokering (unverified); Morph claims sub-250 ms branching with
+unclear pricing (unverified). None beats the four above for M2.
 
 ## 8. Vendor recommendation for M2
 
@@ -502,9 +503,8 @@ vCPU-second and $0.0000045 per GiB-second: $0.403 plus $0.130 an hour for 8 vCPU
 
 **Pick: Vercel Sandbox.** It is proven on this workload (Conductor ran one 8 vCPU, 16 GB Vercel
 sandbox per workspace), sells that size self-serve, has persistent named sandboxes that match our
-deterministic names, prices for the long model waits agents spend most time in, gives doc 06
-credential brokering, and carries the lowest company risk. Recycling between turns hides its 24 h
-cap.
+deterministic names, prices for the long model waits agents spend most time in, gives doc 06 credential
+brokering, and carries the lowest company risk. Recycling between turns hides its 24 h cap.
 
 **Runner-up: E2B.** It loses M2 on the 8 GiB ceiling and on paying for idle allocation. It wins on
 BYOC: one driver could serve hosted M2 and, through Embed, a cheap single-node BYOC tier in M5 beside
@@ -539,8 +539,8 @@ change:
 
 - Launch: a hello releases the `preparing` run. A prompt to a sleeping sandbox wakes it.
 - Two side-chat prompts make one wake on the owner's stream, and `release-waiters` releases both.
-- Deleting the owner hands over after queued sandbox effects; deleting the last thread destroys.
-- A shared sandbox counts once against the team cap. Admission order and cap pressure.
+- Deleting the owner hands over to a fork after queued sandbox effects; deleting the last destroys.
+- A shared sandbox counts once. Two threads provisioning at one free slot admit one. Cap pressure.
 - A crash during `sandbox.create` yields the same `driverRef` and a deduplicated `sandbox.created`.
   Recovery re-arms a run waiting on a `waking` sandbox. Stale generations are dropped.
 - `idleDecision` and `planReconciliation` as table tests.
