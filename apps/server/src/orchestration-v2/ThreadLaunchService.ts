@@ -872,6 +872,15 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         instanceId: input.modelSelection.instanceId,
       });
+      if (input.reuseExistingThread !== true) {
+        yield* threads.assertNewThreadProviderInstanceSelectable({
+          commandId: input.commandId,
+          projectId: input.projectId,
+          instanceId: input.modelSelection.instanceId,
+          actorId: input.actorId,
+          ownerId: input.ownerId,
+        });
+      }
       return yield* Effect.gen(function* () {
         // Recover ids from accepted launch receipts before allocating; retries have no client id and new ids collide with receipts.
         const reusableLaunchReceipt =
