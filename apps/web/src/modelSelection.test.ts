@@ -1321,4 +1321,30 @@ describe("resolveTeamNewThreadModelSelection", () => {
       }),
     ).toEqual(expected);
   });
+
+  it("never leaves a teammate's account as the composer's own default", () => {
+    // Without a driver's default instance, entries keep server order, so a teammate's can lead.
+    const replay = ProviderDriverKind.make("acpRegistry");
+    const listed = [
+      provider({ instanceId: "replay_bob", provider: replay, models: ["showcase"] }),
+      provider({ instanceId: "devReplay", provider: replay, models: ["showcase"] }),
+    ];
+    const owned = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [ProviderInstanceId.make("replay_bob")]: { driver: replay, ownerMemberId: bob },
+        [ProviderInstanceId.make("devReplay")]: { driver: replay },
+      },
+    };
+    const resolve = (memberId: MemberId) =>
+      resolveTeamNewThreadModelSelection({
+        selection: null,
+        providers: listed,
+        settings: owned,
+        projectId: null,
+        memberId,
+      });
+    expect(resolve(alice)).toEqual(pick("devReplay", "showcase"));
+    expect(resolve(bob)).toBeNull();
+  });
 });
