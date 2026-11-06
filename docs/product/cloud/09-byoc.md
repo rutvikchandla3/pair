@@ -258,8 +258,11 @@ before M3 cannot push from a sandbox, and may not be able to clone a private rep
 
 The `aws_secrets_manager` kind is worth having before the driver. It lets a team on any tier keep
 its GitHub App key, API keys and webhook secrets in Secrets Manager, through the same
-[SecretResolver](../../../apps/server/src/secrets/SecretResolver.ts) that resolves 1Password
-references today ([definition](../../../packages/secret-provider-onepassword/src/shared/definition.ts)).
+[SecretResolver](../../../packages/secret-provider-core/src/server/SecretResolver.ts) that resolves
+1Password references today ([definition](../../../packages/secret-provider-onepassword/src/shared/definition.ts)).
+The server wires its built-in drivers into it in
+[secretProviderDefinitions.ts](../../../apps/server/src/secrets/secretProviderDefinitions.ts), where
+the new kind is registered.
 GCP gets a `gcp_secret_manager` kind the same way.
 
 #### Least-privilege IAM for the driver
@@ -348,11 +351,14 @@ route it dials.
 | Sandbox to the internet | 443/tcp (and 22 for SSH git remotes, if used) | Through NAT and the optional firewall |
 | Into a sandbox | None | Security group has no inbound rules. Previews and SSH ride the runner socket (decision 4; doc 07) |
 
-- **The private-network listener lets this work as is.** A background service with no configured
-  host serves only connections whose two ends are loopback, private or tailnet IPv4
-  ([startupAccess.ts](../../../apps/server/src/startupAccess.ts)). An internal load balancer's
-  address is private, so it passes. Two consequences: an IPv6-only VPC is refused (the check is
-  IPv4 only), and the kit should set `T3CODE_HOST` explicitly rather than rely on the default.
+- **The service must be told to listen beyond loopback.** `t3 service install` writes
+  `T3CODE_LAN=false`, so a new service answers only on its own machine. With `T3CODE_LAN=true`
+  and no `T3CODE_HOST`, it serves only connections whose two ends are loopback, private or
+  tailnet IPv4 ([startupAccess.ts](../../../apps/server/src/startupAccess.ts),
+  [cli/config.ts](../../../apps/server/src/cli/config.ts)). An internal load balancer's address
+  is private, so it passes, but an IPv6-only VPC is refused (the check is IPv4 only). An explicit
+  `T3CODE_HOST` turns that filter off and leaves the security group as the gate; the kit sets one
+  rather than rely on either default.
 - **TLS with a private CA.** If the customer's load balancer uses an internal CA, the runner trusts
   it through `NODE_EXTRA_CA_CERTS`, which the driver writes from a kit variable into the sandbox's
   boot configuration. No certificate pinning in M5.
@@ -385,7 +391,8 @@ Terraform first, because one tool covers AWS and GCP and BYOC buyers already run
 ### Upgrades and version pinning
 
 - **Team server.** The kit pins an exact team server release in a variable, and upgrading means
-  changing it. `t3 update` fetches upstream T3 Code's releases, so the kit must not rely on it.
+  changing it. `t3 update` looks up upstream T3 Code's releases (`pingdotgg/t3code`), so the kit
+  must not rely on it.
   The new release should still install through the
   [launcher's trial and rollback](../../internals/server-updates.md), so a failed migration
   restores the SQLite snapshot (inferred: the release format must support this; decision 15).
@@ -489,7 +496,7 @@ billing.
 | 5 | Driver health check: EC2 API, KMS, the runner route; shown on Settings → Cloud → Compute | 3 |
 | 6 | Team image builds produce AMIs through the driver (`provision.sh` on stock Ubuntu, then `CreateImage`, tagged with the `imageBuildId`), including the automatic first build at driver setup | Doc 05's build pipeline (M3), 3 |
 | 7 | `infra/sandbox/aws` Terraform module with a README and an example | 3, 4, the team server release (decision 15) |
-| 8 | CI job that applies `infra/sandbox/aws` in a test account, runs one cloud thread on the Replay provider, sleeps, wakes and destroys it | 7 |
+| 8 | CI job that applies `infra/sandbox/aws` in a test account, starts a cloud thread, runs a terminal command and one turn on the cheapest model with a CI key (Replay exists only on dev servers), sleeps, wakes and destroys it | 7 |
 | 9 | `gce` compute driver and its settings | 3 (shared helpers) |
 | 10 | `infra/sandbox/gcp` Terraform module and its CI job | 9 |
 | 11 | Driver metrics in `Metrics.ts` | 3 |
@@ -529,7 +536,8 @@ billing.
 4. **What form does the team server release take (decision 15)?** Recommended: Pair CI publishes a
    versioned server tarball, in the `t3` CLI archive format that
    [pinnedRuntime.ts](../../../apps/server/src/cloud/pinnedRuntime.ts) installs, to the fork's
-   GitHub releases, with checksums. The kit downloads it by exact version.
+   GitHub releases, with checksums. The kit downloads it by exact version. That installer already
+   takes another release host through `T3CODE_RELEASE_BASE_URL`; its default is upstream's.
 5. **Should Pair offer the managed tier?** Recommended: not until offering A has paying or design
    partner users. It needs SSO, billing and a fleet, all non-goals today.
 

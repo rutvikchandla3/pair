@@ -9,6 +9,9 @@ is the market window. The signals that started this work are in [market signals]
 Research date: 2026-11-06. Statements marked (inferred) are our reading, not something Conductor
 documents. Sources are listed at the end.
 
+This page predates the plan. Where its Pair design sections differ, the
+[Pair Cloud plan](./cloud/README.md) wins.
+
 ## How Conductor Cloud works
 
 | Piece                    | What Conductor does                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -110,7 +113,7 @@ returns 202. The URL is the only credential, and there is a rotate-secret action
 Slackbots, custom UIs, internal tools and driving workspaces from OpenClaw as uses. Agents can also fan
 out to other agents through the workspace token.
 
-Pair's equivalents: the `/mcp` endpoint (about 35 tools, OAuth), the `t3 thread` CLI, member API
+Pair's equivalents: the `/mcp` endpoint (about 70 tools, OAuth), the `t3 thread` CLI, member API
 tokens, and scheduled tasks, which already support webhook triggers. See
 [Agents and automation](../user/outside-agents.md).
 
@@ -239,9 +242,11 @@ flowchart TB
 
 2. **`WorkspaceHost` (new, in `apps/server`).** A per-thread service for process spawn with stdio
    streams, PTY, file system and port access. `LocalWorkspaceHost` is today's behavior.
-   `SandboxWorkspaceHost` forwards to the runner. The code reality: about 51 non-test server files
-   spawn processes or PTYs. Most use Effect's injectable `ChildProcessSpawner`, so a remote spawner can
-   be provided per thread. About 23 files import `node:child_process` directly, including the Claude
+   `SandboxWorkspaceHost` forwards to the runner. The code reality
+   ([02's inventory](./cloud/02-workspace-host.md#1-inventory)): 109 non-test files across the
+   server and provider packages spawn processes or PTYs, 25 of them for a thread. Most use Effect's
+   injectable `ChildProcessSpawner`, so a remote spawner can be provided per thread. Only 10 import
+   `node:child_process` directly, two of them thread-scoped, including the Claude
    adapter's `spawnClaudeProcessGroup` in
    [ClaudeAdapterV2.ts](../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts), and must
    move behind the seam. Terminals ([NodePtyAdapter.ts](../../apps/server/src/terminal/NodePtyAdapter.ts)),

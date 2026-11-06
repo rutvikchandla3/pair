@@ -4,9 +4,8 @@ Status: proposal, 2026-11-06. Nothing here is built. It follows the shared decis
 [plan](./README.md) and the build research in
 [Conductor Cloud](../conductor-cloud.md#3-what-is-a-build).
 
-This page answers one question: how does a team define and build the machine its cloud threads boot
-from? It is for the engineers building M1 (the base image) and M3 (team builds), and for maintainers
-choosing the recipe format.
+How does a team define and build the machine its cloud threads boot from? For the engineers building
+M1 (the base image) and M3 (team builds), and for maintainers choosing the recipe format.
 
 Three layers decide what a sandbox holds, and each changes at a different speed.
 
@@ -48,20 +47,20 @@ needs arm64, and Codex already ships both Linux targets
 
 Left out on purpose: Chrome, Docker inside the sandbox, Go, Rust and Java. Teams add them in recipes.
 
-**Runner as root, agents as `t3` with passwordless sudo** (decided, as Conductor and Claude Code
-cloud give agents root). Agents run as `t3` because some provider CLIs refuse permission-bypass modes as root (inferred from
-Claude Code's behavior), and install scripts need `apt-get`. Once agents can sudo, separating users
-inside the sandbox is no boundary. The boundaries are the sandbox token's narrow scope and the
-sandbox's own isolation ([06](./06-credentials-and-security.md)).
+**Runner as root, agents as `t3` with passwordless sudo** (D3, as Conductor and Claude Code cloud
+give agents root). Agents run as `t3` because some provider CLIs refuse permission-bypass modes as
+root (inferred from Claude Code's behavior), and install scripts need `apt-get`. Once agents can sudo,
+users inside the sandbox are no boundary; the sandbox token's narrow scope and the sandbox's own
+isolation are ([06](./06-credentials-and-security.md)).
 
 **User npm prefix.** `/home/t3/.npm-global` leads `PATH`, so a newer provider CLI installs without `sudo`.
 
 ### Fitting how the server checks providers today
 
 Each provider's `binaryPath` defaults to a bare command (`claude`, `codex`, `opencode`, `grok`,
-`kiro-cli`; [settings.ts](../../../packages/contracts/src/settings.ts),
-[provider-opencode](../../../packages/provider-opencode/src/settings.ts)), so the image only needs
-those names on `PATH`. Status probes run `<binary> --version` on the server's own install
+`kiro-cli`; [settings.ts](../../../packages/contracts/src/settings.ts), and the `settings.ts` of
+[provider-opencode](../../../packages/provider-opencode/src/settings.ts), `provider-grok` and
+`provider-kiro`), so the image only needs those names on `PATH`. Status probes run `<binary> --version` on the server's own install
 ([ClaudeProvider.ts](../../../apps/server/src/provider/ClaudeProvider.ts)) and grade it against
 [model-manifest.json](../../../apps/server/src/provider/model-manifest.json) with
 [providerCompatibility.ts](../../../apps/server/src/provider/providerCompatibility.ts). A cloud
@@ -125,15 +124,14 @@ export const TeamImageRecipe = Schema.Struct({
   base: TeamImageBase,
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(50)), // repos, by Pair project
   buildEnv: Schema.Record(EnvVarName, Schema.String), // install script only, never runtime
-  buildSecrets: Schema.Record(EnvVarName, SettingsSecretValue), // references, never values
+  buildSecrets: Schema.Record(EnvVarName, SecretReference), // references only, never values
   install: Schema.String.check(Schema.isMaxLength(64_000)), // bash -euo pipefail, as t3, from $HOME
 });
 ```
 
-`SettingsSecretValue` already names a secret held by a secret provider
-([settingsSecretValue.ts](../../../packages/contracts/src/settingsSecretValue.ts),
-[resolver](../../../apps/server/src/secrets/settingsSecretValue.ts)), so the recipe adds no secret
-store. Repos are Pair projects with a remote, resolved through
+`SecretReference` names a secret held by a secret provider (`SettingsSecretValue` also takes a literal,
+which a recipe must not store; [settingsSecretValue.ts](../../../packages/contracts/src/settingsSecretValue.ts),
+[resolver](../../../apps/server/src/secrets/settingsSecretValue.ts)), so the recipe adds no secret store. Repos are Pair projects with a remote, resolved through
 [RepositoryIdentityResolver.ts](../../../apps/server/src/project/RepositoryIdentityResolver.ts), not
 free-form URLs. That keeps one list of repos and lets thread start map a project to its clone.
 
@@ -163,10 +161,9 @@ README decision 8.
 | `snapshot` (default) | Vercel Sandbox (M2's recommended vendor), Docker (M3), EC2 then GCE (M5), boat | The build effect asks the driver to create a build machine from the base. The runner connects, the server runs the program through the workspace host, then the driver captures the machine and destroys it. | Vercel: a snapshot id. Docker: an image committed with `docker commit` on the Docker host (local or `DOCKER_HOST`), tagged `t3-team-image:<n>`. EC2: an AMI from `CreateImage`. GCE: an image in a family per team. |
 | `buildImage` | E2B (the runner-up vendor), Kubernetes (later) | Pair generates a single-stage Dockerfile, `FROM <base>` plus one `RUN` of the program, and calls the driver's optional `buildImage`. | E2B: a template from `Template.fromDockerfile`. Kubernetes: a digest in the customer's registry, built in-cluster by BuildKit or Kaniko. |
 
-`snapshot` covers every driver on the M1 to M5 path with one code path, and it runs the M3 build
-locally on Docker exactly as it will run on Vercel and EC2. Builds always go through the driver,
-never as a `docker build` on the server, as [09](./09-byoc.md) requires. [04](./04-sandbox-lifecycle.md)
-owns the interface; this doc needs:
+`snapshot` covers every driver on the M1 to M5 path with one code path, and runs the M3 build on
+Docker exactly as on Vercel and EC2. Builds always go through the driver, never as a `docker build` on
+the server ([09](./09-byoc.md)). [04](./04-sandbox-lifecycle.md) owns the interface; this doc needs:
 
 ```ts
 interface ComputeDriver {
@@ -210,19 +207,23 @@ and feeds the result back as a command. The event store knows `project` and `thr
 add `team-image`, one stream per server. A build machine belongs to no thread, so it is not a sandbox
 record on a thread's stream (README decision 6); the build record holds the driver's handle itself.
 
-**The outbox needs one change.** Outbox rows have `thread_id TEXT NOT NULL`
+**The outbox needs a key.** Outbox rows have `thread_id TEXT NOT NULL`
 ([Foundation.ts](../../../apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts)),
 the worker claims effects per thread ([EffectOutbox.ts](../../../apps/server/src/orchestration-v2/EffectOutbox.ts)),
-and project commands write no effects. M3 item 3.1 adds an aggregate kind and id to outbox rows in an
-additive migration, and the worker claims per aggregate key. Existing rows are threads and behave
-exactly as today. No synthetic thread. This is the only upstream orchestration change builds need.
+and project commands write no effects (EventSink's `commitProjectCommand`). M3 item 3.1 adds an
+aggregate kind and id to outbox rows, and the worker claims per aggregate key. `thread_id` is NOT
+NULL, so the migration rebuilds the table, as `EffectCancellation.ts` did, copying existing rows as
+threads that behave exactly as today. No synthetic thread. The aggregate also needs what threads and
+projects have: its kind in the receipt and event store `"project" | "thread"` literals, an EventSink
+commit that writes effects, and a lock (thread commands take a `KeyedLock<ThreadId>`).
 
 **Effects need a bound.** Effects have no timeout today except `delegated-tasks.stop` (EffectWorker's
 `boundExecution`), and a running effect blocks its key. Build effects call the driver, and a capture
-can hang, so each `team-image.build.*` effect gets a bound in that switch. On timeout it falls
-through to the retry path; `maxAttempts` of 5 means five tries in all, then `build.fail`. Like a sandbox, no effect waits on a boot: driver calls return "accepted", the
-runner's hello arrives as a command, and the build timeout comes from the scheduler worker, not a
-delayed effect.
+can hang, so each `team-image.build.*` effect gets a bound there. On timeout it falls through to the
+retry path; `maxAttempts` of 5 means five tries in all, then the executor dispatches `build.fail`
+outside the bound, whose timeout interrupts it. Like a sandbox, no effect waits on a boot: driver
+calls return "accepted", the runner's hello arrives as a command, and the build timeout comes from
+the scheduler worker, not a delayed effect.
 
 ```ts
 type TeamImageCommand =
@@ -274,10 +275,10 @@ Rules the decider enforces:
   build machine, found by the driver's `list` and tag.
 - **Timeout.** 45 minutes by default, capped by the driver's session limit (E2B: one hour).
 
-**Logs are not events**, or a busy `apt-get` would flood the event log. As in
-[CommandOutputHub.ts](../../../apps/server/src/orchestration-v2/CommandOutputHub.ts), each build
-writes a redacted `team-image/builds/<n>.log` under the T3 home (5 MB, head and tail kept), streamed
-only to someone with the log open. Phase changes are events, so the page shows progress without it.
+**Logs are not events**, or a busy `apt-get` would flood the event log; command output already
+bypasses events in [CommandOutputHub.ts](../../../apps/server/src/orchestration-v2/CommandOutputHub.ts).
+Each build writes a redacted `team-image/builds/<n>.log` under the T3 home (5 MB, head and tail kept),
+streamed only to someone with the log open. Phase changes are events, so the page shows progress.
 
 ## 4. Versions, activation and rollback
 
@@ -316,10 +317,9 @@ export const TeamImageBuild = Schema.Struct({
   rebuild. A stale build still works: its sandboxes fetch the server's runner bundle at boot.
 
 **Garbage collection** runs daily and after each successful build. It keeps the active build, every
-build a non-destroyed sandbox references, and the newest 5 succeeded builds (a setting, 1 to 20). It
-deletes the rest through `deleteImage`. Failed and cancelled builds have no image; their logs go
-after 30 days. A build holds the team's code, so it is treated like a sandbox disk (README decision
-10): encrypted at rest where the backend allows, and deleted, not orphaned.
+build a non-destroyed sandbox references, and the newest 5 succeeded builds (a setting, 1 to 20), and
+deletes the rest through `deleteImage`. Failed and cancelled builds have no image; their logs go after
+30 days. A build holds the team's code, so it is treated like a sandbox disk (decision 10).
 
 | Driver | Cost of keeping a build | Watch out for |
 | ------ | ----------------------- | ------------- |
@@ -335,9 +335,10 @@ after 30 days. A build holds the team's code, so it is treated like a sandbox di
 
 Every sandbox's files live under `/t3-sandbox/<sandboxId>/`, the same path on the server and in the
 sandbox ([02](./02-workspace-host.md)). A build cannot know a future sandbox's id, so it clones into
-`/t3-sandbox/.image/repos/<host>/<owner>/<name>`. When a sandbox first boots, the runner renames
-`/t3-sandbox/.image` to `/t3-sandbox/<sandboxId>/image`, an instant rename on one filesystem; a plain
-clone holds no absolute paths (inferred; 02 and [03](./03-runner.md) own the layout).
+`/t3-sandbox/.image/repos/<host>/<owner>/<name>`. At first boot the runner moves `.image/repos` to
+`/t3-sandbox/<sandboxId>/repos`, where M1 clones too ([implementation](./implementation/README.md)).
+A plain clone holds no absolute paths. On a VM disk that is a rename; on Docker the root is a named
+volume, another filesystem, so the first boot copies the clones and stores. 3.8 measures it.
 
 At thread start the workspace host runs `git fetch origin` in that clone with the runtime credential
 helper ([06](./06-credentials-and-security.md)), then makes the thread's checkout a worktree of it.
@@ -381,17 +382,16 @@ Gitignored files are still missing there: those values belong in project cloud e
 | Package stores: `pnpm fetch`, `cargo fetch`, `go mod download`, `uv` caches | Migrations and seed data |
 | Team CLIs (`turbo`, `terraform`), newer provider CLIs | Dev servers (scripts with `previewUrl`) |
 
-Warm stores, not `node_modules`. The thread's checkout is a separate worktree, so a `node_modules`
-built in the image clone never reaches it; a warm pnpm store on the same disk makes the setup
-script's install a fast hard-link pass. The rule: if it depends on the branch, it goes in the setup
-script. If it is slow and the same for every thread, it goes in the build.
+Warm stores, not `node_modules`: the thread's checkout is a separate worktree, so a `node_modules` built
+in the image clone never reaches it, while a warm pnpm store on the same disk makes the setup script's
+install a hard-link pass. Branch-dependent work goes in the setup script; slow, shared work in the build.
 
 ## 6. Secrets and env in builds
 
 | | Build secrets | Runtime secrets |
 | --- | --- | --- |
 | Example | A token for a private npm registry or apt repo the install script reads | `DATABASE_URL`, or a registry token `pnpm install` needs at thread start |
-| Set in | Recipe → **Build secrets**, as `SettingsSecretValue` references | Team, project or member cloud env ([06](./06-credentials-and-security.md)) |
+| Set in | Recipe → **Build secrets**, as `SecretReference`s | Team, project or member cloud env ([06](./06-credentials-and-security.md)) |
 | Seen by | The install script, during one build | Processes in one sandbox, injected at start |
 
 How a build keeps secrets out of what it captures (README decision 10):
@@ -545,7 +545,7 @@ One row, one pull request. Server code goes in `apps/server/src/sandbox/image/` 
 
 | # | Pull request | Proof |
 | - | ------------ | ----- |
-| 3.1 | Outbox keyed by aggregate: additive migration (aggregate kind and id, existing rows are threads), per-key claiming, bounds for `team-image.build.*` effects. Lands before 3.3. | Existing thread effect tests pass unchanged; a test that a non-thread effect claims and runs. |
+| 3.1 | Outbox keyed by aggregate: a table rebuild adding aggregate kind and id (existing rows are threads), per-key claiming, a `team-image` receipt and stream kind, an effect-writing commit path and its lock, bounds for `team-image.build.*` effects. Lands before 3.3. | Existing thread effect tests pass unchanged; a test that a non-thread effect claims and runs. |
 | 3.2 | Contracts: recipe, build, manifest, RPC methods, guarded scopes. | Typecheck. |
 | 3.3 | `team-image` aggregate: decider, events, projection, revisions, one-build rule, timeout from the scheduler worker. | Decider tests per transition and refusal. |
 | 3.4 | `snapshot` build flow on Docker (`docker commit`): launch, runner attach, program, `imageEnv`, manifest, capture, cancel, restart recovery, log file and subscription. | Effect-worker drain tests; a real build transcript. |

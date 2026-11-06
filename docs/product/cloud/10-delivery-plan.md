@@ -46,19 +46,21 @@ thread is a bug in that row. New code goes in `apps/server/src/workspaceHost/` (
 | - | ----- | ----- | ----- | -------- |
 | 0.1 | `refactor(server): add WorkspaceHost, WorkspaceHosts and LocalWorkspaceHost` | [02](./02-workspace-host.md) §2, §6 PR 1 | — | Critical. Fixes the interfaces M1 builds on. |
 | 0.2 | `chore(lint): keep workspace access behind WorkspaceHost` (`t3code/workspace-host-boundary`, reasoned disables on every current violation) | 02 §6 "The lint rule" | 0.1 | Critical |
-| 0.3 | `refactor(server): route git and checkpoint capture through WorkspaceHost` (with the op-count test) | 02 §6 PR 3 | 0.2 | Yes, with 0.4–0.10 |
+| 0.3 | `refactor(server): route git and checkpoint capture through WorkspaceHost` (with the op-count test; includes VCS detection's disk checks and `GitManager`'s path canonicalization) | 02 §6 PR 3 | 0.2 | Yes, with 0.4–0.10 |
 | 0.4 | `refactor(server): route workspace files and known workspaces through WorkspaceHost` | 02 §6 PR 4 | 0.2 | Yes |
 | 0.5 | `refactor(server): route terminal PTYs and the process table through WorkspaceHost` | 02 §6 PR 5 | 0.2 | Yes |
-| 0.6 | `refactor(server): resolve Replay, Codex and Claude sessions through WorkspaceHost` | 02 §4, §6 PR 6 | 0.2 | Yes; Replay first |
+| 0.6 | `refactor(server): resolve ACP (Replay), Codex and Claude sessions through WorkspaceHost` (Replay (dev) is an ACP agent, so the ACP runtime's session spawn moves; its client files and terminals don't) | 02 §4, §6 PR 6 | 0.2 | Yes; Replay first |
 | 0.7 | `refactor(server): take provider base environment from the workspace host` | 02 §6 PR 7; [06](./06-credentials-and-security.md) §11 | 0.2 | Yes |
-| 0.8 | `refactor(server): route restore, rollback, PR discovery and cleanup disk checks through WorkspaceHost` | 02 §6 PR 7b; [07](./07-access-and-data.md) §10 #1 | 0.2 | Yes |
+| 0.8 | `refactor(server): route restore, rollback, PR discovery and cleanup disk checks through WorkspaceHost` (restore safety at admission too) | 02 §6 PR 7b; [07](./07-access-and-data.md) §10 #1 | 0.2 | Yes |
 | 0.9 | `refactor(server): read host facts from host.info in thread-scoped code` (the rest of about 110 `HostProcess` reads, and their lint disables) | 02 §2 "Rules the host must follow" | 0.3–0.8 | Last |
 | 0.10 | `refactor(server): run port discovery per workspace host` | 02 §6 PR 8 | 0.2 | Yes; may slip to M1 |
 | 0.11 | `refactor(contracts): split OrchestrationV2RunWorkspacePreparation from the launch strategy` (no new literal) | 08 §2, §9; README decision 7 | — | Yes; before 1.16 |
-| 0.12 | `feat(contracts): declare capabilities.sandboxes` (never sent) | 08 §9 | — | Yes |
-| 0.13 | `feat(client-runtime): add cloudAvailability, returning unavailable` | 08 §8, §9 | 0.12 | Yes |
 
-ACP, OpenCode, Pi, Antigravity, Muse and Cursor keep their lint disables after M0 (02 §6).
+0.12 and 0.13 are gone. Settings gate Cloud, since capabilities are fixed at startup (08 §2), and an
+unused `cloudAvailability` export would fail knip, so it lands with its first consumer in 1.37.
+
+OpenCode, Pi, Antigravity, Muse and Cursor keep their lint disables after M0, and so do the ACP
+runtime's client files and terminals (02 §6).
 
 ### M1 Cloud threads on Docker
 
@@ -71,47 +73,46 @@ Three tracks start once 0.1 merges: runner (R), lifecycle and driver (L), image 
 | 1.1 | `feat(contracts): add the runner protocol under @t3tools/contracts/runner` | [03](./03-runner.md) §4, §11 #1; 02 §5 op schemas | 0.1 | R, critical |
 | 1.2 | `feat(contracts): add the sandbox record, thread sandboxId and sandbox commands` | [04](./04-sandbox-lifecycle.md) §10 #1; 08 §9; README decision 7 | 0.1 | L |
 | 1.3 | `feat(server): project sandboxes and record sandbox usage intervals` | 04 §10 #2 | 1.2 | L |
-| 1.4 | `feat(server): add the ComputeDriver service, driver instances, fake driver and contract suite` (with `deleteImage`) | 04 §6, §10 #5; README decision 8 | 1.2 | L, with 1.3 |
-| 1.5 | `feat(server): decide sandbox commands and run driver effects by generation` | 04 §10 #3 | 1.3, 1.4 | L |
-| 1.5a | `feat(server): bound every sandbox effect in the effect worker` (60 s) | 04 §10 #4; README decision 6 | 1.5 | L |
+| 1.4 | `feat(server): add the ComputeDriver service, driver instances, fake driver and contract suite` (with `deleteImage`) | 04 §6, §10 #5; README decision 8 | 1.2, 1.36 | L, with 1.3 |
+| 1.5 | `feat(server): decide sandbox commands and run driver effects by generation` (each effect replay safe and bounded at 60 s in the effect worker; was 1.5a) | 04 §10 #3, #4; README decision 6 | 1.3, 1.4 | L |
 | 1.6 | `feat(server): add the runner with process, PTY, file and watch handlers` | 03 §11 #2 | 1.1 | R, critical |
-| 1.7 | `feat(server): accept runners on /runner/v1/connect with per-boot sandbox tokens` (`sandbox.runner.attached`, `sandbox.runner.lost`) | 03 §7, §11 #3; 06 §7 | 1.1, 1.5 | R |
+| 1.7 | `feat(server): accept runners on /runner/v1/connect with per-boot sandbox tokens` (`sandbox.runner.attached`, `sandbox.runner.lost`) | 03 §7, §11 #3; 06 §7 | 1.1, 1.5, 1.6 | R |
 | 1.8 | `feat(server): resume runner streams and bound them with flow control` | 03 §11 #4 | 1.6, 1.7 | R, critical |
-| 1.9 | `build(server): pack the runner bundle, serve it by runnerBuildId, add t3 runner prefetch` | 03 §11 #5 | 1.6 | R |
-| 1.10 | `feat(server): run search, process table, port listing and checkpoint capture in the runner` | 03 §11 #6; 02 §5; 07 §10 #7, #11 | 1.6 | R, with 1.8 |
-| 1.11 | `feat(server): add SandboxWorkspaceHost and sandbox root registration` (and the loopback test host) | 02 §6 PR 9; §2, §3, §7 | 1.8, 1.10 | Critical |
-| 1.12 | `feat(server): run Replay, Codex and Claude sessions on sandbox hosts` | 02 §6 PR 10; §4 | 1.11, 1.13 | Critical |
-| 1.13 | `feat(server): forward MCP, the Codex token broker and git credentials over the runner` | 03 §8, §11 #7; 06 §5, §7 | 1.8 | R |
+| 1.9 | `build(server): pack the runner bundle, serve it by runnerBuildId, add t3 runner prefetch` (history worker built unsplit; a dev bundle built from source carries the Replay agent) | 03 §11 #5 | 1.6, 1.7 | R |
+| 1.10 | `feat(server): run search, process table, port listing and checkpoint capture in the runner` (search refresh; baseline, capture and file summary as one call) | 03 §11 #6; 02 §5; 07 §10 #7, #11 | 1.6 | R, with 1.8 |
+| 1.11 | `feat(server): add SandboxWorkspaceHost and sandbox root registration` (and the loopback test host) | 02 §6 PR 9; §2, §3, §7 | M0, 1.8, 1.10 | Critical |
+| 1.12 | `feat(server): run ACP (Replay), Codex and Claude sessions on sandbox hosts` (history calls and `resolveSettings` through the worker; a Codex home per session) | 02 §6 PR 10; §4 | 1.9, 1.11, 1.13 | Critical |
+| 1.13 | `feat(server): forward MCP, the Codex token broker and git credentials over the runner` (MCP as a proxy that checks each bearer) | 03 §8, §11 #7; 06 §5, §7 | 1.8 | R |
 | 1.14 | `feat(server): add the Docker compute driver with isolation detection` (limits, network block, no socket) | 04 §7, §10 #6; 06 §8, §9 | 1.4 | L |
 | 1.15 | `feat(server): give Docker runners a Unix socket route and a DOCKER_HOST runner URL` | 03 §3.2, §11 #8 | 1.7, 1.14 | L |
-| 1.16 | `feat(server): launch cloud threads from the cloud launch input and release them on runner hello` (runs keep `worktree`; recovery re-arm) | 04 §1, §10 #7; 08 §2, §9 | 0.11, 1.5, 1.7, 1.11 | Critical |
-| 1.17 | `feat(server): share a cloud thread's sandbox with its side chats and forks` | 04 §10 #8; 07 §10 #5 | 1.16 | Yes |
-| 1.18 | `feat(server): queue cloud threads at the team cap and start rate` (defaults from server config; no member cap, D5) | 04 §4, §10 #9 | 1.16 | Yes |
+| 1.16 | `feat(server): launch cloud threads from the cloud launch input and release them on runner hello` (runs keep `worktree`; recovery re-arm; retry and delegation read `sandboxId`) | 04 §1, §10 #7; 08 §2, §9 | 0.11, 1.5, 1.7, 1.12, 1.14 | Critical |
+| 1.17 | `feat(server): share a cloud thread's sandbox with its side chats and forks` (only forks adopt; command ids name the owner) | 04 §10 #8; 07 §10 #5 | 1.16 | Yes |
+| 1.18 | `feat(server): queue cloud threads at the team cap and start rate` (a process-wide admission lock; defaults from server config; no member cap, D5) | 04 §4, §10 #9 | 1.17 (both edit `dispatchWithReceipt`) | Yes |
 | 1.19 | `feat(server): reconcile sandboxes, stop Docker sandboxes on settle or archive, destroy them with their threads` | 04 §5, §10 #10; 07 §10 #10, #11 | 1.5, 1.14 | Yes |
 | 1.20 | `build(sandbox-image): add the Ubuntu base image with pinned Claude and Codex` | [05](./05-team-images.md) §9 1.1 | — | I, from day one |
 | 1.21 | `ci: publish the base sandbox image to the GHCR of the repo running the workflow` (on release tags; decision 15, D6) | 05 §9 1.2 | 1.9, 1.20 | I |
 | 1.22 | `ci: fail a release whose pinned provider CLIs are unsupported` | 05 §9 1.3 | 1.20 | I |
 | 1.23 | `feat(server): pull the base image matching the exact server version, with a sandbox.baseImage override, shown as Pair base` | 05 §9 1.4; D6 | 1.14, 1.21 | I |
-| 1.24 | `feat(server): run cloud setup scripts with sandbox paths` | 05 §5, §9 1.5 | 1.11 | Yes |
-| 1.25 | `feat(server): build sandbox process environments from an allowlist and cloud env` (team, project, reserved names) | 06 §3, §6 | 1.11 | C |
-| 1.26 | `feat(server): give cloud threads their account's headless credential` (setup token, API key, managed Codex; "Local only") | 06 §3 | 1.13, 1.25 | C |
-| 1.27 | `feat(server): store the team's GitHub App private key under Source Control` (optional) | 06 §5 | — | C, from day one |
-| 1.28 | `feat(server): push from sandboxes with one-hour GitHub App tokens` (helper, `gh` shim, committer) | 06 §5 | 1.13, 1.20, 1.27 | C |
-| 1.28a | `feat(server,web): push cloud threads with the owner's own GitHub when no App key is set` (member token store and RPC, **Use a token instead** on the member's row in Settings → Team, the credential order in the git-credential path, "Connect GitHub to push") | 06 §5; 08 §4; D1 | 1.28 | C |
-| 1.29 | `feat(server): revoke sandbox credentials on destroy and audit git tokens` (with the fork warning) | 06 §2, §7 | 1.19, 1.28 | C |
-| 1.30 | `feat(server): keep a bare checkpoint mirror per project` | 07 §1, §10 #2 | M0 | D, from M0 |
-| 1.31 | `feat(server): pull checkpoint bundles into the mirror at capture` | 07 §1, §10 #3 | 1.10, 1.30 | D |
-| 1.32 | `feat(server): read cloud thread diffs from the mirror` | 07 §1, §10 #4 | 1.30 | D |
-| 1.33 | `feat(server): run cloud terminals and file reads over the runner` | 07 §4, §6, §10 #6, #7 | 1.11 | D |
+| 1.24 | `feat(server): run cloud setup scripts with sandbox paths` | 05 §5, §9 1.5 | 1.11, 1.16 | Yes |
+| 1.25 | `feat(server): build sandbox process environments from an allowlist and cloud env` (team, project, reserved names) | 06 §3, §6 | 1.3, 1.11, 1.36 | C |
+| 1.26 | `feat(server): give cloud threads their account's headless credential` (setup token, API key, managed Codex; "Local only") | 06 §3 | 1.12, 1.13, 1.25 | C |
+| 1.27 | `feat(server): store the team's GitHub App private key under Source Control` (optional; adds the App ID and key settings, which don't exist yet) | 06 §5 | — | C, from day one |
+| 1.28 | `feat(server): push from sandboxes with one-hour GitHub App tokens` (helper, `gh` shim, committer) | 06 §5 | 1.13, 1.20, 1.25, 1.27 | C |
+| 1.28a | `feat(server,web): push cloud threads with the owner's own GitHub when no App key is set` (member token store and RPC, **Use a token instead** on the member's row in Settings → Team, the credential order in the git-credential path, "Connect GitHub to push") | 06 §5; 08 §2, §4; D1 | 1.28 | C |
+| 1.29 | `feat(server): revoke sandbox credentials on stop and destroy and audit git tokens` (with the fork warning) | 06 §2, §7 | 1.19, 1.28 | C |
+| 1.30 | `feat(server): keep a bare checkpoint mirror per project` | 07 §1, §10 #2 | 0.1 | D, from M0 |
+| 1.31 | `feat(server): pull checkpoint bundles into the mirror at capture` | 07 §1, §10 #3 | 1.10, 1.11, 1.30 | D |
+| 1.32 | `feat(server): read cloud thread diffs from the mirror` | 07 §1, §10 #4 | 1.30 (lands before 1.31) | D |
+| 1.33 | `feat(server): read stopped cloud threads from the mirror and refuse their writes` (terminals show exited; live terminals and files ride 1.10 and 1.11) | 07 §1, §10 #6, #7, #11 | 1.11, 1.31, 1.32 | D |
 | 1.34 | `feat(server): stage attachments into the sandbox` | 07 §6, §10 #8; 02 §1 | 1.12 | D |
-| 1.35 | `feat(server): push and open GitHub PRs from cloud threads` | 07 §3, §10 #9 | 1.28, 1.31 | D |
-| 1.36 | `feat(contracts): add sandbox driver instances, sandboxCompute and project sandboxAllowed and defaultsToCloud` | 08 §2, §9 | 1.2 | S |
-| 1.37 | `feat(client-runtime): present machine status and gate cloud commands with permission atoms` | 08 §8, §9 | 1.2, 0.13 | S |
+| 1.35 | `feat(server): push and open GitHub PRs from cloud threads` | 07 §3, §10 #9 | 1.28, 1.28a, 1.31 | D |
+| 1.36 | `feat(contracts,server): add ServerSettings.sandbox driver instances and the project sandboxAllowed and defaultsToCloud overrides` | 08 §2, §9 | 1.2 | S; before 1.4 |
+| 1.37 | `feat(client-runtime): present machine status and gate cloud commands with permission atoms` (with `cloudAvailability`, was 0.13) | 08 §8, §9 | 1.2, 1.36 | S |
 | 1.38 | `feat(web): offer Cloud in the mode picker, drafts and sidebar` | 08 §4, §9; [01](./01-product.md) §3 | 1.16, 1.37 | S, critical |
-| 1.39 | `feat(web): show the machine in the header, banners, thread menu and palette` (`chat.newCloud`) | 08 §4, §9 | 1.37 | S |
-| 1.40 | `feat(web): add Settings → Cloud with the Docker driver, cloud env, and a Test button` (caps read-only) | 08 §4, §9; 01 §6, J1 | 1.14, 1.25, 1.36 | S |
-| 1.41 | `feat(mobile): start cloud threads, show machine status and add a read-only machines screen` | 08 §5, §9 | 1.37 | S |
-| 1.42 | `feat(server): launch cloud threads from MCP tools and t3 thread start --cloud` (evals) | 08 §6, §9 | 1.16 | S |
+| 1.39 | `feat(web): show the machine in the header, banners, thread menu and palette` (`chat.newCloud`) | 08 §4, §9 | 1.37, 1.38 | S |
+| 1.40 | `feat(server,web): add Settings → Cloud with the Docker driver, cloud env, and a Test button` (caps read-only) | 08 §4, §9; 01 §6, J1 | 1.14, 1.16, 1.18, 1.23, 1.25, 1.30, 1.36 | S |
+| 1.41 | `feat(mobile): start cloud threads, show machine status and add a read-only machines screen` (and D1's token row and push notice) | 08 §5, §9 | 1.28a, 1.37, 1.38, 1.40 | S |
+| 1.42 | `feat(server): launch cloud threads from MCP tools and t3 thread start --cloud` (evals) | 08 §6, §9 | 1.16, 1.37 | S |
 | 1.43 | `feat(server): notify the prompter and owner when a machine fails` | 01 §5; 08 §9 | 1.16 | S |
 | 1.44 | `perf(server): measure runner latency and check the startup budget` | 03 §9, §11 #9 | 1.8, 1.9 | Yes |
 | 1.45 | `docs: add the cloud threads guide` | 05 §9 1.6; §5 here | 1.38 | Last |
@@ -128,7 +129,7 @@ with their own GitHub (1.27, 1.28a; D1). Windows team servers are out of M1 (02 
 | 2.2 | `feat(server): wake sandboxes from threads, terminals, MCP, the CLI and restores` | 04 §2, §10 #12; 07 §10 #15 | 2.1 | Critical |
 | 2.3 | `feat(server): recycle sandboxes before a vendor's session limit` | 04 §3, §10 #13 | 2.1 | Yes |
 | 2.4 | `feat(server): honor retryAfterMs from compute drivers` | 04 §10 #16 | M1 | Yes |
-| 2.5 | `feat(server): add the Vercel Sandbox compute driver` (or E2B; with the hosted security review) | 04 §7, §10 #14; 06 §11 | vendor decision | Yes, from M1 |
+| 2.5 | `feat(server): add the Vercel Sandbox compute driver` (or E2B; with the hosted security review) | 04 §7, §10 #14; 06 §11 | 1.4, vendor decision; ships after 2.1 | Yes, from M1 |
 | 2.6 | `feat(server): pick hosted runner URLs and rotate sandbox tokens daily` | 03 §11 #11 | 1.7 | Yes |
 | 2.7 | `feat(server): snapshot the working tree into the mirror before sleep` | 07 §10 #12 | 2.1 | Yes |
 | 2.8 | `feat(server,web,mobile): read files and search while asleep, and show asleep terminals` (`stoppedBy`) | 07 §10 #13, #14; 08 §9 | 2.7 | Yes |
@@ -150,7 +151,7 @@ with their own GitHub (1.27, 1.28a; D1). Windows team servers are out of M1 (02 
 
 | # | Title | Owner | Needs | Parallel |
 | - | ----- | ----- | ----- | -------- |
-| 3.1 | `feat(server): key outbox effects by aggregate` (additive migration; thread rows unchanged; bounds for build effects) | 05 §3, §9 3.1; README decision 9 | M2 | Critical |
+| 3.1 | `feat(server): key outbox effects by aggregate` (outbox table rebuild with an aggregate kind and id, a `team-image` receipt and stream kind, a commit path that writes its effects, its lock; thread effects unchanged; bounds for build effects) | 05 §3, §9 3.1; README decision 9 | M2 | Critical |
 | 3.2 | `feat(contracts): add team image recipes, builds and RPC methods` | 05 §9 3.2; 08 §9 | M2 | Yes, with 3.1 |
 | 3.3 | `feat(server): add the team-image aggregate with one build at a time` | 05 §3, §9 3.3 | 3.1, 3.2 | Critical |
 | 3.4 | `feat(server): build team images on Docker by snapshot` (`docker commit`) | 05 §9 3.4; 04 §10 #17 | 3.3 | Critical |
@@ -197,7 +198,7 @@ with their own GitHub (1.27, 1.28a; D1). Windows team servers are out of M1 (02 
 | 5.7 | `feat(server): build team images as AMIs` (provision on stock Ubuntu, first build at setup) | 09 §9 #6; 05 §9 M5, open question 4 | 3.4, 5.4 | Critical |
 | 5.8 | `feat(server): trust private CAs and egress proxies in the runner` | 03 §11 #13 | 2.6 | Yes |
 | 5.9 | `feat(infra): add the AWS deployment kit` | 09 §6, §9 #7 | 5.1, 5.5, 5.7 | Critical |
-| 5.10 | `ci: apply the AWS kit and run a Replay cloud thread in a test account` | 09 §9 #8 | 5.9 | Critical |
+| 5.10 | `ci: apply the AWS kit and run a cloud thread in a test account` (a terminal command and one cheapest-model turn; Replay exists only on dev servers) | 09 §9 #8 | 5.9 | Critical |
 | 5.11 | `feat(server): add the gce compute driver` | 09 §9 #9; 04 §10 #18 | 5.4 | Yes |
 | 5.12 | `feat(infra): add the GCP deployment kit and its CI job` | 09 §9 #10 | 5.11 | Yes |
 | 5.13 | `feat(server): export compute driver metrics` | 09 §9 #11 | 5.4 | Yes |
@@ -227,12 +228,13 @@ flowchart LR
     L2["1.2 sandbox contracts"] --> L5["1.5 sandbox decisions"] --> L16
     L4["1.4 ComputeDriver"] --> L14["1.14 Docker driver"] --> L16
     I20["1.20 base image"] --> I21["1.21 publish image"]
-    C27["1.27 GitHub App key"] --> C28["1.28 git tokens"] --> C28a["1.28a owner's GitHub"] --> D35["1.35 push and PR"]
+    C27["1.27 GitHub App key"] --> C28["1.28 git tokens"] --> D35["1.35 push and PR"]
     D30["1.30 mirror"] --> D31["1.31 mirror sync"] --> D35
     O11["0.11 launch strategy split"] --> L16
     L16 ==> S38["1.38 web Cloud mode"] ==> P1(["M1 integrated pass"])
     I21 --> P1
     D35 --> P1
+    C28 --> C28a["1.28a owner's GitHub"] --> P1
   end
   subgraph M2["M2 Lifecycle"]
     W1["2.1 idle sleep"] ==> W2["2.2 wake"] ==> P2(["M2 pass"])
@@ -254,24 +256,25 @@ flowchart LR
   A1 --> R1 & L2 & L4
   A3 ==> H11
   P1 ==> W1
-  P1 --> V5
+  L4 --> V5
+  W1 --> V5
   P2 ==> B1
-  B3 --> E7["5.7 AMI builds"] --> E9
+  B3 ==> E7["5.7 AMI builds"] ==> E9
   B7 --> K7 & K2
   T10 --> K2
-  B7 ==> E4
+  L4 --> E4
 ```
 
 What can overlap:
 
-- **Inside M0,** 0.3–0.8 and 0.10 are independent once the lint rule lands. The contract rows
-  0.11–0.13 touch no workspace code and can land any time.
-- **M0 and M1.** M1's contracts (1.1, 1.2), the driver interface (1.4), the base image (1.20), the
+- **Inside M0,** 0.3–0.8 and 0.10 are independent once the lint rule lands. The contract row
+  0.11 touches no workspace code and can land any time.
+- **M0 and M1.** M1's contracts (1.1, 1.2 after 0.11, then 1.36), the driver interface (1.4), the base image (1.20), the
   GitHub App key (1.27) and the mirror store (1.30) need only 0.1's fixed interfaces. They can be
   built while M0's routing PRs land. Nothing that calls `WorkspaceHosts.register` merges before M0
   is done.
-- **Inside M1,** the runner track (1.1–1.13) and the driver track (1.2–1.5a, 1.14–1.19) meet only at
-  1.16. Client rows 1.36, 1.37, 1.39 and 1.41 can start once 1.2 lands. The image track
+- **Inside M1,** the runner track (1.1–1.13) and the driver track (1.2–1.5, 1.14–1.19) meet only at
+  1.16. Client row 1.37 can start once 1.2 and 1.36 land. The image track
   (1.20–1.23) meets at the integrated pass.
 - **M1 into M2.** The hosted driver (2.5) needs only the driver interface and contract suite (1.4),
   so it can start as soon as the maintainers pick a vendor. It must not ship before sleep (2.1).
@@ -285,7 +288,8 @@ Every milestone follows [AGENTS.md](../../../AGENTS.md#verifying) and
 no polling, no wall-clock deltas, `it.effect` on a `TestClock` and `it.live` only for subprocess or
 network fixtures. Server tests drain `OrchestrationEffectWorkerV2` or await a persisted event or a
 `Deferred`. Each PR runs `vp run check:changed` before it is pushed. Turns use the free Replay
-(dev) provider ([replayWorkspace.ts](../../../packages/provider-testing/src/replayWorkspace.ts)).
+(dev) provider, an ACP agent ([dev-replay-agent.ts](../../../apps/server/scripts/dev-replay-agent.ts))
+on the `acpRegistry` driver.
 A real provider is used only where the change depends on its behavior, on its cheapest model.
 
 The shared fixtures, built once and reused:
@@ -338,8 +342,8 @@ The shared fixtures, built once and reused:
   push to a test repo and open a PR, once with the App key and once with only a member's token. [test-t3-mobile](../../../.agents/skills/test-t3-mobile/SKILL.md)
   starts a cloud thread and reads its status. Then one real Claude turn on Haiku with a setup token
   and one managed Codex turn on its cheapest model, because the credential paths depend on those
-  CLIs. This needs the GitHub App, test org and a test member's fine-grained token, listed under
-  [open follow-ups](../decisions.md#open-follow-ups).
+  CLIs. This needs the GitHub App and test org, listed under
+  [open follow-ups](../decisions.md#open-follow-ups), plus a test member's fine-grained token.
 - **Evidence.** Before and after captures of the composer, the thread header and Settings → Cloud
   on web, desktop and mobile. A short video of a thread going from "Starting machine" to its first
   token, because it is timing. The benchmark table on 1.44. A short runtime transcript on
@@ -369,14 +373,14 @@ The shared fixtures, built once and reused:
   builds; image-tool permission tests, including a teammate's **Steer now** and a queued run (05
   §9). The `mcp-tool-use` [evals](../../../evals/README.md) run for the new toolkit, and
   `agentContextBudget.json` stays within budget.
-- **Performance.** Activate applies a rollback in under 10 s (01 §9).
+- **Performance.** Activate applies a rollback in under 10 s (01 J8 says "at once").
 - **Integrated pass.** test-t3-app builds, activates and rolls back on Docker; test-t3-mobile
   receives the build push.
 - **Evidence.** Captures of the Team image page, a real build transcript, and the eval output.
 
 ### M4
 
-- **Tests.** A removed member's SSH key is refused and tunnels close on sleep (07 §10 #23); moves
+- **Tests.** A removed member's SSH key is refused and tunnels close on sleep (07 §10 #24); moves
   carry branch, uncommitted files and checkpoint refs; cloud-only mode refuses each row of 06 §10.
 - **Integrated pass.** Open a machine in VS Code over SSH, continue a thread locally and back, and
   turn cloud-only mode on and off. JetBrains Gateway's use of `ProxyCommand` is checked here (07 §7).
@@ -386,11 +390,11 @@ The shared fixtures, built once and reused:
 ### M5
 
 - **Tests.** The `aws-ec2` and `gce` drivers pass the contract suite. The IAM policy passes the
-  policy simulator (09 §4). The kit's CI job applies Terraform in a test account and runs a Replay
-  cloud thread through sleep, wake and destroy (5.10).
+  policy simulator (09 §4). The kit's CI job applies Terraform in a test account and runs a cloud
+  thread (a terminal command, one cheapest-model turn) through sleep, wake and destroy (5.10).
 - **Performance.** A new team deploys the kit in under two hours (01 §9); 5.14 records WAN sync and
   rebuild times.
-- **Evidence.** The CI log of the apply, and a transcript of the Replay thread on EC2.
+- **Evidence.** The CI log of the apply, and a transcript of the cloud thread on EC2.
 
 ## 5. Rollout
 
@@ -398,10 +402,10 @@ The shared fixtures, built once and reused:
 
 Decision 7 is the switch. With no compute driver configured, nothing changes on the wire or in the
 UI, on solo or team servers. There is no separate feature flag: a second switch would be one more
-state to test, and the driver setting already gates every surface. Within cloud, three settings
+state to test, and the driver setting already gates every surface. Within cloud, two settings
 narrow it: the per-project allow-list (01 §6) and the opt-in model proxy (06 §4). Pushing needs no
 admin step: without the App key, each thread pushes with its owner's own GitHub (D1). New clients
-show Cloud only when `sandboxCompute` reports a driver. Older clients never offer it and see cloud
+show Cloud only when `ServerSettings.sandbox` lists a driver. Older clients never offer it and see cloud
 threads as worktree threads, because runs keep `worktree` and projects use the sibling
 `defaultsToCloud` (08 §2). M0 and the early M1 PRs merge to `main` with no driver able to be configured until 1.40 lands, so partial work is
 invisible.
@@ -413,7 +417,7 @@ invisible.
 | M1 alpha | The engineers building it | Docker on the dev machine, through `vp run dev` with seeded data | The M1 integrated pass |
 | M1 dogfood | Pair's team | Docker on a second Linux host through `DOCKER_HOST`, rootless or gVisor | 30% of new threads are cloud threads in two weeks, under 2% fail to start (01 §9) |
 | M2 dogfood | Pair's team | The hosted vendor, with a team cap and the default idle timeout | Idle awake share under 25% (01 §9); a month's bill read against the cost model |
-| M2 outside | Three outside teams | Their choice | Running cloud weekly (01 §9) |
+| M2 outside | Three outside teams | Their choice | Running cloud weekly |
 
 The team server for dogfooding must be always on. A desktop-hosted server stops cloud turns when
 its laptop closes (decision 1), and Settings says so.
@@ -466,7 +470,7 @@ needs watching, or "open" when it stays a property of the product.
 | Side chats and forks read each other's credentials through `/proc`. | M | M | 06 §2 | Warn on fork; per-thread users only if asked. | Open |
 | A stolen sandbox token yields future credentials of that boot. | L | H | 03 §6 | Per-boot tokens in tmpfs, one socket per sandbox, revocation on sleep and destroy. | Open |
 | Runner protocol handlers on the server become an attack surface. | M | H | 06 §1 | Server checks every frame against its own sandbox; fuzz the handlers. | M1 |
-| The mirror parses objects from an agent-controlled machine. | M | M | 07 §1; 06 §10 | Server pulls; `transfer.fsckObjects`; bare repo, never checked out, no diff or filter drivers. | M1 |
+| The mirror parses objects from an agent-controlled machine. | M | M | 07 §1; 06 §10 | Server pulls; `index-pack --strict` on import; bare repo, never checked out, no diff or filter drivers. | M1 |
 | Hosted sandboxes cannot reach a Tailscale-only server. | H | M | Decision 4; 03 §3.2 | Settings says so before offering a vendor; T3 Connect route; BYOC with a subnet router. | Open |
 | T3 Connect routes sandbox bytes through a third party. | M | M | 09 §1 | The BYOC kit keeps runners on the VPC route. | M5 |
 | Conductor refugees choose another product before M2. | H | M | 01 §1 | Ship M1 on Docker quickly; publish migration notes; stress BYOC and open source. | M2 |
@@ -490,8 +494,8 @@ Decided for M1, inferring from Conductor Cloud, then Claude Code and Codex cloud
 - **D2.** Claude setup tokens are allowed in sandboxes. Precedent: Conductor's `claude setup-token`.
 - **D3.** The runner runs as root, agents as `t3` with passwordless `sudo`. Precedent: Conductor
   machines give `sudo`; Claude Code setup scripts run as root.
-- **D4.** New threads default to New worktree; Cloud is an explicit pick, or a project's
-  `defaultsToCloud`. Precedent: Claude desktop's Local or Cloud selector.
+- **D4.** New threads stay local by default (a worktree on a team server, as today); Cloud is an
+  explicit pick, or a project's `defaultsToCloud`. Precedent: Claude desktop's Local or Cloud selector.
 - **D5.** No member cap by default; team cap `floor(vCPUs / 4)` on Docker and 20 hosted; 10 starts
   a minute. Precedent: none of the three publish a per-user cap.
 - **D6.** Pair publishes the base image to the GHCR of the repo running the workflow, with a
@@ -505,13 +509,13 @@ Still open, the earliest first:
 | 2 | The M2 hosted vendor | **Vercel Sandbox:** 8 vCPU and 16 GB self-serve, Active CPU pricing about $620 a month for the 04 §8 model, Firecracker, credential brokering, low company risk, no BYOC path. **E2B:** 8 GiB ceiling, idle billed as busy, about $740; its default pause keeps memory, which decision 10 forbids, so the driver must use the filesystem-only pause; build secrets undocumented (05 open question 5); E2B Embed makes a cheap single-node BYOC tier a configuration, not a driver (09 §3) | Vercel, unless early BYOC outweighs machine size (04 §8) | Start of M2 (2.5) |
 | 3 | Idle and retention defaults | Idle 20 min hosted and 60 on Docker; settled threads sleep at once; archived destroyed after 7 days, asleep after 30; approvals hold a machine 2 hours; other numbers | 04 §2's numbers, which 07 §9 applies | M2 (2.1, 2.12) |
 | 4 | Model proxy default | Opt-in; on by default after measurement; always on in cloud-only | Opt-in in M2, default on within 10% of direct, always on in cloud-only (06 open questions) | M2 (2.15) |
-| 5 | Should members see the cost estimate? | Hours only; hours and dollars | Hours only for members; admins see the estimate (01 open question 2) | M2 (2.17) |
+| 5 | Should members see the cost estimate? | Hours only; hours and dollars | Hours only for members; admins see the estimate (01 open question 1) | M2 (2.17) |
 | 6 | Mirror provider session files | Yes in M2; never | Yes, so replacements resume natively (04 open question 2) | M2 (2.19) |
 | 7 | Recipe format and scope | Pair recipe; Dev Container; Dockerfile; per team or per project; database or repo | A Pair recipe per team, in the database, with a later image base for Dockerfile teams (05 §2, open questions 1, 2) | M3 (3.2) |
-| 8 | Who hears that an agent build is ready | The run's admins; every admin | The admins who wrote the run (01 open question 3) | M3 (3.10) |
+| 8 | Who hears that an agent build is ready | The run's admins; every admin | The admins who wrote the run (01 open question 2) | M3 (3.10) |
 | 9 | Previews in cloud-only mode (R19) | The server browser loads agent-served pages through the proxy; previews off in cloud-only mode | 07's server-browser design ships in M2; decide at M4 whether cloud-only mode allows it | M4 (4.7) |
 | 10 | What else stays on a cloud-only server | A project checkout for PR views and provider logins; nothing | Keep the checkout as data no agent writes (07 §1) | M4 (4.7) |
-| 11 | A Viewer role on cloud-only servers | Build now; when asked | When a team asks (01 open question 4) | M4 |
+| 11 | A Viewer role on cloud-only servers | Build now; when asked | When a team asks (01 open question 3) | M4 |
 | 12 | SSH into machines | On by default; off by default | On, with one admin switch (07 §7) | M4 (4.2) |
 | 13 | Packaging | A free self-hosted; B managed control plane; C support and deployment help | Ship A, offer C informally to the first BYOC teams, defer B (01 §8; 09 open question 5) | M5 |
 | 14 | Team server release form | A tarball in the CLI archive format on the fork's GitHub releases; a container image | The tarball, by exact version, with checksums (09 open question 4) | M5 (5.1), decide in M3 |
@@ -545,5 +549,5 @@ From 01 §10, 02, 04, 05, 06, 07 and 09:
 
 ## 9. Conflicts found
 
-None. The final resolutions R1–R24 and the README settle every disagreement this page and 08
-found.
+None between the docs. The code checks in [implementation](./implementation/README.md) changed
+some PR rows here; that page lists each change and why.
