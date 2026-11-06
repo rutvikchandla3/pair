@@ -91,13 +91,24 @@ T3 Code throughout.
   or whom an admin invited by GitHub username (in the invite dialog or `t3 member invite --github`).
 - Without a GitHub App, nothing changes.
 
+### Bring your own subscription · [#33](https://github.com/rutvikchandla3/t3code/pull/33) [#34](https://github.com/rutvikchandla3/t3code/pull/34) [#35](https://github.com/rutvikchandla3/t3code/pull/35) [#36](https://github.com/rutvikchandla3/t3code/pull/36)
+
+- **Your own Claude or ChatGPT account.** Add it under **Your provider accounts** in **Settings →
+  Team**, or from the command palette, then sign it in, rename it or remove it. Only you can pick
+  it for a thread, and the server enforces that.
+- **The model picker** hides teammates' accounts. A thread already on one shows it disabled with
+  its owner's name, and anyone prompting that thread uses it.
+- **New threads you start** use your own account of the same provider, and never a teammate's.
+- **Usage per member.** Settings → Team shows each member's turns and tokens for the last 7 days.
+- **Leaving the team** signs a member's accounts out and turns them off. Admins can hand an
+  instance to a member with the **Owner** setting in **Settings → Providers**.
+
 ## Planned
 
-- **Bring your own subscription.** Members connect their own Claude or ChatGPT account. A new
-  thread uses its creator's account, and usage is shown per member. _(In progress.)_
 - **Mobile parity.** Names, avatars, the Team shelf, Follow, presence and per-member push
   notifications in the iOS and Android apps. _(In progress. Until per-member push lands, a team
-  server sends no T3 Connect push, so nobody is pinged about other people's work.)_
+  server sends no T3 Connect push, so nobody is pinged about other people's work. The mobile model
+  picker still lists teammates' accounts, and the server refuses them.)_
 
 ## Not planned
 
