@@ -811,8 +811,12 @@ export function EnvironmentProviderSettings({
       instance: next,
       textGenerationModelSelection,
     });
+    // An upsert keeps the stored owner unless told to hand the instance to the team.
+    const clearOwner =
+      settings.providerInstances[instanceId]?.ownerMemberId !== undefined &&
+      next.ownerMemberId === undefined;
     const result = await persistProviderInstance(
-      { operation: "upsert", instanceId, instance: next },
+      { operation: "upsert", instanceId, instance: next, ...(clearOwner ? { clearOwner } : {}) },
       patch,
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

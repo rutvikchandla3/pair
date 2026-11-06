@@ -6,7 +6,7 @@ import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
-import { VcsProcessTimeoutError } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessTimeoutError } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
@@ -14,6 +14,7 @@ import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { ActingSourceControlCredential } from "@t3tools/source-control-core/server/ActingSourceControlCredential";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
@@ -216,6 +217,50 @@ describe("GitHubRest", () => {
       expect(requests.map((request) => request.headers.authorization)).toEqual([
         "Bearer first",
         "Bearer second",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a member's credential to its own rate-limit scope and refusals", () => {
+    const reset = Math.floor(NOW / 1000) + 600;
+    const { layer, requests, invalidations } = harness((request) =>
+      request.headers.authorization !== "Bearer member-token"
+        ? json({ ok: true })
+        : request.url.endsWith("/user")
+          ? new Response(null, { status: 401 })
+          : json(
+              { message: "API rate limit exceeded" },
+              {
+                status: 403,
+                headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+              },
+            ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubRest.GitHubRest;
+      const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
+      const asMember = Effect.provideService(ActingSourceControlCredential, {
+        kind: SourceControlProviderKind.make("github"),
+        host: "github.com",
+        token: Redacted.make("member-token"),
+      });
+      const refused = yield* Effect.flip(
+        api.rest({ host: "github.com", operation: "user", path: "user" }),
+      ).pipe(asMember);
+      expect(refused._tag).toBe("GitHubApiAuthenticationError");
+      expect(invalidations()).toBe(0);
+      expect((yield* Effect.flip(api.rest(read)).pipe(asMember))._tag).toBe(
+        "GitHubApiRateLimitError",
+      );
+      expect((yield* Effect.flip(api.rest(read)).pipe(asMember))._tag).toBe(
+        "SourceControlRateLimitPausedError",
+      );
+      expect((yield* api.rest(read)).status).toBe(200);
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer member-token",
+        "Bearer member-token",
+        "Bearer first",
       ]);
     }).pipe(Effect.provide(layer));
   });

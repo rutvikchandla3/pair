@@ -580,6 +580,8 @@ export const layer: Layer.Layer<
             providerThread.id,
         );
         const authInstanceId = nativeThread?.providerInstanceId ?? run.providerInstanceId;
+        // An agent's or scheduled prompt has no author; it acts for the thread's holder.
+        const actorId = message?.authorId ?? projection.thread.ownerId ?? undefined;
         const authResult = isEmptyCompaction
           ? null
           : yield* Effect.result(
@@ -590,6 +592,7 @@ export const layer: Layer.Layer<
                   records: message.context?.records ?? [],
                 }),
                 hasAttachments: false,
+                ...(actorId === undefined ? {} : { actorId }),
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {

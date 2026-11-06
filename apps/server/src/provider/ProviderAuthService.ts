@@ -1,4 +1,5 @@
 import {
+  type MemberId,
   ProviderSetupError,
   type ChatGptReconnectProfile,
   type ChatGptTransferredProfile,
@@ -12,11 +13,14 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
@@ -54,12 +58,19 @@ export class ProviderAuthService extends Context.Service<
     readonly logout: (
       input: ProviderAuthTarget,
     ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    /** Signs out where the driver supports it, and always stops the instance's sessions. */
+    readonly revoke: (input: ProviderAuthTarget) => Effect.Effect<void, ProviderSetupError>;
     readonly subscribe: (
       input: ProviderAuthTarget,
       ownerSessionId: string,
     ) => Stream.Stream<ProviderAuthState, ProviderSetupError>;
+    /** `actorId` is who sent the prompt; on a team server it decides who may sign out. */
     readonly tryHandlePromptCommand: (
-      input: ProviderAuthTarget & { readonly text: string; readonly hasAttachments: boolean },
+      input: ProviderAuthTarget & {
+        readonly text: string;
+        readonly hasAttachments: boolean;
+        readonly actorId?: MemberId;
+      },
     ) => Effect.Effect<boolean, ProviderSetupError>;
   }
 >()("t3/provider/ProviderAuthService") {}
@@ -68,6 +79,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const teamState = yield* TeamState.TeamState;
   const credentialChanges = yield* Semaphore.make(1);
 
   const getController = Effect.fn("ProviderAuthService.getController")(function* (
@@ -194,6 +207,32 @@ export const makeProviderAuthService = Effect.gen(function* () {
     }
   });
 
+  // On a team, a member's account is theirs to sign out, and the team's logins are the admins'.
+  const ensureMaySignOut = Effect.fnUntraced(function* (
+    instanceId: ProviderInstanceId,
+    actorId: MemberId | undefined,
+  ) {
+    if (!(yield* teamState.isTeamMode)) return;
+    const failure = (detail: string) =>
+      new ProviderSetupError({ instanceId, operation: "logout", detail });
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => failure("Could not read this provider's owner. Try again.")),
+    );
+    const members = yield* Ref.get(teamState.members);
+    const instance = settings.providerInstances[instanceId];
+    const owner =
+      instance?.ownerMemberId === undefined ? undefined : members.get(instance.ownerMemberId);
+    if (owner !== undefined && owner.removedAt === null) {
+      if (owner.id === actorId) return;
+      return yield* failure(
+        `Only ${owner.name} can sign ${instance?.displayName ?? instanceId} out.`,
+      );
+    }
+    const actor = actorId === undefined ? undefined : members.get(actorId);
+    if (actor?.role === "admin" && actor.removedAt === null) return;
+    return yield* failure("Only an admin can sign out the team login.");
+  });
+
   return ProviderAuthService.of({
     reconnectProfile: Effect.fnUntraced(function* (input) {
       const auth = yield* getController(input.instanceId, "export");
@@ -266,6 +305,16 @@ export const makeProviderAuthService = Effect.gen(function* () {
         }),
       );
     }),
+    revoke: Effect.fn("ProviderAuthService.revoke")(function* (input) {
+      return yield* credentialChanges.withPermit(
+        Effect.gen(function* () {
+          const auth = (yield* registry.getInstance(input.instanceId))?.auth;
+          if (auth === undefined) return yield* stopSessions(input.instanceId, undefined);
+          yield* checkSharedBinding(input.instanceId, "logout", auth);
+          yield* auth.logout(stopSessions(input.instanceId, auth.credentialBinding));
+        }),
+      );
+    }),
     subscribe: Function.flow(
       Effect.fn("ProviderAuthService.subscribe")(function* (input, ownerSessionId) {
         const changes = yield* registry.subscribeChanges;
@@ -285,9 +334,13 @@ export const makeProviderAuthService = Effect.gen(function* () {
     tryHandlePromptCommand: Effect.fn("ProviderAuthService.tryHandlePromptCommand")(
       function* (input) {
         const instance = yield* registry.getInstance(input.instanceId);
-        if (!instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments)) {
-          return false;
-        }
+        // Guarded for every driver: a provider CLI may sign out on its own `/logout`.
+        const isLogoutPrompt =
+          instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments) ??
+          (!input.hasAttachments && input.text.trim() === "/logout");
+        if (!isLogoutPrompt) return false;
+        yield* ensureMaySignOut(input.instanceId, input.actorId);
+        if (!instance?.auth?.isLogoutPrompt) return false;
         return yield* credentialChanges.withPermit(
           Effect.gen(function* () {
             const auth = yield* getController(input.instanceId, "logout");

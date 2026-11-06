@@ -3,7 +3,7 @@ import {
   readHostCredentialSettings,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import { Linking, Pressable, View } from "react-native";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -46,14 +46,8 @@ export function SourceControlAppAccessNotice(props: {
     <View className="mb-4 gap-1 rounded-2xl bg-grouped-card px-4 py-3">
       <Text className="text-sm text-foreground-muted">
         {appSignIn.appName} isn't installed on {owner}, so requests here use your own GitHub login
-        and its lower rate limit.
+        and its lower rate limit. Ask an admin to install the team's GitHub App on {owner}.
       </Text>
-      <Pressable
-        accessibilityRole="link"
-        onPress={() => void Linking.openURL(appSignIn.installUrl).catch(() => undefined)}
-      >
-        <Text className="text-sm font-t3-bold text-foreground">Install on {owner}</Text>
-      </Pressable>
     </View>
   );
 }

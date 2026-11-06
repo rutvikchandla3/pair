@@ -77,6 +77,7 @@ import {
   getProviderSummary,
   getProviderVersionLabel,
 } from "./providerStatus";
+import { ProviderInstanceOwnerChip, ProviderInstanceOwnerRow } from "../team/ProviderInstanceOwner";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -1096,6 +1097,10 @@ export function ProviderInstanceCard({
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
+              <ProviderInstanceOwnerChip
+                environmentId={environmentId ?? null}
+                ownerMemberId={instance.ownerMemberId}
+              />
               {versionLabel ? (
                 <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                   {versionLabel}
@@ -1278,6 +1283,12 @@ export function ProviderInstanceCard({
               />
             </div>
           }
+        />
+        <ProviderInstanceOwnerRow
+          environmentId={environmentId ?? null}
+          instance={instance}
+          readOnly={readOnly}
+          onUpdate={onUpdate}
         />
       </SettingsSection>
 

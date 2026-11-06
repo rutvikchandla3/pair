@@ -4,6 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
+  MemberId,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -538,6 +539,74 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName ?? "",
         ),
       );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps an active member's account theirs through admin edits", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const bob = MemberId.make("member-bob");
+      const carol = MemberId.make("member-carol");
+      const instanceId = ProviderInstanceId.make("claude_bob");
+      const instance = { driver: ProviderDriverKind.make("claudeAgent"), displayName: "Bob's" };
+      const owner = Effect.map(
+        serverSettings.getSettings,
+        (settings) => settings.providerInstances[instanceId]?.ownerMemberId,
+      );
+      const active = { activeMemberIds: new Set([bob, carol]) };
+      // Giving a team instance an owner is an admin's call.
+      yield* serverSettings.updateProviderInstance({ operation: "create", instanceId, instance });
+      yield* serverSettings.updateProviderInstance(
+        { operation: "upsert", instanceId, instance: { ...instance, ownerMemberId: bob } },
+        undefined,
+        active,
+      );
+
+      // Clients that predate owners leave the field out, through either write path.
+      yield* serverSettings.updateProviderInstance(
+        { operation: "upsert", instanceId, instance: { ...instance, displayName: "Renamed" } },
+        undefined,
+        active,
+      );
+      yield* serverSettings.updateSettings(
+        { providerInstances: { [instanceId]: instance } },
+        active,
+      );
+      assert.equal(yield* owner, bob);
+
+      for (const mutation of [
+        { instance: { ...instance, ownerMemberId: carol } },
+        { instance, clearOwner: true },
+      ]) {
+        const refused = yield* serverSettings
+          .updateProviderInstance(
+            { operation: "upsert", instanceId, ...mutation },
+            undefined,
+            active,
+          )
+          .pipe(Effect.flip);
+        assert.equal(refused.operation, "change-provider-instance-owner");
+        assert.equal(
+          refused.message,
+          "Bob's belongs to a member of the team, so only they can give it up.",
+        );
+      }
+      assert.equal(yield* owner, bob);
+
+      // Once Bob has left, an admin may hand his account on or back to the team.
+      const retired = { activeMemberIds: new Set([carol]) };
+      yield* serverSettings.updateProviderInstance(
+        { operation: "upsert", instanceId, instance: { ...instance, ownerMemberId: carol } },
+        undefined,
+        retired,
+      );
+      assert.equal(yield* owner, carol);
+      yield* serverSettings.updateProviderInstance(
+        { operation: "upsert", instanceId, instance, clearOwner: true },
+        undefined,
+        { activeMemberIds: new Set() },
+      );
+      assert.isUndefined(yield* owner);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

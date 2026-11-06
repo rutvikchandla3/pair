@@ -1,7 +1,6 @@
 import {
   SourceControlProviderKind,
   SourceControlSignInError,
-  type SourceControlSignInFailure,
   type SourceControlSignInPrompt,
 } from "@t3tools/contracts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -18,55 +17,20 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as GitHubClient from "../shared/definition.ts";
+import * as GitHubDeviceFlow from "./GitHubDeviceFlow.ts";
 
-/**
- * The public client ID of the T3 Code for GitHub app, which the device flow needs (no secret).
- * Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
- */
-export const CLIENT_ID_VARIABLE = "T3CODE_GITHUB_APP_CLIENT_ID";
+export { CLIENT_ID_VARIABLE } from "./GitHubDeviceFlow.ts";
 
 const KIND = SourceControlProviderKind.make("github");
-const REQUEST_TIMEOUT = Duration.seconds(15);
 // Refresh ahead of expiry so a token never lapses between the check and a long request.
 const REFRESH_MARGIN_MS = Duration.toMillis(Duration.minutes(5));
 
-const GitHubAppSession = Schema.Struct({
-  accessToken: Schema.String,
-  /** Null when the app hands out tokens that do not expire. */
-  accessTokenExpiresAt: Schema.NullOr(Schema.Number),
-  refreshToken: Schema.NullOr(Schema.String),
-  refreshTokenExpiresAt: Schema.NullOr(Schema.Number),
-});
-type GitHubAppSession = typeof GitHubAppSession.Type;
-
-const GitHubAppSessionJson = Schema.fromJsonString(GitHubAppSession);
-const decodeSession = Schema.decodeUnknownOption(GitHubAppSessionJson);
-const encodeSession = Schema.encodeSync(GitHubAppSessionJson);
-
-// GitHub answers both token grants with HTTP 200 and puts refusals in `error`.
-const TokenResponse = Schema.Struct({
-  access_token: Schema.optional(Schema.String),
-  expires_in: Schema.optional(Schema.Number),
-  refresh_token: Schema.optional(Schema.String),
-  refresh_token_expires_in: Schema.optional(Schema.Number),
-  interval: Schema.optional(Schema.Number),
-  error: Schema.optional(Schema.String),
-  error_description: Schema.optional(Schema.String),
-});
-
-const DeviceCodeResponse = Schema.Struct({
-  device_code: Schema.optional(Schema.String),
-  user_code: Schema.optional(Schema.String),
-  verification_uri: Schema.optional(Schema.String),
-  expires_in: Schema.optional(Schema.Number),
-  interval: Schema.optional(Schema.Number),
-  error: Schema.optional(Schema.String),
-  error_description: Schema.optional(Schema.String),
-});
+type GitHubAppSession = GitHubDeviceFlow.GitHubAppSession;
+const { decodeSession, encodeSession, signInError } = GitHubDeviceFlow;
 
 export class GitHubAppSessionError extends Schema.TaggedError<GitHubAppSessionError>()(
   "GitHubAppSessionError",
@@ -100,15 +64,14 @@ interface PendingSignIn {
   readonly fiber: Fiber.Fiber<boolean>;
 }
 
-const signInError = (host: string, reason: SourceControlSignInFailure, detail: string) =>
-  new SourceControlSignInError({ provider: KIND, host, reason, detail });
-
 /** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
-  const clientId = (yield* HostProcess.Environment)[CLIENT_ID_VARIABLE]?.trim() ?? "";
+  const clientId =
+    (yield* HostProcess.Environment)[GitHubDeviceFlow.CLIENT_ID_VARIABLE]?.trim() ?? "";
   const enabled = clientId !== "";
+  const flow = GitHubDeviceFlow.make({ httpClient, clientId });
   const scope = yield* Effect.scope;
   const refreshLock = yield* Semaphore.make(1);
   const refused = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -158,77 +121,18 @@ export const make = Effect.gen(function* () {
     return true;
   });
 
-  const postForm = <S extends Schema.Top>(
-    host: string,
-    path: string,
-    body: Record<string, string>,
-    schema: S,
-  ) =>
-    httpClient
-      .execute(
-        HttpClientRequest.post(`https://${host}${path}`).pipe(
-          HttpClientRequest.setHeaders({ accept: "application/json", "user-agent": "t3code" }),
-          HttpClientRequest.bodyUrlParams(body),
-        ),
-      )
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-        Effect.timeout(REQUEST_TIMEOUT),
-      );
-
-  const sessionFrom = (
-    now: number,
-    response: typeof TokenResponse.Type & { readonly access_token: string },
-  ): GitHubAppSession => ({
-    accessToken: response.access_token,
-    accessTokenExpiresAt:
-      response.expires_in === undefined ? null : now + response.expires_in * 1_000,
-    refreshToken: response.refresh_token ?? null,
-    refreshTokenExpiresAt:
-      response.refresh_token_expires_in === undefined
-        ? null
-        : now + response.refresh_token_expires_in * 1_000,
-  });
-
   const refresh = Effect.fn("GitHubAppSignIn.refresh")(function* (
     host: string,
     session: GitHubAppSession,
   ) {
-    const now = yield* Clock.currentTimeMillis;
-    if (
-      session.refreshToken === null ||
-      (session.refreshTokenExpiresAt !== null && session.refreshTokenExpiresAt <= now)
-    ) {
+    const outcome = yield* flow
+      .refresh(host, session)
+      .pipe(Effect.mapError((error) => new GitHubAppSessionError({ host, cause: error.cause })));
+    if (outcome._tag === "revoked") {
       yield* replaceSession(host, session, null).pipe(Effect.ignore);
       return Option.none<string>();
     }
-    const response = yield* postForm(
-      host,
-      "/login/oauth/access_token",
-      {
-        client_id: clientId,
-        grant_type: "refresh_token",
-        refresh_token: session.refreshToken,
-      },
-      TokenResponse,
-    ).pipe(Effect.mapError((cause) => new GitHubAppSessionError({ host, cause })));
-    if (response.error === "bad_refresh_token") {
-      // Final: the user revoked the app or the session lapsed.
-      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", { host });
-      yield* replaceSession(host, session, null).pipe(Effect.ignore);
-      return Option.none<string>();
-    }
-    if (response.access_token === undefined) {
-      return yield* new GitHubAppSessionError({
-        host,
-        cause: new Error(`GitHub did not refresh the sign-in (${response.error ?? "no token"}).`),
-      });
-    }
-    const next = sessionFrom(now, {
-      ...response,
-      access_token: response.access_token,
-    });
+    const next = outcome.session;
     // GitHub has retired the old pair, so an unsaved new one is still the only usable token.
     const saved = yield* replaceSession(host, session, next).pipe(
       Effect.retry({ times: 2, schedule: Schedule.spaced(Duration.millis(250)) }),
@@ -301,67 +205,21 @@ export const make = Effect.gen(function* () {
 
   const poll = Effect.fn("GitHubAppSignIn.poll")(function* (
     host: string,
-    deviceCode: string,
-    expiresAt: number,
-    initialInterval: number,
+    code: GitHubDeviceFlow.DeviceCode,
   ) {
-    let interval = initialInterval;
-    while (true) {
-      yield* Effect.sleep(Duration.seconds(interval));
-      const now = yield* Clock.currentTimeMillis;
-      if (now >= expiresAt) {
-        return yield* signInError(host, "expired", "The sign-in code expired. Start again.");
-      }
-      const answer = yield* postForm(
-        host,
-        "/login/oauth/access_token",
-        {
-          client_id: clientId,
-          device_code: deviceCode,
-          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        },
-        TokenResponse,
-      ).pipe(Effect.option);
-      // A dropped poll is retried on the next tick; the code stays valid until it expires.
-      if (Option.isNone(answer)) continue;
-      const response = answer.value;
-      if (response.access_token !== undefined) {
-        const accessToken = response.access_token;
-        return yield* writeSession(
-          host,
-          sessionFrom(yield* Clock.currentTimeMillis, { ...response, access_token: accessToken }),
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new SourceControlSignInError({
-                provider: KIND,
-                host,
-                reason: "failed",
-                detail: "The server could not save the sign-in.",
-                cause,
-              }),
-          ),
-        );
-      }
-      switch (response.error) {
-        case "authorization_pending":
-          continue;
-        case "slow_down":
-          interval = response.interval ?? interval + 5;
-          continue;
-        case "expired_token":
-          return yield* signInError(host, "expired", "The sign-in code expired. Start again.");
-        case "access_denied":
-          return yield* signInError(host, "denied", "The sign-in was cancelled on GitHub.");
-        default:
-          return yield* signInError(
+    const session = yield* flow.pollForToken(host, code);
+    return yield* writeSession(host, session).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SourceControlSignInError({
+            provider: KIND,
             host,
-            "failed",
-            response.error_description ??
-              `GitHub refused the sign-in (${response.error ?? "no reason given"}).`,
-          );
-      }
-    }
+            reason: "failed",
+            detail: "The server could not save the sign-in.",
+            cause,
+          }),
+      ),
+    );
   });
 
   const start: GitHubAppSignIn["Service"]["start"] = Effect.fn("GitHubAppSignIn.start")(
@@ -381,39 +239,9 @@ export const make = Effect.gen(function* () {
           `${GitHubClient.APP_SIGN_IN.appName} only signs in to ${GitHubClient.APP_SIGN_IN.hosts.join(", ")}. Use a token or the GitHub CLI for ${host}.`,
         );
       }
-      const code = yield* postForm(
-        host,
-        "/login/device/code",
-        { client_id: clientId },
-        DeviceCodeResponse,
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new SourceControlSignInError({
-              provider: KIND,
-              host,
-              reason: "failed",
-              detail: "The server could not reach GitHub to start the sign-in.",
-              cause,
-            }),
-        ),
-      );
-      if (
-        code.device_code === undefined ||
-        code.user_code === undefined ||
-        code.verification_uri === undefined ||
-        code.expires_in === undefined
-      ) {
-        return yield* signInError(
-          host,
-          "failed",
-          code.error_description ??
-            `GitHub would not start the sign-in (${code.error ?? "no reason given"}).`,
-        );
-      }
-      const expiresAt = (yield* Clock.currentTimeMillis) + code.expires_in * 1_000;
+      const code = yield* flow.requestCode(host);
       const deferred = yield* Deferred.make<void, SourceControlSignInError>();
-      const fiber = yield* poll(host, code.device_code, expiresAt, code.interval ?? 5).pipe(
+      const fiber = yield* poll(host, code).pipe(
         Effect.tap(() => Ref.set(refused, new Set())),
         Deferred.into(deferred),
         Effect.forkIn(scope),
@@ -430,9 +258,9 @@ export const make = Effect.gen(function* () {
         yield* Fiber.interrupt(previous.fiber);
       }
       return {
-        userCode: code.user_code,
-        verificationUri: code.verification_uri,
-        expiresAt,
+        userCode: code.userCode,
+        verificationUri: code.verificationUri,
+        expiresAt: code.expiresAt,
       } satisfies SourceControlSignInPrompt;
     },
   );
