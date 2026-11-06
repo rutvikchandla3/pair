@@ -143,6 +143,8 @@ const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, st
     "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
   env: "The server's environment token can't see it. Give it access, or unset it.",
   gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+  member:
+    "Your GitHub connection can't see it. Ask an admin to install the team's GitHub App there.",
 };
 
 function withAvatar(
