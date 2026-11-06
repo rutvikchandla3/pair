@@ -20,6 +20,29 @@ threads stay and can be assigned to someone else. The same actions are available
 command line: see [Team members from the command line](./remote-access.md#team-members-from-the-command-line).
 For scripts, CI and outside agents, create an [API token](./outside-agents.md#api-tokens) instead.
 
+## Your own provider account
+
+Bring your own Claude or ChatGPT subscription so your threads run on it instead of the team's.
+Open **Settings → Team** and choose **Add account** under **Your provider accounts**, or run
+**Add your provider account** from the command palette.
+
+- **Claude:** paste an API key or a token from `claude setup-token`, or leave it empty and run the
+  command Pair shows in a terminal. It signs Claude in to that account's own folder on the server.
+- **ChatGPT:** sign in on OpenAI after adding the account. This needs Codex installed in Pair, so
+  if Pair asks you to, ask an admin to set up ChatGPT accounts in **Settings → Providers**.
+
+Only you can pick your account for a thread, and new threads you start use it when it matches the
+provider they would have used. Anyone who prompts a thread that runs on your account uses it, and
+teammates see your avatar on it in the model picker.
+
+Your sign-in is saved on this server. Anyone who can run commands here, including agents, can read
+it. Only you can pick this account for a thread, but anyone who prompts that thread uses it.
+
+**Remove** signs the account out and deletes its saved login; threads that used it need another
+provider. When an admin removes you from the team, your accounts are signed out and turned off the
+same way. An admin can also give an instance to a member with the **Owner** setting in
+**Settings → Providers**.
+
 ## Who did what
 
 Messages from other people show their name. Resolved requests say **Approved by**, **Declined

@@ -57,6 +57,7 @@ import {
   OwnGitHubConnection,
   TeamGitHubSetupNote,
 } from "./MemberGitHub";
+import { ProviderAccountsSection } from "./ProviderAccountsSection";
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
@@ -82,6 +83,7 @@ export function TeamSettings() {
       ) : (
         <TeamMembersSection environmentId={environmentId} />
       )}
+      {environmentId === null ? null : <ProviderAccountsSection environmentId={environmentId} />}
     </SettingsPageContainer>
   );
 }

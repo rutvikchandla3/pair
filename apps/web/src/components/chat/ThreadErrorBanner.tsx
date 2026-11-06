@@ -74,10 +74,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   errorCode,
+  notice,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   errorCode?: string | null;
+  /** One line under the error that says what to do about it. */
+  notice?: string | null;
   onDismiss?: () => void;
 }) {
   if (!error) return null;
@@ -107,6 +110,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           ) : (
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
           )}
+          {notice ? <p className="mt-1 font-medium">{notice}</p> : null}
         </AlertDescription>
         {(chatGptLimit || onDismiss) && (
           <AlertAction>
