@@ -1,7 +1,8 @@
 # Pair features
 
 What Pair adds to T3 Code so a team of 8–10 can share one server, and where each piece stands.
-Every slice's last pull request updates this page when it lands.
+Every slice's last pull request updates this page when it lands. The rules these features follow are
+in [Product decisions](./decisions.md).
 
 **Status:** **On main** means merged and usable. A server with one member behaves exactly like
 T3 Code throughout.
