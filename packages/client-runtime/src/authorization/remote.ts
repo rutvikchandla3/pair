@@ -1,5 +1,6 @@
 import {
   AuthAccessTokenType,
+  AuthGitHubSignInError,
   type AuthClientPresentationMetadata,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -13,6 +14,7 @@ import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -185,6 +187,54 @@ export const fetchRemoteSessionState = Effect.fn(
       headers:
         input.bearerToken === undefined ? {} : { authorization: `Bearer ${input.bearerToken}` },
     }),
+  );
+});
+
+const isAuthGitHubSignInError = Schema.is(AuthGitHubSignInError);
+
+/** Keeps GitHub sign-in's own refusal, whose `reason` the UI shows, out of the transport errors. */
+const executeGitHubSignInRequest = <A, E, R>(
+  requestUrl: string,
+  timeoutMs: number | undefined,
+  request: Effect.Effect<A, E, R>,
+) =>
+  executeEnvironmentHttpRequest(
+    requestUrl,
+    timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    request.pipe(
+      Effect.map((value): Result.Result<A, AuthGitHubSignInError> => Result.succeed(value)),
+      Effect.catchIf(isAuthGitHubSignInError, (error) => Effect.succeed(Result.fail(error))),
+    ),
+  ).pipe(Effect.flatMap(Effect.fromResult));
+
+/** Starts a GitHub device-flow sign-in; no session is needed. */
+export const startRemoteGitHubSignIn = Effect.fn(
+  "clientRuntime.authorization.startRemoteGitHubSignIn",
+)(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
+  const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  return yield* executeGitHubSignInRequest(
+    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/github/start"),
+    input.timeoutMs,
+    client.githubSignInStart(),
+  );
+});
+
+/**
+ * Pending until approved on GitHub, then a one-time sign-in code for the usual credential
+ * exchange; a refusal fails with `AuthGitHubSignInError` and its `reason`.
+ */
+export const pollRemoteGitHubSignIn = Effect.fn(
+  "clientRuntime.authorization.pollRemoteGitHubSignIn",
+)(function* (input: {
+  readonly httpBaseUrl: string;
+  readonly attemptId: string;
+  readonly timeoutMs?: number;
+}) {
+  const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  return yield* executeGitHubSignInRequest(
+    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/github/poll"),
+    input.timeoutMs,
+    client.githubSignInPoll({ payload: { attemptId: input.attemptId } }),
   );
 });
 

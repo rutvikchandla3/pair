@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -56,7 +57,11 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
+import { ActingSourceControlCredential } from "@t3tools/source-control-core/server/ActingSourceControlCredential";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -66,6 +71,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as MemberGitHub from "../team/MemberGitHub.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as GitManager from "./GitManager.ts";
 
@@ -94,6 +100,8 @@ interface FakeProviderScenario {
   failWith?: string;
   failCause?: unknown;
   failAfterCalls?: number;
+  /** Fails a create sent with a member's own credential, with this cause. */
+  failMemberCreateWith?: unknown;
   /** Check out the pull request head from its pull ref: fast-forward only unless forced. */
   syncCheckoutWithPullHead?: boolean;
   /**
@@ -116,6 +124,8 @@ type FakeProviderCall =
       readonly headSelector: string;
       readonly title: string;
       readonly body: string;
+      /** The member token the create carried, when it acted as a member. */
+      readonly acting?: string;
     }
   | { readonly operation: "getChangeRequest"; readonly reference: string }
   | {
@@ -473,12 +483,25 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           ),
         ),
       createChangeRequest: (input) =>
-        record(input.cwd, {
-          operation: "createChangeRequest",
-          baseRefName: input.baseRefName,
-          headSelector: input.headSelector,
-          title: input.title,
-          body: NodeFS.readFileSync(input.bodyFile, "utf8"),
+        Effect.gen(function* () {
+          const acting = yield* ActingSourceControlCredential;
+          yield* record(input.cwd, {
+            operation: "createChangeRequest",
+            baseRefName: input.baseRefName,
+            headSelector: input.headSelector,
+            title: input.title,
+            body: NodeFS.readFileSync(input.bodyFile, "utf8"),
+            ...(acting === null ? {} : { acting: Redacted.value(acting.token) }),
+          });
+          if (acting !== null && scenario.failMemberCreateWith !== undefined) {
+            return yield* new SourceControlProviderFailure({
+              provider: kind,
+              operation: "createChangeRequest",
+              cwd: input.cwd,
+              detail: "GitHub refused the member's credential.",
+              cause: scenario.failMemberCreateWith,
+            });
+          }
         }),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
@@ -607,6 +630,10 @@ function makeManager(input?: {
   gitCommands?: string[];
   /** Members of a server team; without them the manager runs as the CLI does, with no team. */
   team?: ReadonlyArray<Members.MemberRecord>;
+  /** Members' own GitHub connections; without it the server has none. */
+  memberGitHub?: Pick<MemberGitHub.MemberGitHub["Service"], "credentialFor" | "check">;
+  /** The remote the provider registry resolves for the checkout. */
+  providerContext?: SourceControlProviderContext;
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
@@ -699,7 +726,8 @@ function makeManager(input?: {
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
+          resolveHandle: () =>
+            Effect.succeed({ provider, context: input?.providerContext ?? null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
@@ -720,6 +748,9 @@ function makeManager(input?: {
     ),
     layerServerSettings,
     input?.team === undefined ? Layer.empty : TeamState.layerTest(input.team),
+    input?.memberGitHub === undefined
+      ? Layer.empty
+      : Layer.mock(MemberGitHub.MemberGitHub)({ enabled: true, ...input.memberGitHub }),
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
     Layer.provideMerge(layerVcsDriver),
@@ -3341,63 +3372,211 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   const owner = teamMember("Ada", { role: "admin", isOwner: true });
   const bob = teamMember("Bob", { gitEmail: "bob@example.com" });
   const cleo = teamMember("Cleo");
-  it.effect.each([
+  const bobFooter = `${generatedPrBody}\n\n---\nRequested by Bob via Pair`;
+  const remoteOn = (host: string): SourceControlProviderContext => ({
+    provider: {
+      kind: SourceControlProviderKind.make("github"),
+      name: "GitHub",
+      baseUrl: `https://${host}`,
+    },
+    remoteName: "origin",
+    remoteUrl: `git@${host}:acme/web.git`,
+  });
+  const bobRefused = (failMemberCreateWith: unknown, toast: string) => ({
+    team: [owner, bob, cleo],
+    actor: bob,
+    author: "Bob|bob@example.com",
+    connected: true,
+    host: "github.com",
+    failMemberCreateWith,
+    prs: [
+      ["member-token", generatedPrBody],
+      ["server", bobFooter],
+    ] as const,
+    toast,
+  });
+  it.effect.each<{
+    readonly name?: string;
+    readonly team: ReadonlyArray<Members.MemberRecord>;
+    readonly actor: Members.MemberRecord;
+    readonly author: string;
+    /** Whether the actor connected GitHub; undefined means the server has no member GitHub. */
+    readonly connected?: boolean;
+    readonly host?: string;
+    readonly failMemberCreateWith?: unknown;
+    readonly findsPrAfterFailure?: boolean;
+    readonly prs: ReadonlyArray<readonly [string, string]>;
+    readonly toast?: string;
+  }>([
     {
       name: "a team member with a git email authors the commit and is named on the PR",
       team: [owner, bob, cleo],
       actor: bob,
       author: "Bob|bob@example.com",
-      body: `${generatedPrBody}\n\n---\nRequested by Bob via Pair`,
+      prs: [["server", bobFooter]],
     },
     {
       name: "a team member without a git email leaves the server author but is named on the PR",
       team: [owner, bob, cleo],
       actor: cleo,
       author: "Test User|test@example.com",
-      body: `${generatedPrBody}\n\n---\nRequested by Cleo via Pair`,
+      prs: [["server", `${generatedPrBody}\n\n---\nRequested by Cleo via Pair`]],
     },
     {
       name: "a solo server with no git identity commits and opens the PR as before",
       team: [owner],
       actor: owner,
       author: "Test User|test@example.com",
-      body: generatedPrBody,
+      prs: [["server", generatedPrBody]],
     },
     {
       name: "a solo server with a git identity authors the commit without a PR footer",
       team: [{ ...owner, gitName: "Ada Lovelace", gitEmail: "ada@example.com" }],
       actor: owner,
       author: "Ada Lovelace|ada@example.com",
-      body: generatedPrBody,
+      prs: [["server", generatedPrBody]],
     },
-  ])("$name", ({ team, actor, author, body }) =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/acting-member"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
-      const { manager, providerCalls } = yield* makeManager({ team });
+    {
+      name: "a member who connected GitHub opens the PR as themselves, with no footer",
+      team: [owner, bob, cleo],
+      actor: bob,
+      author: "Bob|bob@example.com",
+      connected: true,
+      host: "github.com",
+      prs: [["member-token", generatedPrBody]],
+    },
+    {
+      name: "an expired member token falls back to the server with the footer",
+      ...bobRefused(
+        { _tag: "GitHubApiAuthenticationError" },
+        "Opened with the server's GitHub account. Your GitHub connection expired; reconnect it in Settings → Team.",
+      ),
+    },
+    {
+      name: "a member token that can't reach the repository falls back to the server",
+      ...bobRefused(
+        { _tag: "GitHubApiResponseError", status: 403 },
+        "Opened with the server's GitHub account: your GitHub connection can't reach this repository.",
+      ),
+    },
+    {
+      name: "any other member failure falls back to the server",
+      ...bobRefused(
+        { _tag: "GitHubApiResponseError", status: 500 },
+        "Opened with the server's GitHub account.",
+      ),
+    },
+    {
+      name: "a member create whose answer was lost is not retried",
+      ...bobRefused({ _tag: "GitHubApiRequestError" }, "Add stacked git workflow"),
+      findsPrAfterFailure: true,
+      prs: [["member-token", generatedPrBody]],
+    },
+    {
+      name: "a member who never connected opens the PR as the server did",
+      team: [owner, bob, cleo],
+      actor: bob,
+      author: "Bob|bob@example.com",
+      connected: false,
+      host: "github.com",
+      prs: [["server", bobFooter]],
+    },
+    {
+      name: "a connected member's PR on GitHub Enterprise opens as the server did",
+      team: [owner, bob, cleo],
+      actor: bob,
+      author: "Bob|bob@example.com",
+      connected: true,
+      host: "code.example.test",
+      prs: [["server", bobFooter]],
+    },
+    {
+      name: "a server without member GitHub opens a github.com PR as it did",
+      team: [owner, bob, cleo],
+      actor: bob,
+      author: "Bob|bob@example.com",
+      host: "github.com",
+      prs: [["server", bobFooter]],
+    },
+    {
+      name: "a solo owner who connected GitHub opens the PR as themselves",
+      team: [owner],
+      actor: owner,
+      author: "Test User|test@example.com",
+      connected: true,
+      host: "github.com",
+      prs: [["member-token", generatedPrBody]],
+    },
+  ])(
+    "$name",
+    ({
+      team,
+      actor,
+      author,
+      connected,
+      host,
+      failMemberCreateWith,
+      findsPrAfterFailure,
+      prs,
+      toast,
+    }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/acting-member"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        const checked = yield* Deferred.make<MemberId>();
+        const lostAnswer = {
+          number: 12,
+          title: "Add stacked git workflow",
+          url: "https://github.com/acme/web/pull/12",
+          baseRefName: "main",
+          headRefName: "feature/acting-member",
+        };
+        const { manager, providerCalls } = yield* makeManager({
+          team,
+          providerScenario: {
+            ...(failMemberCreateWith === undefined ? {} : { failMemberCreateWith }),
+            ...(findsPrAfterFailure ? { prListSequence: [[], [lostAnswer]] } : {}),
+          },
+          ...(host === undefined ? {} : { providerContext: remoteOn(host) }),
+          ...(connected === undefined
+            ? {}
+            : {
+                memberGitHub: {
+                  credentialFor: (memberId) =>
+                    Effect.succeed(
+                      connected && memberId === actor.id
+                        ? Option.some({ host: "github.com", token: Redacted.make("member-token") })
+                        : Option.none(),
+                    ),
+                  check: (memberId) => Deferred.succeed(checked, memberId).pipe(Effect.asVoid),
+                },
+              }),
+        });
 
-      const result = yield* runStackedAction(
-        manager,
-        { cwd: repoDir, action: "commit_push_pr" },
-        { actorId: actor.id },
-      );
+        const result = yield* runStackedAction(
+          manager,
+          { cwd: repoDir, action: "commit_push_pr" },
+          { actorId: actor.id },
+        );
 
-      expect(result.pr.status).toBe("created");
-      expect(
-        yield* runGit(repoDir, ["log", "-1", "--format=%an|%ae|%cn|%ce"]).pipe(
-          Effect.map((result) => result.stdout.trim()),
-        ),
-      ).toBe(`${author}|Test User|test@example.com`);
-      expect(
-        providerCalls.flatMap((call) =>
-          call.operation === "createChangeRequest" ? [call.body] : [],
-        ),
-      ).toEqual([body]);
-    }),
+        expect(result.pr.status).toBe("created");
+        expect(
+          yield* runGit(repoDir, ["log", "-1", "--format=%an|%ae|%cn|%ce"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+        ).toBe(`${author}|Test User|test@example.com`);
+        expect(
+          providerCalls.flatMap((call) =>
+            call.operation === "createChangeRequest" ? [[call.acting ?? "server", call.body]] : [],
+          ),
+        ).toEqual(prs);
+        if (toast !== undefined) expect(result.toast.description).toBe(toast);
+        if (prs.length > 1) expect(yield* Deferred.await(checked)).toBe(actor.id);
+      }),
   );
 
   it.effect("pushes existing commits without committing dirty worktree changes", () =>

@@ -32,7 +32,7 @@ const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
 );
 
 /**
- * Signing an environment in through a forge's own app, such as T3 Code for GitHub, on servers
+ * Signing an environment in through a forge's own app, such as the team's GitHub App, on servers
  * configured for it.
  */
 export function SourceControlSignInSection(props: {
@@ -175,7 +175,6 @@ function AppSignInRow(props: {
         appSignIn.appName,
         "Signed in. GitHub requests use the app's higher rate limit, in repositories where the app is installed.",
         [
-          { text: "Install on an organization", onPress: () => openUrl(appSignIn.installUrl) },
           { text: "Sign out", style: "destructive", onPress: signOut },
           { text: "Cancel", style: "cancel" },
         ],

@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -40,7 +41,7 @@ const layerGitName = (name: string) =>
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(SqlitePersistence.layerMemory),
-  Layer.provide(ServerSecretStore.layer),
+  Layer.provideMerge(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-team-members-test-" })),
 );
@@ -92,6 +93,7 @@ it.layer(layerTeam)("TeamMembers", (it) => {
         gitEmail: "alice@example.com",
       });
       expect(invited.member.color).toMatch(/^hsl\(/);
+      expect(invited.member).not.toHaveProperty("github");
       const link = (yield* auth.listPairingLinks()).find(
         (candidate) => candidate.id === invited.credential.id,
       );
@@ -102,6 +104,9 @@ it.layer(layerTeam)("TeamMembers", (it) => {
       const { session } = yield* signIn(invited.credential.credential);
       expect(session.memberId).toBe(invited.member.id);
       expect(session.scopes).toEqual(MEMBER_SCOPES);
+
+      const withGitHub = yield* team.invite({ name: "Abe", role: "member", githubLogin: "abe-gh" });
+      expect(withGitHub.member.github).toEqual({ login: "abe-gh", connected: false });
     }),
   );
 
@@ -166,15 +171,20 @@ it.layer(layerTeam)("TeamMembers", (it) => {
     }),
   );
 
-  it.effect("remove revokes sessions and unconsumed links", () =>
+  it.effect("remove revokes sessions and unconsumed links, and drops the GitHub token", () =>
     Effect.gen(function* () {
       const team = yield* TeamMembers.TeamMembers;
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
       const invited = yield* team.invite({ name: "Cleo", role: "member" });
       const { authenticate } = yield* signIn(invited.credential.credential);
       yield* team.signInLink({ memberId: invited.member.id });
+      const tokenName = TeamMembers.memberGitHubSecretName(invited.member.id);
+      yield* secrets.set(tokenName, new TextEncoder().encode("{}"));
 
       const removed = yield* team.remove({ memberId: invited.member.id });
+
+      expect(Option.isNone(yield* secrets.get(tokenName))).toBe(true);
 
       expect(removed.removedAt).not.toBeNull();
       expect((yield* Effect.flip(authenticate))._tag).toBe("ServerAuthInvalidCredentialError");
@@ -185,6 +195,48 @@ it.layer(layerTeam)("TeamMembers", (it) => {
         "removed",
       );
     }),
+  );
+
+  it.effect(
+    "an admin's GitHub username is a claim: a new one drops the binding, null clears it",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamMembers.TeamMembers;
+        const members = yield* Members.MemberRepository;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const { member } = yield* team.invite({ name: "Finn", role: "member" });
+        const tokenName = TeamMembers.memberGitHubSecretName(member.id);
+        const connect = Effect.gen(function* () {
+          yield* secrets.set(tokenName, new TextEncoder().encode("{}"));
+          return yield* team.setGitHub(member.id, {
+            githubUserId: 7,
+            githubLogin: "finn",
+            githubConnectedAt: "2026-10-01T00:00:00.000Z",
+          });
+        });
+        const stored = members
+          .getById(member.id)
+          .pipe(Effect.map((record) => Option.getOrThrow(record).githubUserId));
+
+        expect((yield* connect).github).toEqual({ login: "finn", connected: true });
+        // The same login, in any case, keeps the proven binding.
+        expect((yield* team.update({ memberId: member.id, githubLogin: "Finn" })).github).toEqual({
+          login: "finn",
+          connected: true,
+        });
+        expect(yield* stored).toBe(7);
+
+        const claimed = yield* team.update({ memberId: member.id, githubLogin: "finn-work" });
+        expect(claimed.github).toEqual({ login: "finn-work", connected: false });
+        expect(yield* stored).toBeNull();
+        expect(Option.isNone(yield* secrets.get(tokenName))).toBe(true);
+
+        yield* connect;
+        const cleared = yield* team.update({ memberId: member.id, githubLogin: null });
+        expect(cleared).not.toHaveProperty("github");
+        expect(yield* stored).toBeNull();
+        expect(Option.isNone(yield* secrets.get(tokenName))).toBe(true);
+      }),
   );
 
   it.effect("owner cannot be removed or demoted", () =>

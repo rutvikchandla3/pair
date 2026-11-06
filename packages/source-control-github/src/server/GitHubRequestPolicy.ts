@@ -1,3 +1,4 @@
+import { ActingSourceControlCredential } from "@t3tools/source-control-core/server/ActingSourceControlCredential";
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -299,6 +300,18 @@ export const make = Effect.gen(function* () {
         fromApp: false,
       } satisfies ChosenCredential;
     }
+    const acting = yield* ActingSourceControlCredential;
+    if (acting !== null && acting.kind === "github") {
+      if (normalizeHost(acting.host) !== host) {
+        return yield* new GitHubApiAuthenticationError({ host, operation: "credential" });
+      }
+      return {
+        token: acting.token,
+        fingerprint: yield* credentials.fingerprint(host, Redacted.value(acting.token)),
+        source: "member",
+        fromApp: false,
+      } satisfies ChosenCredential;
+    }
     const saved = yield* credentials.saved(host);
     if (Option.isSome(saved)) {
       return {
@@ -374,9 +387,12 @@ export const make = Effect.gen(function* () {
           });
         }
         case "Unauthorized":
-          // The source may hold a newer token than the one that was refused.
-          yield* appSignIn.invalidate(host, Redacted.value(held.token));
-          yield* credentials.invalidate(host);
+          // A member's own token says nothing about the server's credentials.
+          if (held.source !== "member") {
+            // The source may hold a newer token than the one that was refused.
+            yield* appSignIn.invalidate(host, Redacted.value(held.token));
+            yield* credentials.invalidate(host);
+          }
           return yield* new GitHubApiAuthenticationError(context);
         case "NotFound":
           return yield* new GitHubApiNotFoundError({

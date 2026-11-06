@@ -28,6 +28,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { GitHubUsernameField } from "./MemberGitHub";
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const TRUST_WARNING =
@@ -134,6 +135,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
   const [name, setName] = useState("");
   const [role, setRole] = useState<MemberRole>("member");
   const [gitEmail, setGitEmail] = useState("");
+  const [githubLogin, setGitHubLogin] = useState("");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{
     readonly name: string;
@@ -142,6 +144,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
   const invite = useAtomCommand(teamEnvironment.inviteMember, { label: "invite member" });
   const trimmedName = name.trim();
   const trimmedGitEmail = gitEmail.trim();
+  const trimmedGitHubLogin = githubLogin.trim().replace(/^@/, "");
   const canSubmit = trimmedName.length > 0 && isGitEmailPlausible(trimmedGitEmail);
 
   const handleOpenChange = (next: boolean) => {
@@ -150,6 +153,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
       setName("");
       setRole("member");
       setGitEmail("");
+      setGitHubLogin("");
       setCreated(null);
     }
   };
@@ -161,6 +165,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
       name: trimmedName,
       role,
       ...(trimmedGitEmail === "" ? {} : { gitEmail: trimmedGitEmail }),
+      ...(trimmedGitHubLogin === "" ? {} : { githubLogin: trimmedGitHubLogin }),
     } satisfies TeamInviteInput;
     const result = await invite({ environmentId, input });
     setBusy(false);
@@ -184,6 +189,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
       <DialogPopup className="max-w-lg">
         {created === null ? (
           <form
+            className="flex min-h-0 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               void submit();
@@ -228,6 +234,13 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
                   <p className="mt-1.5 text-xs text-muted-foreground">{ROLE_HINTS[role]}</p>
                 </div>
                 <GitEmailField value={gitEmail} onChange={setGitEmail} disabled={busy} />
+                <GitHubUsernameField
+                  environmentId={environmentId}
+                  value={githubLogin}
+                  onChange={setGitHubLogin}
+                  disabled={busy}
+                  hint="They can sign in with GitHub instead of using the link."
+                />
                 <Alert variant="warning">
                   <AlertDescription>{TRUST_WARNING}</AlertDescription>
                 </Alert>

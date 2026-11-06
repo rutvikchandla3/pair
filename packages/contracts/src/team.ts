@@ -16,6 +16,13 @@ import { IsoDateTime, MemberId, PositiveInt, TrimmedNonEmptyString } from "./bas
 export const MemberRole = Schema.Literals(["admin", "member"]);
 export type MemberRole = typeof MemberRole.Type;
 
+/** A GitHub account bound to a member; `connected` is false once its token stops working. */
+export const TeamMemberGitHub = Schema.Struct({
+  login: TrimmedNonEmptyString,
+  connected: Schema.Boolean,
+});
+export type TeamMemberGitHub = typeof TeamMemberGitHub.Type;
+
 export const TeamMember = Schema.Struct({
   id: MemberId,
   name: TrimmedNonEmptyString,
@@ -24,6 +31,8 @@ export const TeamMember = Schema.Struct({
   color: Schema.String,
   gitName: Schema.optionalKey(TrimmedNonEmptyString),
   gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Absent until the member connects GitHub or an admin sets their GitHub username. */
+  github: Schema.optionalKey(TeamMemberGitHub),
   isOwner: Schema.Boolean,
   createdAt: IsoDateTime,
   removedAt: Schema.NullOr(IsoDateTime),
@@ -42,6 +51,8 @@ export const TeamInviteInput = Schema.Struct({
   role: MemberRole,
   gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
   ttlMs: Schema.optionalKey(PositiveInt),
+  /** Lets them sign in with that GitHub account; it binds on their first sign-in. */
+  githubLogin: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type TeamInviteInput = typeof TeamInviteInput.Type;
 
@@ -56,9 +67,14 @@ export const TeamUpdateSelfInput = Schema.Struct({
 });
 export type TeamUpdateSelfInput = typeof TeamUpdateSelfInput.Type;
 
+/**
+ * `githubLogin` is admin-only: members bind GitHub to themselves only through the device flow. A
+ * changed login drops the old binding and token; `null` clears both.
+ */
 export const TeamUpdateInput = Schema.Struct({
   memberId: MemberId,
   ...TeamUpdateSelfInput.fields,
+  githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type TeamUpdateInput = typeof TeamUpdateInput.Type;
 

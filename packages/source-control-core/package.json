@@ -11,6 +11,10 @@
       "types": "./src/shared/threadPullRequests.ts",
       "import": "./src/shared/threadPullRequests.ts"
     },
+    "./server/ActingSourceControlCredential": {
+      "types": "./src/server/ActingSourceControlCredential.ts",
+      "import": "./src/server/ActingSourceControlCredential.ts"
+    },
     "./server/diffFileRevisions": {
       "types": "./src/server/diffFileRevisions.ts",
       "import": "./src/server/diffFileRevisions.ts"

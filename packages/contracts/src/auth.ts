@@ -180,6 +180,8 @@ export const ServerAuthDescriptor = Schema.Struct({
   sessionCookieName: TrimmedNonEmptyString,
   /** Older servers omit this and authorize self-updates with orchestration:operate. */
   serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
+  /** Present when the GitHub App is configured and an active member has a GitHub account. */
+  githubSignIn: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
@@ -195,6 +197,37 @@ export const AuthBrowserSessionResult = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
+
+/** A GitHub device-flow code to enter; the client polls every `interval` seconds. */
+export const AuthGitHubSignInStarted = Schema.Struct({
+  attemptId: TrimmedNonEmptyString,
+  userCode: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  expiresAt: Schema.Number,
+  interval: Schema.Number,
+});
+export type AuthGitHubSignInStarted = typeof AuthGitHubSignInStarted.Type;
+
+export const AuthGitHubSignInPollRequest = Schema.Struct({
+  attemptId: TrimmedNonEmptyString,
+});
+export type AuthGitHubSignInPollRequest = typeof AuthGitHubSignInPollRequest.Type;
+
+/** `credential` is a one-time sign-in code for `/api/auth/browser-session`, handed out once. */
+export const AuthGitHubSignInPollResult = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("pending") }),
+  Schema.Struct({ status: Schema.Literal("complete"), credential: TrimmedNonEmptyString }),
+]);
+export type AuthGitHubSignInPollResult = typeof AuthGitHubSignInPollResult.Type;
+
+export const AuthGitHubSignInFailure = Schema.Literals([
+  "unavailable",
+  "expired",
+  "denied",
+  "not-a-member",
+  "failed",
+]);
+export type AuthGitHubSignInFailure = typeof AuthGitHubSignInFailure.Type;
 
 export const AuthClientMetadataDeviceType = Schema.Literals([
   "desktop",

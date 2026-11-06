@@ -80,14 +80,24 @@ T3 Code throughout.
   thread owner can send, remove or reorder one, and only the author can edit its text.
 - **Revert warns** when it would discard a teammate's turns: "Discards 2 turns by Alice".
 
+### GitHub sign-in · [#29](https://github.com/rutvikchandla3/t3code/pull/29) [#30](https://github.com/rutvikchandla3/t3code/pull/30) [#31](https://github.com/rutvikchandla3/t3code/pull/31)
+
+- **Connect your GitHub** on your own row in **Settings → Team**, through your team's own GitHub
+  App and its device flow. The token stays on the server, and **Disconnect** or removing the member
+  deletes it. Admins see one **Set up GitHub** line until the app is configured.
+- **Pull requests open as you** when you're connected. If GitHub refuses, Pair opens it with the
+  server's account, adds `Requested by <name> via Pair`, and the toast says why.
+- **Sign in with GitHub** on the sign-in page replaces the sign-in link for members who connected,
+  or whom an admin invited by GitHub username (in the invite dialog or `t3 member invite --github`).
+- Without a GitHub App, nothing changes.
+
 ## Planned
 
 - **Bring your own subscription.** Members connect their own Claude or ChatGPT account. A new
   thread uses its creator's account, and usage is shown per member. _(In progress.)_
-- **GitHub sign-in.** Members connect GitHub with the device flow, so pull requests open as the
-  person. GitHub sign-in can replace sign-in links. _(In progress.)_
 - **Mobile parity.** Names, avatars, the Team shelf, Follow, presence and per-member push
-  notifications in the iOS and Android apps.
+  notifications in the iOS and Android apps. _(In progress. Until per-member push lands, a team
+  server sends no T3 Connect push, so nobody is pinged about other people's work.)_
 
 ## Not planned
 
