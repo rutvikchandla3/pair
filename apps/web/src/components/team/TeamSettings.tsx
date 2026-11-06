@@ -50,6 +50,13 @@ import {
   MemberLinkDialog,
 } from "./InviteMemberDialog";
 import { MemberAvatar } from "./MemberAvatar";
+import {
+  confirmGitHubLoginChange,
+  GitHubUsernameField,
+  githubLoginChange,
+  OwnGitHubConnection,
+  TeamGitHubSetupNote,
+} from "./MemberGitHub";
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
@@ -100,6 +107,7 @@ function TeamMembersSection({ environmentId }: { readonly environmentId: Environ
         ) : null
       }
     >
+      {canInvite ? <TeamGitHubSetupNote environmentId={environmentId} /> : null}
       {canInvite ? (
         <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
           Members can run commands as this server&apos;s user. Invite only people you&apos;d give
@@ -236,6 +244,7 @@ function MemberRow({
                     status === undefined ? null : STATUS_LABELS[status],
                     ROLE_LABELS[member.role],
                     member.gitEmail,
+                    !isSelf && member.github ? `@${member.github.login}` : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
@@ -307,6 +316,9 @@ function MemberRow({
           ) : null}
         </div>
       </div>
+      {isSelf && !isRemoved ? (
+        <OwnGitHubConnection environmentId={environmentId} member={member} />
+      ) : null}
       {editing ? (
         <EditMemberDialog
           environmentId={environmentId}
@@ -384,6 +396,7 @@ function EditMemberDialog({
   const [name, setName] = useState(member.name);
   const [gitName, setGitName] = useState(member.gitName ?? "");
   const [gitEmail, setGitEmail] = useState(member.gitEmail ?? "");
+  const [githubLogin, setGitHubLogin] = useState(member.github?.login ?? "");
   const [busy, setBusy] = useState(false);
 
   const trimmedGitName = gitName.trim();
@@ -398,14 +411,20 @@ function EditMemberDialog({
       ? { gitEmail: trimmedGitEmail === "" ? null : trimmedGitEmail }
       : {}),
   } satisfies TeamUpdateSelfInput;
-  const canSave = Object.keys(changes).length > 0 && isGitEmailPlausible(trimmedGitEmail);
+  const githubChange = isSelf ? {} : githubLoginChange(member, githubLogin);
+  const canSave =
+    Object.keys({ ...changes, ...githubChange }).length > 0 && isGitEmailPlausible(trimmedGitEmail);
 
   const submit = async () => {
     if (busy || !canSave) return;
+    if (!(await confirmGitHubLoginChange(member, githubChange))) return;
     setBusy(true);
     const result = isSelf
       ? await updateSelf({ environmentId, input: changes })
-      : await updateMember({ environmentId, input: { memberId: member.id, ...changes } });
+      : await updateMember({
+          environmentId,
+          input: { memberId: member.id, ...changes, ...githubChange },
+        });
     setBusy(false);
     if (result._tag === "Success") onClose();
     else toastCommandFailure("Could not save the changes", result);
@@ -449,6 +468,14 @@ function EditMemberDialog({
                 />
               </label>
               <GitEmailField value={gitEmail} onChange={setGitEmail} disabled={busy} />
+              {isSelf ? null : (
+                <GitHubUsernameField
+                  environmentId={environmentId}
+                  value={githubLogin}
+                  onChange={setGitHubLogin}
+                  disabled={busy}
+                />
+              )}
             </div>
           </DialogPanel>
           <DialogFooter variant="bare">

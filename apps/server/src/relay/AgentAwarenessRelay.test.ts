@@ -318,6 +318,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
         update: unused,
         updateSelf: unused,
         setRole: unused,
+        setGitHub: unused,
         remove: unused,
         streamChanges: options.memberChanges ?? Stream.empty,
       }),

@@ -130,5 +130,21 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:update-self",
       tag: WS_METHODS.teamUpdateSelf,
     }),
+    startGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-start",
+      tag: WS_METHODS.teamGitHubLinkStart,
+    }),
+    waitForGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-wait",
+      tag: WS_METHODS.teamGitHubLinkWait,
+    }),
+    cancelGitHubLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-link-cancel",
+      tag: WS_METHODS.teamGitHubLinkCancel,
+    }),
+    disconnectGitHub: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-disconnect",
+      tag: WS_METHODS.teamGitHubDisconnect,
+    }),
   };
 }

@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "../auth/PairingGrantStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as Members from "../persistence/Members.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -51,8 +52,13 @@ export class TeamMembers extends Context.Service<
     ) => Effect.Effect<TeamMember, TeamError>;
     /** Narrows or widens the member's live sessions; their sockets reconnect with the new scopes. */
     readonly setRole: (input: TeamSetRoleInput) => Effect.Effect<TeamMember, TeamError>;
-    /** Revokes every session and unconsumed link the member has. */
+    /** Revokes every session and unconsumed link the member has, and drops their GitHub token. */
     readonly remove: (input: TeamRemoveInput) => Effect.Effect<TeamMember, TeamError>;
+    /** Writes the member's GitHub binding and streams it; MemberGitHub keeps the token. */
+    readonly setGitHub: (
+      memberId: MemberId,
+      github: Omit<Members.SetMemberGitHubInput, "id" | "updatedAt">,
+    ) => Effect.Effect<TeamMember, TeamError>;
     /** A snapshot, then each changed member. A removal is an upsert with `removedAt` set. */
     readonly streamChanges: Stream.Stream<TeamStreamEvent>;
   }
@@ -70,6 +76,9 @@ const memberColor = (id: MemberId): string => {
   return `hsl(${hash % 360}, 60%, 50%)`;
 };
 
+/** Where a member's GitHub token lives, so it never reaches SQLite or the team stream. */
+export const memberGitHubSecretName = (memberId: MemberId) => `github-member-${memberId}`;
+
 const toTeamMember = (record: Members.MemberRecord): TeamMember => ({
   id: record.id,
   name: record.name,
@@ -77,6 +86,9 @@ const toTeamMember = (record: Members.MemberRecord): TeamMember => ({
   color: memberColor(record.id),
   ...(record.gitName === null ? {} : { gitName: record.gitName }),
   ...(record.gitEmail === null ? {} : { gitEmail: record.gitEmail }),
+  ...(record.githubLogin == null
+    ? {}
+    : { github: { login: record.githubLogin, connected: record.githubConnectedAt != null } }),
   isOwner: record.isOwner,
   createdAt: record.createdAt,
   removedAt: record.removedAt,
@@ -106,6 +118,7 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const random = yield* SecureRandom.SecureRandom;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
   const changes = yield* PubSub.unbounded<TeamMember>();
 
@@ -223,12 +236,50 @@ const make = Effect.gen(function* () {
     return yield* publish(updated.value);
   });
 
+  const forgetGitHubToken = (memberId: MemberId) =>
+    secrets
+      .remove(memberGitHubSecretName(memberId))
+      .pipe(Effect.catch(internalError("Could not delete the member's GitHub connection.")));
+
+  const writeGitHub = Effect.fnUntraced(function* (
+    memberId: MemberId,
+    github: Omit<Members.SetMemberGitHubInput, "id" | "updatedAt">,
+  ) {
+    const updated = yield* repository
+      .setGitHub({ id: memberId, ...github, updatedAt: yield* now })
+      .pipe(Effect.catch(internalError("Could not save the member's GitHub account.")));
+    if (Option.isNone(updated)) {
+      return yield* new TeamError({ reason: "removed", message: "That member was removed." });
+    }
+    return updated.value;
+  });
+
   const update: TeamMembers["Service"]["update"] = Effect.fn("TeamMembers.update")(function* ({
     memberId,
+    githubLogin,
     ...input
   }) {
+    if (githubLogin !== undefined) {
+      const record = yield* requireActive(memberId);
+      // Same login: keep the proven binding. A new one is only a claim until its owner signs in.
+      if (githubLogin === null || githubLogin.toLowerCase() !== record.githubLogin?.toLowerCase()) {
+        yield* forgetGitHubToken(memberId);
+        yield* writeGitHub(memberId, {
+          githubUserId: null,
+          githubLogin,
+          githubConnectedAt: null,
+        });
+      }
+    }
     return yield* updateMember(memberId, input);
   });
+
+  const setGitHub: TeamMembers["Service"]["setGitHub"] = Effect.fn("TeamMembers.setGitHub")(
+    function* (memberId, github) {
+      yield* requireActive(memberId);
+      return yield* publish(yield* writeGitHub(memberId, github));
+    },
+  );
 
   const updateSelf: TeamMembers["Service"]["updateSelf"] = Effect.fn("TeamMembers.updateSelf")(
     function* (memberId, input) {
@@ -281,6 +332,7 @@ const make = Effect.gen(function* () {
       yield* pairingLinks
         .revokeUnconsumedForMember(record.id)
         .pipe(Effect.catch(internalError("Could not revoke the member's links.")));
+      yield* forgetGitHubToken(record.id);
       return member;
     },
   );
@@ -354,6 +406,7 @@ const make = Effect.gen(function* () {
     updateSelf,
     setRole,
     remove,
+    setGitHub,
     streamChanges,
   });
 });
