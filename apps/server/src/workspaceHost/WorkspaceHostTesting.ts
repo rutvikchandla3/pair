@@ -1,8 +1,10 @@
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as WorkspaceHosts from "./WorkspaceHosts.ts";
@@ -51,3 +53,60 @@ export const layerFromContext: Layer.Layer<WorkspaceHosts.WorkspaceHosts> = Laye
     );
   }),
 );
+
+/** Operations the recording host saw, in call order. */
+export interface RecordedOps {
+  /** `"git rev-parse"`: the executable's name and its first argument that is not an option. */
+  readonly spawns: Array<string>;
+  /** FileSystem method names: `"exists"`, `"stat"`, `"copyFile"`, ... */
+  readonly files: Array<string>;
+}
+
+const optionsWithValue = new Set(["-C", "-c", "--git-dir", "--work-tree"]);
+
+// Skips git's global options so `git -C <cwd> -c k=v status` records as `git status`.
+const commandSummary = (command: ChildProcess.Command): string => {
+  if (command._tag === "PipedCommand") return commandSummary(command.left);
+  const args = command.args.map(String);
+  let index = 0;
+  while (index < args.length && args[index]!.startsWith("-")) {
+    index += optionsWithValue.has(args[index]!) ? 2 : 1;
+  }
+  const name = command.command
+    .split(/[\\/]/)
+    .at(-1)!
+    .replace(/\.(?:exe|cmd)$/i, "");
+  return args[index] === undefined ? name : `${name} ${args[index]}`;
+};
+
+/**
+ * Wraps the context's spawner and FileSystem and builds WorkspaceHosts from the wrapped pair.
+ * It also provides the wrapped pair itself, so code that reads them directly records the same ops.
+ */
+export const makeRecording = () => {
+  const ops: RecordedOps = { spawns: [], files: [] };
+  const layerRecorded = Layer.effectContext(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        ops.spawns.push(commandSummary(command));
+        return spawner.spawn(command);
+      });
+      const recordingFileSystem = new Proxy(fileSystem, {
+        get: (target, key, receiver) => {
+          const value: unknown = Reflect.get(target, key, receiver);
+          if (typeof value !== "function") return value;
+          return (...args: ReadonlyArray<unknown>) => {
+            ops.files.push(String(key));
+            return Reflect.apply(value, target, args);
+          };
+        },
+      });
+      return Context.make(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner).pipe(
+        Context.add(FileSystem.FileSystem, recordingFileSystem),
+      );
+    }),
+  );
+  return { ops, layer: layerFromContext.pipe(Layer.provideMerge(layerRecorded)) };
+};

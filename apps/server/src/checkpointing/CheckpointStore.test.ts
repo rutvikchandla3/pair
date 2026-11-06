@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -18,6 +19,7 @@ import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ServerConfig from "../config.ts";
 
 function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
@@ -118,6 +120,56 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       yield* fileSystem.makeDirectory(nested, { recursive: true });
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+    }),
+  );
+  it.effect("runs the same processes and disk checks for a turn's baseline and capture", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const recording = WorkspaceHostTesting.makeRecording();
+      // A fresh memo map, so the registry and VcsProcess are not the suite's already-built ones.
+      const context = yield* Layer.buildWithMemoMap(
+        CheckpointStore.layer.pipe(
+          Layer.provide(VcsDriverRegistry.layer),
+          Layer.provide(VcsProcess.layer),
+          Layer.provide(recording.layer),
+        ),
+        yield* Layer.makeMemoMap,
+        yield* Effect.scope,
+      );
+      const checkpointStore = Context.get(context, CheckpointStore.CheckpointStore);
+      const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("thread-op-count"), 1);
+
+      expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+      expect(yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef })).toBe(false);
+      yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+      // Each of the three detections probes `.t3code/vcs.json` in every folder up to the root and
+      // checks three paths on disk; the first, a cache miss, checks them twice.
+      const configProbes = tmp.split(NodePath.sep).length;
+      const { files, spawns } = recording.ops;
+      expect(files.filter((name) => name === "exists")).toHaveLength(3 * (configProbes + 3) + 3);
+      expect(files.filter((name) => name !== "exists")).toEqual([
+        "stat",
+        "copyFile",
+        "utimes",
+        "remove",
+        "remove",
+      ]);
+      expect(spawns).toEqual([
+        "git rev-parse",
+        "git rev-parse",
+        "git rev-parse",
+        "git rev-parse",
+        "git config",
+        "git read-tree",
+        "git ls-files",
+        "git check-ignore",
+        "git add",
+        "git write-tree",
+        "git commit-tree",
+        "git update-ref",
+      ]);
     }),
   );
   describe("diffCheckpoints", () => {

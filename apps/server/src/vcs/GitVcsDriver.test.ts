@@ -28,6 +28,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import { runVcsDriverContractSuite } from "./testing/VcsDriverContractHarness.ts";
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
@@ -1357,6 +1358,7 @@ it.effect("checkpoint capture meters every git process it starts, including stre
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
     let started = 0;
     let streamed = 0;
+    const recording = WorkspaceHostTesting.makeRecording();
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
       Effect.provideService(VcsProcess.VcsProcess, {
@@ -1368,6 +1370,7 @@ it.effect("checkpoint capture meters every git process it starts, including stre
           return liveProcess.run(input);
         },
       }),
+      Effect.provide(recording.layer),
     );
     const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-metrics-" });
     const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
@@ -1375,6 +1378,8 @@ it.effect("checkpoint capture meters every git process it starts, including stre
     yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
     assert.isAbove(streamed, 0);
+    assert.strictEqual(started, 8);
+    assert.deepStrictEqual(recording.ops.files, ["stat", "copyFile", "utimes", "remove", "remove"]);
     assert.strictEqual(yield* gitCommandCount(operation, "success"), started);
     assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
     assert.strictEqual((yield* gitCommandTiming(operation)).count, started);

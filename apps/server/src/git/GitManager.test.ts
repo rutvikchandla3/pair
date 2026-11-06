@@ -57,6 +57,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import type {
   SourceControlProvider,
   SourceControlProviderContext,
@@ -628,6 +629,8 @@ function makeManager(input?: {
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
+  /** Records the driver's processes and file system calls, in place of `gitCommands`. */
+  recording?: ReturnType<typeof WorkspaceHostTesting.makeRecording>;
   /** Members of a server team; without them the manager runs as the CLI does, with no team. */
   team?: ReadonlyArray<Members.MemberRecord>;
   /** Members' own GitHub connections; without it the server has none. */
@@ -657,37 +660,40 @@ function makeManager(input?: {
 
   const gitCommands = input?.gitCommands;
   const gitSpawnGate = input?.gitSpawnGate;
-  const watchesGitSpawns = gitCommands !== undefined || gitSpawnGate !== undefined;
-  const layerGitDriverSpawner = watchesGitSpawns
-    ? Layer.effect(
-        ChildProcessSpawner.ChildProcessSpawner,
-        Effect.gen(function* () {
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          return ChildProcessSpawner.make((command) => {
-            // On Windows the driver starts git by its full path to git.exe.
-            const args =
-              command._tag === "StandardCommand" &&
-              NodePath.parse(command.command).name.toLowerCase() === "git"
-                ? command.args.map(String)
-                : null;
-            if (args !== null) gitCommands?.push(args.join(" "));
-            if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
-              return spawner.spawn(command);
-            }
-            return spawner
-              .spawn(command)
-              .pipe(
-                Effect.tap((handle) =>
-                  handle.exitCode.pipe(
-                    Effect.andThen(Deferred.succeed(gitSpawnGate.reached, undefined)),
-                    Effect.andThen(Deferred.await(gitSpawnGate.release)),
+  const watchesGitSpawns =
+    gitCommands !== undefined || gitSpawnGate !== undefined || input?.recording !== undefined;
+  const layerGitDriverSpawner = input?.recording
+    ? input.recording.layer
+    : watchesGitSpawns
+      ? Layer.effect(
+          ChildProcessSpawner.ChildProcessSpawner,
+          Effect.gen(function* () {
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            return ChildProcessSpawner.make((command) => {
+              // On Windows the driver starts git by its full path to git.exe.
+              const args =
+                command._tag === "StandardCommand" &&
+                NodePath.parse(command.command).name.toLowerCase() === "git"
+                  ? command.args.map(String)
+                  : null;
+              if (args !== null) gitCommands?.push(args.join(" "));
+              if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
+                return spawner.spawn(command);
+              }
+              return spawner
+                .spawn(command)
+                .pipe(
+                  Effect.tap((handle) =>
+                    handle.exitCode.pipe(
+                      Effect.andThen(Deferred.succeed(gitSpawnGate.reached, undefined)),
+                      Effect.andThen(Deferred.await(gitSpawnGate.release)),
+                    ),
                   ),
-                ),
-              );
-          });
-        }),
-      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
-    : Layer.empty;
+                );
+            });
+          }),
+        ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
+      : Layer.empty;
   const gitVcsDriver = input?.gitConfigReads
     ? Layer.effect(
         GitVcsDriver.GitVcsDriver,
@@ -977,6 +983,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         state: "merged",
         updatedAt: "2026-01-02T00:00:00.000Z",
       });
+    }),
+  );
+
+  it.effect("local status runs the same git commands and disk checks", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-local-status-ops-");
+      yield* initRepo(repoDir);
+      const recording = WorkspaceHostTesting.makeRecording();
+      const { manager } = yield* makeManager({ recording });
+
+      yield* manager.localStatus({ cwd: repoDir });
+
+      expect(recording.ops.spawns.toSorted()).toEqual([
+        "git config",
+        "git config",
+        "git config",
+        "git config",
+        "git config",
+        "git config",
+        "git diff",
+        "git diff-index",
+        "git ls-files",
+        "git remote",
+        "git remote",
+        "git remote",
+        "git rev-parse",
+        "git rev-parse",
+        "git rev-parse",
+        "git rev-parse",
+        "git show-ref",
+        "git show-ref",
+        "git status",
+        "git symbolic-ref",
+        "git symbolic-ref",
+      ]);
+      expect(recording.ops.files.toSorted()).toEqual([
+        "exists",
+        "realPath",
+        "realPath",
+        "realPath",
+      ]);
     }),
   );
 
