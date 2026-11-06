@@ -809,7 +809,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
     ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
-    ...(input.steerOthersTurn === true && (requestedMode === "steer" || requestedMode === "restart")
+    ...(input.steerOthersTurn === true && requestedMode !== "queue"
       ? { steerOthersTurn: true }
       : {}),
     dispatchMode,

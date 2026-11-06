@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   INITIAL_PRESENCE_REPORTER,
+  stepAppPresence,
   stepPresenceReporter,
   type PresenceReporterSignal,
   type PresenceReporterState,
@@ -183,6 +184,53 @@ describe("stepPresenceReporter", () => {
     },
   ])("$name", ({ state, signal, now = NOW, report, next }) => {
     const step = stepPresenceReporter(state, signal, now);
+    expect(step.report).toEqual(report);
+    expect(step.state).toEqual({ ...state, ...next });
+  });
+});
+
+describe("stepAppPresence", () => {
+  it.each<{
+    readonly name: string;
+    readonly state: PresenceReporterState;
+    readonly appState: "active" | "background" | "inactive";
+    readonly threadId: ThreadId | null;
+    readonly report: unknown;
+    readonly next?: Partial<PresenceReporterState>;
+  }>([
+    {
+      name: "background leaves the thread and goes idle",
+      state: typingOnX,
+      appState: "background",
+      threadId: threadX,
+      report: { viewingThreadId: null, idle: true },
+      next: { viewingThreadId: null, idle: true, typingSentAt: null },
+    },
+    {
+      name: "foreground views the routed thread and is active again",
+      state: { ...together, idle: true },
+      appState: "active",
+      threadId: threadX,
+      report: { viewingThreadId: threadX, idle: false },
+      next: { viewingThreadId: threadX, idle: false },
+    },
+    {
+      name: "inactive (app switcher) still views the thread",
+      state: onX,
+      appState: "inactive",
+      threadId: threadX,
+      report: undefined,
+    },
+    {
+      name: "silent while alone, but remembers for the flip",
+      state: INITIAL_PRESENCE_REPORTER,
+      appState: "background",
+      threadId: threadX,
+      report: undefined,
+      next: { idle: true },
+    },
+  ])("$name", ({ state, appState, threadId, report, next }) => {
+    const step = stepAppPresence(state, { appState, threadId }, NOW);
     expect(step.report).toEqual(report);
     expect(step.state).toEqual({ ...state, ...next });
   });

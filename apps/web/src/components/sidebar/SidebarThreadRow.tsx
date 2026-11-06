@@ -114,7 +114,7 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { PresentMember } from "~/state/presence";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 import { MemberAvatar } from "../team/MemberAvatar";
 import { MemberAvatarStack } from "../team/MemberAvatarStack";
 import { MiddleTruncate } from "../ui/middle-truncate";

@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  MemberId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -11,6 +12,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
   type ServerConfig,
+  type TeamMember,
 } from "@t3tools/contracts";
 import {
   v2Now,
@@ -32,6 +34,11 @@ const state = vi.hoisted(() => ({
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
+  queueWorkflow: null as { readonly canPromoteToSteer: boolean } | null,
+  team: { members: new Map(), me: null } as {
+    members: ReadonlyMap<string, TeamMember>;
+    me: string | null;
+  },
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
   clearDraft: vi.fn(),
@@ -106,12 +113,13 @@ vi.mock("./use-thread-detail", () => ({
   useSelectedThreadVisibleTurnItems: () => [],
   useSelectedThreadPendingRequests: () => state.pendingRequests,
 }));
+vi.mock("./team", () => ({ useTeamRoster: () => state.team }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     environmentThreadDetails: {
-      queueWorkflowAtom: () => Atom.make(null),
+      queueWorkflowAtom: () => Atom.make(state.queueWorkflow),
       checkpointSummariesAtom: () => Atom.make([]),
       sequenceAtom: () => Atom.make(0),
       pendingRequestsAtom: () => Atom.make(state.pendingRequests),
@@ -182,6 +190,8 @@ beforeEach(() => {
   state.connectionState = "connected";
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
   state.projection = null;
+  state.queueWorkflow = null;
+  state.team = { members: new Map(), me: null };
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
     environment: { capabilities: {} },
@@ -316,6 +326,71 @@ describe("mobile task permissions", () => {
       environmentId: "secondary",
       input: { threadId: "thread", requestId: "input", answers: { language: "TypeScript" } },
     });
+  });
+});
+
+describe("mobile sends on another member's turn", () => {
+  it("queues without declining approvals, and Steer now steers it", async () => {
+    state.grantedEnvironments.add("secondary");
+    const member = (id: string, isOwner: boolean): TeamMember => ({
+      id: MemberId.make(id),
+      name: id === "alice" ? "Alice" : "Bob",
+      role: isOwner ? "admin" : "member",
+      color: "#000000",
+      isOwner,
+      createdAt: "2026-09-05T00:00:00.000Z",
+      removedAt: null,
+    });
+    state.team = {
+      members: new Map([
+        ["alice", member("alice", true)],
+        ["bob", member("bob", false)],
+      ]),
+      me: "bob",
+    };
+    state.queueWorkflow = { canPromoteToSteer: true };
+    const model = v2Projection.thread.modelSelection;
+    // Alice holds the thread, so a run without a recorded author is hers.
+    state.projection = {
+      ...v2Projection,
+      runs: [
+        {
+          id: RunId.make("alice-run"),
+          threadId: v2Projection.thread.id,
+          ordinal: 1,
+          providerInstanceId: model.instanceId,
+          modelSelection: model,
+          providerThreadId: null,
+          userMessageId: MessageId.make("alice-message"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: v2Now,
+          startedAt: v2Now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      ],
+    };
+    const declineApprovals = vi.fn(async () => true);
+
+    const composer = useThreadComposerState();
+    expect(composer.othersTurnName).toBe("Alice");
+    expect(await composer.onSendMessage(undefined, declineApprovals)).toBe("message");
+    expect(declineApprovals).not.toHaveBeenCalled();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dispatchMode: "queue" }),
+    );
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ steerOthersTurn: true }),
+    );
+
+    expect(await composer.onSendMessage("steer", declineApprovals)).toBe("message");
+    expect(declineApprovals).toHaveBeenCalledOnce();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dispatchMode: "auto", steerOthersTurn: true }),
+    );
   });
 });
 

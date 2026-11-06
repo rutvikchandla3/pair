@@ -66,7 +66,8 @@ the owner of the thread they came from.
   can also bind a shortcut to it in [Keybindings](./keybindings.md).
 - Only a thread's owner or an admin can delete it.
 
-The mobile app shows names, owners, the Team shelf, Follow and Assign too.
+The mobile app shows names, owners, the Team shelf, Follow and Assign too. On a teammate's
+running turn, Send queues your message after it; hold Send and choose **Steer now** to interrupt.
 
 ## Follow threads and notifications
 
@@ -98,8 +99,9 @@ You never see yourself, and a hidden tab or Settings open over a thread doesn't 
 it.
 
 Someone with no input for 10 minutes is **Away**: their avatar is hollow, and **Settings → Team**
-says **Away** instead of **Online**. Members who aren't connected show no status. Presence from
-the mobile app isn't shown yet.
+says **Away** instead of **Online**. Members who aren't connected show no status. The mobile app
+shows who's around too; it reports the thread on screen and counts as **Away** while it's in the
+background.
 
 ## What is yours and what is shared
 

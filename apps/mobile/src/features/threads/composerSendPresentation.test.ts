@@ -8,6 +8,7 @@ const idle = {
   canSteer: false,
   followUpBehavior: "queue",
   deliveryDeferred: false,
+  othersTurnName: null,
 } as const;
 
 describe("resolveComposerSendPresentation", () => {

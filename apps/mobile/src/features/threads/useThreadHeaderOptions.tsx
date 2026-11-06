@@ -8,6 +8,8 @@ import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspace
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
+import { ThreadViewerStack } from "./ThreadViewerStack";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -54,6 +56,8 @@ export function useThreadHeaderOptions(props: {
   readonly draft?: boolean;
   /** Follow and Assign; null outside team mode. */
   readonly teamMenu?: AppBarMenu | null;
+  /** Teammates viewing this thread; empty outside team mode. */
+  readonly viewers?: ReadonlyArray<PresentMember>;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -66,8 +70,28 @@ export function useThreadHeaderOptions(props: {
   const teamHeaderItems: NativeHeaderItems = props.teamMenu
     ? [nativeHeaderMenu(props.teamMenu)]
     : [];
-  const compactRightHeaderItems = [...gitRightHeaderItems, ...teamHeaderItems];
-  const threadCenterHeaderItems = [...gitCenterHeaderItems, ...teamHeaderItems];
+  const viewers = props.viewers ?? [];
+  const viewerHeaderItems: NativeHeaderItems =
+    viewers.length > 0
+      ? [
+          {
+            element: <ThreadViewerStack viewers={viewers} />,
+            hidesSharedBackground: true,
+            identifier: "thread-right-viewers",
+            type: "custom",
+          },
+        ]
+      : [];
+  const compactRightHeaderItems = [
+    ...gitRightHeaderItems,
+    ...teamHeaderItems,
+    ...viewerHeaderItems,
+  ];
+  const threadCenterHeaderItems = [
+    ...gitCenterHeaderItems,
+    ...teamHeaderItems,
+    ...viewerHeaderItems,
+  ];
   const splitLeftHeaderItems: NativeHeaderItems = [
     ...(!usesDuoHeader
       ? [
@@ -139,6 +163,7 @@ export function useThreadHeaderOptions(props: {
       threadCenterHeaderItems,
       compactRightHeaderItems,
       props.teamMenu,
+      viewers.map((viewer) => `${viewer.id}:${viewer.away}`).join(","),
       usesDuoHeader,
       environmentId,
       threadId,

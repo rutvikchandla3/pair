@@ -16,6 +16,10 @@ export interface ComposerSendPresentation {
   readonly action: ActiveTurnComposerAction | null;
   readonly alternate: ActiveTurnComposerAction | null;
   readonly offersFollowUpChoice: boolean;
+  /** On another member's turn: what Send does there, shown above the composer. */
+  readonly othersTurnHint: string | null;
+  /** On another member's turn: the subtitle of the Steer now alternate. */
+  readonly steerSubtitle: string | null;
 }
 
 const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
@@ -30,6 +34,8 @@ export function resolveComposerSendPresentation(input: {
   readonly canSteer: boolean;
   readonly followUpBehavior: FollowUpBehavior;
   readonly deliveryDeferred: boolean;
+  /** Who started the running turn, when it is another member's. */
+  readonly othersTurnName: string | null;
 }): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
     return {
@@ -38,6 +44,8 @@ export function resolveComposerSendPresentation(input: {
       action: null,
       alternate: null,
       offersFollowUpChoice: false,
+      othersTurnHint: null,
+      steerSubtitle: null,
     };
   }
   if (!input.running) {
@@ -47,9 +55,14 @@ export function resolveComposerSendPresentation(input: {
       action: null,
       alternate: null,
       offersFollowUpChoice: false,
+      othersTurnHint: null,
+      steerSubtitle: null,
     };
   }
-  const action: ActiveTurnComposerAction = input.canSteer ? input.followUpBehavior : "queue";
+  const othersTurn = input.othersTurnName;
+  // Another member's turn queues whatever the setting; steering it is the explicit alternate.
+  const action: ActiveTurnComposerAction =
+    input.canSteer && othersTurn === null ? input.followUpBehavior : "queue";
   const alternate = alternateComposerDispatchAction(action);
   return {
     label: ACTION_LABEL[action],
@@ -57,5 +70,12 @@ export function resolveComposerSendPresentation(input: {
     action,
     alternate: input.canSteer ? alternate : null,
     offersFollowUpChoice: input.canSteer,
+    othersTurnHint:
+      othersTurn === null
+        ? null
+        : input.canSteer
+          ? `Queues after ${othersTurn}'s turn. Hold Send to steer now.`
+          : `Queues after ${othersTurn}'s turn.`,
+    steerSubtitle: othersTurn === null ? null : `Interrupt ${othersTurn}'s turn`,
   };
 }

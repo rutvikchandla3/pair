@@ -115,6 +115,8 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import { presenceTypingText } from "@t3tools/client-runtime/state/presence";
+import { reportComposerSent, reportComposerTyping, useThreadPresence } from "../../state/presence";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
   useThreadSettingsSheetPresentation,
@@ -231,6 +233,8 @@ export interface ThreadComposerProps {
   } | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
+  /** Who started the running turn, when it is another member's. */
+  readonly othersTurnName: string | null;
   readonly hidden: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -333,7 +337,10 @@ function SendActionButton(props: {
       actions={actions.map((action) => ({
         id: action,
         title: FOLLOW_UP_ACTION_LABEL[action],
-        subtitle: FOLLOW_UP_ACTION_SUBTITLE[action],
+        subtitle:
+          action === "steer" && presentation.steerSubtitle !== null
+            ? presentation.steerSubtitle
+            : FOLLOW_UP_ACTION_SUBTITLE[action],
         state: action === presentation.action ? ("on" as const) : ("off" as const),
       }))}
       onPressAction={({ nativeEvent }) =>
@@ -483,6 +490,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
+    othersTurnName: props.othersTurnName,
+  });
+  const threadPresence = useThreadPresence({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
   });
   const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
@@ -696,6 +708,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       return;
     }
     if (sent.value === null) return;
+    reportComposerSent(props.environmentId);
     // Arm after send so preference reads and native Activity startup do not delay tap-frame feedback.
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: props.environmentId,
@@ -872,6 +885,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             onPress={openSettings}
           />
         ) : null}
+        {threadPresence.typing.length > 0 ? (
+          <Text numberOfLines={1} className="px-3 pb-1 text-xs text-foreground-muted">
+            {presenceTypingText(threadPresence.typing.map((member) => member.name))}
+          </Text>
+        ) : null}
+        {sendPresentation.othersTurnHint !== null ? (
+          <Text className="px-3 pb-1 text-xs text-foreground-muted">
+            {sendPresentation.othersTurnHint}
+          </Text>
+        ) : null}
 
         <ComposerSurface
           animateLayout={false}
@@ -957,7 +980,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   skills={composerMenu.skills}
                   selection={composerMenu.selection}
                   onChangeText={(text) => {
-                    if (!isSubmissionLocked) props.onChangeDraftMessage(text);
+                    if (isSubmissionLocked) return;
+                    props.onChangeDraftMessage(text);
+                    reportComposerTyping(props.environmentId, props.selectedThread.id);
                   }}
                   onSelectionChange={composerMenu.onSelectionChange}
                   onPasteImages={(uris) => {

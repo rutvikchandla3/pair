@@ -78,6 +78,7 @@ import {
   useComposerDraftSettings,
 } from "./use-composer-drafts";
 import {
+  othersTurnStarterId,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -108,6 +109,8 @@ import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
+import { useTeamRoster } from "./team";
+import { memberDisplayName } from "@t3tools/client-runtime/state/team";
 
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
@@ -360,6 +363,17 @@ export function useThreadComposerState() {
   })();
   // A compacting turn cannot take steering input, so follow-ups queue meanwhile.
   const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
+  const team = useTeamRoster(selectedThreadShell?.environmentId ?? null);
+  // On a team, sends on another member's turn queue; steering it is an explicit Steer now.
+  const othersTurnStarter = selectedThreadProjection
+    ? othersTurnStarterId({
+        projection: selectedThreadProjection.projection,
+        members: team.members,
+        me: team.me,
+      })
+    : null;
+  const othersTurnName =
+    othersTurnStarter === null ? null : memberDisplayName(team.members, othersTurnStarter);
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
@@ -615,7 +629,25 @@ export function useThreadComposerState() {
       return null;
     }
 
-    if (beforeDispatch !== undefined) {
+    // Resolve at send time because outbox delivery may be delayed.
+    // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
+    // An approval redirect must steer the waiting turn instead of queueing behind it, except on
+    // another member's turn, where a send queues and leaves its approvals unless it steers now.
+    const othersTurn = othersTurnStarter !== null;
+    const activeTurnDefault = othersTurn
+      ? "queue"
+      : beforeDispatch !== undefined
+        ? "steer"
+        : followUpBehavior;
+    const followUpAction = resolveComposerDispatchMode({
+      running: activeThreadBusy && canSteerActiveTurn,
+      alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
+      activeTurnDefault,
+    });
+    const steersOthersTurn =
+      othersTurn && (followUpAction === "steer" || followUpAction === "restart");
+
+    if (beforeDispatch !== undefined && (!othersTurn || steersOthersTurn)) {
       const response = await beforeDispatch(
         text,
         attachments.length > 0 || draft.context !== undefined,
@@ -641,15 +673,6 @@ export function useThreadComposerState() {
       }
     }
 
-    // Resolve at send time because outbox delivery may be delayed.
-    // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
-    // An approval redirect must steer the waiting turn instead of queueing behind it.
-    const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
-    const followUpAction = resolveComposerDispatchMode({
-      running: activeThreadBusy && canSteerActiveTurn,
-      alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
-      activeTurnDefault,
-    });
     const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
       (status) => status === "preparing" || status === "starting",
     );
@@ -703,6 +726,7 @@ export function useThreadComposerState() {
         : followUpDispatchMode === null
           ? {}
           : { dispatchMode: followUpDispatchMode }),
+      ...(steersOthersTurn && followUpDispatchMode === "auto" ? { steerOthersTurn: true } : {}),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
@@ -778,6 +802,7 @@ export function useThreadComposerState() {
     composerDraftKey,
     followUpBehavior,
     canSteerActiveTurn,
+    othersTurnName,
     queueHeld,
     resumableRunId,
     queuedRunEdit,

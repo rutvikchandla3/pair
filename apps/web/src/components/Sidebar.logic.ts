@@ -50,7 +50,7 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
-import type { PresentMember } from "../state/presence";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;

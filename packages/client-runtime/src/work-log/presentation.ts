@@ -6,6 +6,7 @@ import {
   type ToolActivitySource,
   type ToolActivitySurface,
   type ToolActivityIcon,
+  type MemberId,
   type OrchestrationV2TurnItem,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -665,4 +666,19 @@ export function liveThoughtLine(markdown: string): string {
   if (heading !== undefined) return text;
   const end = /[.?!]["'”’)]?(?=\s)/.exec(text);
   return end ? text.slice(0, end.index + end[0].length) : text;
+}
+
+/** Names the member who settled an approval or question; null while it is open or unattributed. */
+export function requestResolutionLabel(
+  item: OrchestrationV2TurnItem | undefined,
+  nameOf: (id: MemberId) => string,
+): string | null {
+  if (item?.type !== "approval_request" && item?.type !== "user_input_request") return null;
+  if (item.resolvedBy === undefined) return null;
+  const who = nameOf(item.resolvedBy);
+  if (item.type === "user_input_request") {
+    return item.status === "completed" ? `Answered by ${who}` : null;
+  }
+  if (item.status === "completed") return `Approved by ${who}`;
+  return item.status === "cancelled" ? `Declined by ${who}` : null;
 }
