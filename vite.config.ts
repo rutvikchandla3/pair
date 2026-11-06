@@ -362,6 +362,25 @@ export default defineConfig({
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {
+        files: [
+          "apps/server/src/{vcs,workspace,terminal,checkpointing,git,orchestration-v2}/**",
+          "apps/server/src/storageCleanup.ts",
+          "apps/server/src/preview/PortScanner.ts",
+          "apps/server/src/provider/Drivers/ClaudeHome.ts",
+          "apps/server/src/provider/codexLaunchArgs.ts",
+          "apps/server/src/provider/userInputAttachments.ts",
+          "apps/server/src/textGeneration/{Claude,Codex}TextGeneration.ts",
+          "packages/provider-core/src/server/instanceEnvironment.ts",
+          "packages/provider-*/src/server/**",
+        ],
+        excludeFiles: [
+          "**/*.{test,spec,testkit}.ts",
+          "**/{test,tests,testkit,testing,fixtures,integration}/**",
+          "**/*Testing.ts",
+        ],
+        rules: { "t3code/workspace-host-boundary": "error" },
+      },
+      {
         // The `t3` npm launcher is published as plain, dependency-free Node.
         files: ["scripts/npm-launcher/**"],
         rules: {

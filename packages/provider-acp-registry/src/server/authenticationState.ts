@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: probes and manages the server's own provider CLI install */
 import type { ProviderInstanceEnvironment, ProviderInstanceId } from "@t3tools/contracts";
 import type { AcpRegistrySettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";

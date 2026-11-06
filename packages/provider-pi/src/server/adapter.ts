@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";

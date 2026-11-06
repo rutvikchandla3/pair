@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";

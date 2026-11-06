@@ -56,3 +56,15 @@ export function isIdentifier(node: Option.Option<AstNode>, name?: string): boole
     (name === undefined || expression.name === name)
   );
 }
+
+export function isGlobalProcessObject(node: unknown): boolean {
+  const expression = unwrapExpression(node);
+  if (isIdentifier(expression, "process")) return true;
+  if (Option.isNone(expression) || expression.value.type !== "MemberExpression") return false;
+
+  const object = unwrapExpression(expression.value.object);
+  const property = getPropertyName(expression.value.property);
+  return (
+    isIdentifier(object, "globalThis") && Option.isSome(property) && property.value === "process"
+  );
+}

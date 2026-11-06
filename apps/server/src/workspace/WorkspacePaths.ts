@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.4): workspace files on the thread's machine */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

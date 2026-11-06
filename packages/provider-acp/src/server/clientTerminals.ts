@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M3: the ACP runtime's client files and terminals */
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 // Pi frames are LF-delimited with trailing CR stripped; readline also splits U+2028/U+2029 and corrupts them.
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";

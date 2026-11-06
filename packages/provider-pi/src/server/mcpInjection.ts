@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

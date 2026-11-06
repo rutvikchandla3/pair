@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";

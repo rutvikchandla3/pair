@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M3: ACP flavors other than Replay run on the server's machine */
 /**
  * Discovers fx skills for the `$` picker by scanning the SKILL.md folders fx
  * reads (fx 0.0.13, src/builtins/skills.zig), so no `fx acp` session starts

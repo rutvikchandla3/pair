@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: the fallback redacts the server's own home; sessions pass their environment */
 const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
 
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;

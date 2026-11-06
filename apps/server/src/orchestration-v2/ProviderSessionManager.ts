@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";

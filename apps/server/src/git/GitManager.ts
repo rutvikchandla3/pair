@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";

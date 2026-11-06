@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.6): the session spawn; client fs and terminals are routed in M3 */
 // @effect-diagnostics nodeBuiltinImport:off
 
 import {

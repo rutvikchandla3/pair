@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M3: ACP flavors other than Replay run on the server's machine */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {

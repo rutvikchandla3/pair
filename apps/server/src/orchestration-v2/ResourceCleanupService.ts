@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: attachments live on the server */
 import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

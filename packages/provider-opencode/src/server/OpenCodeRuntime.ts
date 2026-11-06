@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision } from "@t3tools/contracts";

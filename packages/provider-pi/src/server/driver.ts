@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: probes and manages the server's own provider CLI install */
 // User-wide ~/.pi/agent state makes continuation identity use default instance grouping.
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";

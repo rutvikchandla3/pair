@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: probes and manages the server's own provider CLI install */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";

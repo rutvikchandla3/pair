@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: attachments live on the server */
 import * as FileSystem from "effect/FileSystem";
 import {
   ChatAttachmentId,

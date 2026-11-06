@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: probes and manages the server's own provider CLI install */
 export type {
   ProviderMaintenanceCapabilities,
   ProviderMaintenanceCommandAction,

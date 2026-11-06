@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M3: ACP flavors other than Replay run on the server's machine */
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {

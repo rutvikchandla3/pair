@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: the local PTY implementation behind LocalWorkspaceHost */
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 

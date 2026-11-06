@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 // @effect-diagnostics globalTimers:off
 // The SDK owns process shutdown; native deadlines cover initialize before an Effect resource exists.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museCanonicalPath needs the native one.

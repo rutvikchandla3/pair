@@ -1,22 +1,10 @@
 import { defineRule } from "@oxlint/plugins";
 import * as Option from "effect/Option";
 
-import { getPropertyName, isIdentifier, unwrapExpression } from "../utils.ts";
+import { getPropertyName, isGlobalProcessObject, unwrapExpression } from "../utils.ts";
 
 const RUNTIME_PROPERTIES = new Set(["platform", "arch"]);
 const NODE_OS_MODULES = new Set(["node:os", "os"]);
-
-const isGlobalProcessObject = (node: unknown): boolean => {
-  const expression = unwrapExpression(node);
-  if (isIdentifier(expression, "process")) return true;
-  if (Option.isNone(expression) || expression.value.type !== "MemberExpression") return false;
-
-  const object = unwrapExpression(expression.value.object);
-  const property = getPropertyName(expression.value.property);
-  return (
-    isIdentifier(object, "globalThis") && Option.isSome(property) && property.value === "process"
-  );
-};
 
 const message = (property: string) =>
   `Use HostProcess.${property === "arch" ? "Architecture" : "Platform"} instead of process.${property}; inject the runtime reference in Effect code and provide it explicitly in tests.`;

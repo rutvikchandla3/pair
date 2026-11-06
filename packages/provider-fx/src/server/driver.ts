@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: probes and manages the server's own provider CLI install */
 import { TextGenerationError } from "@t3tools/contracts";
 import { FxSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";

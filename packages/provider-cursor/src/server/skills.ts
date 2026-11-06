@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 // Scan skills without opening an ACP session and starting its MCP servers.
 
 import type { ServerProviderSkill } from "@t3tools/contracts";

@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M3: the ACP runtime's client files and terminals */
 // @effect-diagnostics nodeBuiltinImport:off
 import type { ProviderRequestKind, RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";

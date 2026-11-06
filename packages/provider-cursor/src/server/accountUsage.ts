@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/workspace-host-boundary -- not supported in cloud: this provider runs only on the server's machine */
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
