@@ -61,6 +61,9 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useThreadOwner, useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
+import { useThreadPresence } from "../../state/presence";
+import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -501,7 +504,23 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  const threadOwner = useThreadOwner(selectedThread);
+  const threadTeamMenu = useThreadTeamMenu(selectedThread);
+  const threadTeamActions = useThreadTeamActions();
+  const threadViewers = useThreadPresence(
+    selectedThread === null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+  ).viewers;
+  const teamHeaderMenu =
+    selectedThread !== null && threadTeamMenu !== null && canOperateThread
+      ? buildThreadTeamHeaderMenu(threadTeamMenu, {
+          setFollowed: (following) => void threadTeamActions.setFollowed(selectedThread, following),
+          assign: (ownerId) => void threadTeamActions.assign(selectedThread, ownerId),
+        })
+      : null;
   const headerSubtitle = [
+    threadOwner === null ? null : `${threadOwner.name}'s thread`,
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
@@ -972,6 +991,8 @@ function ThreadRouteContent(
                 headerColor={headerColor}
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
+                teamMenu={teamHeaderMenu}
+                viewers={threadViewers}
                 hasThreadCwd={selectedThreadCwd !== null}
                 hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
                 fileInspectorSupported={fileInspector.supported}
@@ -1042,6 +1063,7 @@ function ThreadRouteContent(
           composerDraftKey={composer.composerDraftKey}
           followUpBehavior={composer.followUpBehavior}
           canSteerActiveTurn={composer.canSteerActiveTurn}
+          othersTurnName={composer.othersTurnName}
           isSavingQueuedEdit={composer.isSavingQueuedEdit}
           onCancelQueuedRunEdit={composer.cancelQueuedRunEdit}
           onRemoveQueuedEditAttachment={composer.onRemoveQueuedEditAttachment}

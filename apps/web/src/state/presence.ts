@@ -9,11 +9,12 @@ import {
 import {
   EMPTY_PRESENCE,
   createPresenceEnvironmentAtoms,
+  presentMembers,
   type PresenceState,
+  type PresentMember,
 } from "@t3tools/client-runtime/state/presence";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { TeamMembers } from "@t3tools/client-runtime/state/team";
-import type { EnvironmentId, MemberId, ScopedThreadRef, TeamMember } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
@@ -38,32 +39,6 @@ export function usePresence(environmentId: EnvironmentId | null): PresenceState 
       ? NO_PRESENCE_ATOM
       : presenceEnvironment.presenceValueAtom(environmentId),
   );
-}
-
-export interface PresentMember extends Pick<TeamMember, "name" | "color"> {
-  readonly id: MemberId;
-  readonly away: boolean;
-}
-
-/** Roster members for these ids, with away flags; members not on the roster are skipped. */
-function presentMembers(
-  members: TeamMembers,
-  presence: PresenceState,
-  memberIds: ReadonlyArray<MemberId> | undefined,
-): PresentMember[] {
-  return (memberIds ?? []).flatMap((id) => {
-    const member = members.get(id);
-    return member === undefined
-      ? []
-      : [
-          {
-            id,
-            name: member.name,
-            color: member.color,
-            away: presence.members.get(id) === "away",
-          },
-        ];
-  });
 }
 
 /** Who else views a thread, and who of them is typing there; members not on the roster are skipped. */

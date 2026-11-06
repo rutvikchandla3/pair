@@ -24,6 +24,11 @@ export class TeamState extends Context.Service<
   }
 >()("t3/team/TeamState") {}
 
+export const activeMemberIds = (
+  members: ReadonlyMap<MemberId, Members.MemberRecord>,
+): ReadonlySet<MemberId> =>
+  new Set([...members.values()].filter((member) => member.removedAt === null).map(({ id }) => id));
+
 export interface GitAuthor {
   readonly name: string;
   readonly email: string;
@@ -40,6 +45,14 @@ const gitAuthorFor =
         return { name: member.gitName ?? member.name, email: member.gitEmail };
       }),
     );
+
+/** GitHub sign-in can reach someone: an active member is bound, or an admin pre-set a username. */
+export const hasGitHubSignInMember = (members: ReadonlyMap<MemberId, Members.MemberRecord>) => {
+  for (const member of members.values()) {
+    if (member.removedAt === null && member.githubLogin != null) return true;
+  }
+  return false;
+};
 
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));

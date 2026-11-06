@@ -933,6 +933,7 @@ export function createThreadOutboxDelivery(): {
         interactionMode: sendSettings.interactionMode,
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
+        ...(queuedMessage.steerOthersTurn ? { steerOthersTurn: true } : {}),
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

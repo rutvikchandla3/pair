@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MemberId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
@@ -79,6 +79,8 @@ export const ProviderInstanceConfig = Schema.Struct({
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
+  /** A member's own account. Absent on team instances, so a solo server never writes it. */
+  ownerMemberId: Schema.optionalKey(MemberId),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
 
@@ -91,6 +93,8 @@ export const ProviderInstanceMutation = Schema.Union([
   Schema.Struct({
     operation: Schema.Literal("upsert"),
     instanceId: ProviderInstanceId,
+    /** An `instance` without `ownerMemberId` keeps the stored owner; this hands it to the team. */
+    clearOwner: Schema.optionalKey(Schema.Boolean),
     instance: ProviderInstanceConfig,
   }),
   Schema.Struct({

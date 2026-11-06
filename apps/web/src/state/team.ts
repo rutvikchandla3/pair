@@ -6,18 +6,20 @@ import {
   canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
+  memberDisplayName,
+  resolveThreadFollowing,
+  teamViewerOf,
   type TeamMembers,
+  type TeamViewer,
 } from "@t3tools/client-runtime/state/team";
 import {
   AuthAccessWriteScope,
   type EnvironmentId,
   type MemberId,
   type ScopedThreadRef,
-  type TeamMember,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { resolveThreadFollowing } from "../components/Sidebar.logic";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -51,6 +53,17 @@ export function useIsTeamMode(environmentId: EnvironmentId | null): boolean {
   );
 }
 
+const teamGitHubFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) => get(serverEnvironment.configValueAtom(environmentId))?.teamGitHub === true,
+  ).pipe(Atom.withLabel(`team-github:${environmentId}`)),
+);
+
+/** Whether members can connect their own GitHub account on this server. */
+export function useTeamGitHub(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(environmentId === null ? NOT_TEAM_ATOM : teamGitHubFamily(environmentId));
+}
+
 /** The origin a copied thread link opens on: the team server itself, else the hosted app. */
 export function useThreadShareOrigin(environmentId: EnvironmentId | null): string {
   return threadShareOrigin({
@@ -78,13 +91,6 @@ export function useTeamSettingsVisible(): boolean {
   return knowsTeams && (canWriteAccess || isTeamMode);
 }
 
-const FORMER_MEMBER_NAME = "Former member";
-
-/** A member the roster no longer lists (never known, or purged) reads as a former member. */
-function memberDisplayName(members: TeamMembers, id: MemberId): string {
-  return members.get(id)?.name ?? FORMER_MEMBER_NAME;
-}
-
 /** What attribution labels need: nothing renders unless `isTeamMode`. */
 export function useTeamAttribution(environmentId: EnvironmentId | null) {
   const members = useTeamMembers(environmentId);
@@ -96,32 +102,6 @@ export function useTeamAttribution(environmentId: EnvironmentId | null) {
     members,
     nameOf: (id: MemberId) => memberDisplayName(members, id),
   };
-}
-
-/** Who "me" and the server owner are in one team-mode environment. */
-export interface TeamViewer {
-  readonly memberId: MemberId;
-  readonly ownerId: MemberId | null;
-  readonly members: TeamMembers;
-}
-
-function teamViewerOf(members: TeamMembers, memberId: MemberId | null): TeamViewer | null {
-  if (memberId === null || !isTeamModeMembers(members)) return null;
-  let ownerId: MemberId | null = null;
-  for (const member of members.values()) if (member.isOwner) ownerId = member.id;
-  return { memberId, ownerId, members };
-}
-
-const FORMER_MEMBER = { name: FORMER_MEMBER_NAME, color: "#6b7280" } as const;
-
-/** The member who owns a thread when it is not the viewer; null for the viewer's own threads. */
-export function teamOwnerOf(
-  viewer: TeamViewer,
-  ownerId: MemberId | null | undefined,
-): Pick<TeamMember, "name" | "color"> | null {
-  const effectiveOwnerId = ownerId ?? viewer.ownerId;
-  if (effectiveOwnerId === null || effectiveOwnerId === viewer.memberId) return null;
-  return viewer.members.get(effectiveOwnerId) ?? FORMER_MEMBER;
 }
 
 /** Team mode, me and the owner are per environment; single-member environments are absent. */

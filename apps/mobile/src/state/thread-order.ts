@@ -13,6 +13,7 @@ import {
 import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadShells } from "./threads";
+import { teamViewersAtom } from "./team";
 import { queuedThreadKeysAtom } from "./use-thread-outbox";
 
 export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
@@ -73,6 +74,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
       settlementEnvironmentIds: new Set(configs.keys()),
       snoozeEnvironmentIds: new Set(configs.keys()),
+      teamViewers: appAtomRegistry.get(teamViewersAtom),
     });
     const next = reconcilePendingThreadOrder(current, ordered);
     if (next === null) {

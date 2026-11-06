@@ -7,6 +7,9 @@ import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
+import { ThreadViewerStack } from "./ThreadViewerStack";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -14,6 +17,34 @@ import {
 } from "./ThreadGitControls";
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
+
+function nativeMenuItems(items: ReadonlyArray<AppBarMenuItem>): NativeHeaderItems {
+  return items.map((item) => ({
+    label: item.title ?? "",
+    ...(item.icon ? { icon: { name: item.icon, type: "sfSymbol" as const } } : {}),
+    ...("items" in item
+      ? { type: "submenu" as const, items: nativeMenuItems(item.items) }
+      : {
+          type: "action" as const,
+          state: item.selected ? ("on" as const) : undefined,
+          disabled: item.disabled,
+          onPress: item.onPress,
+        }),
+  }));
+}
+
+function nativeHeaderMenu(menu: AppBarMenu) {
+  return {
+    accessibilityLabel: menu.title,
+    icon: { name: typeof menu.icon === "string" ? menu.icon : menu.icon.ios, type: "sfSymbol" },
+    identifier: "thread-right-team",
+    label: menu.title,
+    menu: { title: menu.title, items: nativeMenuItems(menu.items) },
+    sharesBackground: true,
+    type: "menu",
+    variant: "plain",
+  };
+}
 
 export function useThreadHeaderOptions(props: {
   readonly title: string;
@@ -23,6 +54,10 @@ export function useThreadHeaderOptions(props: {
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
+  /** Follow and Assign; null outside team mode. */
+  readonly teamMenu?: AppBarMenu | null;
+  /** Teammates viewing this thread; empty outside team mode. */
+  readonly viewers?: ReadonlyArray<PresentMember>;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -30,8 +65,33 @@ export function useThreadHeaderOptions(props: {
   const navigation = useNavigation();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
-  const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
-  const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  const gitRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  const gitCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
+  const teamHeaderItems: NativeHeaderItems = props.teamMenu
+    ? [nativeHeaderMenu(props.teamMenu)]
+    : [];
+  const viewers = props.viewers ?? [];
+  const viewerHeaderItems: NativeHeaderItems =
+    viewers.length > 0
+      ? [
+          {
+            element: <ThreadViewerStack viewers={viewers} />,
+            hidesSharedBackground: true,
+            identifier: "thread-right-viewers",
+            type: "custom",
+          },
+        ]
+      : [];
+  const compactRightHeaderItems = [
+    ...gitRightHeaderItems,
+    ...teamHeaderItems,
+    ...viewerHeaderItems,
+  ];
+  const threadCenterHeaderItems = [
+    ...gitCenterHeaderItems,
+    ...teamHeaderItems,
+    ...viewerHeaderItems,
+  ];
   const splitLeftHeaderItems: NativeHeaderItems = [
     ...(!usesDuoHeader
       ? [
@@ -102,6 +162,8 @@ export function useThreadHeaderOptions(props: {
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,
+      props.teamMenu,
+      viewers.map((viewer) => `${viewer.id}:${viewer.away}`).join(","),
       usesDuoHeader,
       environmentId,
       threadId,

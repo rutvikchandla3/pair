@@ -1,9 +1,6 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  resolveThreadWorkingStartedAt,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -27,7 +24,12 @@ import {
   type TeamMember,
   type ThreadId,
 } from "@t3tools/contracts";
-import { activeTeamMembers } from "@t3tools/client-runtime/state/team";
+import {
+  activeTeamMembers,
+  sidebarThreadOwnerId,
+  type TeamThread,
+  type TeamViewer,
+} from "@t3tools/client-runtime/state/team";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
@@ -48,8 +50,7 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
-import type { PresentMember } from "../state/presence";
-import type { TeamViewer } from "../state/team";
+import type { PresentMember } from "@t3tools/client-runtime/state/presence";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -183,35 +184,6 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled" | "team";
 
-type SidebarTeamThread = {
-  readonly source: { readonly ownerId?: MemberId | null | undefined };
-  readonly pinnedAt?: string | null | undefined;
-  readonly followedAt?: string | null | undefined;
-};
-
-/** A thread with no recorded owner belongs to the server owner. */
-function sidebarThreadOwnerId(thread: SidebarTeamThread, team: TeamViewer): MemberId | null {
-  return thread.source.ownerId ?? team.ownerId;
-}
-
-export function isSidebarThreadMine(thread: SidebarTeamThread, team: TeamViewer): boolean {
-  return (
-    sidebarThreadOwnerId(thread, team) === team.memberId ||
-    // Pins and follows are per member, so either one on someone else's thread makes it mine.
-    thread.pinnedAt != null ||
-    thread.followedAt != null
-  );
-}
-
-/** Null hides Follow: solo mode, a server without it, or the viewer owns the thread. */
-export function resolveThreadFollowing(
-  thread: SidebarTeamThread,
-  team: TeamViewer | null | undefined,
-): boolean | null {
-  if (!team || sidebarThreadOwnerId(thread, team) === team.memberId) return null;
-  return thread.followedAt != null;
-}
-
 /** The stored owner filter is "me" or a member id; anything else, like a purged member, is Anyone. */
 function sidebarOwnerFilterId(team: TeamViewer, filter: string | undefined): MemberId | undefined {
   if (filter === undefined) return undefined;
@@ -219,7 +191,7 @@ function sidebarOwnerFilterId(team: TeamViewer, filter: string | undefined): Mem
 }
 
 export function matchesSidebarOwnerFilter(
-  thread: SidebarTeamThread,
+  thread: TeamThread,
   team: TeamViewer,
   filter: string | undefined,
 ): boolean {
@@ -299,29 +271,6 @@ export function resolveSidebarThreadSection(input: {
   if (input.pinned) return "pinned";
   if (teamMode && !mine) return "team";
   return "active";
-}
-
-/** Newest activity first: the latest message, run, or update. */
-export function sortTeamThreadsByActivity<
-  T extends Pick<
-    EnvironmentThreadShell,
-    "id" | "environmentId" | "latestUserMessageAt" | "latestRun" | "updatedAt"
-  >,
->(threads: readonly T[]): T[] {
-  const activityAt = (thread: T) =>
-    Math.max(
-      firstValidTimestampMs(thread.latestUserMessageAt),
-      firstValidTimestampMs(thread.latestRun?.completedAt),
-      firstValidTimestampMs(thread.latestRun?.startedAt),
-      firstValidTimestampMs(thread.updatedAt),
-    );
-  const timestamps = new Map(threads.map((thread) => [thread, activityAt(thread)]));
-  return threads.toSorted(
-    (left, right) =>
-      timestamps.get(right)! - timestamps.get(left)! ||
-      left.id.localeCompare(right.id) ||
-      left.environmentId.localeCompare(right.environmentId),
-  );
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";

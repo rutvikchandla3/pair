@@ -35,6 +35,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
+import { useTeamViewers } from "../../state/team";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 
 export function SettingsRouteScreen() {
@@ -166,8 +167,15 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
+  const teamMode = useTeamViewers().size > 0;
+  const connections: readonly SettingsListRow[] = teamMode
+    ? [
+        ...props.connections,
+        { id: "SettingsTeam", icon: "person.2", label: "Team", target: "SettingsTeam" },
+      ]
+    : props.connections;
   const sections = filterSettingsSections(
-    [{ rows: overflowRows }, { title: "Connections", rows: props.connections }, ...indexSections],
+    [{ rows: overflowRows }, { title: "Connections", rows: connections }, ...indexSections],
     query,
   );
 

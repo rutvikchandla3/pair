@@ -7,6 +7,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { ThreadViewerStack } from "./ThreadViewerStack";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -76,6 +77,29 @@ export function ThreadHeader(
     props.gitControls.canOpenTerminal,
   ]);
 
+  const inspectorButton =
+    props.fileInspectorSupported && props.hasThreadCwd ? (
+      <ScreenHeaderButton
+        accessibilityLabel={
+          props.inspectorMode !== null && panes.auxiliaryPaneVisible
+            ? "Hide inspector"
+            : "Show inspector"
+        }
+        icon="sidebar.right"
+        selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
+        onPress={props.onToggleInspector}
+      />
+    ) : null;
+  const trailing =
+    props.viewers !== undefined && props.viewers.length > 0 ? (
+      <>
+        <ThreadViewerStack viewers={props.viewers} />
+        {inspectorButton}
+      </>
+    ) : (
+      inspectorButton
+    );
+
   return (
     <>
       <AppBar
@@ -83,22 +107,10 @@ export function ThreadHeader(
         subtitle={props.subtitle}
         options={native.options}
         optionsVersion={native.optionsVersion}
-        trailing={
-          props.fileInspectorSupported && props.hasThreadCwd ? (
-            <ScreenHeaderButton
-              accessibilityLabel={
-                props.inspectorMode !== null && panes.auxiliaryPaneVisible
-                  ? "Hide inspector"
-                  : "Show inspector"
-              }
-              icon="sidebar.right"
-              selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
-              onPress={props.onToggleInspector}
-            />
-          ) : null
-        }
+        trailing={trailing}
         onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
+        menus={props.teamMenu ? [props.teamMenu] : undefined}
         hideBottomBorder
         compact={composerKeyboardActive}
       />

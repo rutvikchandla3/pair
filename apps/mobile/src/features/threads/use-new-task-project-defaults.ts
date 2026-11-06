@@ -12,6 +12,7 @@ import { useProjectHasThreads } from "../../state/project-has-threads";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
+import { useIsTeamMode } from "../../state/team";
 
 /**
  * A project's new-task defaults: server settings merged with its t3.json. The
@@ -59,11 +60,11 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     t3ProjectFile,
   );
   const projectHasThreads = useProjectHasThreads(project);
+  const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
   const defaultWorkspaceMode = isScratch
     ? "local"
     : resolveNewThreadEnvMode({
-        // Mobile has no team state yet, so it keeps the single-member default.
-        teamDefault: false,
+        teamDefault: isTeamMode,
         projectSettings,
         workspaceRoot: project?.workspaceRoot ?? null,
         newProjectsRoot: serverConfig?.newProjectsRoot,

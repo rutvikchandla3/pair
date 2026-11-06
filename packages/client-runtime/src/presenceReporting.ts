@@ -99,3 +99,34 @@ export function stepPresenceReporter(
     }
   }
 }
+
+/** React Native's `AppStateStatus`; anything but `"background"` counts as on screen. */
+export type AppPresenceState = "active" | "background" | "inactive" | "unknown" | "extension";
+
+/**
+ * How an app that can be backgrounded (mobile) reports itself: in the background it views
+ * nothing and is idle; back on screen it views the routed thread and is active again.
+ */
+export function stepAppPresence(
+  state: PresenceReporterState,
+  app: { readonly appState: AppPresenceState; readonly threadId: ThreadId | null },
+  now: number,
+): PresenceReporterStep {
+  const signals: ReadonlyArray<PresenceReporterSignal> =
+    app.appState === "background"
+      ? [
+          { type: "viewing", threadId: null },
+          { type: "idleCheck", lastInputAt: now - PRESENCE_IDLE_AFTER_MS },
+        ]
+      : [{ type: "viewing", threadId: app.threadId }, { type: "input" }];
+  let next = state;
+  const reports: PresenceReportInput[] = [];
+  for (const signal of signals) {
+    const step = stepPresenceReporter(next, signal, now);
+    next = step.state;
+    if (step.report !== undefined) reports.push(step.report);
+  }
+  return reports.length === 0
+    ? { state: next }
+    : { state: next, report: Object.assign({}, ...reports) };
+}

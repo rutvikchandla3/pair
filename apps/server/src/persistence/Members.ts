@@ -24,6 +24,11 @@ export const MemberRecord = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: Schema.NullOr(IsoDateTime),
   removedAt: Schema.NullOr(IsoDateTime),
+  // Absent and null both mean unbound, so records built in code can leave these out.
+  githubUserId: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Null while bound means the token stopped working and the member must reconnect. */
+  githubConnectedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
 });
 export type MemberRecord = typeof MemberRecord.Type;
 
@@ -34,6 +39,8 @@ export const InsertMemberInput = Schema.Struct({
   gitName: Schema.NullOr(TrimmedNonEmptyString),
   gitEmail: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
+  /** A username an admin pre-set; it binds to an account id on the member's first GitHub sign-in. */
+  githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type InsertMemberInput = typeof InsertMemberInput.Type;
 
@@ -53,6 +60,16 @@ export const SetMemberRoleInput = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type SetMemberRoleInput = typeof SetMemberRoleInput.Type;
+
+/** Writes all three GitHub columns; all null unbinds. */
+export const SetMemberGitHubInput = Schema.Struct({
+  id: MemberId,
+  githubUserId: Schema.NullOr(Schema.Int),
+  githubLogin: Schema.NullOr(TrimmedNonEmptyString),
+  githubConnectedAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+export type SetMemberGitHubInput = typeof SetMemberGitHubInput.Type;
 
 export const MarkMemberRemovedInput = Schema.Struct({
   id: MemberId,
@@ -79,6 +96,10 @@ export class MemberRepository extends Context.Service<
     readonly setRole: (
       input: SetMemberRoleInput,
     ) => Effect.Effect<Option.Option<MemberRecord>, MemberRepositoryError>;
+    /** Never writes a removed member. */
+    readonly setGitHub: (
+      input: SetMemberGitHubInput,
+    ) => Effect.Effect<Option.Option<MemberRecord>, MemberRepositoryError>;
     /** Never removes the owner or a member already removed. */
     readonly markRemoved: (
       input: MarkMemberRemovedInput,
@@ -104,7 +125,10 @@ const make = Effect.gen(function* () {
     is_owner AS "isOwner",
     created_at AS "createdAt",
     updated_at AS "updatedAt",
-    removed_at AS "removedAt"
+    removed_at AS "removedAt",
+    github_user_id AS "githubUserId",
+    github_login AS "githubLogin",
+    github_connected_at AS "githubConnectedAt"
   `;
 
   const listRows = SqlSchema.findAll({
@@ -125,10 +149,12 @@ const make = Effect.gen(function* () {
   const insertRow = SqlSchema.void({
     Request: InsertMemberInput,
     execute: (input) => sql`
-      INSERT INTO members (id, name, role, git_name, git_email, is_owner, created_at)
+      INSERT INTO members (
+        id, name, role, git_name, git_email, is_owner, created_at, github_login
+      )
       VALUES (
         ${input.id}, ${input.name}, ${input.role}, ${input.gitName}, ${input.gitEmail}, 0,
-        ${input.createdAt}
+        ${input.createdAt}, ${input.githubLogin ?? null}
       )
     `,
   });
@@ -153,6 +179,17 @@ const make = Effect.gen(function* () {
     execute: (input) => sql`
       UPDATE members SET role = ${input.role}, updated_at = ${input.updatedAt}
       WHERE id = ${input.id} AND is_owner = 0
+      RETURNING ${columns}
+    `,
+  });
+  const setGitHubRow = SqlSchema.findOneOption({
+    Request: SetMemberGitHubInput,
+    Result: MemberRecord,
+    execute: (input) => sql`
+      UPDATE members
+      SET github_user_id = ${input.githubUserId}, github_login = ${input.githubLogin},
+        github_connected_at = ${input.githubConnectedAt}, updated_at = ${input.updatedAt}
+      WHERE id = ${input.id} AND removed_at IS NULL
       RETURNING ${columns}
     `,
   });
@@ -195,6 +232,11 @@ const make = Effect.gen(function* () {
     setRole: Effect.fn("MemberRepository.setRole")(function (input) {
       return setRoleRow(input).pipe(
         Effect.mapError(toSqlOrDecodeError("MemberRepository.setRole")),
+      );
+    }),
+    setGitHub: Effect.fn("MemberRepository.setGitHub")(function (input) {
+      return setGitHubRow(input).pipe(
+        Effect.mapError(toSqlOrDecodeError("MemberRepository.setGitHub")),
       );
     }),
     markRemoved: Effect.fn("MemberRepository.markRemoved")(function (input) {

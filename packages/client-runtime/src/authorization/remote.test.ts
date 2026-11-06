@@ -2,13 +2,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+import { AuthGitHubSignInError, EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import {
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
+  pollRemoteGitHubSignIn,
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
@@ -177,6 +178,34 @@ describe("remote environment authorization", () => {
         expect(error.reason).toBe("missing_credential");
         expect(error.traceId).toBe("trace-auth-test");
       }
+    }),
+  );
+
+  it.effect("polls GitHub sign-in to its sign-in code, and keeps a refusal's reason", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ status: "pending" }),
+        Response.json({ status: "complete", credential: "one-time-code" }),
+        Response.json(
+          { _tag: "AuthGitHubSignInError", reason: "not-a-member", message: "Not on the team." },
+          { status: 400 },
+        ),
+      );
+      const poll = pollRemoteGitHubSignIn({
+        httpBaseUrl: "https://remote.example.com/",
+        attemptId: "attempt-1",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expect(yield* poll).toEqual({ status: "pending" });
+      expect(yield* poll).toEqual({ status: "complete", credential: "one-time-code" });
+      const refusal = yield* Effect.flip(poll);
+      expect(refusal).toBeInstanceOf(AuthGitHubSignInError);
+      expect(refusal).toMatchObject({ reason: "not-a-member", message: "Not on the team." });
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://remote.example.com/api/auth/github/poll",
+        method: "POST",
+        body: '{"attemptId":"attempt-1"}',
+      });
     }),
   );
 

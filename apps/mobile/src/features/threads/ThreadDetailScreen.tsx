@@ -263,6 +263,7 @@ export interface ThreadDetailScreenProps {
   readonly composerDraftKey: string | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
+  readonly othersTurnName: string | null;
   readonly isSavingQueuedEdit: boolean;
   readonly onCancelQueuedRunEdit: () => void;
   readonly onRemoveQueuedEditAttachment: (attachmentId: string) => void;
@@ -1825,6 +1826,7 @@ function ThreadDetailBody(
                             : props.followUpBehavior
                         }
                         canSteerActiveTurn={props.canSteerActiveTurn}
+                        othersTurnName={props.othersTurnName}
                         hidden={composerSlotHidden}
                         queuedEdit={
                           props.queuedRunEdit === null

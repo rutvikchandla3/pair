@@ -11,10 +11,24 @@ import {
   AuthSettingsWriteScope,
   AuthStandardClientScopes,
 } from "./auth.ts";
-import { IsoDateTime, MemberId, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  MemberId,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const MemberRole = Schema.Literals(["admin", "member"]);
 export type MemberRole = typeof MemberRole.Type;
+
+/** A GitHub account bound to a member; `connected` is false once its token stops working. */
+export const TeamMemberGitHub = Schema.Struct({
+  login: TrimmedNonEmptyString,
+  connected: Schema.Boolean,
+});
+export type TeamMemberGitHub = typeof TeamMemberGitHub.Type;
 
 export const TeamMember = Schema.Struct({
   id: MemberId,
@@ -24,6 +38,8 @@ export const TeamMember = Schema.Struct({
   color: Schema.String,
   gitName: Schema.optionalKey(TrimmedNonEmptyString),
   gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Absent until the member connects GitHub or an admin sets their GitHub username. */
+  github: Schema.optionalKey(TeamMemberGitHub),
   isOwner: Schema.Boolean,
   createdAt: IsoDateTime,
   removedAt: Schema.NullOr(IsoDateTime),
@@ -42,6 +58,8 @@ export const TeamInviteInput = Schema.Struct({
   role: MemberRole,
   gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
   ttlMs: Schema.optionalKey(PositiveInt),
+  /** Lets them sign in with that GitHub account; it binds on their first sign-in. */
+  githubLogin: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type TeamInviteInput = typeof TeamInviteInput.Type;
 
@@ -56,9 +74,14 @@ export const TeamUpdateSelfInput = Schema.Struct({
 });
 export type TeamUpdateSelfInput = typeof TeamUpdateSelfInput.Type;
 
+/**
+ * `githubLogin` is admin-only: members bind GitHub to themselves only through the device flow. A
+ * changed login drops the old binding and token; `null` clears both.
+ */
 export const TeamUpdateInput = Schema.Struct({
   memberId: MemberId,
   ...TeamUpdateSelfInput.fields,
+  githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type TeamUpdateInput = typeof TeamUpdateInput.Type;
 
@@ -74,12 +97,31 @@ export const TeamLinkResult = Schema.Struct({
 });
 export type TeamLinkResult = typeof TeamLinkResult.Type;
 
+export const TeamUsageInput = Schema.Struct({ since: Schema.DateTimeUtc });
+export type TeamUsageInput = typeof TeamUsageInput.Type;
+
+/** Provider turns per prompter and instance. Input tokens exclude cache reads. */
+export const TeamUsageRow = Schema.Struct({
+  memberId: MemberId,
+  providerInstanceId: ProviderInstanceId,
+  turns: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  /** Turns whose provider reported no token counts. */
+  unmeasuredTurns: NonNegativeInt,
+});
+export type TeamUsageRow = typeof TeamUsageRow.Type;
+
+export const TeamUsageResult = Schema.Struct({ rows: Schema.Array(TeamUsageRow) });
+export type TeamUsageResult = typeof TeamUsageResult.Type;
+
 export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
   reason: Schema.Literals([
     "not-found",
     "owner-immutable",
     "removed",
     "not-a-member",
+    "forbidden",
     "policy-refused",
     "internal",
   ]),

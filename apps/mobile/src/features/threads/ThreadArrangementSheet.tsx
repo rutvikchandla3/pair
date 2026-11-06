@@ -2,6 +2,7 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { isSidebarThreadMine } from "@t3tools/client-runtime/state/team";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { sortInboxThreadsByReturn } from "@t3tools/client-runtime/state/thread-inbox";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +18,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { useTeamViewers } from "../../state/team";
 import { environmentThreadShells } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -177,6 +179,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
+  const teamViewers = useTeamViewers();
   const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -184,7 +187,16 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   );
   // Older settled threads load in pages, as in the thread list.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: [...configs.keys()].map((environmentId) => ({ environmentId, projectIds: null })),
+    scopes: [...configs.keys()].map((environmentId) => {
+      const viewer = teamViewers.get(environmentId);
+      return {
+        environmentId,
+        projectIds: null,
+        ...(viewer === undefined
+          ? {}
+          : { ownerId: viewer.memberId, serverOwnerId: viewer.ownerId }),
+      };
+    }),
     expanded: expanded.settled,
     visibleCount: settledVisibleCount,
   });
@@ -196,13 +208,21 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       pendingOrder,
       settlementEnvironmentIds: new Set(configs.keys()),
       snoozeEnvironmentIds: new Set(configs.keys()),
+      teamViewers,
     };
     const pinned = getThreadListV2OrderedSection({ ...shared, section: "pinned" });
     const active = getThreadListV2OrderedSection({ ...shared, section: "active" });
     const visible = new Set([...pinned, ...active].map(keyOf));
-    const parked = threads.filter(
-      (thread) => thread.archivedAt === null && !visible.has(keyOf(thread)),
-    );
+    // Teammates' threads are not arranged here, except snoozed ones, which list as on Home.
+    const parked = threads.filter((thread) => {
+      if (thread.archivedAt !== null || visible.has(keyOf(thread))) return false;
+      const viewer = teamViewers.get(thread.environmentId);
+      return (
+        viewer === undefined ||
+        effectiveSnoozed(thread, { now }) ||
+        isSidebarThreadMine(thread, viewer)
+      );
+    });
     return {
       pinned,
       active: workingShelfEnabled
@@ -211,7 +231,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled, teamViewers]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);

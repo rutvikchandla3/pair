@@ -57,9 +57,11 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     shelfPreferencesLoaded: true,
     workingShelfEnabled: true,
     workingShelfExpanded: false,
+    teamShelfExpanded: false,
     snoozedShelfExpanded: false,
     settledShelfExpanded: true,
     selectedThreadKey: null,
+    teamViewers: new Map(),
   };
   const seen: Array<ReturnType<typeof useThreadListV2>> = [];
   function Probe(props: { input: typeof input; tab: string }) {

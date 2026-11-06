@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   MemberId,
+  ThreadId,
   type AuthSessionState,
   type TeamMember,
   type TeamStreamEvent,
@@ -19,6 +20,10 @@ import {
   canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
+  otherMessageAuthorId,
+  resolveTeamThreadSection,
+  sortTeamThreadsByActivity,
+  type TeamViewer,
 } from "./team.ts";
 
 const streamed = vi.hoisted(() => ({ events: [] as unknown[] }));
@@ -146,4 +151,90 @@ describe("team state", () => {
       }),
     ),
   );
+});
+
+describe("Team shelf", () => {
+  const me = MemberId.make("member-me");
+  const bob = MemberId.make("member-bob");
+  const viewer: TeamViewer = { memberId: me, ownerId: bob, members: new Map() };
+
+  it.each([
+    ["a thread I own stays mine", { ownerId: me }, "mine"],
+    ["a thread without an owner belongs to the server owner", {}, "team"],
+    ["another member's active thread goes to Team", { ownerId: bob }, "team"],
+    ["another member's thread I follow is mine", { ownerId: bob, followedAt: "t" }, "mine"],
+    [
+      "another member's thread I unfollowed goes back to Team",
+      { ownerId: bob, followedAt: null },
+      "team",
+    ],
+    ["another member's thread I pinned is mine", { ownerId: bob, pinnedAt: "t" }, "mine"],
+    ["my settled thread is mine", { ownerId: me, settled: true }, "mine"],
+    ["another member's settled thread is not listed", { ownerId: bob, settled: true }, "hidden"],
+    ["a followed settled thread is mine", { ownerId: bob, followedAt: "t", settled: true }, "mine"],
+  ] as const)("team mode: %s", (_name, thread, expected) => {
+    const shell = {
+      source: "ownerId" in thread ? { ownerId: thread.ownerId } : {},
+      pinnedAt: "pinnedAt" in thread ? thread.pinnedAt : undefined,
+      followedAt: "followedAt" in thread ? thread.followedAt : undefined,
+    };
+    expect(
+      resolveTeamThreadSection(shell, viewer, {
+        settled: "settled" in thread && thread.settled,
+      }),
+    ).toBe(expected);
+  });
+
+  it("sorts the Team bucket by the latest message, run or update", () => {
+    const shell = (
+      id: string,
+      input: { message?: string; completed?: string; updated: string },
+    ) => ({
+      id: ThreadId.make(id),
+      environmentId: env,
+      latestUserMessageAt: input.message ?? null,
+      latestRun:
+        input.completed === undefined
+          ? null
+          : {
+              runId: "turn-1" as never,
+              status: "completed" as const,
+              assistantMessageId: null,
+              requestedAt: "2026-03-09T10:00:00.000Z",
+              startedAt: null,
+              completedAt: input.completed,
+            },
+      updatedAt: input.updated,
+    });
+    const sorted = sortTeamThreadsByActivity([
+      shell("stale", { updated: "2026-03-01T00:00:00.000Z" }),
+      shell("messaged", {
+        message: "2026-03-09T09:00:00.000Z",
+        updated: "2026-03-02T00:00:00.000Z",
+      }),
+      shell("finished", {
+        completed: "2026-03-09T12:00:00.000Z",
+        updated: "2026-03-03T00:00:00.000Z",
+      }),
+      shell("touched", { updated: "2026-03-09T10:00:00.000Z" }),
+    ]);
+    expect(sorted.map((entry) => entry.id)).toEqual(["finished", "touched", "messaged", "stale"]);
+  });
+});
+
+describe("otherMessageAuthorId", () => {
+  const me = MemberId.make("member-me");
+  const bob = MemberId.make("member-bob");
+  it.each([
+    ["names a teammate's message", { authorId: bob }, null, true, bob],
+    ["skips my own message", { authorId: me }, null, true, undefined],
+    ["skips a guest's message", { authorId: bob }, "guest", true, undefined],
+    ["skips an agent's message", { authorId: bob }, "agent", true, undefined],
+    ["skips a message without an author", {}, null, true, undefined],
+    ["skips everything in solo mode", { authorId: bob }, null, false, undefined],
+  ] as const)("%s", (_name, message, attribution, isTeamMode, expected) => {
+    expect(otherMessageAuthorId({ isTeamMode, currentMemberId: me, message, attribution })).toBe(
+      expected,
+    );
+  });
 });

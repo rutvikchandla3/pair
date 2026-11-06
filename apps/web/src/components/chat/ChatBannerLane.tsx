@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
+import { useSignedOutAccountNotice } from "../team/useSignedOutAccountNotice";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
 import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
 
@@ -20,6 +21,8 @@ export function ChatBannerLane(props: {
   setDismissedProviderStatusBannerKey: Dispatch<SetStateAction<string | null>>;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   threadId: ThreadId;
+  /** The instance the thread runs on, for the line about another member's signed-out account. */
+  threadInstanceId: ProviderInstanceId | null;
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
   threadErrorCode: string | null;
@@ -40,6 +43,7 @@ export function ChatBannerLane(props: {
     setThreadError,
     setThreadErrorBannerDismissTick,
   } = props;
+  const signedOutNotice = useSignedOutAccountNotice(props.environmentId, props.threadInstanceId);
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
       <ProviderStatusBanner
@@ -52,6 +56,7 @@ export function ChatBannerLane(props: {
         error={threadError}
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
+        notice={signedOutNotice}
         onDismiss={() => {
           setThreadError(threadId, null);
           dismissThreadErrorBannerForSession(threadErrorBannerKey);

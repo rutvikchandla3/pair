@@ -1,10 +1,12 @@
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
   MemberId,
   MessageId,
+  NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
@@ -31,6 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -130,6 +133,19 @@ it("attributes client commands to the session's member, never to a member the cl
       alice,
     ),
   ).toEqual({ type: "thread.archive", commandId, threadId, actorId: alice });
+  const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+  expect(
+    ThreadManagementService.withActor(
+      { type: "provider.switch", commandId, threadId, modelSelection, actorId: forged },
+      alice,
+    ),
+  ).toMatchObject({ actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      { type: "thread.model-selection.set", commandId, threadId, modelSelection },
+      alice,
+    ),
+  ).toMatchObject({ actorId: alice });
   expect(
     ThreadManagementService.withActor(
       { type: "thread.unarchive", commandId, threadId, actorId: forged },
@@ -265,6 +281,234 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+describe("the provider instance selection rule", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const projectId = ProjectId.make("project:thread-management:selection");
+  const threadId = ThreadId.make("thread:thread-management:selection");
+  const bobs = { instanceId: ProviderInstanceId.make("claudeAgent-bob-ab12"), model: "haiku" };
+  const team = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" };
+  const member = (id: MemberId, name: string, isOwner: boolean) => ({
+    id,
+    name,
+    role: isOwner ? ("admin" as const) : ("member" as const),
+    gitName: null,
+    gitEmail: null,
+    isOwner,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: null,
+    removedAt: null,
+  });
+  const ownedSettings = {
+    providerInstances: {
+      [team.instanceId]: { driver: ProviderDriverKind.make("claudeAgent") },
+      [bobs.instanceId]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        displayName: "Bob's Claude",
+        ownerMemberId: bob,
+      },
+    },
+  };
+  const create = (fields: Partial<Extract<OrchestrationV2Command, { type: "thread.create" }>>) =>
+    ({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make("command:selection:create"),
+      threadId,
+      projectId,
+      title: "Selection",
+      modelSelection: bobs,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      ...fields,
+    }) as const;
+  const prompt = (modelSelection?: typeof bobs) =>
+    ({
+      type: "message.dispatch",
+      actorId: alice,
+      commandId: CommandId.make("command:selection:prompt"),
+      threadId,
+      messageId: MessageId.make("message:selection:prompt"),
+      text: "Go on",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+      ...(modelSelection === undefined ? {} : { modelSelection }),
+    }) as const;
+  const switchTo = (type: "provider.switch" | "thread.model-selection.set", to: typeof bobs) =>
+    ({
+      type,
+      actorId: alice,
+      commandId: CommandId.make(`command:selection:${type}`),
+      threadId,
+      modelSelection: to,
+    }) as const;
+  const delegate = {
+    type: "delegated_task.request",
+    createdBy: "agent",
+    creationSource: "mcp",
+    commandId: CommandId.make("command:selection:delegate"),
+    parentThreadId: threadId,
+    parentRunId: RunId.make("run:selection:parent"),
+    parentNodeId: NodeId.make("node:selection:parent"),
+    task: "Look into it",
+    modelSelection: bobs,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+  } as const;
+  const rejected = "Bob's Claude belongs to Bob. Pick another provider.";
+
+  it.effect.each([
+    { name: "Bob creates on Bob's", command: create({ actorId: bob }), error: null },
+    { name: "Alice creates on Bob's", command: create({ actorId: alice }), error: rejected },
+    {
+      name: "a scheduled thread.create for Bob uses Bob's",
+      command: create({ ownerId: bob, createdBy: "agent", creationSource: "server" }),
+      error: null,
+    },
+    { name: "Alice prompts a thread on Bob's", command: prompt(), thread: bobs, error: null },
+    {
+      name: "Alice prompts a thread on Bob's naming its instance",
+      command: prompt(bobs),
+      thread: bobs,
+      error: null,
+    },
+    {
+      name: "Alice moves a thread onto Bob's with a prompt",
+      command: prompt(bobs),
+      thread: team,
+      error: rejected,
+    },
+    {
+      name: "Alice switches Bob's thread to a team instance",
+      command: switchTo("provider.switch", team),
+      thread: bobs,
+      error: null,
+    },
+    {
+      name: "Alice sets a team model on Bob's thread",
+      command: switchTo("thread.model-selection.set", team),
+      thread: bobs,
+      error: null,
+    },
+    {
+      name: "Alice switches it back",
+      command: switchTo("provider.switch", bobs),
+      thread: team,
+      error: rejected,
+    },
+    {
+      name: "Alice sets Bob's model on a team thread",
+      command: switchTo("thread.model-selection.set", bobs),
+      thread: team,
+      error: rejected,
+    },
+    {
+      name: "Alice forks a thread on Bob's",
+      command: {
+        type: "thread.fork",
+        actorId: alice,
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("command:selection:fork"),
+        sourceThreadId: threadId,
+        targetThreadId: ThreadId.make("thread:thread-management:selection-fork"),
+        sourcePoint: { type: "latest_stable" },
+      },
+      thread: bobs,
+      error: null,
+    },
+    {
+      name: "a delegated task inherits Bob's from Alice's thread",
+      command: delegate,
+      thread: bobs,
+      error: null,
+    },
+    {
+      name: "a delegated task on Alice's team thread picks Bob's",
+      command: delegate,
+      thread: team,
+      error: rejected,
+    },
+  ] as const)("$name", ({ command, thread, error }) => {
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId,
+                deletedAt: null,
+                ownerId: alice,
+                modelSelection: thread ?? team,
+              },
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (accepted) =>
+            Effect.sync(() => {
+              dispatched.push(accepted);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest(ownedSettings)),
+      Layer.provide(TeamState.layerTest([member(alice, "Alice", true), member(bob, "Bob", false)])),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* Effect.result(threads.dispatch(command));
+      if (error === null) {
+        // The orchestrator gets the command as sent, so a prompt runs on the thread's instance.
+        expect(dispatched).toEqual([command]);
+      } else {
+        expect(dispatched).toEqual([]);
+        expect(result).toMatchObject({ failure: { message: error } });
+      }
+    }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("a server with no owned instances never reads the thread for a selection", () => {
+    let threadReads = 0;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.sync(() => {
+              threadReads += 1;
+              return {} as OrchestrationV2ThreadProjection;
+            }),
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] } as never),
+        }),
+      ),
+      Layer.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [team.instanceId]: { driver: ProviderDriverKind.make("claudeAgent") },
+          },
+        }),
+      ),
+      Layer.provide(TeamState.layerTest([member(alice, "Alice", true), member(bob, "Bob", false)])),
+      Layer.provide(layerReceiptsTest),
+    );
+
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.dispatch(switchTo("provider.switch", team));
+      yield* threads.dispatch(create({ actorId: alice, modelSelection: team }));
+      expect(threadReads).toBe(0);
+    }).pipe(Effect.provide(layerTest));
+  });
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {

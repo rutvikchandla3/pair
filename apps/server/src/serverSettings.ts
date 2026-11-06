@@ -19,6 +19,7 @@ import {
   type ManagedPolicySummary,
   globalIdleCompaction,
   isSecretReference,
+  type MemberId,
   type SecretReference,
   withIdleCompaction,
 } from "@t3tools/contracts";
@@ -182,17 +183,76 @@ function withoutUnknownSecretProviderConfigs(
   ) as ServerSettings["secretProviders"];
 }
 
+/** Without `activeMemberIds`, every owner counts as active, so no owner can change. */
+export interface ProviderInstanceOwnership {
+  readonly activeMemberIds?: ReadonlySet<MemberId>;
+}
+
+const withOwner = (
+  instance: ProviderInstanceConfig,
+  ownerMemberId: MemberId | undefined,
+): ProviderInstanceConfig => {
+  if (instance.ownerMemberId === ownerMemberId) return instance;
+  const { ownerMemberId: _owner, ...rest } = instance;
+  return ownerMemberId === undefined ? rest : { ...rest, ownerMemberId };
+};
+
 export function applyProviderInstanceMutation(
   settings: ServerSettings,
   mutation: ProviderInstanceMutation,
 ): ServerSettings {
   const providerInstances = { ...settings.providerInstances };
-  if (mutation.operation === "upsert" || mutation.operation === "create") {
+  if (mutation.operation === "create") {
     providerInstances[mutation.instanceId] = mutation.instance;
+  } else if (mutation.operation === "upsert") {
+    // Clients that predate owners send instances without one; an edit keeps it.
+    const owner = mutation.clearOwner
+      ? undefined
+      : (mutation.instance.ownerMemberId ??
+        settings.providerInstances[mutation.instanceId]?.ownerMemberId);
+    providerInstances[mutation.instanceId] = withOwner(mutation.instance, owner);
   } else {
     delete providerInstances[mutation.instanceId];
   }
   return { ...settings, providerInstances };
+}
+
+/** A whole-record patch from a client that predates owners keeps every stored owner. */
+function keepProviderInstanceOwners(current: ServerSettings, next: ServerSettings): ServerSettings {
+  if (next.providerInstances === current.providerInstances) return next;
+  let providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> | undefined;
+  for (const [key, instance] of Object.entries(next.providerInstances)) {
+    const instanceId = key as ProviderInstanceId;
+    const owner = current.providerInstances[instanceId]?.ownerMemberId;
+    if (owner === undefined || instance.ownerMemberId !== undefined) continue;
+    providerInstances ??= { ...next.providerInstances };
+    providerInstances[instanceId] = withOwner(instance, owner);
+  }
+  return providerInstances === undefined ? next : { ...next, providerInstances };
+}
+
+// An active member's account stays theirs; only a removed member's can be reassigned or cleared.
+function ensureProviderInstanceOwnersKept(
+  current: ServerSettings,
+  next: ServerSettings,
+  ownership: ProviderInstanceOwnership,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
+    const owner = instance.ownerMemberId;
+    const updated = next.providerInstances[instanceId as ProviderInstanceId];
+    if (owner === undefined || updated === undefined || updated.ownerMemberId === owner) continue;
+    if (ownership.activeMemberIds !== undefined && !ownership.activeMemberIds.has(owner)) continue;
+    return Effect.fail(
+      new ServerSettingsError({
+        settingsPath,
+        operation: "change-provider-instance-owner",
+        providerInstanceId: instanceId,
+        ...(instance.displayName === undefined ? {} : { providerLabel: instance.displayName }),
+      }),
+    );
+  }
+  return Effect.void;
 }
 
 const secretProviderConfigGuards = new Map(
@@ -263,11 +323,13 @@ export class ServerSettingsService extends Context.Service<
 
     readonly updateSettings: (
       patch: ServerSettingsPatch,
+      ownership?: ProviderInstanceOwnership,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
+      ownership?: ProviderInstanceOwnership,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly withSettingsSnapshot: <A, E, R>(
@@ -323,16 +385,38 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
-    updateSettings: (patch) =>
+    updateSettings: (patch, ownership = {}) =>
       updateTestSettings((currentSettings) =>
-        Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        Effect.gen(function* () {
+          const next = keepProviderInstanceOwners(
+            currentSettings,
+            applyServerSettingsPatch(currentSettings, patch),
+          );
+          yield* ensureProviderInstanceOwnersKept(
+            currentSettings,
+            next,
+            ownership,
+            "test settings",
+          );
+          return next;
+        }),
       ),
-    updateProviderInstance: (mutation, patch = {}) =>
+    updateProviderInstance: (mutation, patch = {}, ownership = {}) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
           yield* ensureProviderInstanceMutationAllowed(currentSettings, mutation, "test settings");
-          const patched = applyServerSettingsPatch(currentSettings, patch);
-          return applyProviderInstanceMutation(patched, mutation);
+          const patched = keepProviderInstanceOwners(
+            currentSettings,
+            applyServerSettingsPatch(currentSettings, patch),
+          );
+          const next = applyProviderInstanceMutation(patched, mutation);
+          yield* ensureProviderInstanceOwnersKept(
+            currentSettings,
+            next,
+            ownership,
+            "test settings",
+          );
+          return next;
         }),
       ),
     withSettingsSnapshot: (use) =>
@@ -1335,19 +1419,30 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
-    updateSettings: (patch) =>
+    updateSettings: (patch, ownership = {}) =>
       updateAndPersistSettings(patch, (current) =>
-        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
-          Effect.as(applyServerSettingsPatch(current, patch)),
-        ),
+        Effect.gen(function* () {
+          yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
+          const next = keepProviderInstanceOwners(
+            current,
+            applyServerSettingsPatch(current, patch),
+          );
+          yield* ensureProviderInstanceOwnersKept(current, next, ownership, settingsPath);
+          return next;
+        }),
       ),
-    updateProviderInstance: (mutation, patch = {}) =>
+    updateProviderInstance: (mutation, patch = {}, ownership = {}) =>
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {
           yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
           yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
-          const patched = applyServerSettingsPatch(current, patch);
-          return applyProviderInstanceMutation(patched, mutation);
+          const patched = keepProviderInstanceOwners(
+            current,
+            applyServerSettingsPatch(current, patch),
+          );
+          const next = applyProviderInstanceMutation(patched, mutation);
+          yield* ensureProviderInstanceOwnersKept(current, next, ownership, settingsPath);
+          return next;
         }),
       ),
     withSettingsSnapshot,

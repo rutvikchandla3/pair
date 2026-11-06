@@ -14,6 +14,7 @@ const SETTINGS_SEARCH_TERMS = {
     "tailscale",
   ],
   SettingsNotifications: ["push", "alerts", "live activity", "agent activity"],
+  SettingsTeam: ["members", "teammates", "online", "away", "admin"],
   SettingsAppearance: [
     "theme",
     "dark mode",

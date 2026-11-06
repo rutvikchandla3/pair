@@ -28,7 +28,10 @@ export function workspaceTabColumns(
 // Pages a Settings row opens, minus Project overview: it shows the project chosen in the
 // Settings scope, which resets whenever Settings closes.
 const REMEMBERED_SETTINGS_PAGES: ReadonlySet<string> = new Set(
-  SETTINGS_PAGE_TARGETS.filter((page) => page !== "SettingsProjectOverview"),
+  // Team is listed only on a team server, so it is not a page to come back to.
+  SETTINGS_PAGE_TARGETS.filter(
+    (page) => page !== "SettingsProjectOverview" && page !== "SettingsTeam",
+  ),
 );
 
 export function rememberedSettingsPage(selections: WorkspaceSelections): SettingsPageTarget {

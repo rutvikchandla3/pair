@@ -21,6 +21,7 @@ import {
   ThreadModelSwitchDivider,
 } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
+import { MessageAuthorName } from "./MessageAuthorName";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -1998,6 +1999,13 @@ function renderFeedEntry(
           ) : null}
           {presentation.guestName !== undefined ? (
             <GuestMessageName name={presentation.guestName} />
+          ) : null}
+          {message.authorId !== undefined ? (
+            <MessageAuthorName
+              environmentId={props.environmentId}
+              authorId={message.authorId}
+              attribution={presentation.attribution}
+            />
           ) : null}
           {mediaAttachments.length + pendingMedia.length > 0 ? (
             <View

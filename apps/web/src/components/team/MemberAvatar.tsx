@@ -1,3 +1,4 @@
+import { memberInitials } from "@t3tools/client-runtime/state/team";
 import type { TeamMember } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
@@ -6,15 +7,6 @@ const SIZE_CLASSNAMES = {
   sm: "size-5 text-3xs",
   md: "size-8 text-xs",
 } as const;
-
-function memberInitials(name: string): string {
-  const words = name.trim().split(/\s+/u).filter(Boolean);
-  const letters =
-    words.length > 1
-      ? [words[0], words[words.length - 1]].map((word) => Array.from(word ?? "")[0] ?? "")
-      : Array.from(words[0] ?? "").slice(0, 2);
-  return letters.join("").toUpperCase();
-}
 
 export function MemberAvatar({
   member,

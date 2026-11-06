@@ -171,6 +171,10 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./providerInstanceOwnership": {
+      "types": "./src/providerInstanceOwnership.ts",
+      "import": "./src/providerInstanceOwnership.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"

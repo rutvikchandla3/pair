@@ -40,6 +40,7 @@ import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-pref
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { useTeamViewers } from "../../state/team";
 import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
@@ -71,6 +72,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2TeamShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
@@ -274,12 +276,15 @@ function ThreadNavigationSidebarPane(
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    teamShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleTeamShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const teamViewers = useTeamViewers();
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -319,8 +324,10 @@ function ThreadNavigationSidebarPane(
     shelfPreferencesLoaded,
     workingShelfEnabled,
     workingShelfExpanded,
+    teamShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    teamViewers,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
   const listItems: readonly SidebarListItem[] =
@@ -548,6 +555,8 @@ function ThreadNavigationSidebarPane(
             snoozed={item.item.snoozed}
             pinned={item.item.pinned}
             wokeAt={item.item.wokeAt}
+            owner={item.item.owner}
+            team={item.item.team}
             snoozePresetMinute={item.snoozePresetMinute ?? ""}
             snoozeWakeLabelText={item.snoozeWakeLabelText}
             timeLabel={item.timeLabel}
@@ -620,6 +629,16 @@ function ThreadNavigationSidebarPane(
             disabled={item.disabled}
             expanded={item.expanded}
             onToggle={toggleWorkingShelf}
+            pane="sidebar"
+          />
+        );
+      case "v2-team-shelf":
+        return (
+          <ThreadListV2TeamShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleTeamShelf}
             pane="sidebar"
           />
         );
