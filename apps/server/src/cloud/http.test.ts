@@ -33,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
+import * as GitHubSignIn from "../team/GitHubSignIn.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectHttp from "./http.ts";
@@ -77,6 +78,7 @@ const layerConfig = Layer.effect(
 // Real credential issuance, verification, origin checks and signing; no relay or tunnel is started.
 const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
+  Layer.provide(Layer.mock(GitHubSignIn.GitHubSignIn)({})),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(EnvironmentKeys.layer),

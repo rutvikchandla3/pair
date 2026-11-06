@@ -50,6 +50,12 @@ export class MemberGitHub extends Context.Service<
       memberId: MemberId,
     ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
     readonly cancel: (memberId: MemberId) => Effect.Effect<void>;
+    /** Binds an account the member proved through the device flow and stores its session. */
+    readonly connect: (
+      memberId: MemberId,
+      viewer: GitHubDeviceFlow.GitHubViewer,
+      session: GitHubDeviceFlow.GitHubAppSession,
+    ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
     /** Drops the token and the binding. GitHub keeps the grant until the member revokes it. */
     readonly disconnect: (memberId: MemberId) => Effect.Effect<TeamMember, TeamError>;
     /** The member's token, refreshed when due; none when not connected or no longer usable. */
@@ -142,6 +148,32 @@ const make = Effect.gen(function* () {
       );
   });
 
+  const connect: MemberGitHub["Service"]["connect"] = Effect.fn("MemberGitHub.connect")(
+    function* (memberId, viewer, session) {
+      // The CLI writes members directly, so check against fresh rows.
+      yield* teamState.reload.pipe(Effect.ignore);
+      for (const record of (yield* Ref.get(teamState.members)).values()) {
+        if (
+          record.id !== memberId &&
+          record.removedAt === null &&
+          record.githubUserId === viewer.id
+        ) {
+          return yield* linkError(`That GitHub account is connected to ${record.name}.`);
+        }
+      }
+      yield* writeSession(memberId, session).pipe(
+        Effect.mapError((cause) => linkError("The server could not save the connection.", cause)),
+      );
+      return yield* team
+        .setGitHub(memberId, {
+          githubUserId: viewer.id,
+          githubLogin: viewer.login,
+          githubConnectedAt: yield* nowIso,
+        })
+        .pipe(Effect.tapError(() => secrets.remove(secretName(memberId)).pipe(Effect.ignore)));
+    },
+  );
+
   const link = Effect.fn("MemberGitHub.link")(function* (
     memberId: MemberId,
     session: GitHubDeviceFlow.GitHubAppSession,
@@ -154,27 +186,7 @@ const make = Effect.gen(function* () {
         ),
       );
     if (viewer === null) return yield* linkError("GitHub refused the new connection. Start again.");
-    // The CLI writes members directly, so check against fresh rows.
-    yield* teamState.reload.pipe(Effect.ignore);
-    for (const record of (yield* Ref.get(teamState.members)).values()) {
-      if (
-        record.id !== memberId &&
-        record.removedAt === null &&
-        record.githubUserId === viewer.id
-      ) {
-        return yield* linkError(`That GitHub account is connected to ${record.name}.`);
-      }
-    }
-    yield* writeSession(memberId, session).pipe(
-      Effect.mapError((cause) => linkError("The server could not save the connection.", cause)),
-    );
-    return yield* team
-      .setGitHub(memberId, {
-        githubUserId: viewer.id,
-        githubLogin: viewer.login,
-        githubConnectedAt: yield* nowIso,
-      })
-      .pipe(Effect.tapError(() => secrets.remove(secretName(memberId)).pipe(Effect.ignore)));
+    return yield* connect(memberId, viewer, session);
   });
 
   const start: MemberGitHub["Service"]["start"] = Effect.fn("MemberGitHub.start")(
@@ -325,7 +337,16 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return MemberGitHub.of({ enabled, start, wait, cancel, disconnect, credentialFor, check });
+  return MemberGitHub.of({
+    enabled,
+    start,
+    wait,
+    cancel,
+    connect,
+    disconnect,
+    credentialFor,
+    check,
+  });
 });
 
 export const layer = Layer.effect(MemberGitHub, make);

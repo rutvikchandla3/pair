@@ -25,6 +25,8 @@ import {
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CLIENT_ID_VARIABLE } from "@t3tools/source-control-github/server/deviceFlow";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -34,6 +36,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
@@ -757,6 +760,19 @@ export const make = Effect.gen(function* () {
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const teamState = yield* TeamState.TeamState;
   const devAuth = resolveReusableDevAuth(config);
+  const githubAppConfigured =
+    ((yield* HostProcess.Environment)[CLIENT_ID_VARIABLE]?.trim() ?? "") !== "";
+
+  // Same rule GitHubSignIn.start enforces, so the sign-in page only offers what can work.
+  const currentDescriptor = Effect.gen(function* () {
+    if (!githubAppConfigured) return descriptor;
+    if (!TeamState.hasGitHubSignInMember(yield* Ref.get(teamState.members))) {
+      // The CLI writes members directly, so a username it pre-set may not be loaded yet.
+      yield* teamState.reload.pipe(Effect.ignore);
+      if (!TeamState.hasGitHubSignInMember(yield* Ref.get(teamState.members))) return descriptor;
+    }
+    return { ...descriptor, githubSignIn: true } satisfies ServerAuthDescriptor;
+  });
 
   // Runs inside each authenticate span, on every request.
   const resolveMember = Effect.fnUntraced(function* (memberId: MemberId | null) {
@@ -891,22 +907,25 @@ export const make = Effect.gen(function* () {
 
   const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
-      Effect.map(
-        (session) =>
-          ({
-            authenticated: true,
-            auth: descriptor,
-            ...authScopeResponse(session.scopes),
-            sessionMethod: session.method,
-            ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
-            memberId: session.memberId,
-          }) satisfies AuthSessionState,
+      Effect.flatMap((session) =>
+        currentDescriptor.pipe(
+          Effect.map(
+            (auth) =>
+              ({
+                authenticated: true,
+                auth,
+                ...authScopeResponse(session.scopes),
+                sessionMethod: session.method,
+                ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+                memberId: session.memberId,
+              }) satisfies AuthSessionState,
+          ),
+        ),
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
-        Effect.succeed({
-          authenticated: false,
-          auth: descriptor,
-        } satisfies AuthSessionState),
+        currentDescriptor.pipe(
+          Effect.map((auth) => ({ authenticated: false, auth }) satisfies AuthSessionState),
+        ),
       ),
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
@@ -1489,7 +1508,7 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentAuth.of({
     getDescriptor: Effect.fn("EnvironmentAuth.getDescriptor")(function () {
-      return Effect.succeed(descriptor);
+      return currentDescriptor;
     }),
     getSessionState,
     createBrowserSession,

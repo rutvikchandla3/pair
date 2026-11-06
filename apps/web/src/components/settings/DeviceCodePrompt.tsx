@@ -12,7 +12,7 @@ const expiryTime = (expiresAt: number) =>
 /** The device code, one cell per character, as GitHub prints it. */
 function DeviceCode(props: { readonly code: string }) {
   return (
-    <div className="flex items-center gap-1 font-mono text-lg font-medium">
+    <div className="flex min-w-0 items-center gap-1 font-mono text-lg font-medium">
       <span className="sr-only">{props.code}</span>
       {Array.from(props.code, (char, index) =>
         char === "-" ? (
@@ -40,31 +40,34 @@ export function DeviceCodePrompt({ prompt }: { readonly prompt: SourceControlSig
     target: "sign-in code",
   });
   return (
-    <div className="grid gap-4 border-t border-border bg-muted/40 px-3 py-4 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-6">
-      <div className="flex items-center gap-2">
-        <DeviceCode code={prompt.userCode} />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Copy code"
-          onClick={() => copyToClipboard(prompt.userCode, undefined)}
-        >
-          <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
-        </Button>
-      </div>
-      <div className="grid gap-2 sm:justify-items-end">
-        <Button
-          size="sm"
-          render={<a href={prompt.verificationUri} target="_blank" rel="noreferrer noopener" />}
-          onClick={() => copyToClipboard(prompt.userCode, undefined)}
-        >
-          Copy code & open GitHub
-          <ExternalLinkIcon aria-hidden className="size-3.5" />
-        </Button>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-          Waiting for approval · code expires at {expiryTime(prompt.expiresAt)}
-        </p>
+    // Sized by its container: the /pair card is narrower than the `sm` viewport breakpoint implies.
+    <div className="@container border-t border-border bg-muted/40 px-3 py-4">
+      <div className="grid gap-4 @2xl:grid-cols-[auto_1fr] @2xl:items-center @2xl:gap-6">
+        <div className="flex min-w-0 items-center gap-2">
+          <DeviceCode code={prompt.userCode} />
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Copy code"
+            onClick={() => copyToClipboard(prompt.userCode, undefined)}
+          >
+            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+          </Button>
+        </div>
+        <div className="grid gap-2 @2xl:justify-items-end">
+          <Button
+            size="sm"
+            render={<a href={prompt.verificationUri} target="_blank" rel="noreferrer noopener" />}
+            onClick={() => copyToClipboard(prompt.userCode, undefined)}
+          >
+            Copy code & open GitHub
+            <ExternalLinkIcon aria-hidden className="size-3.5" />
+          </Button>
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+            Waiting for approval · code expires at {expiryTime(prompt.expiresAt)}
+          </p>
+        </div>
       </div>
     </div>
   );

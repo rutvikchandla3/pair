@@ -1,15 +1,18 @@
 import { Alert, AlertDescription } from "../ui/alert";
-import type { AuthSessionState } from "@t3tools/contracts";
+import type { AuthGitHubSignInStarted, AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import React, { startTransition, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { connectPairing } from "../../connection/onboarding";
 import {
   peekPairingTokenFromUrl,
+  pollGitHubSignIn,
+  startGitHubSignIn,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
 } from "../../environments/primary";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { DeviceCodePrompt } from "../settings/DeviceCodePrompt";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
@@ -98,6 +101,10 @@ export function PairingRouteSurface({
         </p>
       ) : null}
 
+      {auth.githubSignIn ? (
+        <GitHubSignIn disabled={isSubmitting} onCredential={submitCredential} />
+      ) : null}
+
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="pairing-token">
@@ -142,6 +149,100 @@ export function PairingRouteSurface({
         {describeSupportedMethods(auth.bootstrapMethods)}
       </div>
     </StandalonePage>
+  );
+}
+
+type GitHubSignInState =
+  | { readonly status: "idle" }
+  | { readonly status: "starting" }
+  | { readonly status: "waiting"; readonly prompt: AuthGitHubSignInStarted }
+  | { readonly status: "failed"; readonly message: string };
+
+const waitSeconds = (seconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000));
+
+/** The GitHub device flow; its approval yields a one-time sign-in code for the form's own path. */
+function GitHubSignIn({
+  disabled,
+  onCredential,
+}: {
+  readonly disabled: boolean;
+  readonly onCredential: (credential: string) => Promise<void>;
+}) {
+  const [state, setState] = useState<GitHubSignInState>({ status: "idle" });
+  // The attempt still being polled; clearing it stops the loop.
+  const attemptRef = useRef<string | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops polling GitHub sign-in when the page goes away
+  useEffect(
+    () => () => {
+      attemptRef.current = null;
+    },
+    [],
+  );
+
+  const signIn = async () => {
+    setState({ status: "starting" });
+    const started = await startGitHubSignIn().catch((error: unknown) => {
+      setState({ status: "failed", message: errorMessageFromUnknown(error) });
+      return null;
+    });
+    if (started === null) return;
+    attemptRef.current = started.attemptId;
+    setState({ status: "waiting", prompt: started });
+    while (true) {
+      await waitSeconds(started.interval);
+      if (attemptRef.current !== started.attemptId) return;
+      const result = await pollGitHubSignIn(started.attemptId).catch((error: unknown) => {
+        attemptRef.current = null;
+        setState({ status: "failed", message: errorMessageFromUnknown(error) });
+        return null;
+      });
+      if (result === null || attemptRef.current !== started.attemptId) return;
+      if (result.status === "complete") {
+        attemptRef.current = null;
+        setState({ status: "idle" });
+        await onCredential(result.credential);
+        return;
+      }
+    }
+  };
+
+  const cancel = () => {
+    attemptRef.current = null;
+    setState({ status: "idle" });
+  };
+
+  return (
+    <div className="mt-6 space-y-3">
+      {state.status === "waiting" ? (
+        <div className="overflow-hidden rounded-lg border border-border">
+          <div className="flex items-center gap-3 px-3 py-2">
+            <p className="min-w-0 flex-1 text-sm text-foreground">
+              Enter this code on GitHub to sign in.
+            </p>
+            <Button size="xs" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+          <DeviceCodePrompt prompt={state.prompt} />
+        </div>
+      ) : (
+        <Button
+          disabled={disabled || state.status === "starting"}
+          onClick={() => void signIn()}
+          size="sm"
+          variant="outline"
+        >
+          {state.status === "starting" ? "Starting…" : "Sign in with GitHub"}
+        </Button>
+      )}
+      {state.status === "failed" ? (
+        <Alert variant="error">
+          <AlertDescription>{state.message}</AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
   );
 }
 

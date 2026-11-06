@@ -16,6 +16,10 @@ import {
   AuthBrowserSessionResult,
   AuthCreateApiTokenInput,
   AuthCreatePairingCredentialInput,
+  AuthGitHubSignInFailure,
+  AuthGitHubSignInPollRequest,
+  AuthGitHubSignInPollResult,
+  AuthGitHubSignInStarted,
   AuthMcpApprovalDecisionRequest,
   AuthMcpApprovalDetails,
   AuthMcpApprovalError,
@@ -333,6 +337,20 @@ export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError
     });
   }
 }
+/** Every refusal of an unauthenticated GitHub sign-in; `message` is copy for the sign-in page. */
+export class AuthGitHubSignInError extends Schema.TaggedError<AuthGitHubSignInError>()(
+  "AuthGitHubSignInError",
+  {
+    reason: AuthGitHubSignInFailure,
+    message: Schema.String,
+  },
+  { httpApiStatus: 400 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(AuthGitHubSignInError)(this, { status: 400 });
+  }
+}
+
 const EnvironmentSessionCreationErrors = [
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
@@ -550,6 +568,19 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       payload: AuthBrowserSessionRequest,
       success: AuthBrowserSessionResult,
       error: EnvironmentSessionCreationErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("githubSignInStart", "/api/auth/github/start", {
+      success: AuthGitHubSignInStarted,
+      error: AuthGitHubSignInError,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("githubSignInPoll", "/api/auth/github/poll", {
+      payload: AuthGitHubSignInPollRequest,
+      success: AuthGitHubSignInPollResult,
+      error: AuthGitHubSignInError,
     }),
   )
   .add(

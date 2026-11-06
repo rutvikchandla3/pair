@@ -39,6 +39,8 @@ export const InsertMemberInput = Schema.Struct({
   gitName: Schema.NullOr(TrimmedNonEmptyString),
   gitEmail: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
+  /** A username an admin pre-set; it binds to an account id on the member's first GitHub sign-in. */
+  githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type InsertMemberInput = typeof InsertMemberInput.Type;
 
@@ -147,10 +149,12 @@ const make = Effect.gen(function* () {
   const insertRow = SqlSchema.void({
     Request: InsertMemberInput,
     execute: (input) => sql`
-      INSERT INTO members (id, name, role, git_name, git_email, is_owner, created_at)
+      INSERT INTO members (
+        id, name, role, git_name, git_email, is_owner, created_at, github_login
+      )
       VALUES (
         ${input.id}, ${input.name}, ${input.role}, ${input.gitName}, ${input.gitEmail}, 0,
-        ${input.createdAt}
+        ${input.createdAt}, ${input.githubLogin ?? null}
       )
     `,
   });

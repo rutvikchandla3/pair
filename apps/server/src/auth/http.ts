@@ -35,6 +35,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as GitHubSignIn from "../team/GitHubSignIn.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -278,6 +279,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const githubSignIn = yield* GitHubSignIn.GitHubSignIn;
 
     return handlers
       .handle(
@@ -362,6 +364,22 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentInternal("browser_session_issuance_failed", error),
           ),
         ),
+      )
+      .handle(
+        "githubSignInStart",
+        Effect.fn("environment.auth.githubSignInStart")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* appendCredentialResponseHeaders;
+          return yield* githubSignIn.start();
+        }),
+      )
+      .handle(
+        "githubSignInPoll",
+        Effect.fn("environment.auth.githubSignInPoll")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* appendCredentialResponseHeaders;
+          return yield* githubSignIn.poll(args.payload.attemptId);
+        }),
       )
       .handle(
         "token",
