@@ -88,6 +88,19 @@ shows **Reconnect**.
 An admin can set a member's GitHub username under **Edit**. A new username or an empty one
 disconnects that member's account.
 
+### Sign in with GitHub
+
+Once the GitHub App is set up and someone on the team has added GitHub, the sign-in page offers
+**Sign in with GitHub**. Choose it on a new device, copy the code, and approve it on GitHub. You
+are signed in as your own member, and your GitHub connection is renewed.
+
+To let someone join this way, add their **GitHub username** when you invite them. They can then
+use the invite link or sign in with GitHub. A GitHub account that is not on the team cannot sign
+in.
+
+Only enter a code on GitHub that you started yourself on Pair's sign-in page. Someone who sends
+you a code is asking you to sign them in as you.
+
 ## Your threads and the Team shelf
 
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to

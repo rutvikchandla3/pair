@@ -41,6 +41,14 @@ const gitAuthorFor =
       }),
     );
 
+/** GitHub sign-in can reach someone: an active member is bound, or an admin pre-set a username. */
+export const hasGitHubSignInMember = (members: ReadonlyMap<MemberId, Members.MemberRecord>) => {
+  for (const member of members.values()) {
+    if (member.removedAt === null && member.githubLogin != null) return true;
+  }
+  return false;
+};
+
 const byId = (records: ReadonlyArray<Members.MemberRecord>) =>
   new Map(records.map((record) => [record.id, record] as const));
 

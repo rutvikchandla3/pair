@@ -51,6 +51,8 @@ export const TeamInviteInput = Schema.Struct({
   role: MemberRole,
   gitEmail: Schema.optionalKey(TrimmedNonEmptyString),
   ttlMs: Schema.optionalKey(PositiveInt),
+  /** Lets them sign in with that GitHub account; it binds on their first sign-in. */
+  githubLogin: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type TeamInviteInput = typeof TeamInviteInput.Type;
 

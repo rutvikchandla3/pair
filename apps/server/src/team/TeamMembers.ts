@@ -200,6 +200,7 @@ const make = Effect.gen(function* () {
         createdAt: yield* now,
         updatedAt: null,
         removedAt: null,
+        ...(input.githubLogin === undefined ? {} : { githubLogin: input.githubLogin }),
       };
       // A refused link leaves no member behind.
       const result = yield* repository

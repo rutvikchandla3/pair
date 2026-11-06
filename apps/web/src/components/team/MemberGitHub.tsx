@@ -228,11 +228,13 @@ export function GitHubUsernameField({
   value,
   onChange,
   disabled,
+  hint = "They still connect the account themselves. Clearing it disconnects their GitHub.",
 }: {
   readonly environmentId: EnvironmentId;
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly disabled: boolean;
+  readonly hint?: string;
 }) {
   if (!useTeamGitHub(environmentId)) return null;
   return (
@@ -247,9 +249,7 @@ export function GitHubUsernameField({
         autoComplete="off"
         spellCheck={false}
       />
-      <span className="mt-1.5 block text-xs text-muted-foreground">
-        They still connect the account themselves. Clearing it disconnects their GitHub.
-      </span>
+      <span className="mt-1.5 block text-xs text-muted-foreground">{hint}</span>
     </label>
   );
 }
