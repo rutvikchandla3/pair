@@ -35,6 +35,7 @@ import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2Sandbox,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
@@ -45,6 +46,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  SandboxId,
   TeamUsageRow,
 } from "@t3tools/contracts";
 import {
@@ -98,6 +100,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import * as SandboxProjection from "../sandbox/lifecycle/SandboxProjection.ts";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
@@ -595,6 +598,13 @@ export interface ProjectionStoreV2Shape {
   readonly listFollowedThreadIds: (
     memberId: MemberId,
   ) => Effect.Effect<ReadonlySet<ThreadId>, ProjectionStoreV2Error>;
+  readonly getSandbox: (
+    sandboxId: SandboxId,
+  ) => Effect.Effect<OrchestrationV2Sandbox | null, ProjectionStoreV2Error>;
+  /** Live (not deleted) threads using the sandbox, oldest first. */
+  readonly listSandboxThreads: (
+    sandboxId: SandboxId,
+  ) => Effect.Effect<ReadonlyArray<SandboxProjection.SandboxThreadRow>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -1066,6 +1076,7 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
+  readonly sandbox_id: SandboxId | null;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
@@ -1783,6 +1794,12 @@ export function threadShellFromProjection(
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    ...(projection.thread.sandboxId === undefined
+      ? {}
+      : { sandboxId: projection.thread.sandboxId }),
+    ...(projection.sandbox === undefined
+      ? {}
+      : { sandbox: SandboxProjection.sandboxShellSummary(projection.sandbox) }),
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1991,6 +2008,7 @@ function visibleItemCountForShell(input: {
 function shellFromState(input: {
   readonly state: ShellThreadState;
   readonly visibleItemCount: number;
+  readonly sandbox: OrchestrationV2Sandbox | undefined;
 }): OrchestrationV2ThreadShell {
   return {
     createdBy: input.state.thread.createdBy,
@@ -2070,6 +2088,12 @@ function shellFromState(input: {
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    ...(input.state.thread.sandboxId === undefined
+      ? {}
+      : { sandboxId: input.state.thread.sandboxId }),
+    ...(input.sandbox === undefined
+      ? {}
+      : { sandbox: SandboxProjection.sandboxShellSummary(input.sandbox) }),
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -2096,6 +2120,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ELSE ${payload}
       END
     `;
+
+    const withSql = Effect.provideService(SqlClient.SqlClient, sql);
 
     // The owner row is created by migration 080 and can never be removed or demoted.
     let cachedServerOwnerId: MemberId | null = null;
@@ -2278,6 +2304,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   DELETE FROM projection_thread_member_state WHERE thread_id = ${event.payload.id}
                 `;
               }
+              yield* withSql(
+                SandboxProjection.applySandboxMembership(event.payload, event.occurredAt),
+              );
               break;
             }
             case "run.created":
@@ -3010,6 +3039,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               break;
             }
+            case "sandbox.updated":
+              yield* withSql(SandboxProjection.applySandboxUpdated(event));
+              break;
             case "context-transfer.created":
             case "context-transfer.updated": {
               const payloadJson = yield* encodeContextTransferPayload(event.payload);
@@ -3073,7 +3105,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
             event.type !== "thread.provider-switched" &&
-            event.type !== "thread.guest-share-updated"
+            event.type !== "thread.guest-share-updated" &&
+            // Machine state must not reorder threads.
+            event.type !== "sandbox.updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -4779,9 +4813,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
     );
 
+    // Every attached thread shows the machine, not only the owner whose stream records it.
+    const withThreadSandbox = (projection: OrchestrationV2ThreadProjection) =>
+      projection.thread.sandboxId === undefined
+        ? Effect.succeed(projection)
+        : withSql(SandboxProjection.getSandbox(projection.thread.sandboxId)).pipe(
+            Effect.map((sandbox) => (sandbox === null ? projection : { ...projection, sandbox })),
+          );
+
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       sql
-        .withTransaction(readProjection(threadId, new Set()))
+        .withTransaction(
+          readProjection(threadId, new Set()).pipe(Effect.flatMap(withThreadSandbox)),
+        )
         .pipe(
           Effect.mapError((cause) =>
             isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
@@ -6275,15 +6319,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       `).map((row) => ThreadId.make(row.thread_id))[0] ??
                       threadId,
                   };
-            const projection = yield* readProjection(threadId, new Set(), {
-              rowLimit: options.rowLimit,
-              userTurnLimit: options.userTurnLimit,
-              deferWork: options.deferWork,
-              ...(historyAnchor?.threadId === threadId
-                ? { anchorItemId: historyAnchor.itemId }
-                : {}),
-              ...(historyAnchor === undefined ? {} : { historyAnchor }),
-            });
+            const projection = yield* withThreadSandbox(
+              yield* readProjection(threadId, new Set(), {
+                rowLimit: options.rowLimit,
+                userTurnLimit: options.userTurnLimit,
+                deferWork: options.deferWork,
+                ...(historyAnchor?.threadId === threadId
+                  ? { anchorItemId: historyAnchor.itemId }
+                  : {}),
+                ...(historyAnchor === undefined ? {} : { historyAnchor }),
+              }),
+            );
             // Pending requests outlive their turn's window; clients read their prompt from the card.
             const retainedIds = new Set(projection.turnItems.map((item) => item.id));
             const pendingCards = (yield* decodeRows(
@@ -6386,6 +6432,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              json_extract(t.payload_json, '$.sandboxId') AS sandbox_id,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -7172,6 +7219,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const shellSnapshotReadError = (cause: unknown) =>
       new ProjectionStoreReadError({ threadId: ThreadId.make("thread:shell"), cause });
 
+    // One batched read, skipped entirely when no listed thread runs in a sandbox.
+    const selectShellSandboxes = (rows: ReadonlyArray<ShellThreadRow>) =>
+      withSql(
+        SandboxProjection.getSandboxes([
+          ...new Set(rows.flatMap((row) => (row.sandbox_id === null ? [] : [row.sandbox_id]))),
+        ]),
+      );
+    const shellSandbox = (
+      state: ShellThreadState,
+      sandboxes: ReadonlyMap<SandboxId, OrchestrationV2Sandbox>,
+    ) => (state.thread.sandboxId === undefined ? undefined : sandboxes.get(state.thread.sandboxId));
+
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
@@ -7209,6 +7268,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sequenceRows,
         providerThreadRows,
         pendingTurnItemRows,
+        sandboxes,
       ] = yield* Effect.all([
         readForThreadIds(selectShellRunRows, forkSourceIds),
         readForThreadIds(selectShellRunItemCounts, forkSourceIds),
@@ -7230,6 +7290,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ),
           ),
         ),
+        selectShellSandboxes(threadRows),
       ]);
       return {
         targetThreadIds,
@@ -7240,6 +7301,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sequenceRows,
         providerThreadRows,
         pendingTurnItemRows,
+        sandboxes,
       };
     });
 
@@ -7252,6 +7314,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sequenceRows,
       providerThreadRows,
       pendingTurnItemRows,
+      sandboxes,
     }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) {
       const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
         runRows,
@@ -7281,6 +7344,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               threadId: state.thread.id,
               statesByThreadId,
             }),
+            sandbox: shellSandbox(state, sandboxes),
           }),
         );
 
@@ -7667,6 +7731,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               shellItemCountRows,
               providerThreadRows,
               pendingTurnItemRows,
+              sandboxes,
             ] = yield* Effect.all([
               forkSourceIds.length === 0
                 ? Effect.succeed([] as ReadonlyArray<ShellRunRow>)
@@ -7684,6 +7749,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     : [],
                 ),
               ),
+              selectShellSandboxes([rowsByThreadId.get(threadId)!]),
             ]);
             const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
               runRows,
@@ -7711,6 +7777,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return shellFromState({
               state,
               visibleItemCount: visibleItemCountForShell({ threadId, statesByThreadId }),
+              sandbox: shellSandbox(state, sandboxes),
             });
           }),
         )
@@ -7844,6 +7911,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ),
     );
 
+    const sandboxReadError = (sandboxId: SandboxId) => (cause: unknown) =>
+      new ProjectionStoreReadError({ threadId: ThreadId.make(`sandbox:${sandboxId}`), cause });
+    const getSandbox: ProjectionStoreV2Shape["getSandbox"] = (sandboxId) =>
+      withSql(SandboxProjection.getSandbox(sandboxId)).pipe(
+        Effect.mapError(sandboxReadError(sandboxId)),
+      );
+    const listSandboxThreads: ProjectionStoreV2Shape["listSandboxThreads"] = (sandboxId) =>
+      withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
+        Effect.mapError(sandboxReadError(sandboxId)),
+      );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7868,6 +7946,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listThreadMemberStates: readOnReader(listThreadMemberStates),
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
+      getSandbox: readOnReader(getSandbox),
+      listSandboxThreads: readOnReader(listSandboxThreads),
       memberUsageSince: readOnReader(memberUsageSince),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

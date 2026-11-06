@@ -141,6 +141,7 @@ import * as TeamState from "./team/TeamState.ts";
 import {
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
+  expandSandboxShellEvents,
   composeShellStreamWithEnrichment,
   isOtherMembersShellEvent,
   dedupeShellEnrichment,
@@ -1148,6 +1149,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const projections = yield* ProjectionStoreV2;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const projectService = yield* ProjectService.ProjectService;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -1225,10 +1227,33 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       });
     });
 
+    const threadsBySandbox = Effect.fn("ws.orchestrationV2.threadsBySandbox")(function* (
+      events: ReadonlyArray<ShellApplicationEvent>,
+    ) {
+      const sandboxIds = new Set(
+        events.flatMap((stored) =>
+          "aggregateKind" in stored || stored.event.sandboxId === undefined
+            ? []
+            : [stored.event.sandboxId],
+        ),
+      );
+      return new Map(
+        yield* Effect.forEach(sandboxIds, (sandboxId) =>
+          projections.listSandboxThreads(sandboxId).pipe(
+            // The owner's own shell still goes out; only the attached threads' refresh is lost.
+            Effect.orElseSucceed(() => []),
+            Effect.map((rows) => [sandboxId, rows] as const),
+          ),
+        ),
+      );
+    });
+
     const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
       events: ReadonlyArray<ShellApplicationEvent>,
     ) {
-      const coalesced = coalesceShellApplicationEvents(events);
+      const coalesced = coalesceShellApplicationEvents(
+        expandSandboxShellEvents(events, yield* threadsBySandbox(events)),
+      );
       const threadIds = coalesced.flatMap((stored) =>
         "aggregateKind" in stored ? [] : [stored.event.threadId],
       );

@@ -121,6 +121,8 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_runs`;
           yield* sql`DELETE FROM orchestration_v2_projection_threads`;
           yield* sql`DELETE FROM projection_thread_member_state`;
+          yield* sql`DELETE FROM orchestration_v2_projection_sandboxes`;
+          yield* sql`DELETE FROM orchestration_v2_projection_sandbox_threads`;
           yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
 
           const pageSize = 500;

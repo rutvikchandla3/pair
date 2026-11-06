@@ -347,6 +347,10 @@ it.live.each(["thread", "shell"] as const)(
               );
           },
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(
+          ProjectionStore.ProjectionStoreV2,
+          {} as ProjectionStore.ProjectionStoreV2["Service"],
+        ),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
@@ -502,6 +506,10 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
                 : shell(threadId, threadId === "thread:archived" ? now : null);
             }),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(
+          ProjectionStore.ProjectionStoreV2,
+          {} as ProjectionStore.ProjectionStoreV2["Service"],
+        ),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
@@ -625,6 +633,10 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
               }),
             ),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(
+          ProjectionStore.ProjectionStoreV2,
+          {} as ProjectionStore.ProjectionStoreV2["Service"],
+        ),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
@@ -1252,6 +1264,10 @@ it.effect.each(["thread", "shell"] as const)(
           readShellSnapshot: () => Effect.die("snapshot"),
           listActiveSubagentThreadIds: () => Effect.die("replay"),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(
+          ProjectionStore.ProjectionStoreV2,
+          {} as ProjectionStore.ProjectionStoreV2["Service"],
+        ),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
@@ -1320,6 +1336,10 @@ it.effect.each(["thread", "shell"] as const)(
           readShellSnapshot: () => Effect.die("snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(
+          ProjectionStore.ProjectionStoreV2,
+          {} as ProjectionStore.ProjectionStoreV2["Service"],
+        ),
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),

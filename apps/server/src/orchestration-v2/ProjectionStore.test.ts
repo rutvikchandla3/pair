@@ -1,5 +1,6 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
+  ComputeDriverId,
   EnvironmentId,
   EventId,
   CommandId,
@@ -11,6 +12,9 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Sandbox,
+  type OrchestrationV2ThreadShellSandbox,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
@@ -26,6 +30,7 @@ import {
   RuntimeRequestId,
   RunAttemptId,
   RunId,
+  SandboxId,
   ThreadId,
   TurnItemId,
   type ThreadPullRequestLink,
@@ -1624,6 +1629,31 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
     payload: { ...reordered.thread, pinnedAt: null, pinOrderKey: null },
   });
   yield* readActivity;
+
+  yield* store.apply({
+    id: EventId.make("event:background-updates:sandbox-updated"),
+    type: "sandbox.updated",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 60 }),
+    payload: {
+      id: SandboxId.make("sbx_00000000000000000001"),
+      projectId: thread.projectId,
+      ownerThreadId: threadId,
+      ownerMemberId: null,
+      driverId: ComputeDriverId.make("docker"),
+      size: "default",
+      state: "ready",
+      generation: 1,
+      driverRef: null,
+      admission: null,
+      runnerLostAt: null,
+      sleepReason: null,
+      failure: null,
+      createdAt,
+      updatedAt: DateTime.add(createdAt, { minutes: 60 }),
+    },
+  });
+  yield* readActivity;
 });
 
 it.effect("SQL projection keeps background thread updates out of updatedAt", () =>
@@ -2657,6 +2687,161 @@ it.effect("counts member usage against each turn's prompter and instance", () =>
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("projects sandboxes, their threads and usage intervals", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const t0 = DateTime.makeUnsafe("2026-11-06T10:00:00.000Z");
+      const at = (minutes: number) => DateTime.add(t0, { minutes });
+      const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+      const projectId = ProjectId.make("project:sandbox-projection");
+      const ownerId = ThreadId.make("thread:sandbox-owner");
+      const forkId = ThreadId.make("thread:sandbox-fork");
+      const thread = (id: ThreadId, createdAt: DateTime.Utc): OrchestrationV2AppThread => ({
+        createdBy: "user",
+        creationSource: "web",
+        id,
+        projectId,
+        title: id,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+        forkedFrom: null,
+        createdAt,
+        updatedAt: createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+        sandboxId,
+      });
+      const owner = thread(ownerId, at(0));
+      const fork = thread(forkId, at(2));
+      const sandbox = (state: OrchestrationV2Sandbox["state"], minutes: number) =>
+        ({
+          id: sandboxId,
+          projectId,
+          ownerThreadId: ownerId,
+          ownerMemberId: null,
+          driverId: ComputeDriverId.make("docker"),
+          size: "default",
+          state,
+          generation: 1,
+          driverRef: null,
+          admission: null,
+          runnerLostAt: null,
+          sleepReason: null,
+          failure:
+            state === "failed" ? { code: "lost", message: "Runner lost", retryable: true } : null,
+          createdAt: at(1),
+          updatedAt: at(minutes),
+        }) satisfies OrchestrationV2Sandbox;
+      const failed = sandbox("failed", 4);
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          id: EventId.make("event:sbx:owner"),
+          type: "thread.created",
+          threadId: ownerId,
+          occurredAt: at(0),
+          payload: owner,
+        },
+        {
+          id: EventId.make("event:sbx:provisioning"),
+          type: "sandbox.updated",
+          threadId: ownerId,
+          occurredAt: at(1),
+          payload: sandbox("provisioning", 1),
+        },
+        {
+          id: EventId.make("event:sbx:fork"),
+          type: "thread.created",
+          threadId: forkId,
+          occurredAt: at(2),
+          payload: fork,
+        },
+        {
+          id: EventId.make("event:sbx:ready"),
+          type: "sandbox.updated",
+          threadId: ownerId,
+          occurredAt: at(3),
+          payload: sandbox("ready", 3),
+        },
+        {
+          id: EventId.make("event:sbx:failed"),
+          type: "sandbox.updated",
+          threadId: ownerId,
+          occurredAt: at(4),
+          payload: failed,
+        },
+      ];
+      const later: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          id: EventId.make("event:sbx:fork-archived"),
+          type: "thread.archived",
+          threadId: forkId,
+          occurredAt: at(5),
+          payload: { ...fork, archivedAt: at(5) },
+        },
+        {
+          id: EventId.make("event:sbx:owner-deleted"),
+          type: "thread.deleted",
+          threadId: ownerId,
+          occurredAt: at(6),
+          payload: { ...owner, deletedAt: at(6) },
+        },
+      ];
+      const readLedger = sql`
+        SELECT thread_id, member_id, driver_id, size, started_at, ended_at
+        FROM sandbox_usage_intervals WHERE sandbox_id = ${sandboxId}
+      `;
+      const ledger = [
+        {
+          thread_id: ownerId,
+          member_id: null,
+          driver_id: "docker",
+          size: "default",
+          started_at: DateTime.formatIso(at(1)),
+          ended_at: DateTime.formatIso(at(4)),
+        },
+      ];
+      const summary: OrchestrationV2ThreadShellSandbox = {
+        state: "failed",
+        ownerThreadId: ownerId,
+        runnerConnected: false,
+        failureCode: "lost",
+        retryable: true,
+      };
+
+      for (const event of events) yield* store.apply(event);
+      assert.deepStrictEqual(yield* store.getSandbox(sandboxId), failed);
+      assert.deepStrictEqual(yield* readLedger, ledger);
+      const shells = (yield* store.getShellSnapshot({ threadIds: [ownerId, forkId] })).threads;
+      assert.deepStrictEqual(
+        shells.map(({ id, sandboxId, sandbox }) => ({ id, sandboxId, sandbox })),
+        [ownerId, forkId].map((id) => ({ id, sandboxId, sandbox: summary })),
+      );
+      assert.deepStrictEqual((yield* store.getThreadShell(forkId))?.sandbox, summary);
+      assert.deepStrictEqual((yield* store.getThreadProjection(forkId)).sandbox, failed);
+
+      for (const event of later) yield* store.apply(event);
+      const members = yield* store.listSandboxThreads(sandboxId);
+      assert.deepStrictEqual(
+        members.map((row) => [row.threadId, row.archived, DateTime.formatIso(row.attachedAt)]),
+        [[forkId, true, DateTime.formatIso(at(2))]],
+      );
+
+      for (const event of [...events, ...later]) yield* store.apply(event);
+      assert.deepStrictEqual(yield* store.listSandboxThreads(sandboxId), members);
+      assert.deepStrictEqual(yield* readLedger, ledger);
+    }),
+  );
+
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
     Effect.gen(function* () {

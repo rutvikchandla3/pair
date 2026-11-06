@@ -10,6 +10,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   ProjectId,
+  SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -35,6 +36,7 @@ import * as Stream from "effect/Stream";
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
 import { holderOf, isMemberThreadEvent } from "./MemberThreadState.ts";
 import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
+import type { SandboxThreadRow } from "../sandbox/lifecycle/SandboxProjection.ts";
 
 type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
 
@@ -449,7 +451,10 @@ export type ShellApplicationEvent =
     >
   | {
       readonly sequence: number;
-      readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
+      readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId"> & {
+        /** Set on `sandbox.updated`, whose summary every thread sharing the machine shows. */
+        readonly sandboxId?: SandboxId;
+      };
     };
 
 /** Focused subagents receive these updates through their thread subscription. */
@@ -499,7 +504,32 @@ export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellAp
         type: stored.type,
         sequence: stored.sequence,
       }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+    : {
+        sequence: stored.sequence,
+        event:
+          stored.event.type === "sandbox.updated"
+            ? { threadId: stored.event.threadId, sandboxId: stored.event.payload.id }
+            : { threadId: stored.event.threadId },
+      };
+}
+
+/** A machine change re-sends the shell of every unarchived thread using it: side chats and forks. */
+export function expandSandboxShellEvents(
+  events: ReadonlyArray<ShellApplicationEvent>,
+  threadsBySandbox: ReadonlyMap<SandboxId, ReadonlyArray<SandboxThreadRow>>,
+): ReadonlyArray<ShellApplicationEvent> {
+  return events.flatMap((stored) => {
+    if ("aggregateKind" in stored || stored.event.sandboxId === undefined) return [stored];
+    const attached = threadsBySandbox.get(stored.event.sandboxId) ?? [];
+    return [
+      stored,
+      ...attached.flatMap((row) =>
+        row.archived || row.threadId === stored.event.threadId
+          ? []
+          : [{ sequence: stored.sequence, event: { threadId: row.threadId } }],
+      ),
+    ];
+  });
 }
 
 export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(

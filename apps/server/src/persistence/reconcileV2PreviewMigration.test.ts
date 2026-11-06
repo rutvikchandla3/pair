@@ -67,6 +67,7 @@ describe("V2 preview upgrade", () => {
         [85, "MemberGitHub"],
         [86, "ProviderTurnCompletedIndex"],
         [87, "MemberPushDevices"],
+        [88, "SandboxProjections"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -177,6 +178,7 @@ describe("V2 preview upgrade", () => {
         [85, "MemberGitHub"],
         [86, "ProviderTurnCompletedIndex"],
         [87, "MemberPushDevices"],
+        [88, "SandboxProjections"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

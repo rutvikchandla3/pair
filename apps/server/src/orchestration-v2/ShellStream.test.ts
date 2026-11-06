@@ -5,7 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { MemberId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { MemberId, ProjectId, ProviderInstanceId, SandboxId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -19,8 +19,10 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   activeShellRowsForSubscriber,
   bufferShellLiveStream,
+  coalesceShellApplicationEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  expandSandboxShellEvents,
   omitIdleSubagentShells,
   omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
@@ -28,6 +30,7 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
+  toShellApplicationEvent,
 } from "./ShellStream.ts";
 
 const emptyShellSnapshot = {
@@ -78,6 +81,34 @@ describe("subagent shell events", () => {
       shouldPublishShellApplicationEvent(stored("new-child", "thread.deleted"), subagents),
     ).toBe(true);
     expect(subagents.has("new-child")).toBe(true);
+  });
+});
+
+describe("sandbox shell events", () => {
+  it("re-sends the shell of every unarchived thread sharing the machine, once each", () => {
+    const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+    const attached = (threadId: string, archived = false) => ({
+      threadId: ThreadId.make(threadId),
+      attachedAt: DateTime.makeUnsafe("2026-11-06T00:00:00.000Z"),
+      archived,
+    });
+    const events = [
+      { sequence: 1, event: { threadId: "fork", type: "run.updated" } },
+      {
+        sequence: 2,
+        event: { threadId: "owner", type: "sandbox.updated", payload: { id: sandboxId } },
+      },
+    ].map((stored) => toShellApplicationEvent(stored as ApplicationStoredEvent));
+    expect(events[1]).toEqual({ sequence: 2, event: { threadId: "owner", sandboxId } });
+
+    const expanded = expandSandboxShellEvents(
+      events,
+      new Map([[sandboxId, [attached("owner"), attached("fork"), attached("side", true)]]]),
+    );
+    expect(coalesceShellApplicationEvents(expanded)).toEqual([
+      { sequence: 2, event: { threadId: "fork" } },
+      { sequence: 2, event: { threadId: "owner", sandboxId } },
+    ]);
   });
 });
 
