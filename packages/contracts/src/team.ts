@@ -96,6 +96,7 @@ export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
     "owner-immutable",
     "removed",
     "not-a-member",
+    "forbidden",
     "policy-refused",
     "internal",
   ]),

@@ -24,6 +24,11 @@ export class TeamState extends Context.Service<
   }
 >()("t3/team/TeamState") {}
 
+export const activeMemberIds = (
+  members: ReadonlyMap<MemberId, Members.MemberRecord>,
+): ReadonlySet<MemberId> =>
+  new Set([...members.values()].filter((member) => member.removedAt === null).map(({ id }) => id));
+
 export interface GitAuthor {
   readonly name: string;
   readonly email: string;

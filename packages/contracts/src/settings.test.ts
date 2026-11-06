@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import {
   ProviderDriverKind,
+  ProviderInstanceConfig,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
 } from "./providerInstance.ts";
@@ -225,6 +226,19 @@ describe("ServerSettings secret providers", () => {
         decodeServerSettings({ providerInstances: providerInstances(invalid) }),
       ).toThrow();
     }
+  });
+});
+
+describe("provider instance owners", () => {
+  it("adds no owner to instances saved before owners existed", () => {
+    const codec = Schema.toCodecJson(ProviderInstanceConfig);
+    const stored = { driver: "codex", enabled: true, config: { setupMode: "managed" } };
+    const decoded = Schema.decodeSync(codec)(stored);
+    expect(decoded).not.toHaveProperty("ownerMemberId");
+    expect(Schema.encodeSync(codec)(decoded)).toEqual(stored);
+    expect(Schema.decodeSync(codec)({ ...stored, ownerMemberId: "member-bob" }).ownerMemberId).toBe(
+      "member-bob",
+    );
   });
 });
 
