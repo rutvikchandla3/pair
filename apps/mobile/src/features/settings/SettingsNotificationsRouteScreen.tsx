@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { serverEnvironment } from "../../state/server";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -32,6 +32,13 @@ import {
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
+import {
+  getMemberPushToken,
+  memberPushStatus,
+  refreshMemberPushRegistration,
+  subscribeMemberPushToken,
+  type MemberPushStatus,
+} from "../agent-awareness/memberPushRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   getAgentAwarenessRegistrationStatus,
@@ -67,6 +74,13 @@ function canLinkEnvironmentToConnect(environmentId: EnvironmentId) {
 }
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
+
+const TEAM_PUSH_DESCRIPTION: Record<MemberPushStatus, string> = {
+  "server-unsupported":
+    "This team server doesn't send push notifications yet. Open the app to catch up.",
+  registered: "Team notifications: on for this device",
+  "no-token": "This build of the app can't receive team notifications.",
+};
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
 const notificationStatusAtom = makePermissionStatusAtom<NotificationStatus>({
@@ -143,6 +157,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { savedConnectionsById } = useSavedRemoteConnections();
   const teamEnvironmentIds = [...useTeamViewers().keys()];
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const memberPushToken = useSyncExternalStore(
+    subscribeMemberPushToken,
+    getMemberPushToken,
+    () => null,
+  );
   const notificationStatus = useAtomValue(notificationStatusAtom);
   const setNotificationStatus = useAtomSet(notificationStatusAtom);
   // A write in progress or a failed one shows its own status until the auth or
@@ -173,13 +193,15 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const connections = Object.values(savedConnectionsById);
   const environmentCount = connections.length;
 
-  const requestNotifications = async () => {
+  const requestNotifications = async (target: "connect" | "team") => {
+    const register =
+      target === "team"
+        ? Effect.promise(refreshMemberPushRegistration)
+        : refreshAgentAwarenessRegistration();
     const result = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         requestAgentNotificationPermission.pipe(
-          Effect.tap((permission) =>
-            permission.type === "granted" ? refreshAgentAwarenessRegistration() : Effect.void,
-          ),
+          Effect.tap((permission) => (permission.type === "granted" ? register : Effect.void)),
         ),
       ),
     );
@@ -195,6 +217,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
+      if (target === "team") return;
       if (getAgentAwarenessRegistrationStatus() === "registered") {
         Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
       } else {
@@ -342,7 +365,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         promptSignIn();
         return;
       }
-      void requestNotifications();
+      void requestNotifications("connect");
       return;
     }
 
@@ -489,14 +512,27 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         </SettingsSection>
         {teamEnvironmentIds.length > 0 ? (
           <SettingsSection title="Team servers">
-            {teamEnvironmentIds.map((environmentId) => (
-              <ListRowLayout
-                key={environmentId}
-                icon="person.2"
-                label={savedConnectionsById[environmentId]?.environmentLabel ?? "Team server"}
-                description="This team server doesn't send push notifications yet. Open the app to catch up."
-              />
-            ))}
+            {teamEnvironmentIds.map((environmentId) => {
+              const label = savedConnectionsById[environmentId]?.environmentLabel ?? "Team server";
+              const status = memberPushStatus(serverConfigs.get(environmentId), memberPushToken);
+              return status === "no-token" && notificationStatus === "disabled" ? (
+                <SettingsRow
+                  key={environmentId}
+                  icon="person.2"
+                  label={label}
+                  value="Allow notifications to get team notifications on this device."
+                  valuePosition="below"
+                  onPress={() => void requestNotifications("team")}
+                />
+              ) : (
+                <ListRowLayout
+                  key={environmentId}
+                  icon="person.2"
+                  label={label}
+                  description={TEAM_PUSH_DESCRIPTION[status]}
+                />
+              );
+            })}
           </SettingsSection>
         ) : null}
       </ScrollView>

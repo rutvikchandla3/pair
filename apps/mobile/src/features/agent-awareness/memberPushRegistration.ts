@@ -97,9 +97,7 @@ export function installMemberPushRegistration(): () => void {
   if (Platform.OS !== "ios" && Platform.OS !== "android") return () => {};
   const seen = new Map<EnvironmentId, ServerConfig>();
   const run = (environmentIds: ReadonlyArray<EnvironmentId>) => {
-    registerEnvironments(environmentIds).catch((error: unknown) => {
-      console.warn("[member push] registration failed", error);
-    });
+    void registerQuietly(environmentIds);
   };
   const unsubscribe = appAtomRegistry.subscribe(
     environmentServerConfigsAtom,
@@ -124,6 +122,16 @@ export function installMemberPushRegistration(): () => void {
     unsubscribe();
     appState.remove();
   };
+}
+
+function registerQuietly(environmentIds: ReadonlyArray<EnvironmentId>): Promise<void> {
+  return registerEnvironments(environmentIds).catch((error: unknown) => {
+    console.warn("[member push] registration failed", error);
+  });
+}
+
+export function refreshMemberPushRegistration(): Promise<void> {
+  return registerQuietly(memberPushEnvironments());
 }
 
 /**
