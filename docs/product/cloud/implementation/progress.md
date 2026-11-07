@@ -10,14 +10,14 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (48 of 57):**
+**Landed on `feat/pair` (49 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (37): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
+- M1 (38): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.38, 1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
-**In flight (2026-11-07, second session):** 1.17, 1.38, 1.42, 1.43, each in `../pair-wt/<id>` on
+**In flight (2026-11-07, second session):** 1.17, 1.42, 1.43, each in `../pair-wt/<id>` on
 `wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
 and relaunch those PRs.
 
@@ -101,7 +101,7 @@ pkgs=$(echo "$files" | grep -oE '^(apps|packages)/[^/]+' | sort -u)
 echo "$pkgs" | grep -q 'packages/\(contracts\|shared\|client-runtime\)' && pkgs=$(printf '%s\n' $pkgs apps/server apps/web packages/client-runtime | sort -u)
 fail=0
 for p in $pkgs; do
-  [ -f "$p/package.json" ] && grep -q '"typecheck"' "$p/package.json" || continue
+  [ -f "$p/package.json" ] && { grep -q '"typecheck"' "$p/package.json" || grep -qs 'typecheck:' "$p/vite.config.ts"; } || continue
   (cd "$p" && vp run typecheck > /tmp/land-tc.log 2>&1) && ! grep -q "error TS" /tmp/land-tc.log && echo "typecheck ok $p" || { echo "TYPECHECK FAIL $p"; grep -E "error TS" /tmp/land-tc.log | head -20; fail=1; }
 done
 git log --oneline "$before"..HEAD
@@ -601,6 +601,15 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Also fixed 1.25's "TODO 1.24": sandbox terminals no longer get the server's managed ACP bin dirs on PATH.
 - 1.16's setup script goes through `ProjectSetupScriptRunner` → `terminalManager.open`, so it is covered.
 - `T3CODE_SANDBOX` is still not set for provider processes (1.12's open note). A root-owned clone would trip git's dubious-ownership check and silently fall back; the clone is made through the sandbox spawner (agent uid), so check ownership once in the integrated pass.
+
+## 1.38 web Cloud mode (landed)
+
+- `BranchToolbar.logic.ts`: `EnvMode` gains `cloud`; `resolveCloudEnvModeItem` (hidden / offered / disabled + reason) feeds both pickers, which take a resolved `cloudItem` prop. Cloud is offered on drafts only, not empty server threads. A cloud draft falls back to worktree in render when Cloud goes away.
+- `packages/shared/src/projectSettings.ts` `resolveSendEnvMode` is generic now so `ThreadEnvMode` never gains `cloud`.
+- "Local only" model reason: `cloudModelDisabledReason` (web) wraps 1.26's `sandboxCredentialSupport`, driver read from `ServerProvider`. Mobile (1.41) can mirror it and reuse client-runtime's `prepareCloud`.
+- `useWorktreeSetup.ts` unchanged (cloud sends never call local setup tracking; the snapshot still shows 1.24's sandbox setup script).
+- For 1.39: "new-thread-on-branch" in `useThreadActionMenu.ts` and `Sidebar.tsx` passes a cloud thread's `/t3-sandbox` `worktreePath` into a local worktree draft; map it to `envMode: "cloud"`. `useHandleNewThread`'s `envMode` already accepts `"cloud"` for `chat.newCloud`. Web bindings for `createSandboxEnvironmentAtoms` are not added yet.
+- Owed in the integrated pass: the spec's `test-t3-app` steps 1–4 and captures (browser tests cannot launch here).
 
 ## Open follow-ups and risks
 
