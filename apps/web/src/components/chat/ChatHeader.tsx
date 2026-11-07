@@ -10,7 +10,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, EyeIcon } from "lucide-react";
+import type { SandboxStatePresentation } from "@t3tools/client-runtime/state/sandbox";
+import { ChevronDownIcon, CloudIcon, EyeIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -53,6 +54,9 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeThreadLinkOrigin?: string | null | undefined;
+  /** A cloud thread's machine state; null for local threads and a ready machine. */
+  machineLabel?: string | null | undefined;
+  machineTone?: SandboxStatePresentation["tone"] | null | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
@@ -73,6 +77,12 @@ function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
+const MACHINE_BADGE_VARIANT = {
+  neutral: "secondary",
+  warning: "warning",
+  danger: "error",
+} as const satisfies Record<SandboxStatePresentation["tone"], string>;
+
 // Delay the input-swallowing native menu through the double-click rename interval.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
@@ -80,6 +90,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeThreadLinkOrigin,
+  machineLabel,
+  machineTone,
   isServerThread,
   activeProject,
   parentThreadLink,
@@ -432,6 +444,12 @@ export const ChatHeader = memo(function ChatHeader({
                 Started by an agent on {activeThreadLinkOrigin} through a linked environment.
               </TooltipPopup>
             </Tooltip>
+          ) : null}
+          {renamingTitle === null && machineLabel ? (
+            <Badge variant={MACHINE_BADGE_VARIANT[machineTone ?? "neutral"]} size="sm">
+              <CloudIcon aria-hidden />
+              {machineLabel}
+            </Badge>
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>

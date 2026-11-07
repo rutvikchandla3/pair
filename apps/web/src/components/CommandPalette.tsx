@@ -59,6 +59,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  CloudIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -143,6 +144,12 @@ import {
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { cloudAvailability } from "@t3tools/shared/sandbox";
+import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
+import {
+  SANDBOX_ACTION_PALETTE_LABELS,
+  SANDBOX_OWNER_ONLY_REASON,
+} from "./sandbox/sandboxActionLabels";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -485,9 +492,14 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const serverConfigs = useServerConfigs();
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const activeThreadMachine = useSandboxThreadMachine(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const runSandboxAction = useSandboxActionRunner();
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1281,6 +1293,38 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       });
+      if (
+        contextualProjectRef !== null &&
+        cloudAvailability(
+          serverConfigs.get(contextualProjectRef.environmentId)?.settings ?? null,
+          contextualProjectRef.projectId,
+        ).available
+      ) {
+        actionItems.push({
+          kind: "action",
+          value: "action:new-cloud-thread",
+          searchTerms: ["new cloud thread", "cloud", "machine", "sandbox", "remote", "create"],
+          title: (
+            <>
+              New cloud thread in <span className="font-semibold">{activeProjectTitle}</span>
+            </>
+          ),
+          searchTitle: `New cloud thread in ${activeProjectTitle}`,
+          icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+          shortcutCommand: "chat.newCloud",
+          run: async () => {
+            await startNewThreadFromContext(
+              {
+                activeDraftThread,
+                activeThread: activeThread ?? undefined,
+                defaultProjectRef,
+                handleNewThread,
+              },
+              { envMode: "cloud" },
+            );
+          },
+        });
+      }
     }
 
     actionItems.push({
@@ -1477,6 +1521,22 @@ function OpenCommandPaletteDialog(props: {
 
   if (activeThread !== null) {
     const thread = activeThread;
+    if (activeThreadMachine !== null) {
+      const machine = activeThreadMachine;
+      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+      for (const action of machine.actions) {
+        const denied = machine.ownerOnlyDenied.includes(action);
+        actionItems.push({
+          kind: "action",
+          value: `action:machine-${action}`,
+          searchTerms: ["machine", "cloud", "sandbox", action],
+          title: SANDBOX_ACTION_PALETTE_LABELS[action],
+          icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+          ...(denied ? { disabled: true, description: SANDBOX_OWNER_ONLY_REASON } : {}),
+          run: () => runSandboxAction(threadRef, machine.sandboxId, action),
+        });
+      }
+    }
     actionItems.push({
       kind: "action",
       value: "action:restart-agent-session",
@@ -2540,6 +2600,7 @@ function OpenCommandPaletteDialog(props: {
       event.keyCode !== 229 &&
       (command === "chat.new" ||
         command === "chat.newLocal" ||
+        command === "chat.newCloud" ||
         command === "chat.newWithoutProject");
     const matchingItem =
       isJump || isNewThread

@@ -19,9 +19,15 @@ import { useRouter } from "@tanstack/react-router";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  machineMenuAction,
+  newThreadOnBranchOptions,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import {
+  readSandboxThreadMachine,
+  useSandboxActionRunner,
+} from "../components/sandbox/useSandboxThreadStatus";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -95,6 +101,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
+  const runSandboxAction = useSandboxActionRunner();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -137,6 +144,7 @@ export function useThreadActionMenu(input: {
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const team = readThreadTeamMenu(thread);
+      const machine = readSandboxThreadMachine(threadRef);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -154,6 +162,7 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         ...(team ? { team } : {}),
+        ...(machine ? { machine } : {}),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -194,6 +203,11 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      const machineAction = machineMenuAction(action);
+      if (machineAction !== null) {
+        if (machine !== null) await runSandboxAction(threadRef, machine.sandboxId, machineAction);
+        return;
+      }
       if (action.startsWith("assign:")) {
         await reportFailure("Could not assign the thread", () =>
           setThreadOwner(threadRef, MemberId.make(action.slice("assign:".length))),
@@ -222,9 +236,7 @@ export function useThreadActionMenu(input: {
         case "new-thread-on-branch": {
           const result = await settlePromise(() =>
             handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {
-              branch: thread.branch,
-              worktreePath: thread.worktreePath,
-              envMode: thread.worktreePath ? "worktree" : "local",
+              ...newThreadOnBranchOptions(thread),
               startFromOrigin: false,
             }),
           );

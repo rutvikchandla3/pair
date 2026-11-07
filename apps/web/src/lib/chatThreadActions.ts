@@ -17,16 +17,15 @@ interface ThreadContextLike {
   projectId: ProjectId;
 }
 
+interface NewThreadOptions {
+  branch?: string | null;
+  worktreePath?: string | null;
+  envMode?: DraftThreadEnvMode;
+  startFromOrigin?: boolean;
+}
+
 interface NewThreadHandler {
-  (
-    projectRef: ScopedProjectRef,
-    options?: {
-      branch?: string | null;
-      worktreePath?: string | null;
-      envMode?: DraftThreadEnvMode;
-      startFromOrigin?: boolean;
-    },
-  ): Promise<unknown>;
+  (projectRef: ScopedProjectRef, options?: NewThreadOptions): Promise<unknown>;
 }
 
 export interface ChatThreadActionContext {
@@ -84,12 +83,15 @@ export function resolveThreadActionProjectRef(
 
 export async function startNewThreadFromContext(
   context: ChatThreadActionContext,
+  options?: NewThreadOptions,
 ): Promise<boolean> {
   const projectRef = resolveThreadActionProjectRef(context);
   if (!projectRef) {
     return false;
   }
 
-  await context.handleNewThread(projectRef);
+  await (options === undefined
+    ? context.handleNewThread(projectRef)
+    : context.handleNewThread(projectRef, options));
   return true;
 }
