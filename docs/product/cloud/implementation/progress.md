@@ -92,6 +92,8 @@ id=$1
 wt=/home/user/pair-wt/$id
 git -C "$wt" status --porcelain | grep -v '^??' && { echo "DIRTY worktree $id"; exit 1; } || true
 git -C "$wt" rebase feat/pair || { echo "REBASE CONFLICT $id"; exit 2; }
+# Workers never edit progress.md and every landing does, so a squash that reverts landed work shows here.
+git diff --name-only feat/pair "wt/$id" | grep -q 'implementation/progress.md' && { echo "REVERTS LANDED WORK $id (touches progress.md)"; git diff --stat feat/pair "wt/$id" | tail -3; exit 3; }
 cd /home/user/pair
 before=$(git rev-parse HEAD)
 git merge --ff-only -q "wt/$id"
