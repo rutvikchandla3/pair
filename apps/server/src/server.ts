@@ -128,6 +128,7 @@ import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
+import * as SandboxProcessEnvironment from "./sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
@@ -506,9 +507,15 @@ const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDr
 
 const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
+const layerSandboxProcessEnvironment = SandboxProcessEnvironment.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(SecretResolver.layer),
+);
+
 const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),
+  Layer.provide(layerSandboxProcessEnvironment),
 );
 
 const layerPreview = Layer.empty.pipe(

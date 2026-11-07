@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  SandboxId,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -34,6 +35,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { SandboxEnvironmentError } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import { SettingsSecretUnresolvedError } from "../secrets/settingsSecretValue.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -41,6 +44,8 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
@@ -244,6 +249,13 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  /** Registers the fixture's temp dir as a sandbox host with this base env. */
+  sandbox?: {
+    readonly environment: Record<string, string>;
+    readonly forProcess?: Parameters<
+      typeof TerminalManager.makeWithOptions
+    >[0]["sandboxEnvironment"];
+  };
 }
 
 interface ManagerFixture {
@@ -268,6 +280,19 @@ const createManager = (
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts.pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
+        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
+      );
+      if (options.sandbox !== undefined) {
+        const local = yield* hosts.local.info;
+        yield* hosts.register(baseDir, {
+          ...hosts.local,
+          id: "sbx_0000000000000000000a" as WorkspaceHostId,
+          kind: "sandbox",
+          info: Effect.succeed({ ...local, environment: options.sandbox.environment }),
+        });
+      }
 
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
@@ -300,10 +325,10 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      }).pipe(
-        Effect.provide(WorkspaceHostTesting.layerFromContext),
-        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
-      );
+        ...(options.sandbox?.forProcess === undefined
+          ? {}
+          : { sandboxEnvironment: options.sandbox.forProcess }),
+      }).pipe(Effect.provideService(WorkspaceHosts.WorkspaceHosts, hosts));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -1899,6 +1924,57 @@ it.layer(
       expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
       expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+    }),
+  );
+
+  it.effect("gives sandbox terminals the cloud env layers and never the server env", () =>
+    Effect.gen(function* () {
+      const seen: Array<string> = [];
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        env: { SERVER_ONLY: "server-secret", PATH: "/server/bin" },
+        sandbox: {
+          environment: { PATH: "/opt/pair-runner/build:/usr/bin", HOME: "/home/t3" },
+          forProcess: (host) =>
+            Effect.sync(() => {
+              seen.push(host.id);
+              return { PATH: "/opt/pair-runner/build:/usr/bin", HOME: "/home/t3", TEAM: "1" };
+            }),
+        },
+      });
+
+      yield* manager.open(openInput({ cwd: baseDir, env: { T3CODE_PROJECT_ROOT: "/repo" } }));
+
+      const env = ptyAdapter.spawnInputs[0]?.env;
+      expect(seen).toEqual(["sbx_0000000000000000000a"]);
+      expect(env?.TEAM).toBe("1");
+      expect(env?.PATH).toBe("/opt/pair-runner/build:/usr/bin");
+      expect(env?.T3CODE_PROJECT_ROOT).toBe("/repo");
+      expect(env?.SERVER_ONLY).toBeUndefined();
+    }),
+  );
+
+  it.effect("fails a sandbox terminal's start when its cloud env cannot be read", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir, getEvents } = yield* createManager(5, {
+        sandbox: {
+          environment: { HOME: "/home/t3" },
+          forProcess: () =>
+            Effect.fail(
+              new SandboxEnvironmentError({
+                sandboxId: SandboxId.make("sbx_0000000000000000000a"),
+                cause: new SettingsSecretUnresolvedError({ provider: "vault" }),
+              }),
+            ),
+        },
+      });
+
+      yield* manager.open(openInput({ cwd: baseDir }));
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+      const errors = (yield* getEvents).filter((event) => event.type === "error");
+      expect(errors.map((event) => event.message)).toEqual([
+        new SettingsSecretUnresolvedError({ provider: "vault" }).message,
+      ]);
     }),
   );
 

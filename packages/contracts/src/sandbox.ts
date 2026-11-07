@@ -9,6 +9,48 @@ export const SandboxId = TrimmedNonEmptyString.check(Schema.isPattern(/^sbx_[0-9
 );
 export type SandboxId = typeof SandboxId.Type;
 
+/**
+ * Names a team or project cannot set on sandbox processes (06 §6): the agent's identity, Pair's
+ * own names, and the provider and git credentials the server hands out per process.
+ */
+const SANDBOX_RESERVED_ENV_NAMES: ReadonlyArray<string> = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "PWD",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CONFIG_DIR",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "CODEX_HOME",
+  "CURSOR_API_KEY",
+  "XAI_API_KEY",
+  "KIRO_API_KEY",
+  "GIT_ASKPASS",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "SSH_AUTH_SOCK",
+];
+
+const SANDBOX_RESERVED_ENV_PREFIXES: ReadonlyArray<string> = [
+  "T3CODE_",
+  "T3_",
+  "PAIR_",
+  "GIT_AUTHOR_",
+  "GIT_COMMITTER_",
+  "GIT_CONFIG_",
+];
+
+const reservedSandboxEnvNames = new Set(SANDBOX_RESERVED_ENV_NAMES);
+
+export const isReservedSandboxEnvName = (name: string): boolean =>
+  reservedSandboxEnvNames.has(name) ||
+  SANDBOX_RESERVED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
+
 export const ComputeDriverId = TrimmedNonEmptyString.pipe(Schema.brand("ComputeDriverId"));
 export type ComputeDriverId = typeof ComputeDriverId.Type;
 

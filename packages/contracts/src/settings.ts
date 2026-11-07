@@ -1548,6 +1548,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-managed-setting",
   "use-disallowed-provider",
   "change-provider-instance-owner",
+  "use-reserved-sandbox-env",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1576,6 +1577,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     }
     if (this.operation === "change-provider-instance-owner") {
       return `${this.providerLabel ?? this.providerInstanceId ?? "This account"} belongs to a member of the team, so only they can give it up.`;
+    }
+    if (this.operation === "use-reserved-sandbox-env") {
+      return `${this.environmentVariable ?? "This variable"} is reserved on cloud machines and cannot be set.`;
     }
     if (this.operation === "use-disallowed-provider") {
       return disallowedProviderMessage(

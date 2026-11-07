@@ -1566,6 +1566,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("refuses reserved names in the team and project cloud env", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const projectId = ProjectId.make("project-a");
+      const team = yield* service
+        .updateSettings({
+          sandbox: { env: [{ name: "GH_TOKEN", value: "ghp_x", sensitive: true }] },
+        })
+        .pipe(Effect.flip);
+      assert.equal(team.operation, "use-reserved-sandbox-env");
+      assert.equal(team.environmentVariable, "GH_TOKEN");
+      assert.equal(team.message, "GH_TOKEN is reserved on cloud machines and cannot be set.");
+      const project = yield* service
+        .updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { sandboxEnv: [{ name: "T3CODE_X", value: "1", sensitive: false }] },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(project.operation, "use-reserved-sandbox-env");
+      assert.equal(project.environmentVariable, "T3CODE_X");
+
+      // A reserved name already on disk does not block unrelated writes; spawns drop it.
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          sandbox: { drivers: [], env: [{ name: "PATH", value: "/x", sensitive: false }] },
+        }),
+      );
+      const saved = yield* service.updateSettings({
+        sandbox: {
+          env: [
+            { name: "PATH", value: "/x", sensitive: false },
+            { name: "TEAM_FLAG", value: "1", sensitive: false },
+          ],
+        },
+      });
+      assert.deepEqual(
+        saved.sandbox?.env?.map((entry) => entry.name),
+        ["PATH", "TEAM_FLAG"],
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("moves saved provider credentials to the secret store when settings load", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

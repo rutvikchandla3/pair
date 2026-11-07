@@ -66,6 +66,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SandboxProcessEnvironment from "../sandbox/credentials/SandboxProcessEnvironment.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
@@ -1349,6 +1350,8 @@ interface TerminalManagerOptions {
     Record<string, string>,
     TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
   >;
+  /** A sandbox host's layered env; absent, sandbox terminals get the host's allowlisted base. */
+  sandboxEnvironment?: SandboxProcessEnvironment.SandboxProcessEnvironment["Service"]["forProcess"];
 }
 
 export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
@@ -1398,6 +1401,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sandboxEnvironment = yield* SandboxProcessEnvironment.SandboxProcessEnvironment;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
@@ -1421,6 +1425,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
+    sandboxEnvironment: sandboxEnvironment.forProcess,
   });
 });
 
@@ -1437,8 +1442,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
-  // Inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
-  const hostEnvironment = (info: WorkspaceHostInfo) => options.env ?? info.environment;
+  // Local: inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
+  // Sandbox: never the server's environment, only the host's base and cloud env layers.
+  const hostEnvironment = (host: WorkspaceHost, info: WorkspaceHostInfo) =>
+    host.kind === "sandbox"
+      ? (options.sandboxEnvironment?.(host) ?? Effect.succeed(info.environment))
+      : Effect.succeed(options.env ?? info.environment);
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput>(
@@ -2427,7 +2436,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const host = yield* hosts.forPath(session.cwd);
             const info = yield* host.info;
             const { platform } = info;
-            const baseEnv = hostEnvironment(info);
+            const baseEnv = yield* hostEnvironment(host, info);
             const shellResolver =
               options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);

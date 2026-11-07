@@ -18,8 +18,10 @@ import {
   type ServerSettingsPatch,
   type ManagedPolicySummary,
   globalIdleCompaction,
+  isReservedSandboxEnvName,
   isSecretReference,
   type MemberId,
+  type ProviderInstanceEnvironment,
   type SecretReference,
   withIdleCompaction,
 } from "@t3tools/contracts";
@@ -307,6 +309,32 @@ function ensureProviderInstanceMutationAllowed(
     );
   }
   return Effect.void;
+}
+
+/**
+ * A reserved name the write adds to the team's or a project's cloud env. Names already stored
+ * stay writable around (a hand edit); spawns drop them anyway.
+ */
+function addedReservedSandboxEnvName(
+  current: ServerSettings,
+  next: ServerSettings,
+): string | undefined {
+  const added = (
+    stored: ProviderInstanceEnvironment | undefined,
+    entries: ProviderInstanceEnvironment | undefined,
+  ) => {
+    const kept = new Set(stored?.map((entry) => entry.name));
+    return entries?.find((entry) => isReservedSandboxEnvName(entry.name) && !kept.has(entry.name))
+      ?.name;
+  };
+  const team = added(current.sandbox?.env, next.sandbox?.env);
+  if (team !== undefined) return team;
+  for (const [projectId, overrides] of Object.entries(next.projectSettingsOverrides)) {
+    const stored = current.projectSettingsOverrides[ProjectId.make(projectId)]?.sandboxEnv;
+    const project = added(stored, overrides.sandboxEnv);
+    if (project !== undefined) return project;
+  }
+  return undefined;
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -1282,6 +1310,14 @@ const make = Effect.gen(function* () {
             providerInstanceId: vettedProviders.instanceId,
             providerLabel: vettedProviders.label,
             managedBy: managedPolicy?.organization,
+          });
+        }
+        const reservedName = addedReservedSandboxEnvName(current, vettedProviders.settings);
+        if (reservedName !== undefined) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "use-reserved-sandbox-env",
+            environmentVariable: reservedName,
           });
         }
         const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
