@@ -4,7 +4,6 @@ import {
   type OrchestrationV2ServerCommand,
   SandboxId,
   type SandboxFailure,
-  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -73,11 +72,8 @@ export const isSandboxEffectRequest = (
 
 type DriverEffectRequest = Exclude<
   SandboxEffectRequest,
-  { readonly type: "sandbox.release-waiters" | "sandbox.request-wake" }
+  { readonly type: "sandbox.release-waiters" }
 >;
-
-const isDriverEffectRequest = (request: SandboxEffectRequest): request is DriverEffectRequest =>
-  request.type !== "sandbox.release-waiters" && request.type !== "sandbox.request-wake";
 
 export class SandboxEffects extends Context.Service<
   SandboxEffects,
@@ -89,11 +85,6 @@ export class SandboxEffects extends Context.Service<
       request: SandboxEffectRequest,
       cause: Cause.Cause<unknown>,
     ) => Effect.Effect<void>;
-    /** Runs on the deleted owner's queue; a replay finds the record already moved. */
-    readonly handOver: (input: {
-      readonly sandboxId: SandboxId;
-      readonly fromThreadId: ThreadId;
-    }) => Effect.Effect<void, SandboxEffectError>;
   }
 >()("t3/sandbox/lifecycle/SandboxEffects") {}
 
@@ -163,21 +154,15 @@ const make = Effect.gen(function* () {
         (cause) =>
           new SandboxEffectError({
             sandboxId: request.sandboxId,
-            operation: isDriverEffectRequest(request) ? operationOf(request.type) : "report",
+            operation:
+              request.type === "sandbox.release-waiters" ? "report" : operationOf(request.type),
             retryable: true,
             cause,
           }),
       ),
     );
     if (record === null || record.generation !== request.generation) return null;
-    // A wake on a destroyed record provisions a new machine.
-    if (
-      record.state === "destroyed" &&
-      request.type !== "sandbox.destroy" &&
-      request.type !== "sandbox.request-wake"
-    ) {
-      return null;
-    }
+    if (record.state === "destroyed" && request.type !== "sandbox.destroy") return null;
     return record;
   });
 
@@ -288,53 +273,32 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const driverFor = Effect.fn("SandboxEffects.driverFor")(function* (
-    record: OrchestrationV2Sandbox,
-    operation: Exclude<SandboxEffectOperation, "report">,
-  ) {
-    const fail = (retryable: boolean) => (cause: unknown) =>
-      new SandboxEffectError({ sandboxId: record.id, operation, retryable, cause });
-    // A removed driver stays removed; a settings read may succeed next time.
-    const driver = yield* registry
-      .get(record.driverId)
-      .pipe(Effect.mapError((cause) => fail(!isDriverNotConfigured(cause))(cause)));
-    const call = <A>(effect: Effect.Effect<A, ComputeDriverError>) =>
-      effect.pipe(
-        Effect.retry({ ...DRIVER_RETRY, while: (error) => error.retryable }),
-        Effect.mapError((error) => fail(error.retryable)(error)),
-      );
-    const callIgnoringMissing = (effect: Effect.Effect<void, ComputeDriverError>) =>
-      call(
-        effect.pipe(
-          Effect.catchIf(
-            (error) => error.reason === "not-found",
-            () => Effect.void,
-          ),
-        ),
-      );
-    return { fail, driver, call, callIgnoringMissing };
-  });
-
   const execute: SandboxEffects["Service"]["execute"] = Effect.fn("SandboxEffects.execute")(
     function* (request) {
       const record = yield* currentRecord(request);
       if (record === null) return;
       if (request.type === "sandbox.release-waiters") return yield* releaseWaiters(record);
-      if (request.type === "sandbox.request-wake") {
-        // Receipts match one thread, so the id names the owner; a moved owner fails and retries.
-        return yield* report(record, {
-          type: "sandbox.wake",
-          commandId: CommandId.make(
-            `sandbox-wake:${record.id}:${record.ownerThreadId}:${record.generation}`,
+      const operation = operationOf(request.type);
+      const fail = (retryable: boolean) => (cause: unknown) =>
+        new SandboxEffectError({ sandboxId: record.id, operation, retryable, cause });
+      // A removed driver stays removed; a settings read may succeed next time.
+      const driver = yield* registry
+        .get(record.driverId)
+        .pipe(Effect.mapError((cause) => fail(!isDriverNotConfigured(cause))(cause)));
+      const call = <A>(effect: Effect.Effect<A, ComputeDriverError>) =>
+        effect.pipe(
+          Effect.retry({ ...DRIVER_RETRY, while: (error) => error.retryable }),
+          Effect.mapError((error) => fail(error.retryable)(error)),
+        );
+      const callIgnoringMissing = (effect: Effect.Effect<void, ComputeDriverError>) =>
+        call(
+          effect.pipe(
+            Effect.catchIf(
+              (error) => error.reason === "not-found",
+              () => Effect.void,
+            ),
           ),
-          threadId: record.ownerThreadId,
-          sandboxId: record.id,
-        });
-      }
-      const { fail, driver, call, callIgnoringMissing } = yield* driverFor(
-        record,
-        operationOf(request.type),
-      );
+        );
       const bootstrap = bootstraps
         .forGeneration({
           sandboxId: record.id,
@@ -386,28 +350,20 @@ const make = Effect.gen(function* () {
             ...generationFields(record),
           });
         case "sandbox.destroy":
-          return yield* destroy(record, driver, callIgnoringMissing);
+          if (record.driverRef !== null) {
+            yield* callIgnoringMissing(driver.destroy(record.driverRef));
+          }
+          yield* revokeCredentials(record, "destroy");
+          return yield* report(record, {
+            type: "sandbox.destroyed",
+            commandId: CommandId.make(`sandbox-destroyed:${record.id}:${record.generation}`),
+            ...generationFields(record),
+          });
         case "sandbox.status":
           return yield* reportStatus(record, driver, call);
       }
     },
   );
-
-  const destroy = Effect.fn("SandboxEffects.destroy")(function* (
-    record: OrchestrationV2Sandbox,
-    driver: ComputeDriver["Service"],
-    callIgnoringMissing: (
-      effect: Effect.Effect<void, ComputeDriverError>,
-    ) => Effect.Effect<void, SandboxEffectError>,
-  ) {
-    if (record.driverRef !== null) yield* callIgnoringMissing(driver.destroy(record.driverRef));
-    yield* revokeCredentials(record, "destroy");
-    return yield* report(record, {
-      type: "sandbox.destroyed",
-      commandId: CommandId.make(`sandbox-destroyed:${record.id}:${record.generation}`),
-      ...generationFields(record),
-    });
-  });
 
   const requireDriverRef = (
     record: OrchestrationV2Sandbox,
@@ -456,8 +412,8 @@ const make = Effect.gen(function* () {
     "SandboxEffects.reportExhausted",
   )(
     function* (request, cause) {
-      // Waiters and wakes are the threads' runs; failing to reach them says nothing about the machine.
-      if (!isDriverEffectRequest(request)) return;
+      // Waiters are the threads' runs; failing to reach them says nothing about the machine.
+      if (request.type === "sandbox.release-waiters") return;
       const record = yield* currentRecord(request);
       if (record === null || record.state === "destroyed") return;
       yield* report(record, {
@@ -474,42 +430,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const handOver: SandboxEffects["Service"]["handOver"] = Effect.fn("SandboxEffects.handOver")(
-    function* ({ sandboxId, fromThreadId }) {
-      const fail = (cause: unknown) =>
-        new SandboxEffectError({ sandboxId, operation: "report", retryable: true, cause });
-      const record = yield* projections.getSandbox(sandboxId).pipe(Effect.mapError(fail));
-      if (record === null || record.ownerThreadId !== fromThreadId) return;
-      const candidates = yield* projections
-        .listSandboxThreads(sandboxId)
-        .pipe(Effect.mapError(fail));
-      // One id for every candidate: a refused adopt keeps no receipt, an accepted one dedupes a replay.
-      const commandId = CommandId.make(`sandbox-adopt:${sandboxId}:${fromThreadId}`);
-      for (const { threadId } of candidates) {
-        if (threadId === fromThreadId) continue;
-        const adopted = yield* threads
-          .dispatch({
-            type: "sandbox.adopt",
-            commandId,
-            threadId,
-            sandboxId,
-            previousOwnerThreadId: fromThreadId,
-          })
-          .pipe(
-            Effect.as(true),
-            Effect.catchTags({ OrchestratorSandboxCommandMovedError: () => Effect.succeed(false) }),
-            Effect.mapError(fail),
-          );
-        if (adopted) return;
-      }
-      // Nobody is left: the same destroy `sandbox.destroy` runs, reported on the old owner's stream.
-      if (record.state === "destroyed") return;
-      const { driver, callIgnoringMissing } = yield* driverFor(record, "destroy");
-      yield* destroy(record, driver, callIgnoringMissing);
-    },
-  );
-
-  return SandboxEffects.of({ execute, reportExhausted, handOver });
+  return SandboxEffects.of({ execute, reportExhausted });
 });
 
 export const layer: Layer.Layer<

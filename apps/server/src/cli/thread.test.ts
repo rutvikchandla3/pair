@@ -19,7 +19,6 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { Command } from "effect/cli";
@@ -45,7 +44,6 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import {
-  launchWorkspaceStrategy,
   readLatestMessages,
   resolveProject,
   ThreadUnauthorizedError,
@@ -209,25 +207,6 @@ it.effect("show returns a --messages count larger than one call can spread", () 
       messages.map((item) => item.itemId),
       latest(200_000),
     );
-  }),
-);
-
-it.effect("--cloud asks for a cloud checkout of its ref, and not alongside --worktree", () =>
-  Effect.gen(function* () {
-    const strategy = (input: { worktree?: string; cloud?: string; branch?: string }) =>
-      launchWorkspaceStrategy({
-        worktree: Option.fromUndefinedOr(input.worktree),
-        cloud: Option.fromUndefinedOr(input.cloud),
-        branch: Option.fromUndefinedOr(input.branch),
-      });
-    assert.deepStrictEqual(yield* strategy({ cloud: "main" }), { type: "cloud", baseRef: "main" });
-    assert.deepStrictEqual(yield* strategy({ worktree: "main", branch: "fix" }), {
-      type: "worktree",
-      baseRef: "main",
-      branch: "fix",
-    });
-    const both = yield* strategy({ worktree: "main", cloud: "main" }).pipe(Effect.flip);
-    assert.strictEqual(both.detail, "Use --worktree or --cloud, not both.");
   }),
 );
 

@@ -27,7 +27,6 @@ import * as Stream from "effect/Stream";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
-import * as CloudPreparation from "../../../sandbox/lifecycle/CloudPreparation.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -56,8 +55,6 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
-  /** The launch refuses a cloud strategy, as on a server without Cloud set up. */
-  readonly refusedByCloud?: true;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -119,19 +116,6 @@ const clientLaunchHarness = (input: {
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
-        if (input.refusedByCloud) {
-          return Effect.fail(
-            new ThreadLaunch.ThreadLaunchError({
-              operation: "resolve-project",
-              commandId: launch.commandId,
-              projectId: launch.projectId,
-              cause: new CloudPreparation.CloudLaunchError({
-                projectId: launch.projectId,
-                reason: "no-driver",
-              }),
-            }),
-          );
-        }
         input.launched.push(launch);
         if (input.refusedByCeiling) {
           return Effect.fail(
@@ -209,17 +193,9 @@ it.effect(
           readonly overrideModel?: ModelSelection;
           readonly hostedAppUrl?: string;
           readonly refusedByCeiling?: true;
-          readonly refusedByCloud?: true;
         },
       ) {
-        const {
-          targeted,
-          overrideModel,
-          hostedAppUrl,
-          refusedByCeiling,
-          refusedByCloud,
-          ...input
-        } = params;
+        const { targeted, overrideModel, hostedAppUrl, refusedByCeiling, ...input } = params;
         const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
@@ -228,7 +204,6 @@ it.effect(
           ...(overrideModel === undefined ? {} : { overrideModel }),
           ...(hostedAppUrl === undefined ? {} : { hostedAppUrl }),
           ...(refusedByCeiling === undefined ? {} : { refusedByCeiling }),
-          ...(refusedByCloud === undefined ? {} : { refusedByCloud }),
         });
         const toolkit = yield* ProjectToolkit.pipe(
           Effect.provide(
@@ -304,16 +279,6 @@ it.effect(
       expect(managed.result).toMatchObject({
         code: "invalid_request",
         message: "Example Corp limits threads to Supervised.",
-      });
-
-      // A refused cloud launch says why; the launch refused it before creating anything.
-      const noCloud = yield* launchWith("full-access", "full-access", {
-        title: "Fix",
-        refusedByCloud: true,
-      });
-      expect(noCloud.result).toMatchObject({
-        code: "invalid_request",
-        message: "Cloud is not set up on this environment. No thread was created.",
       });
     }),
 );

@@ -145,9 +145,7 @@ as the machine's owner; with `T3CODE_TOKEN` set, it acts as the token's member,
 so on a shared team machine each person sets their own.
 
 A new thread uses the project's default model and permission mode, and runs in
-the project folder unless you pass `--worktree <base-branch>`, or
-`--cloud <base-branch>` for a cloud machine, when your server has Cloud set up.
-`send` never
+the project folder unless you pass `--worktree <base-branch>`. `send` never
 interrupts: a busy thread gets the message as its next turn. Pass `-` as the
 message to read it from stdin.
 
@@ -164,9 +162,6 @@ started can also move its own thread into a new worktree. A thread an agent
 starts belongs to whoever the agent acts for: you, for an agent you approved or
 a token you created, and the thread's owner, for an agent running in a Pair
 thread.
-
-Agents start cloud threads and cloud tasks the same way, when your server has
-Cloud set up. A cloud task starts from its thread's pushed branch.
 
 ## Webhooks
 

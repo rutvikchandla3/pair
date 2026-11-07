@@ -187,8 +187,11 @@ import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  machineMenuAction,
+  newThreadOnBranchOptions,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -1005,6 +1008,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const runSandboxAction = useSandboxActionRunner();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2723,6 +2727,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ) ?? null;
         const teamMenu = readThreadTeamMenu(thread);
+        const machine = readSandboxThreadMachine(threadRef);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2751,6 +2756,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               ...(teamMenu ? { team: teamMenu } : {}),
+              ...(machine ? { machine } : {}),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2776,6 +2782,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   thread.environmentId,
                 );
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        const machineAction = machineMenuAction(clicked.value);
+        if (machineAction !== null) {
+          if (machine !== null) await runSandboxAction(threadRef, machine.sandboxId, machineAction);
           return;
         }
         const follow = clicked.value === "follow" || clicked.value === "unfollow";
@@ -2815,9 +2826,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "new-thread-on-branch": {
             const result = await settlePromise(() =>
               handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
-                branch: thread.branch,
-                worktreePath: thread.worktreePath,
-                envMode: thread.worktreePath ? "worktree" : "local",
+                ...newThreadOnBranchOptions(thread),
                 startFromOrigin: false,
               }),
             );

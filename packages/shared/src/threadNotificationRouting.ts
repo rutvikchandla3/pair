@@ -5,7 +5,6 @@ export type ThreadNotificationKind =
   | "completion"
   | "failed"
   | "limited"
-  | "machine-failed"
   | "approval"
   | "input"
   | "request"
@@ -46,7 +45,6 @@ export function shouldNotifyMember(
     case "completion":
     case "failed":
     case "limited":
-    case "machine-failed":
     case "approval":
     case "input":
       return event.prompterId === me || event.ownerId === me;
@@ -70,8 +68,6 @@ export function threadNotificationTitle(
       return "Thread failed";
     case "limited":
       return "Usage limit reached";
-    case "machine-failed":
-      return "Machine failed";
     case "approval":
       return "Approval needed";
     case "input":

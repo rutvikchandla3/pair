@@ -7,7 +7,6 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
-  SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -264,17 +263,9 @@ it.effect.each([
   { sideChat: "answering questions", running: false, toolItems: 0, isolated: true },
   { sideChat: "running", running: true, toolItems: 0, isolated: false },
   { sideChat: "after running tools", running: false, toolItems: 1, isolated: false },
-  // The same path string on another machine is another checkout.
-  {
-    sideChat: "running on another machine",
-    running: true,
-    toolItems: 1,
-    isolated: true,
-    sandboxId: SandboxId.make("sbx_ffffffffffffffffffff"),
-  },
 ] as const)(
   "a side chat $sideChat shares the parent's worktree: $isolated",
-  ({ running, toolItems, isolated, ...other }) =>
+  ({ running, toolItems, isolated }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -288,7 +279,6 @@ it.effect.each([
         deletedAt: null,
         worktreePath,
         activeRunId: running ? "side-chat-run" : null,
-        ...("sandboxId" in other ? { sandboxId: other.sandboxId } : {}),
         lineage: {
           parentThreadId: parentId,
           relationshipToParent: "fork",

@@ -3,7 +3,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
-  ComputeDriverId,
   ContextTransferId,
   EnvironmentId,
   GitCommandError,
@@ -36,7 +35,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1944,150 +1942,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
-  );
-
-  it.effect.each([
-    { name: "starts its own machine from the parent's pushed branch", branch: "feature/cache" },
-    { name: "needs a parent branch", branch: null },
-  ])("a cloud task $name", ({ branch }) =>
-    Effect.gen(function* () {
-      const steps = yield* Ref.make<ReadonlyArray<unknown>>([]);
-      const record = (step: unknown) => Ref.update(steps, (all) => [...all, step]);
-      const childRunId = RunId.make("run:mcp-providers-cloud-child");
-      const placement = { driverId: ComputeDriverId.make("docker"), size: "default" as const };
-      let delegated = false;
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        childThreadId,
-        prompt: "Fix the cache.",
-        model: "gpt-5.4",
-        status: "running",
-        result: null,
-      };
-      const parent = () => {
-        const projection = parentProjection(delegated ? [task] : []);
-        return { ...projection, thread: { ...projection.thread, branch } };
-      };
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          getThreadRecords: (threadId) =>
-            Effect.succeed((threadId === parentThreadId ? parent() : childProjection) as never),
-          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-          assertProviderInstanceEnabled: () => Effect.void,
-          dispatch: (command) =>
-            record(command).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  delegated = true;
-                }),
-              ),
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                  {
-                    sequence: 2,
-                    commandId: null,
-                    event: {
-                      type: "run.created",
-                      threadId: childThreadId,
-                      payload: {
-                        id: childRunId,
-                        workspacePreparation: { type: "worktree", baseRef: "feature/cache" },
-                      },
-                    },
-                  },
-                ],
-              } as never),
-            ),
-        }),
-        providerRegistryLayer([
-          providerSnapshot({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: "gpt-5.4",
-          }),
-        ]),
-        adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        ServerSettings.layerTest(
-          branch === null
-            ? {}
-            : {
-                sandbox: { drivers: [{ kind: "docker", id: placement.driverId, label: "Docker" }] },
-              },
-        ),
-      );
-      const service = OrchestratorMcpService.layer.pipe(
-        Layer.provide(layerSingleMemberViews),
-        Layer.provide(
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            checkCloudLaunch: () => Effect.succeed(placement),
-            provisionCloud: (input) => record({ provision: input }),
-            prepareRun: (input) => record({ prepare: input }),
-          }),
-        ),
-        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-      );
-
-      yield* Effect.gen(function* () {
-        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const { features } = yield* mcp.capabilities(scope);
-        assert.equal(features.cloudThreads, branch !== null);
-        const result = yield* mcp
-          .delegateTask(scope, { task: "Fix the cache.", isolation: "cloud", mode: "async" })
-          .pipe(Effect.result);
-        if (branch === null) {
-          assert.isTrue(Result.isFailure(result));
-          assert.include(Result.isFailure(result) ? result.failure : {}, {
-            code: "invalid_request",
-            message:
-              "A cloud task starts from a pushed branch; this thread has none. Use isolation 'worktree'.",
-          });
-          assert.deepEqual(yield* Ref.get(steps), []);
-          return;
-        }
-        assert.isTrue(Result.isSuccess(result));
-        // The child's run records a worktree of the pushed branch; its machine comes before it.
-        const [request, provision, prepare] = yield* Ref.get(steps);
-        assert.deepInclude(request, {
-          type: "delegated_task.request",
-          workspaceStrategy: { type: "worktree", baseRef: "feature/cache" },
-        });
-        assert.deepInclude(provision, {
-          provision: {
-            commandId: (request as { commandId: CommandId }).commandId,
-            threadId: childThreadId,
-            projectId,
-            placement,
-          },
-        });
-        assert.deepInclude(prepare, {
-          prepare: {
-            commandId: (request as { commandId: CommandId }).commandId,
-            threadId: childThreadId,
-            runId: childRunId,
-          },
-        });
-      }).pipe(Effect.provide(service.pipe(Layer.provide(layerDependencies))));
     }),
   );
 

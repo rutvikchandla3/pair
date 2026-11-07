@@ -129,36 +129,28 @@ const appThread = (
   ...overrides,
 });
 
-const completedRun = {
-  id: RUN_ID,
-  threadId: THREAD_ID,
-  ordinal: 1,
-  providerInstanceId: INSTANCE_ID,
-  modelSelection: { instanceId: INSTANCE_ID, model: "test-model" },
-  providerThreadId: null,
-  userMessageId: MessageId.make("message-1"),
-  rootNodeId: null,
-  activeAttemptId: null,
-  status: "completed",
-  requestedAt: DateTime.makeUnsafe(NOW),
-  startedAt: DateTime.makeUnsafe(NOW),
-  completedAt: DateTime.makeUnsafe(NOW),
-  checkpointId: null,
-  contextHandoffId: null,
-} satisfies OrchestrationV2Run;
-
 const runCompleted: OrchestrationV2DomainEvent = {
   id: EventId.make("event-run-completed"),
   type: "run.updated",
   threadId: THREAD_ID,
   occurredAt: DateTime.makeUnsafe(NOW),
-  payload: completedRun,
-};
-
-const runFailed: OrchestrationV2DomainEvent = {
-  ...runCompleted,
-  id: EventId.make("event-run-failed"),
-  payload: { ...completedRun, status: "failed" },
+  payload: {
+    id: RUN_ID,
+    threadId: THREAD_ID,
+    ordinal: 1,
+    providerInstanceId: INSTANCE_ID,
+    modelSelection: { instanceId: INSTANCE_ID, model: "test-model" },
+    providerThreadId: null,
+    userMessageId: MessageId.make("message-1"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "completed",
+    requestedAt: DateTime.makeUnsafe(NOW),
+    startedAt: DateTime.makeUnsafe(NOW),
+    completedAt: DateTime.makeUnsafe(NOW),
+    checkpointId: null,
+    contextHandoffId: null,
+  } satisfies OrchestrationV2Run,
 };
 
 interface SentMessage {
@@ -172,7 +164,6 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   readonly members?: ReadonlyArray<MemberRecord>;
   readonly unregistered?: ReadonlyArray<string>;
   readonly endpoint?: string;
-  readonly shell?: OrchestrationV2ThreadShell;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations();
@@ -219,7 +210,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
 
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const pulls = yield* Queue.unbounded<void>();
-  const currentShell = options.shell ?? shell();
+  const currentShell = shell();
   const notifier = yield* MemberPushNotifier.make.pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -290,28 +281,6 @@ describe("MemberPushNotifier", () => {
       ]);
       assert.deepStrictEqual(harness.urls, ["https://exp.host/--/api/v2/push/send"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect(
-    "pushes Machine failed once to Bob and Alice when Bob's waiting run fails with its machine",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness({
-          shell: shell({
-            sandbox: { state: "failed", ownerThreadId: THREAD_ID, failureCode: "boot-timeout" },
-          }),
-        });
-        yield* harness.emit(runFailed);
-
-        assert.deepStrictEqual(
-          harness.requests.flat().map(({ to, title, body }) => ({ to, title, body })),
-          [ALICE, BOB].map((record) => ({
-            to: token(record),
-            title: "Machine failed",
-            body: "Fix the login bug",
-          })),
-        );
-      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("never pushes Bob his own message", () =>

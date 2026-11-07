@@ -611,7 +611,6 @@ export const layerExecutor: Layer.Layer<
           case "sandbox.destroy":
           case "sandbox.status":
           case "sandbox.release-waiters":
-          case "sandbox.request-wake":
             return sandboxEffects.execute(effect.request).pipe(
               Effect.mapError(
                 (cause) =>
@@ -622,19 +621,6 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
-          case "sandbox.hand-over":
-            return sandboxEffects
-              .handOver({ sandboxId: effect.request.sandboxId, fromThreadId: effect.threadId })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
         }
       }),
     });
@@ -653,8 +639,6 @@ const EFFECT_TIMEOUTS: Partial<
   "sandbox.destroy": Duration.seconds(60),
   "sandbox.status": Duration.seconds(60),
   "sandbox.release-waiters": Duration.seconds(60),
-  "sandbox.request-wake": Duration.seconds(60),
-  "sandbox.hand-over": Duration.seconds(60),
 };
 
 const boundExecution =

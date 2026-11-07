@@ -14,7 +14,7 @@ import {
   decideGitCredentialRecord,
   decideCloudPrompt,
   decideSandboxCommand,
-  planSandboxOnDelete,
+  planSandboxOnThreadDelete,
   type SandboxAttachedThread,
   type SandboxCommand,
 } from "./SandboxDecisions.ts";
@@ -342,18 +342,6 @@ const rows: ReadonlyArray<Row> = [
   ],
   ["any command without a record", { type: "sandbox.sleep", ...base }, null, "not-found"],
   [
-    "adopt moves the owner and its member to the adopting thread",
-    { type: "sandbox.adopt", ...base, threadId: fork, previousOwnerThreadId: owner },
-    record({ state: "sleeping" }),
-    { next: { ownerThreadId: fork, ownerMemberId: MemberId.make("member") }, effects: [] },
-  ],
-  [
-    "adopt after the owner already moved",
-    { type: "sandbox.adopt", ...base, threadId: sideChat, previousOwnerThreadId: fork },
-    record(),
-    "not-owner-thread",
-  ],
-  [
     "a command on a thread that no longer owns the sandbox",
     { type: "sandbox.wake", ...base, threadId: sideChat },
     record({ state: "sleeping" }),
@@ -393,55 +381,60 @@ describe("decideSandboxCommand", () => {
   });
 });
 
-describe("planSandboxOnDelete", () => {
-  const rows = (...threadIds: ReadonlyArray<ThreadId>) =>
-    threadIds.map((threadId) => ({ threadId, attachedAt: earlier, archived: false }));
-  const destroy = {
-    _tag: "Destroy",
-    next: record({ state: "destroyed", updatedAt: now }),
-    effects: [{ type: "sandbox.destroy", sandboxId, generation: 2 }],
-  };
+describe("planSandboxOnThreadDelete", () => {
+  const commandId = CommandId.make("delete");
+  const destroy = [
+    {
+      id: "effect:delete:sandbox.destroy",
+      commandId,
+      threadId: owner,
+      request: { type: "sandbox.destroy", sandboxId, generation: 2 },
+    },
+  ];
   it.each([
-    { name: "the owner alone", deleted: [owner], remaining: [owner], expected: destroy },
+    {
+      name: "the owner alone",
+      deleted: [owner],
+      live: [owner],
+      sandbox: record(),
+      expected: destroy,
+    },
     {
       name: "the owner with a side chat deleted in the same command",
       deleted: [owner, sideChat],
-      remaining: [owner, sideChat],
+      live: [owner, sideChat],
+      sandbox: record(),
       expected: destroy,
     },
     {
       name: "the owner while a fork remains",
       deleted: [owner],
-      remaining: [owner, fork],
-      expected: { _tag: "HandOver", effect: { type: "sandbox.hand-over", sandboxId } },
-    },
-    {
-      name: "the owner of a discarded machine a fork still uses",
-      deleted: [owner],
-      remaining: [owner, fork],
-      sandbox: record({ state: "destroyed" }),
-      expected: { _tag: "HandOver", effect: { type: "sandbox.hand-over", sandboxId } },
+      live: [owner, fork],
+      sandbox: record(),
+      expected: [],
     },
     {
       name: "a thread that is not the owner",
       deleted: [fork],
-      remaining: [owner, fork],
-      expected: { _tag: "Untouched" },
+      live: [owner, fork],
+      sandbox: record(),
+      expected: [],
     },
     {
-      name: "the last thread of a sandbox already destroyed",
+      name: "a sandbox already destroyed",
       deleted: [owner],
-      remaining: [owner],
+      live: [owner],
       sandbox: record({ state: "destroyed" }),
-      expected: { _tag: "Untouched" },
+      expected: [],
     },
-  ])("$name", ({ deleted, remaining, sandbox = record(), expected }) => {
+    { name: "no sandbox", deleted: [owner], live: [], sandbox: null, expected: [] },
+  ])("$name", ({ deleted, live, sandbox, expected }) => {
     expect(
-      planSandboxOnDelete({
-        record: sandbox,
-        deletedThreadIds: new Set(deleted),
-        remaining: rows(...remaining),
-        now,
+      planSandboxOnThreadDelete({
+        deletedThreadIds: deleted,
+        sandbox,
+        liveAttachedThreadIds: live,
+        commandId,
       }),
     ).toEqual(expected);
   });
@@ -512,23 +505,10 @@ describe("decideCloudPrompt", () => {
       expected: { _tag: "Refuse", message: "Gone." },
     },
     {
-      name: "another thread's prompt asks the owner to wake the generation it saw",
+      name: "another thread's prompt refuses until it can wake the owner",
       current: record({ state: "sleeping" }),
       threadId: sideChat,
-      expected: {
-        _tag: "Defer",
-        workspaceStrategy: undefined,
-        wake: {
-          _tag: "RequestWake",
-          request: { type: "sandbox.request-wake", sandboxId, generation: 2 },
-        },
-      },
-    },
-    {
-      name: "another thread's prompt refuses what the owner's would",
-      current: record({ state: "failed", failure: { ...lost, retryable: false } }),
-      threadId: sideChat,
-      expected: { _tag: "Refuse", message: "Gone." },
+      expected: { _tag: "Refuse", message: "The machine is not running." },
     },
   ])("$name", ({ current, threadId = owner, expected }) => {
     const decision = decideCloudPrompt({
@@ -540,9 +520,7 @@ describe("decideCloudPrompt", () => {
       now,
     });
     if (!("state" in expected)) return expect(decision).toEqual(expected);
-    if (decision._tag !== "Defer" || decision.wake?._tag !== "Accept") {
-      throw new Error("Expected a wake");
-    }
+    if (decision._tag !== "Defer" || decision.wake === null) throw new Error("Expected a wake");
     expect(decision.workspaceStrategy).toEqual(expected.workspaceStrategy);
     expect(decision.wake.next).toMatchObject({
       state: expected.state,

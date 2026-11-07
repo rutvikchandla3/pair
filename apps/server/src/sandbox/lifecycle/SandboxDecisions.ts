@@ -11,8 +11,10 @@ import type {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
-import type { SandboxThreadRow } from "./SandboxProjection.ts";
+import type {
+  OrchestrationEffectRequestV2,
+  PendingOrchestrationEffectV2,
+} from "../../orchestration-v2/EffectOutbox.ts";
 
 export type SandboxCommand = Extract<
   OrchestrationV2ServerCommand,
@@ -29,19 +31,13 @@ export type SandboxCommand = Extract<
       | "sandbox.stopped"
       | "sandbox.destroyed"
       | "sandbox.failed"
-      | "sandbox.auto-sleep"
-      | "sandbox.adopt";
+      | "sandbox.auto-sleep";
   }
 >;
 
 export type SandboxEffectRequest = Extract<
   OrchestrationEffectRequestV2,
   { readonly type: `sandbox.${string}`; readonly generation: number }
->;
-
-type SandboxHandOverRequest = Extract<
-  OrchestrationEffectRequestV2,
-  { readonly type: "sandbox.hand-over" }
 >;
 
 /** A live thread using the sandbox, as the shared thread row says (never one member's view). */
@@ -70,7 +66,7 @@ export const sandboxAttachedThread = (
 export interface SandboxDecisionInput {
   readonly command: SandboxCommand;
   readonly record: OrchestrationV2Sandbox | null;
-  /** The commanding thread's owner, for a record `sandbox.provision` creates or `sandbox.adopt` moves. */
+  /** The owning thread's owner, for a record `sandbox.provision` creates. */
   readonly ownerMemberId: MemberId | null;
   /** Read only for sleep, discard and auto-sleep. */
   readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
@@ -101,65 +97,42 @@ export const decideAutoSleep = (
 };
 
 /**
- * Deleting the owner (with the side chats deleted in the same command) destroys the sandbox when
- * no other thread uses it, and otherwise hands it to the oldest remaining one.
+ * Deleting the owner together with every live attached thread (its side chats deleted in the
+ * same command) destroys the sandbox; while any other thread remains, deletion enqueues nothing.
  */
-export const planSandboxOnDelete = (input: {
-  readonly record: OrchestrationV2Sandbox;
-  readonly deletedThreadIds: ReadonlySet<ThreadId>;
-  /** `listSandboxThreads` read before the deletion commits, oldest first. */
-  readonly remaining: ReadonlyArray<SandboxThreadRow>;
-  readonly now: DateTime.Utc;
-}):
-  | { readonly _tag: "Untouched" }
-  | {
-      readonly _tag: "Destroy";
-      readonly next: OrchestrationV2Sandbox;
-      readonly effects: ReadonlyArray<SandboxEffectRequest>;
-    }
-  | { readonly _tag: "HandOver"; readonly effect: SandboxHandOverRequest } => {
-  const { record, deletedThreadIds } = input;
-  if (!deletedThreadIds.has(record.ownerThreadId)) return { _tag: "Untouched" };
-  if (input.remaining.some((row) => !deletedThreadIds.has(row.threadId))) {
-    return { _tag: "HandOver", effect: { type: "sandbox.hand-over", sandboxId: record.id } };
+export const planSandboxOnThreadDelete = (input: {
+  readonly deletedThreadIds: ReadonlyArray<ThreadId>;
+  readonly sandbox: OrchestrationV2Sandbox | null;
+  readonly liveAttachedThreadIds: ReadonlyArray<ThreadId>;
+  readonly commandId: CommandId;
+}): ReadonlyArray<PendingOrchestrationEffectV2> => {
+  const { sandbox, commandId } = input;
+  const deleted = new Set(input.deletedThreadIds);
+  if (
+    sandbox === null ||
+    sandbox.state === "destroyed" ||
+    !deleted.has(sandbox.ownerThreadId) ||
+    input.liveAttachedThreadIds.some((threadId) => !deleted.has(threadId))
+  ) {
+    return [];
   }
-  if (record.state === "destroyed") return { _tag: "Untouched" };
-  // Destroy stops a running sandbox too, so no separate stop effect.
-  const next: OrchestrationV2Sandbox = { ...record, state: "destroyed", updatedAt: input.now };
-  return {
-    _tag: "Destroy",
-    next,
-    effects: [{ type: "sandbox.destroy", sandboxId: next.id, generation: next.generation }],
-  };
+  return [
+    {
+      id: `effect:${commandId}:sandbox.destroy`,
+      commandId,
+      threadId: sandbox.ownerThreadId,
+      request: { type: "sandbox.destroy", sandboxId: sandbox.id, generation: sandbox.generation },
+    },
+  ];
 };
-
-/** Reassigning the owning thread moves the sandbox's member with it; other threads' don't. */
-export const sandboxOwnerMemberChange = (
-  record: OrchestrationV2Sandbox | null,
-  threadId: ThreadId,
-  ownerMemberId: MemberId | null,
-  now: DateTime.Utc,
-): OrchestrationV2Sandbox | null =>
-  record === null || record.ownerThreadId !== threadId || record.ownerMemberId === ownerMemberId
-    ? null
-    : { ...record, ownerMemberId, updatedAt: now };
 
 export type CloudPromptDecision =
   | { readonly _tag: "Send" }
-  /**
-   * The run waits in `preparing`. On the owner a wake (or a new machine) commits with it; another
-   * thread can't write the owner's stream, so it asks the owner's stream with an effect.
-   */
+  /** The run waits in `preparing`; on the owner a wake (or a new machine) commits with it. */
   | {
       readonly _tag: "Defer";
       readonly workspaceStrategy: OrchestrationV2RunWorkspacePreparation | undefined;
-      readonly wake:
-        | Extract<SandboxDecision, { readonly _tag: "Accept" }>
-        | {
-            readonly _tag: "RequestWake";
-            readonly request: Extract<SandboxEffectRequest, { type: "sandbox.request-wake" }>;
-          }
-        | null;
+      readonly wake: Extract<SandboxDecision, { readonly _tag: "Accept" }> | null;
     }
   | { readonly _tag: "Refuse"; readonly message: string };
 
@@ -178,12 +151,14 @@ export const decideCloudPrompt = (input: {
 }): CloudPromptDecision => {
   const { record } = input;
   if (record === null || record.state === "ready") return { _tag: "Send" };
-  // Decided as the owner would decide the wake, so another thread refuses what the owner would.
+  if (record.ownerThreadId !== input.threadId) {
+    return { _tag: "Refuse", message: "The machine is not running." };
+  }
   const decision = decideSandboxCommand({
     command: {
       type: "sandbox.wake",
       commandId: input.commandId,
-      threadId: record.ownerThreadId,
+      threadId: input.threadId,
       sandboxId: record.id,
     },
     record,
@@ -198,19 +173,8 @@ export const decideCloudPrompt = (input: {
   if (decision._tag === "Refuse") {
     return { _tag: "Refuse", message: record.failure?.message ?? "The machine is not running." };
   }
-  const wake =
-    record.ownerThreadId === input.threadId
-      ? decision
-      : {
-          _tag: "RequestWake" as const,
-          request: {
-            type: "sandbox.request-wake" as const,
-            sandboxId: record.id,
-            generation: record.generation,
-          },
-        };
   if (record.state !== "destroyed") {
-    return { _tag: "Defer", workspaceStrategy: undefined, wake };
+    return { _tag: "Defer", workspaceStrategy: undefined, wake: decision };
   }
   if (input.checkout === null) {
     return { _tag: "Refuse", message: "This thread has no checkout to rebuild on a new machine." };
@@ -222,7 +186,7 @@ export const decideCloudPrompt = (input: {
       baseRef: input.checkout.baseRef,
       ...(input.checkout.branch === null ? {} : { branch: input.checkout.branch }),
     },
-    wake,
+    wake: decision,
   };
 };
 
@@ -285,20 +249,6 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
   const { command, record, now } = input;
   if (command.type === "sandbox.provision") return decideProvision({ ...input, command });
   if (record === null) return refuse("not-found");
-  if (command.type === "sandbox.adopt") {
-    // A hand-over that lost its race resends to the next thread under the same id.
-    return record.ownerThreadId === command.previousOwnerThreadId
-      ? accept(
-          {
-            ...record,
-            ownerThreadId: command.threadId,
-            ownerMemberId: input.ownerMemberId,
-            updatedAt: now,
-          },
-          [],
-        )
-      : refuse("not-owner-thread");
-  }
   if (record.ownerThreadId !== command.threadId) return refuse("not-owner-thread");
 
   const update = (

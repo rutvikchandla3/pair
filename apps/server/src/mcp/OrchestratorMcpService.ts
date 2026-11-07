@@ -67,7 +67,6 @@ import {
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -105,7 +104,6 @@ import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
-import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -863,7 +861,6 @@ function threadDetail(
           },
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
-    ...(shell.sandbox === undefined ? {} : { sandbox: shell.sandbox }),
     parentThreadId: projection.thread.lineage.parentThreadId,
     relationshipToParent: projection.thread.lineage.relationshipToParent,
     runCount: projection.runs.length,
@@ -2373,7 +2370,6 @@ const make = Effect.gen(function* () {
           threadManagement: true,
           incrementalThreadRead: true,
           scheduledTasks: true,
-          cloudThreads: cloudAvailability(settings, parent?.thread.projectId ?? null).available,
           maxBatchThreads: 20,
         },
       };
@@ -2471,39 +2467,6 @@ const make = Effect.gen(function* () {
         }
         workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
       }
-      // The child's machine clones the remote, so it starts from the pushed branch, never the
-      // parent's commit. Its run records `worktree`; the machine comes after the thread exists.
-      let cloudPlacement: Effect.Success<ReturnType<typeof threadLaunch.checkCloudLaunch>> | null =
-        null;
-      if (input.isolation === "cloud") {
-        // Its child would inherit this thread's machine; it needs one of its own.
-        if (parent.thread.sandboxId !== undefined) {
-          return yield* failure(
-            "invalid_request",
-            "This thread already runs on a cloud machine. Use isolation 'shared' for a task on it.",
-          );
-        }
-        const baseRef = parent.thread.branch;
-        if (baseRef === null) {
-          return yield* failure(
-            "invalid_request",
-            "A cloud task starts from a pushed branch; this thread has none. Use isolation 'worktree'.",
-          );
-        }
-        cloudPlacement = yield* threadLaunch
-          .checkCloudLaunch({
-            projectId: parent.thread.projectId,
-            instanceId: target.modelSelection.instanceId,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              CloudPreparation.isCloudLaunchRefusal(error)
-                ? failure("invalid_request", `${error.message} No task was created.`)
-                : failure("orchestration_error", "Unable to read server settings."),
-            ),
-          );
-        workspaceStrategy = { type: "worktree", baseRef };
-      }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
@@ -2557,23 +2520,6 @@ const make = Effect.gen(function* () {
         childRunEvent?.event.type === "run.created" &&
         childRunEvent.event.payload.workspacePreparation !== undefined
       ) {
-        if (cloudPlacement !== null) {
-          yield* threadLaunch
-            .provisionCloud({
-              commandId,
-              threadId: childThreadId,
-              projectId: parent.thread.projectId,
-              placement: cloudPlacement,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                failure(
-                  "orchestration_error",
-                  `Unable to start the task's machine: ${errorMessage(error)}`,
-                ),
-              ),
-            );
-        }
         yield* threadLaunch.prepareRun({
           commandId,
           threadId: childThreadId,
