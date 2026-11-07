@@ -216,8 +216,9 @@ import {
   decideGitCredentialRecord,
   decideCloudPrompt,
   decideSandboxCommand,
-  planSandboxOnThreadDelete,
+  planSandboxOnDelete,
   type SandboxAttachedThread,
+  sandboxOwnerMemberChange,
   sandboxAttachedThread,
   type SandboxCommand,
   type SandboxDecision,
@@ -7839,29 +7840,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
-    const checkpointScope = yield* checkpointService
-      .prepareRootRunScope({
-        threadId: command.threadId,
-        runId,
-        rootNodeId,
-        providerThreadId: providerThread.id,
-        cwd:
-          resolvedRuntimePolicy.cwd ??
-          existingProviderSession?.cwd ??
-          projection.thread.worktreePath ??
-          process.cwd(),
-        createdAt: now,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+    // A fork's first prompt on a machine that is not running waits like any other (release scopes it).
+    const deferredStart = dispatchMode.type === "defer_start" ? dispatchMode : null;
+    const checkpointScope =
+      deferredStart !== null
+        ? null
+        : yield* checkpointService
+            .prepareRootRunScope({
+              threadId: command.threadId,
+              runId,
+              rootNodeId,
+              providerThreadId: providerThread.id,
+              cwd:
+                resolvedRuntimePolicy.cwd ??
+                existingProviderSession?.cwd ??
+                projection.thread.worktreePath ??
+                process.cwd(),
+              createdAt: now,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            );
     const run: OrchestrationV2Run = {
       id: runId,
       threadId: command.threadId,
@@ -7872,7 +7878,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       userMessageId: command.messageId,
       rootNodeId,
       activeAttemptId: attemptId,
-      status: "starting",
+      status: deferredStart === null ? "starting" : "preparing",
       queuePosition: null,
       requestedAt: now,
       startedAt: null,
@@ -7888,6 +7894,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.restartContinuationOfRunId === undefined
         ? {}
         : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+      ...(deferredStart?.workspaceStrategy === undefined
+        ? {}
+        : { workspacePreparation: deferredStart.workspaceStrategy }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection.runs, command),
     };
@@ -7917,7 +7926,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       nativeItemRef: null,
       runtimeRequestId: null,
-      checkpointScopeId: checkpointScope.id,
+      checkpointScopeId: checkpointScope?.id ?? null,
       startedAt: null,
       completedAt: null,
     };
@@ -8261,15 +8270,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: rootNode,
     });
-    yield* emitEvent({
-      type: "checkpoint-scope.created",
-      threadId: command.threadId,
-      runId,
-      nodeId: rootNodeId,
-      providerInstanceId: modelSelection.instanceId,
-      occurredAt: now,
-      payload: checkpointScope,
-    });
+    if (checkpointScope !== null) {
+      yield* emitEvent({
+        type: "checkpoint-scope.created",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: checkpointScope,
+      });
+    }
     if (handoffTurnItem !== null) {
       yield* emitEvent({
         type: "turn-item.updated",
@@ -8303,6 +8314,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* notificationTasks(command.threadId, message, projection.subagents),
       ),
     });
+    if (deferredStart !== null) {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.turnItemFromProviderItem({
+            driver: adapter.driver,
+            nativeItemId: `workspace-preparation:${runId}`,
+          }),
+          threadId: command.threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: turnItem.ordinal + 1,
+          status: "running",
+          title: WORKSPACE_PREPARATION_INPUT,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "command_execution",
+          input: WORKSPACE_PREPARATION_INPUT,
+        },
+      });
+    }
     const forkResolution = nativeForkResolution ?? portableForkResolution;
     if (pendingForkTransfer !== undefined && forkResolution !== null) {
       yield* emitEvent({
@@ -8354,6 +8396,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
+    if (deferredStart !== null) return;
     const pendingEffect = {
       id: `effect:${command.commandId}:provider-turn.start:${runId}`,
       commandId: command.commandId,
@@ -10783,9 +10826,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const record = yield* projectionStore.getSandbox(command.sandboxId).pipe(mapProjection);
     const thread =
-      command.type === "sandbox.provision"
+      command.type === "sandbox.provision" || command.type === "sandbox.adopt"
         ? yield* projectionStore.getThread(command.threadId).pipe(mapProjection)
         : null;
+    // A candidate deleted since the hand-over read it refuses without a receipt; it tries the next.
+    if (
+      command.type === "sandbox.adopt" &&
+      (thread === null || thread.deletedAt !== null || thread.sandboxId !== command.sandboxId)
+    ) {
+      return yield* new OrchestratorSandboxCommandMovedError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+        sandboxId: command.sandboxId,
+      });
+    }
     if (
       thread !== null &&
       (thread.deletedAt !== null ||
@@ -10871,6 +10925,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
+  /** Reassigning the owning thread moves the sandbox's member in the same commit. */
+  const dispatchSandboxOwnerChange = Effect.fn("Orchestrator.dispatchSandboxOwnerChange")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.owner.set" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const mapProjection = Effect.mapError(
+        (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+      );
+      const thread = yield* projectionStore.getThread(command.threadId).pipe(mapProjection);
+      if (thread.sandboxId === undefined) return;
+      const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
+      const now = yield* DateTime.now;
+      const next = sandboxOwnerMemberChange(record, command.threadId, command.ownerId, now);
+      if (next === null) return;
+      yield* emit(
+        events,
+        command,
+      )({ type: "sandbox.updated", threadId: next.ownerThreadId, occurredAt: now, payload: next });
+    },
+  );
+
   const dispatchGitCredentialRecord = Effect.fn("Orchestrator.dispatchGitCredentialRecord")(
     function* (
       command: Extract<
@@ -10955,8 +11031,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: decision.message,
       });
     }
-    if (decision.wake !== null) {
+    if (decision.wake?._tag === "Accept") {
       yield* applySandboxDecision(command, decision.wake, now, events, effects);
+    } else if (decision.wake?._tag === "RequestWake") {
+      const { request } = decision.wake;
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:${request.type}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request,
+        },
+      ]);
     }
     return {
       ...command,
@@ -14112,21 +14199,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )),
         ];
         const thread = yield* findThread(command.threadId);
-        const sandboxEffects =
+        const record =
           thread?.sandboxId === undefined
-            ? []
-            : planSandboxOnThreadDelete({
-                deletedThreadIds: [command.threadId, ...sideChatIds],
-                sandbox: yield* projectionStore
-                  .getSandbox(thread.sandboxId)
+            ? null
+            : yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapDispatchError(command));
+        const sandboxPlan =
+          record === null
+            ? ({ _tag: "Untouched" } as const)
+            : planSandboxOnDelete({
+                record,
+                deletedThreadIds: new Set([command.threadId, ...sideChatIds]),
+                remaining: yield* projectionStore
+                  .listSandboxThreads(record.id)
                   .pipe(mapDispatchError(command)),
-                liveAttachedThreadIds: (yield* projectionStore
-                  .listSandboxThreads(thread.sandboxId)
-                  .pipe(mapDispatchError(command))).map((row) => row.threadId),
-                commandId: command.commandId,
+                now,
               });
+        const sandboxEvents =
+          sandboxPlan._tag === "Destroy"
+            ? [
+                yield* makeEvent(command, {
+                  type: "sandbox.updated",
+                  threadId: sandboxPlan.next.ownerThreadId,
+                  occurredAt: now,
+                  payload: sandboxPlan.next,
+                }),
+              ]
+            : [];
+        const sandboxEffects =
+          record === null
+            ? []
+            : (sandboxPlan._tag === "Destroy"
+                ? sandboxPlan.effects
+                : sandboxPlan._tag === "HandOver"
+                  ? [sandboxPlan.effect]
+                  : []
+              ).map((request): PendingOrchestrationEffectV2 => ({
+                id: `effect:${command.commandId}:${request.type}`,
+                commandId: command.commandId,
+                // The owner's queue, behind every sandbox effect already queued there.
+                threadId: record.ownerThreadId,
+                request,
+              }));
         return {
-          events: plans.flatMap((plan) => plan.events),
+          events: [...plans.flatMap((plan) => plan.events), ...sandboxEvents],
           effects: [...plans.flatMap((plan) => plan.effects), ...sandboxEffects],
         };
       }
@@ -14144,7 +14259,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.tag.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
-      case "thread.owner.set":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
@@ -14156,6 +14270,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.owner.set":
+        yield* dispatchThreadMutation(command, events, effects);
+        yield* dispatchSandboxOwnerChange(command, events);
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
@@ -14424,6 +14542,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.destroyed":
       case "sandbox.failed":
       case "sandbox.auto-sleep":
+      case "sandbox.adopt":
         yield* dispatchSandboxCommand(command, events, effects);
         break;
       case "sandbox.git-credential.record":

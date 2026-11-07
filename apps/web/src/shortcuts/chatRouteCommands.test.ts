@@ -6,7 +6,6 @@ import * as commandPalette from "../commandPaletteBus";
 import * as settings from "../hooks/useSettings";
 import * as threadActions from "../lib/chatThreadActions";
 import * as entities from "../state/entities";
-import * as sandbox from "../state/sandbox";
 import type { Project } from "../types";
 import { installChatRouteCommands } from "./chatRouteCommands";
 import * as dispatcher from "./dispatcher";
@@ -32,11 +31,7 @@ describe("new thread commands", () => {
     { mode: "boring", count: 1, command: "chat.new", picker: false },
     { mode: "legacy", count: 2, command: "chat.new", picker: false },
     { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
-    { mode: "boring", count: 2, command: "chat.newCloud", picker: false, cloud: true },
-    { mode: "boring", count: 2, command: "chat.newCloud", picker: false, cloud: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
-    const cloud = "cloud" in scenario ? scenario.cloud : undefined;
-    using _cloud = vi.spyOn(sandbox, "readCloudAvailable").mockReturnValue(cloud === true);
     using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",
@@ -62,11 +57,6 @@ describe("new thread commands", () => {
     if (scenario.picker) {
       expect(openPicker).toHaveBeenCalledWith({ open: "new-thread-in" });
       expect(startLocal).not.toHaveBeenCalled();
-    } else if (cloud !== undefined) {
-      expect(openPicker).not.toHaveBeenCalled();
-      expect(startLocal.mock.calls.map((call) => call[1])).toEqual(
-        cloud ? [{ envMode: "cloud" }] : [],
-      );
     } else {
       expect(openPicker).not.toHaveBeenCalled();
       expect(startLocal).toHaveBeenCalledOnce();

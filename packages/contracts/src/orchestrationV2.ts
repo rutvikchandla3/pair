@@ -748,7 +748,7 @@ export const OrchestrationV2RunWorkspacePreparation = Schema.Union([
 export type OrchestrationV2RunWorkspacePreparation =
   typeof OrchestrationV2RunWorkspacePreparation.Type;
 
-/** How a delegation, MCP or scheduled launch asks for its workspace; never `cloud` yet. */
+/** How a delegation or scheduled launch asks for its workspace; never `cloud`. */
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = OrchestrationV2RunWorkspacePreparation;
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
@@ -762,7 +762,7 @@ export const OrchestrationV2ThreadLaunchCloudStrategy = Schema.Struct({
 export type OrchestrationV2ThreadLaunchCloudStrategy =
   typeof OrchestrationV2ThreadLaunchCloudStrategy.Type;
 
-/** Only the launch input takes `cloud`; runs, `defer_start`, MCP and scheduled tasks never do. */
+/** Only launches take `cloud` (clients, `t3_thread_launch`); runs, `defer_start` and scheduled tasks never do. */
 export const OrchestrationV2ThreadLaunchInputWorkspaceStrategy = Schema.Union([
   ...OrchestrationV2RunWorkspacePreparation.members,
   OrchestrationV2ThreadLaunchCloudStrategy,

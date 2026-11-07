@@ -1,9 +1,5 @@
 import type { ContextMenuItem, MemberId } from "@t3tools/contracts";
-import type { SandboxAction } from "@t3tools/client-runtime/state/sandbox";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
-
-import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { SANDBOX_ACTION_MENU_LABELS } from "./sandbox/sandboxActionLabels";
 
 export type ThreadActionMenuId =
   | "find"
@@ -28,7 +24,6 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
-  | `machine:${SandboxAction}`
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -113,20 +108,7 @@ export interface ThreadActionMenuState {
     /** Absent hides Follow: the viewer owns the thread, or the server cannot follow. */
     readonly following?: boolean;
   };
-  /** Set only for a cloud thread, which has no local path to copy. */
-  readonly machine?: {
-    readonly actions: ReadonlyArray<SandboxAction>;
-    /** Shown disabled with the owner-or-admin suffix, not hidden. */
-    readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
-  };
 }
-
-const MACHINE_ACTION_ICONS: Readonly<Record<SandboxAction, string>> = {
-  wake: "cloud",
-  sleep: "power",
-  retry: "refresh-cw",
-  discard: "trash",
-};
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
@@ -230,19 +212,6 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
-    ...(state.machine?.actions ?? []).map((action, index) => {
-      const denied = state.machine?.ownerOnlyDenied.includes(action) === true;
-      return {
-        id: `machine:${action}` as const,
-        label: denied
-          ? `${SANDBOX_ACTION_MENU_LABELS[action]} (owner or admin only)`
-          : SANDBOX_ACTION_MENU_LABELS[action],
-        icon: MACHINE_ACTION_ICONS[action],
-        ...(index === 0 ? { separatorBefore: true } : {}),
-        ...(action === "discard" ? { destructive: true } : {}),
-        ...(denied ? { disabled: true } : {}),
-      };
-    }),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
@@ -294,7 +263,7 @@ export function buildThreadActionMenuItems(
       icon: "copy",
       separatorBefore: true,
       children: [
-        ...(state.machine ? [] : [{ id: "copy-path" as const, label: "Path", icon: "folder" }]),
+        { id: "copy-path", label: "Path", icon: "folder" },
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
@@ -331,35 +300,4 @@ export function buildThreadActionMenuItems(
             }
           : item,
       );
-}
-
-export function machineMenuAction(id: ThreadActionMenuId): SandboxAction | null {
-  switch (id) {
-    case "machine:wake":
-      return "wake";
-    case "machine:sleep":
-      return "sleep";
-    case "machine:retry":
-      return "retry";
-    case "machine:discard":
-      return "discard";
-    default:
-      return null;
-  }
-}
-
-/** A cloud thread's worktree path is inside its machine, so its branch starts a cloud draft. */
-export function newThreadOnBranchOptions(thread: {
-  readonly branch: string | null;
-  readonly worktreePath: string | null;
-  readonly source: { readonly sandboxId?: unknown };
-}): { branch: string | null; worktreePath: string | null; envMode: DraftThreadEnvMode } {
-  if (thread.source.sandboxId !== undefined) {
-    return { branch: thread.branch, worktreePath: null, envMode: "cloud" };
-  }
-  return {
-    branch: thread.branch,
-    worktreePath: thread.worktreePath,
-    envMode: thread.worktreePath ? "worktree" : "local",
-  };
 }

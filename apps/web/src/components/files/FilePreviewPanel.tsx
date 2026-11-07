@@ -39,7 +39,6 @@ import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { StoppedFilesNotice, useStoppedFiles } from "~/components/sandbox/stoppedFilesNotice";
-import { useQuietThreadShell } from "~/state/entities";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
@@ -1045,9 +1044,6 @@ export default function FilePreviewPanel({
   // A stopped machine's files come from its latest checkpoint; the server refuses writes there.
   const stoppedFiles = useStoppedFiles(attachment === undefined ? threadRef : null);
   const canWriteFiles = canWriteScope && stoppedFiles === null;
-  // A cloud thread's paths are inside its machine; opening them would use the server's disk.
-  const threadSandboxId = useQuietThreadShell(threadRef)?.source.sandboxId;
-  const cloudWorkspaceFile = attachment === undefined && threadSandboxId !== undefined;
   const file = useProjectFileQuery(
     environmentId,
     cwd,
@@ -1278,7 +1274,6 @@ export default function FilePreviewPanel({
             </div>
           </ScrollArea>
           {absolutePath &&
-          !cloudWorkspaceFile &&
           (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}

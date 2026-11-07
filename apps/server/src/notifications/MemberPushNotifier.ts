@@ -147,7 +147,14 @@ export const make = Effect.gen(function* () {
           return null;
         }
         if (run.status === "failed") {
-          return agentEvent(thread, thread.lastErrorClass === "usage_limit" ? "limited" : "failed");
+          return agentEvent(
+            thread,
+            thread.lastErrorClass === "usage_limit"
+              ? "limited"
+              : thread.sandbox?.state === "failed"
+                ? "machine-failed"
+                : "failed",
+          );
         }
         // As on web: only a settled thread whose run nobody stopped reports completion.
         if (

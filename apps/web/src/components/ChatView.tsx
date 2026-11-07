@@ -16,7 +16,6 @@ import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useCloudPushBanner } from "./sandbox/cloudPushBanner";
 import { useSharedMachineBanner } from "./sandbox/sharedMachineBanner";
-import { useSandboxThreadStatus } from "./sandbox/useSandboxThreadStatus";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
   applyOptimisticUserMessagesAction,
@@ -1115,12 +1114,6 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     serverThread === null ? null : threadId,
   );
-  const sandboxStatus = useSandboxThreadStatus({
-    threadRef: serverThread === null ? null : routeThreadRef,
-    sandbox: serverProjection?.sandbox,
-    turnItems: serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
-    onStartNewMachine: () => composerRef.current?.focusAtEnd(),
-  });
   const activeProjectDefaultModelSelection =
     !isServerThread && draftFallback
       ? draftFallback.selection
@@ -1667,7 +1660,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
     primaryEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
-    cloudThread: serverThread?.source.sandboxId !== undefined,
   });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker && !backgroundThread,
@@ -2457,7 +2449,6 @@ export default function ChatView(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     gitStatusQuery,
     nowMinute,
-    sandboxStatusLine: sandboxStatus.statusLine,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
@@ -2637,10 +2628,9 @@ export default function ChatView(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const cloudPushItems = [
-      ...sandboxStatus.bannerItems,
-      ...[cloudPushBannerItem, sharedMachineBannerItem].filter((item) => item !== null),
-    ];
+    const cloudPushItems = [cloudPushBannerItem, sharedMachineBannerItem].filter(
+      (item) => item !== null,
+    );
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -3373,8 +3363,6 @@ export default function ChatView(props: ChatViewProps) {
               isServerThread={isServerThread}
               activeThreadTitle={activeThread.title}
               activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
-              machineLabel={sandboxStatus.badge?.label ?? null}
-              machineTone={sandboxStatus.badge?.tone ?? null}
               activeProject={activeProject ?? null}
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}

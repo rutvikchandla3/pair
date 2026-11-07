@@ -64,10 +64,6 @@ vi.mock("../state/entities", () => ({
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/team", () => ({ readThreadTeamMenu: () => undefined }));
-vi.mock("../components/sandbox/useSandboxThreadStatus", () => ({
-  readSandboxThreadMachine: () => null,
-  useSandboxActionRunner: () => async () => {},
-}));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {

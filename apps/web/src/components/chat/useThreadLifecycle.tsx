@@ -1,6 +1,6 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { Dispatch, ReactNode } from "react";
+import type { Dispatch } from "react";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import {
@@ -115,8 +115,6 @@ interface ThreadLifecycleInput {
   } | null;
   readonly gitStatusQuery: { readonly refresh: () => void };
   readonly nowMinute: string;
-  /** The machine's line for a cloud thread, shown before the snooze and settle lines. */
-  readonly sandboxStatusLine: ReactNode | null;
   readonly composerRef: ComposerHandleRef;
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly sendInFlightRef: { current: boolean };
@@ -165,7 +163,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     localCheckoutBranchMismatch,
     gitStatusQuery,
     nowMinute,
-    sandboxStatusLine,
     composerRef,
     composerDraftTarget,
     sendInFlightRef,
@@ -616,7 +613,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const snoozeWake = snoozedUntil
     ? snoozeWakeLabel(snoozedUntil, { now: `${nowMinute}:00.000Z` })
     : null;
-  const lifecycleStatusLine = activeThreadSnoozed ? (
+  const threadStatusLine = activeThreadSnoozed ? (
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
       label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
@@ -642,15 +639,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       onAction={acknowledgeActiveThreadWokeStable}
     />
   ) : null;
-  const threadStatusLine =
-    sandboxStatusLine === null ? (
-      lifecycleStatusLine
-    ) : (
-      <>
-        {sandboxStatusLine}
-        {lifecycleStatusLine}
-      </>
-    );
   const toastThreadActionFailure =
     (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;

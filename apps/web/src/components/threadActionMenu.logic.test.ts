@@ -124,29 +124,5 @@ describe("buildThreadActionMenuItems", () => {
     expect(notOwner.find((item) => item.id === "assign")?.children?.some((c) => c.checked)).toBe(
       false,
     );
-    const copyChildren = (items: typeof solo) =>
-      items.find((item) => item.id === "copy")?.children?.map((child) => child.id);
-    expect(solo.some((item) => item.id.startsWith("machine:"))).toBe(false);
-    expect(copyChildren(solo)).toContain("copy-path");
-
-    const member = buildThreadActionMenuItems({
-      ...baseState,
-      team: { members, ownerId: ben, canDelete: false },
-      machine: {
-        actions: ["wake", "sleep", "retry", "discard"],
-        ownerOnlyDenied: ["sleep", "discard"],
-      },
-    });
-    const machineRows = member.filter((item) => item.id.startsWith("machine:"));
-    expect(machineRows.map((item) => [item.id, item.label, item.disabled ?? false])).toEqual([
-      ["machine:wake", "Wake machine", false],
-      ["machine:sleep", "Sleep now (owner or admin only)", true],
-      ["machine:retry", "Retry machine", false],
-      ["machine:discard", "Discard machine (owner or admin only)", true],
-    ]);
-    expect(member.findIndex((item) => item.id === "machine:wake")).toBe(
-      member.findIndex((item) => item.id === "mark-unread") + 1,
-    );
-    expect(copyChildren(member)).not.toContain("copy-path");
   });
 });

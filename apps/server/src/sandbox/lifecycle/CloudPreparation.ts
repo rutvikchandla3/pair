@@ -60,6 +60,11 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
   }
 }
 
+/** A refused cloud launch says why: not set up, off for this project, or a local-only account. */
+export const isCloudLaunchRefusal = Schema.is(
+  Schema.Union([CloudLaunchError, ProviderCloudLocalOnlyError, ProviderCloudUnsupportedError]),
+);
+
 /**
  * Where a sandbox's checkouts live on its host (README P1). The loopback runner in tests serves
  * the local disk, so tests point it at a temp folder they register for that host.

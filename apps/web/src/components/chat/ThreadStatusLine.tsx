@@ -5,10 +5,9 @@ import { InlineButton } from "../ui/button";
 export function ThreadStatusLine(props: {
   readonly icon: ReactNode;
   readonly label: string;
-  /** Omitted for a line that only reports, such as a machine starting. */
-  readonly actionLabel?: string;
+  readonly actionLabel: string;
   readonly actionDisabled?: boolean;
-  readonly onAction?: () => void;
+  readonly onAction: () => void;
   // Set for clock-dependent labels to trigger updates.
   readonly clockMinute?: string;
 }) {
@@ -19,14 +18,10 @@ export function ThreadStatusLine(props: {
     >
       {props.icon}
       <span className="min-w-0 truncate">{props.label}</span>
-      {props.actionLabel !== undefined && props.onAction !== undefined ? (
-        <>
-          <span aria-hidden="true">·</span>
-          <InlineButton disabled={props.actionDisabled} onClick={props.onAction}>
-            {props.actionLabel}
-          </InlineButton>
-        </>
-      ) : null}
+      <span aria-hidden="true">·</span>
+      <InlineButton disabled={props.actionDisabled} onClick={props.onAction}>
+        {props.actionLabel}
+      </InlineButton>
     </div>
   );
 }
