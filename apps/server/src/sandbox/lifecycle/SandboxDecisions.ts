@@ -2,6 +2,7 @@ import type {
   CommandId,
   MemberId,
   OrchestrationV2DomainEvent,
+  OrchestrationV2RunWorkspacePreparation,
   OrchestrationV2Sandbox,
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
@@ -123,6 +124,70 @@ export const planSandboxOnThreadDelete = (input: {
       request: { type: "sandbox.destroy", sandboxId: sandbox.id, generation: sandbox.generation },
     },
   ];
+};
+
+export type CloudPromptDecision =
+  | { readonly _tag: "Send" }
+  /** The run waits in `preparing`; on the owner a wake (or a new machine) commits with it. */
+  | {
+      readonly _tag: "Defer";
+      readonly workspaceStrategy: OrchestrationV2RunWorkspacePreparation | undefined;
+      readonly wake: Extract<SandboxDecision, { readonly _tag: "Accept" }> | null;
+    }
+  | { readonly _tag: "Refuse"; readonly message: string };
+
+/**
+ * A prompt to a cloud thread whose machine is not `ready` waits for it instead of starting. A
+ * new machine has an empty disk, so that prompt also re-creates the checkout from the remote.
+ */
+export const decideCloudPrompt = (input: {
+  readonly record: OrchestrationV2Sandbox | null;
+  readonly commandId: CommandId;
+  readonly threadId: ThreadId;
+  readonly dispatchMode: "start_immediately" | "queue_after_active";
+  /** The base the thread's checkout was first made from, and its branch now. */
+  readonly checkout: { readonly baseRef: string; readonly branch: string | null } | null;
+  readonly now: DateTime.Utc;
+}): CloudPromptDecision => {
+  const { record } = input;
+  if (record === null || record.state === "ready") return { _tag: "Send" };
+  if (record.ownerThreadId !== input.threadId) {
+    return { _tag: "Refuse", message: "The machine is not running." };
+  }
+  const decision = decideSandboxCommand({
+    command: {
+      type: "sandbox.wake",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      sandboxId: record.id,
+    },
+    record,
+    ownerMemberId: record.ownerMemberId,
+    attachedThreads: [],
+    now: input.now,
+  });
+  // Provisioning and waking release their waiters on hello; nothing more to start.
+  if (decision._tag === "NoOp" || record.state === "provisioning") {
+    return { _tag: "Defer", workspaceStrategy: undefined, wake: null };
+  }
+  if (decision._tag === "Refuse") {
+    return { _tag: "Refuse", message: record.failure?.message ?? "The machine is not running." };
+  }
+  if (record.state !== "destroyed") {
+    return { _tag: "Defer", workspaceStrategy: undefined, wake: decision };
+  }
+  if (input.checkout === null) {
+    return { _tag: "Refuse", message: "This thread has no checkout to rebuild on a new machine." };
+  }
+  return {
+    _tag: "Defer",
+    workspaceStrategy: {
+      type: "worktree",
+      baseRef: input.checkout.baseRef,
+      ...(input.checkout.branch === null ? {} : { branch: input.checkout.branch }),
+    },
+    wake: decision,
+  };
 };
 
 export type SandboxDecision =
@@ -263,7 +328,9 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         return record.runnerLostAt === null ? noOp : update({ runnerLostAt: null });
       }
       return record.state === "provisioning" || record.state === "waking"
-        ? update({ state: "ready", runnerLostAt: null, sleepReason: null, failure: null })
+        ? update({ state: "ready", runnerLostAt: null, sleepReason: null, failure: null }, [
+            "sandbox.release-waiters",
+          ])
         : refuse("wrong-state");
     case "sandbox.runner.lost":
       return record.state === "ready"
@@ -280,12 +347,15 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
     case "sandbox.failed":
       if (command.failure.code === "boot-timeout") {
         return record.state === "provisioning" || record.state === "waking"
-          ? update({ state: "failed", failure: command.failure }, ["sandbox.stop"])
+          ? update({ state: "failed", failure: command.failure }, [
+              "sandbox.stop",
+              "sandbox.release-waiters",
+            ])
           : refuse("wrong-state");
       }
       return record.state === "destroyed"
         ? refuse("wrong-state")
-        : update({ state: "failed", failure: command.failure });
+        : update({ state: "failed", failure: command.failure }, ["sandbox.release-waiters"]);
   }
 };
 

@@ -127,6 +127,8 @@ import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as CloudPreparation from "./sandbox/lifecycle/CloudPreparation.ts";
+import { ProviderCloudLocalOnlyError, ProviderCloudUnsupportedError } from "./provider/Errors.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -303,6 +305,14 @@ import { requestUrl } from "./requestUrl.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+// A refused cloud launch says why: not set up, off for this project, or a local-only account.
+const isCloudLaunchRefusal = Schema.is(
+  Schema.Union([
+    CloudPreparation.CloudLaunchError,
+    ProviderCloudLocalOnlyError,
+    ProviderCloudUnsupportedError,
+  ]),
+);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -2380,7 +2390,9 @@ export const layerWsRpc = (
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
-                        message: "Failed to launch thread",
+                        message: isCloudLaunchRefusal(cause.cause)
+                          ? cause.cause.message
+                          : "Failed to launch thread",
                         cause,
                       }),
                     ServerRuntimeStartupError: (cause) =>

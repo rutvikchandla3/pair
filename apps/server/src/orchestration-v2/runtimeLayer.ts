@@ -286,6 +286,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
       IdAllocator.layer,
+      ProjectionStore.layer,
     ),
   ),
 );
@@ -385,7 +386,8 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
-  layer.pipe(Layer.provide(layerProjectService)),
+  // Sandbox release and startup recovery re-arm cloud checkouts through the launch service.
+  layer.pipe(Layer.provide(Layer.merge(layerProjectService, layerThreadLaunchProvided))),
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,

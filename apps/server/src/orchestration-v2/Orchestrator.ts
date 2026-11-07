@@ -214,11 +214,13 @@ import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
   decideGitCredentialRecord,
+  decideCloudPrompt,
   decideSandboxCommand,
   planSandboxOnThreadDelete,
   type SandboxAttachedThread,
   sandboxAttachedThread,
   type SandboxCommand,
+  type SandboxDecision,
 } from "../sandbox/lifecycle/SandboxDecisions.ts";
 
 const isMessageQuestionAnswer = Schema.is(
@@ -10826,9 +10828,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
     }
     const { next } = decision;
-    const emitEvent = emit(events, command);
     if (thread !== null && thread.sandboxId !== next.id) {
-      yield* emitEvent({
+      yield* emit(
+        events,
+        command,
+      )({
         type: "thread.metadata-updated",
         threadId: thread.id,
         providerInstanceId: thread.providerInstanceId,
@@ -10836,7 +10840,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...thread, sandboxId: next.id, updatedAt: now },
       });
     }
-    yield* emitEvent({
+    yield* applySandboxDecision(command, decision, now, events, effects);
+  });
+
+  const applySandboxDecision = Effect.fn("Orchestrator.applySandboxDecision")(function* (
+    command: OrchestrationV2ServerCommand,
+    decision: Extract<SandboxDecision, { readonly _tag: "Accept" }>,
+    now: DateTime.Utc,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const { next } = decision;
+    yield* emit(
+      events,
+      command,
+    )({
       type: "sandbox.updated",
       threadId: next.ownerThreadId,
       occurredAt: now,
@@ -10887,6 +10905,69 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+  /**
+   * A prompt to a cloud thread whose machine is not `ready` waits in `preparing`; on the owner the
+   * same commit wakes the machine, or provisions a new one after a discard.
+   */
+  const gateCloudMessage = Effect.fn("Orchestrator.gateCloudMessage")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    thread: OrchestrationV2ThreadProjection["thread"],
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const mode = command.dispatchMode.type;
+    if (
+      thread.sandboxId === undefined ||
+      (mode !== "start_immediately" && mode !== "queue_after_active")
+    ) {
+      return command;
+    }
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
+    if (record === null || record.state === "ready") return command;
+    const firstCheckout =
+      record.state === "destroyed"
+        ? (yield* projectionStore
+            .getThreadRecords(command.threadId, ["runs"])
+            .pipe(mapProjection)).runs
+            .toSorted((left, right) => left.ordinal - right.ordinal)
+            .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation
+        : undefined;
+    const now = yield* DateTime.now;
+    const decision = decideCloudPrompt({
+      record,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      dispatchMode: mode,
+      checkout:
+        firstCheckout?.type === "worktree"
+          ? { baseRef: firstCheckout.baseRef, branch: thread.branch }
+          : null,
+      now,
+    });
+    if (decision._tag === "Send") return command;
+    if (decision._tag === "Refuse") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: decision.message,
+      });
+    }
+    if (decision.wake !== null) {
+      yield* applySandboxDecision(command, decision.wake, now, events, effects);
+    }
+    return {
+      ...command,
+      dispatchMode: {
+        type: "defer_start" as const,
+        ...(decision.workspaceStrategy === undefined
+          ? {}
+          : { workspaceStrategy: decision.workspaceStrategy }),
+      },
+    };
+  });
 
   const dispatchPreparedRunRelease = Effect.fn("Orchestrator.dispatchPreparedRunRelease")(
     function* (
@@ -14111,13 +14192,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.guestMessageId === undefined
             ? undefined
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
-        const { actorId: _soloActorId, ...withoutActor } = command;
+        const gated = yield* gateCloudMessage(command, thread, events, effects);
+        const { actorId: _soloActorId, ...withoutActor } = gated;
         const dispatched =
           guestSend === undefined
-            ? withoutGuestAttribution(command)
+            ? withoutGuestAttribution(gated)
             : {
                 // On a team the sending member authors the guest's turn; solo stays authorless.
-                ...(guestSend.sentByMember ? command : withoutActor),
+                ...(guestSend.sentByMember ? gated : withoutActor),
                 text: guestSend.text,
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };

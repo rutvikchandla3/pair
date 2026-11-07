@@ -257,6 +257,13 @@ export interface GitRemoteExistsInput {
   remoteName: string;
 }
 
+export interface GitCloneRepositoryInput {
+  /** An existing folder git runs in; it also picks the host the clone lands on. */
+  cwd: string;
+  url: string;
+  path: string;
+}
+
 export interface GitRemoteBranchExistsInput extends GitRemoteExistsInput {
   refName: string;
 }
@@ -397,6 +404,13 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<string | null, GitCommandError>;
     readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly remoteExists: (input: GitRemoteExistsInput) => Effect.Effect<boolean, GitCommandError>;
+    /** The remote's fetch URL, or null when there is no such remote. */
+    readonly readRemoteUrl: (
+      input: GitRemoteExistsInput,
+    ) => Effect.Effect<string | null, GitCommandError>;
+    readonly cloneRepository: (
+      input: GitCloneRepositoryInput,
+    ) => Effect.Effect<void, GitCommandError>;
     readonly remoteBranchExists: (
       input: GitRemoteBranchExistsInput,
     ) => Effect.Effect<boolean, GitCommandError>;

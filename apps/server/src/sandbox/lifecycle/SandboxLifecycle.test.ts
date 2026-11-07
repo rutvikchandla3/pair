@@ -5,6 +5,7 @@ import {
   CommandId,
   ComputeDriverId,
   EnvironmentId,
+  MessageId,
   type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
@@ -285,6 +286,19 @@ const attach = (threadId: ThreadId, sandboxId: SandboxId, generation: number) =>
     runnerBootId: "boot",
   });
 
+/** The hello, then the `release-waiters` it enqueues, which makes no driver call. */
+const attachAndRelease = (
+  runtime: Runtime,
+  threadId: ThreadId,
+  sandboxId: SandboxId,
+  generation: number,
+) =>
+  Effect.gen(function* () {
+    yield* attach(threadId, sandboxId, generation);
+    assert.equal(yield* runtime.worker.drain(1), 1);
+    assert.equal(yield* Queue.size(runtime.calls), 0);
+  });
+
 it.layer(layerTest)("sandbox lifecycle", (it) => {
   it.effect("provisions a thread's sandbox and stores the backend ref the create answers", () =>
     Effect.gen(function* () {
@@ -366,7 +380,7 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         const runtime = yield* makeSandboxRuntime();
         const { threadId, sandboxId } = yield* provisioned("stale-start");
         yield* runAnswering(runtime, answerCreate);
-        yield* attach(threadId, sandboxId, 1);
+        yield* attachAndRelease(runtime, threadId, sandboxId, 1);
         const sleep = { commandId: CommandId.make("sleep:stale-start"), threadId, sandboxId };
         yield* dispatch({ type: "sandbox.sleep", ...sleep });
         yield* runAnswering(runtime, (call) =>
@@ -396,9 +410,9 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         });
         assert.deepInclude(yield* getSandbox(sandboxId), { state: "waking", generation: 3 });
 
-        // Generation 2's start and its deadline's stop run first, in queue order, and return
-        // without a driver call.
-        assert.equal(yield* runtime.worker.drain(2), 2);
+        // Generation 2's start, and its deadline's stop and release, run first, in queue order,
+        // and return without a driver call.
+        assert.equal(yield* runtime.worker.drain(3), 3);
         assert.equal(yield* Queue.size(runtime.calls), 0);
         const started = yield* Deferred.make<number>();
         yield* runAnswering(runtime, (call) =>
@@ -418,7 +432,7 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const runtime = yield* makeSandboxRuntime();
       const { threadId, sandboxId } = yield* provisioned("lost");
       yield* runAnswering(runtime, answerCreate);
-      yield* attach(threadId, sandboxId, 1);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
       yield* dispatch({
         type: "sandbox.runner.lost",
         commandId: CommandId.make(`sandbox-lost:${sandboxId}:1:boot`),
@@ -445,6 +459,8 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const sandbox = yield* getSandbox(sandboxId);
       assert.equal(sandbox?.state, "failed");
       assert.deepInclude(sandbox?.failure ?? {}, { code: "lost", retryable: true });
+      // The failure's release-waiters finds no parked run.
+      assert.equal(yield* runtime.worker.drain(1), 1);
       assert.equal(yield* Queue.size(runtime.calls), 0);
       // A machine that stopped by itself keeps no credentials either.
       assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
@@ -479,6 +495,10 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
             : Effect.die(`Expected create, got ${call._tag}`),
         );
         assert.equal((yield* sandboxEvents(threadId)).length, afterFirst);
+        // The passes also failed earlier tests' machines that have no backend; their
+        // release-waiters find no parked run and call no driver.
+        yield* runtime.worker.drain();
+        assert.equal(yield* Queue.size(runtime.calls), 0);
       }).pipe(
         Effect.provide(
           SandboxReconciler.layer.pipe(
@@ -496,7 +516,7 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const runtime = yield* makeSandboxRuntime();
       const { threadId, sandboxId } = yield* provisioned("delete");
       yield* runAnswering(runtime, answerCreate);
-      yield* attach(threadId, sandboxId, 1);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
       yield* dispatch({ type: "thread.delete", commandId: CommandId.make("delete"), threadId });
       // Deletion cleanup effects run first; the destroy is the only one that calls the driver.
       const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
@@ -521,7 +541,7 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         const runtime = yield* makeSandboxRuntime();
         const { threadId, sandboxId } = yield* provisioned("revoke");
         yield* runAnswering(runtime, answerCreate);
-        yield* attach(threadId, sandboxId, 1);
+        yield* attachAndRelease(runtime, threadId, sandboxId, 1);
         const grants = yield* RunnerGrants.RunnerGrants.pipe(
           Effect.provide(Layer.succeedContext(runtime.context)),
         );
@@ -564,7 +584,7 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const runtime = yield* makeSandboxRuntime();
       const { threadId, sandboxId } = yield* provisioned("replayed-destroy");
       yield* runAnswering(runtime, answerCreate);
-      yield* attach(threadId, sandboxId, 1);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
       yield* dispatch({
         type: "sandbox.discard",
         commandId: CommandId.make("discard:replayed-destroy"),
@@ -699,6 +719,58 @@ it.layer(layerTest)("runner return after a restart", (it) => {
   );
 });
 
+// A released run leaves a provider turn queued, which no other test's worker may claim.
+it.layer(layerTest)("cloud prompts", (it) => {
+  it.effect("wakes a sleeping machine in the prompt's commit and releases the run on hello", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("prompt-wake");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.sleep",
+        commandId: CommandId.make("sleep:prompt-wake"),
+        threadId,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "stop" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+
+      const sent = yield* dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("prompt:prompt-wake"),
+        threadId,
+        messageId: MessageId.make("message:prompt-wake"),
+        text: "Carry on",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const stored = sent.storedEvents.map((entry) => entry.event);
+      const woke = stored.find((event) => event.type === "sandbox.updated");
+      assert.deepInclude(woke?.type === "sandbox.updated" ? woke.payload : {}, {
+        state: "waking",
+        generation: 2,
+      });
+      const created = stored.find((event) => event.type === "run.created");
+      const run = created?.type === "run.created" ? created.payload : undefined;
+      assert.equal(run?.status, "preparing");
+      assert.isUndefined(run?.workspacePreparation);
+
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "start" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+      yield* attachAndRelease(runtime, threadId, sandboxId, 2);
+      const { runs } = yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+        projections.getThreadRecords(threadId, ["runs"]),
+      );
+      assert.equal(runs.find((candidate) => candidate.id === run?.id)?.status, "starting");
+    }),
+  );
+});
+
 // Sweeps read every sandbox in the database, so they get one of their own.
 it.layer(layerTest)("sandbox lifecycle worker", (it) => {
   it.effect("stops a ready Docker sandbox once its owner settles, and not before", () =>
@@ -706,7 +778,7 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       const runtime = yield* makeSandboxRuntime();
       const { threadId, sandboxId } = yield* provisioned("settle");
       yield* runAnswering(runtime, answerCreate);
-      yield* attach(threadId, sandboxId, 1);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
         Effect.provide(runtime.layerDriver),
       );

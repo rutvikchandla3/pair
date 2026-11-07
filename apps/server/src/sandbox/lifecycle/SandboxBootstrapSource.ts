@@ -41,6 +41,19 @@ export const layer = Layer.effect(
     const endpoint = yield* RunnerEndpoint;
     const hub = yield* RunnerHub;
     const bundle = yield* RunnerBundle;
+    // A source-run server builds the bundle on first use, which can outlast a create's 60 s bound.
+    const configured = yield* settings.getSettings.pipe(
+      Effect.map((current) => (current.sandbox?.drivers.length ?? 0) > 0),
+      Effect.orElseSucceed(() => false),
+    );
+    if (configured) {
+      yield* bundle.current.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("sandbox.runner-bundle.warm-failed", { cause }),
+        ),
+        Effect.forkScoped,
+      );
+    }
 
     const forGeneration: SandboxBootstrapSource["Service"]["forGeneration"] = Effect.fn(
       "SandboxBootstrapSource.forGeneration",

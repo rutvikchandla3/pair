@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   decideGitCredentialRecord,
+  decideCloudPrompt,
   decideSandboxCommand,
   planSandboxOnThreadDelete,
   type SandboxAttachedThread,
@@ -138,7 +139,10 @@ const rows: ReadonlyArray<Row> = [
     "attached makes a waking sandbox ready",
     { type: "sandbox.runner.attached", ...at(2), runnerBootId: "boot" },
     record({ state: "waking", sleepReason: "manual" }),
-    { next: { state: "ready", sleepReason: null, failure: null }, effects: [] },
+    {
+      next: { state: "ready", sleepReason: null, failure: null },
+      effects: ["sandbox.release-waiters"],
+    },
   ],
   [
     "attached clears a lost runner",
@@ -307,13 +311,16 @@ const rows: ReadonlyArray<Row> = [
     "failed",
     { type: "sandbox.failed", ...at(2), failure: lost },
     record({ state: "provisioning" }),
-    { next: { state: "failed", failure: lost }, effects: [] },
+    { next: { state: "failed", failure: lost }, effects: ["sandbox.release-waiters"] },
   ],
   [
     "a boot deadline stops the machine",
     { type: "sandbox.failed", ...at(2), failure: bootTimeout },
     record({ state: "waking" }),
-    { next: { state: "failed", failure: bootTimeout }, effects: ["sandbox.stop"] },
+    {
+      next: { state: "failed", failure: bootTimeout },
+      effects: ["sandbox.stop", "sandbox.release-waiters"],
+    },
   ],
   [
     "a boot deadline after the runner attached",
@@ -460,5 +467,64 @@ describe("decideGitCredentialRecord", () => {
         ? { _tag: "Accept", payload: issued }
         : { _tag: "Refuse", reason: "not-this-sandbox" },
     );
+  });
+});
+
+describe("decideCloudPrompt", () => {
+  const checkout = { baseRef: "main", branch: "pair/fix" };
+  it.each([
+    { name: "a ready machine sends", current: record(), expected: { _tag: "Send" } },
+    {
+      name: "a booting machine parks the run without a second start",
+      current: record({ state: "provisioning", generation: 1, driverRef: null }),
+      expected: { _tag: "Defer", workspaceStrategy: undefined, wake: null },
+    },
+    {
+      name: "a waking machine parks the run",
+      current: record({ state: "waking" }),
+      expected: { _tag: "Defer", workspaceStrategy: undefined, wake: null },
+    },
+    {
+      name: "a sleeping machine wakes in the same commit",
+      current: record({ state: "sleeping", sleepReason: "settled" }),
+      expected: { _tag: "Defer", workspaceStrategy: undefined, state: "waking", generation: 3 },
+    },
+    {
+      name: "a discarded machine is replaced and the checkout rebuilt",
+      current: record({ state: "destroyed" }),
+      expected: {
+        _tag: "Defer",
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "pair/fix" },
+        state: "provisioning",
+        generation: 3,
+      },
+    },
+    {
+      name: "a machine that failed for good refuses",
+      current: record({ state: "failed", failure: { ...lost, retryable: false } }),
+      expected: { _tag: "Refuse", message: "Gone." },
+    },
+    {
+      name: "another thread's prompt refuses until it can wake the owner",
+      current: record({ state: "sleeping" }),
+      threadId: sideChat,
+      expected: { _tag: "Refuse", message: "The machine is not running." },
+    },
+  ])("$name", ({ current, threadId = owner, expected }) => {
+    const decision = decideCloudPrompt({
+      record: current,
+      commandId: CommandId.make("prompt"),
+      threadId,
+      dispatchMode: "start_immediately",
+      checkout,
+      now,
+    });
+    if (!("state" in expected)) return expect(decision).toEqual(expected);
+    if (decision._tag !== "Defer" || decision.wake === null) throw new Error("Expected a wake");
+    expect(decision.workspaceStrategy).toEqual(expected.workspaceStrategy);
+    expect(decision.wake.next).toMatchObject({
+      state: expected.state,
+      generation: expected.generation,
+    });
   });
 });

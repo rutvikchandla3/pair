@@ -12,10 +12,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import {
   type ComputeDriver,
@@ -68,6 +70,11 @@ export const isSandboxEffectRequest = (
   // `sandbox.mirror.forget-thread` shares the prefix but is a thread's effect, not a driver call.
   request.type.startsWith("sandbox.") && "generation" in request;
 
+type DriverEffectRequest = Exclude<
+  SandboxEffectRequest,
+  { readonly type: "sandbox.release-waiters" }
+>;
+
 export class SandboxEffects extends Context.Service<
   SandboxEffects,
   {
@@ -83,7 +90,7 @@ export class SandboxEffects extends Context.Service<
 
 const DRIVER_RETRY = { schedule: Schedule.spaced("2 seconds"), times: 3 } as const;
 
-const operationOf = (type: SandboxEffectRequest["type"]) =>
+const operationOf = (type: DriverEffectRequest["type"]) =>
   type.slice("sandbox.".length) as Exclude<SandboxEffectOperation, "report">;
 
 /** The worker wraps executor failures, so the sandbox error sits somewhere down the cause chain. */
@@ -97,7 +104,7 @@ const sandboxErrorIn = (cause: Cause.Cause<unknown>): SandboxEffectError | undef
 };
 
 const failureFor = (
-  request: SandboxEffectRequest,
+  request: DriverEffectRequest,
   error: SandboxEffectError | undefined,
 ): SandboxFailure => {
   const operation = operationOf(request.type);
@@ -135,6 +142,9 @@ const make = Effect.gen(function* () {
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
 
+  // The server provides it; without it a re-armed checkout waits for the next restart's recovery.
+  const threadLaunch = yield* Effect.serviceOption(ThreadLaunch.ThreadLaunchService);
+
   /** The record when this request's generation is still current, otherwise null. */
   const currentRecord = Effect.fn("SandboxEffects.currentRecord")(function* (
     request: SandboxEffectRequest,
@@ -144,7 +154,8 @@ const make = Effect.gen(function* () {
         (cause) =>
           new SandboxEffectError({
             sandboxId: request.sandboxId,
-            operation: operationOf(request.type),
+            operation:
+              request.type === "sandbox.release-waiters" ? "report" : operationOf(request.type),
             retryable: true,
             cause,
           }),
@@ -193,10 +204,80 @@ const make = Effect.gen(function* () {
     generation: record.generation,
   });
 
+  // A run another path already released or failed refuses with a receipt; that is not a failure.
+  const releaseOne = (record: OrchestrationV2Sandbox, command: OrchestrationV2ServerCommand) =>
+    threads.dispatch(command).pipe(
+      Effect.asVoid,
+      Effect.catchTags({
+        OrchestratorCommandPreviouslyRejectedError: () => Effect.void,
+        OrchestratorDispatchError: (cause) =>
+          Effect.logWarning("A parked run was no longer waiting on its machine", { cause }),
+      }),
+      Effect.mapError(
+        (cause) =>
+          new SandboxEffectError({
+            sandboxId: record.id,
+            operation: "report",
+            retryable: true,
+            cause,
+          }),
+      ),
+    );
+
+  /**
+   * Runs parked on this machine: on `ready` those with no checkout to make are released and those
+   * with one are re-armed (a no-op while a fiber prepares them); on `failed` the former fail.
+   */
+  const releaseWaiters = Effect.fn("SandboxEffects.releaseWaiters")(function* (
+    record: OrchestrationV2Sandbox,
+  ) {
+    if (record.state !== "ready" && record.state !== "failed") return;
+    const fail = (cause: unknown) =>
+      new SandboxEffectError({ sandboxId: record.id, operation: "report", retryable: true, cause });
+    const rows = yield* projections.listSandboxThreads(record.id).pipe(Effect.mapError(fail));
+    for (const { threadId } of rows) {
+      const { runs } = yield* projections
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(Effect.mapError(fail));
+      for (const run of runs) {
+        if (run.status !== "preparing") continue;
+        const commandId = CommandId.make(`sandbox-release:${run.id}:${record.generation}`);
+        if (run.workspacePreparation !== undefined) {
+          if (record.state === "ready" && Option.isSome(threadLaunch)) {
+            yield* threadLaunch.value.prepareRun({
+              commandId: CommandId.make(`sandbox-rearm:${run.id}:${record.generation}`),
+              threadId,
+              runId: run.id,
+            });
+          }
+          continue;
+        }
+        yield* releaseOne(
+          record,
+          record.state === "ready"
+            ? { type: "prepared-run.release", commandId, threadId, runId: run.id }
+            : {
+                type: "prepared-run.fail",
+                commandId,
+                threadId,
+                runId: run.id,
+                failure: makeProviderFailure({
+                  cause: record.failure,
+                  message: record.failure?.message ?? "The machine failed to start.",
+                  class: "validation_error",
+                  retryable: record.failure?.retryable ?? false,
+                }),
+              },
+        );
+      }
+    }
+  });
+
   const execute: SandboxEffects["Service"]["execute"] = Effect.fn("SandboxEffects.execute")(
     function* (request) {
       const record = yield* currentRecord(request);
       if (record === null) return;
+      if (request.type === "sandbox.release-waiters") return yield* releaseWaiters(record);
       const operation = operationOf(request.type);
       const fail = (retryable: boolean) => (cause: unknown) =>
         new SandboxEffectError({ sandboxId: record.id, operation, retryable, cause });
@@ -331,6 +412,8 @@ const make = Effect.gen(function* () {
     "SandboxEffects.reportExhausted",
   )(
     function* (request, cause) {
+      // Waiters are the threads' runs; failing to reach them says nothing about the machine.
+      if (request.type === "sandbox.release-waiters") return;
       const record = yield* currentRecord(request);
       if (record === null || record.state === "destroyed") return;
       yield* report(record, {

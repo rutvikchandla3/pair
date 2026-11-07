@@ -18,6 +18,7 @@ import {
   OrchestrationV2ThreadShellJson,
   OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadLaunchInput,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
@@ -56,6 +57,10 @@ const oldRunWorkspacePreparation = Schema.Union([
 ]);
 const encodeRunWorkspacePreparation = Schema.encodeSync(OrchestrationV2RunWorkspacePreparation);
 const decodeOldRunWorkspacePreparation = Schema.decodeSync(oldRunWorkspacePreparation);
+const decodeRunWorkspacePreparation = Schema.decodeUnknownSync(
+  OrchestrationV2RunWorkspacePreparation,
+);
+const decodeThreadLaunchInput = Schema.decodeUnknownSync(OrchestrationV2ThreadLaunchInput);
 
 // Freeze the shell and thread that clients decoded before cloud threads.
 const decodePreCloudThreadShellJson = Schema.decodeSync(
@@ -843,6 +848,27 @@ describe("cloud threads on older clients", () => {
         runnerBootId: "boot-1",
       }),
     ).toThrow();
+  });
+
+  it("takes cloud only in the launch input and records a run old clients decode", () => {
+    const cloud = { type: "cloud", baseRef: "main", branch: "pair/fix" } as const;
+    expect(
+      decodeThreadLaunchInput({
+        commandId: "command-1",
+        projectId: "project-1",
+        title: "Thread",
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: cloud,
+      }).workspaceStrategy,
+    ).toEqual(cloud);
+    expect(() => decodeRunWorkspacePreparation(cloud)).toThrow();
+    // What the launch records for the run (ThreadLaunchService), read by a pre-cloud client.
+    const recorded = { type: "worktree", baseRef: cloud.baseRef, branch: cloud.branch } as const;
+    expect(decodeOldRunWorkspacePreparation(encodeRunWorkspacePreparation(recorded))).toEqual(
+      recorded,
+    );
   });
 
   it.each(["../x", "sbx_0123456789ABCDEF0123", "sbx_0123", `${sandboxId}/..`])(

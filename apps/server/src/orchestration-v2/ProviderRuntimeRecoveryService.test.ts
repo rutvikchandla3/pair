@@ -14,6 +14,7 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -24,6 +25,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");
@@ -504,14 +506,21 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
 it.effect.each([
   "queued",
   "preparing",
+  "preparing-cloud",
   "starting",
   "starting-other-request",
   "starting-own-request",
   "starting-scheduled",
 ] as const)("recovers $0 work after restart", (scenario) => {
-  const status = scenario.startsWith("starting") ? "starting" : scenario;
+  const status = scenario.startsWith("starting")
+    ? "starting"
+    : scenario === "preparing-cloud"
+      ? "preparing"
+      : scenario;
+  // A cloud run waits on its machine, so recovery re-arms it instead of cancelling it.
+  const cloud = scenario === "preparing-cloud";
   const terminalized =
-    status === "preparing" ||
+    scenario === "preparing" ||
     scenario === "starting-own-request" ||
     scenario === "starting-scheduled";
   const threadId = ThreadId.make("thread_queued_restart");
@@ -521,7 +530,7 @@ it.effect.each([
   let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
     null;
   const projection = {
-    thread: { id: threadId },
+    thread: cloud ? { id: threadId, sandboxId: "sbx_0123456789abcdef0123" } : { id: threadId },
     runtimeRequests: scenario.endsWith("request")
       ? [
           {
@@ -594,10 +603,14 @@ it.effect.each([
         : [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+  const rearmed = Deferred.makeUnsafe<ThreadLaunch.ThreadLaunchPreparationInput>();
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          prepareRun: (input) => Deferred.succeed(rearmed, input).pipe(Effect.asVoid),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
@@ -625,14 +638,26 @@ it.effect.each([
         }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          cancelUnsettled: () => Effect.succeed([]),
+          signalCancellations: () => Effect.void,
         }),
       ),
     ),
   );
 
   return Effect.gen(function* () {
-    const summary =
-      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    if (cloud) {
+      assert.equal((yield* recovery.recover).terminalizedRuns, 0);
+      assert.isNull(committedInput);
+      assert.deepEqual(yield* Deferred.await(rearmed), {
+        commandId: `sandbox-rearm:${runId}`,
+        threadId,
+        runId,
+      });
+      return;
+    }
+    const summary = yield* recovery.reconcile("startup");
     assert.equal(summary.terminalizedRuns, terminalized ? 1 : 0);
     const command = committedInput;
     assert.isNotNull(command);

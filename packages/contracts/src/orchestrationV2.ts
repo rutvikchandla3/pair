@@ -748,10 +748,27 @@ export const OrchestrationV2RunWorkspacePreparation = Schema.Union([
 export type OrchestrationV2RunWorkspacePreparation =
   typeof OrchestrationV2RunWorkspacePreparation.Type;
 
-/** How a launch asks for its workspace. M1 adds `cloud` here only. */
+/** How a delegation, MCP or scheduled launch asks for its workspace; never `cloud` yet. */
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = OrchestrationV2RunWorkspacePreparation;
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+/** A sandbox checkout of the project's remote; its run records `worktree` (decision 7). */
+export const OrchestrationV2ThreadLaunchCloudStrategy = Schema.Struct({
+  type: Schema.Literal("cloud"),
+  baseRef: TrimmedNonEmptyString,
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2ThreadLaunchCloudStrategy =
+  typeof OrchestrationV2ThreadLaunchCloudStrategy.Type;
+
+/** Only the launch input takes `cloud`; runs, `defer_start`, MCP and scheduled tasks never do. */
+export const OrchestrationV2ThreadLaunchInputWorkspaceStrategy = Schema.Union([
+  ...OrchestrationV2RunWorkspacePreparation.members,
+  OrchestrationV2ThreadLaunchCloudStrategy,
+]);
+export type OrchestrationV2ThreadLaunchInputWorkspaceStrategy =
+  typeof OrchestrationV2ThreadLaunchInputWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
@@ -4001,7 +4018,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  workspaceStrategy: OrchestrationV2ThreadLaunchInputWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),

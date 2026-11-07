@@ -140,6 +140,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     sandboxId: SandboxId,
     generation: NonNegativeInt,
   }),
+  /** Releases or fails the runs parked on the sandbox once that generation is `ready` or `failed`. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.release-waiters"),
+    sandboxId: SandboxId,
+    generation: NonNegativeInt,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -160,6 +166,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "sandbox.stop",
   "sandbox.destroy",
   "sandbox.status",
+  "sandbox.release-waiters",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [

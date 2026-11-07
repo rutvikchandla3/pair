@@ -19,6 +19,7 @@ import {
   ProjectId,
   type RunId,
   type RuntimeMode,
+  type SandboxId,
   type ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -54,6 +55,9 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
+import * as RunnerHub from "../sandbox/runnerHub/RunnerHub.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -67,7 +71,11 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
-    };
+    }
+  /** A checkout in a new sandbox; the run records `worktree` and the thread holds the sandbox. */
+  | { readonly type: "cloud"; readonly baseRef: string; readonly branch?: string | undefined };
+
+type RunWorkspaceStrategy = Exclude<ThreadLaunchWorkspaceStrategy, { readonly type: "cloud" }>;
 
 export interface ThreadLaunchInitialMessage {
   readonly messageId?: MessageId;
@@ -110,11 +118,13 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
 }
 
-type PreparationInput = Pick<
-  ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
-> & {
+type PreparationInput = Pick<ThreadLaunchInput, "commandId" | "projectId" | "initialMessage"> & {
+  readonly workspaceStrategy: RunWorkspaceStrategy;
   readonly reusedWorktree?: { readonly baseRef: string };
+  /** A cloud thread's `worktree` is made in this sandbox, from the project's remote. */
+  readonly sandboxId?: SandboxId | undefined;
+  /** A cloud thread's recorded checkout, kept when the sandbox's disk still has it. */
+  readonly existingWorktreePath?: string | null;
 };
 
 export interface ThreadLaunchPreparationInput {
@@ -220,12 +230,29 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const preparationScope = yield* Scope.make("sequential");
-  const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
+  // Keyed by run when there is one, so a re-arm never prepares a run a launch already prepares.
+  const scheduledLaunches = yield* Ref.make<ReadonlySet<string>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
+  // The server provides the hub; a cloud checkout then waits for the machine's runner to dial in.
+  const runnerHub = yield* Effect.serviceOption(RunnerHub.RunnerHub);
+  const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
+    Context.add(ProjectionStore.ProjectionStoreV2, projections),
+    Context.add(ServerSettings.ServerSettingsService, serverSettings),
+    Context.add(ThreadManagement.ThreadManagementService, threads),
+    (context) =>
+      Option.isSome(runnerHub)
+        ? Context.add(context, RunnerHub.RunnerHub, runnerHub.value)
+        : context,
+  );
 
   const mapError =
-    (input: PreparationInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: Pick<PreparationInput, "commandId" | "projectId">,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -314,6 +341,9 @@ const make = Effect.gen(function* () {
 
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
+    const sandboxId = input.sandboxId;
+    // A cloud checkout is a worktree of the sandbox's clone, not of the project root.
+    let worktreeRepository = project.workspaceRoot;
     let createdWorktreePath: string | null = null;
     let createdBranch: string | null = null;
     let setupTerminalId: string | null = null;
@@ -388,7 +418,47 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      if (input.workspaceStrategy.type === "worktree") {
+      const progress = (phase: "sandbox-admission" | "sandbox-start" | "clone") =>
+        runId === null
+          ? Effect.void
+          : threads
+              .dispatch({
+                type: "prepared-run.progress",
+                commandId: CommandId.make(`${input.commandId}:progress:${phase}`),
+                threadId,
+                runId,
+                phase,
+              })
+              .pipe(Effect.asVoid, Effect.mapError(mapError(input, "update-thread", threadId)));
+      if (input.workspaceStrategy.type === "worktree" && sandboxId !== undefined) {
+        yield* CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
+          Effect.provide(cloudServices),
+          Effect.mapError(mapError(input, "provision-worktree", threadId)),
+        );
+        yield* progress("clone");
+        yield* setupTracker.stageStatus(threadId, "fetch", "running");
+        const checkout = yield* CloudPreparation.checkoutInSandbox({
+          sandboxId,
+          projectId: input.projectId,
+          projectRoot: project.workspaceRoot,
+          baseRef: input.workspaceStrategy.baseRef,
+          branch: branch!,
+          existingWorktreePath: input.existingWorktreePath ?? null,
+        }).pipe(
+          Effect.provide(cloudServices),
+          Effect.mapError(mapError(input, "provision-worktree", threadId)),
+        );
+        yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        worktreeRepository = checkout.clonePath;
+        worktreePath = checkout.worktreePath;
+        branch = checkout.branch;
+        if (checkout.created) {
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+        }
+        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+      } else if (input.workspaceStrategy.type === "worktree") {
         if (runId !== null) {
           yield* threads
             .dispatch({
@@ -493,7 +563,11 @@ const make = Effect.gen(function* () {
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
-        branchRename = yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
+        // Text generation runs a local CLI that reads only the message, never a sandbox path.
+        branchRename = yield* generateBranchNameFor(
+          sandboxId === undefined ? worktreeCwd : project.workspaceRoot,
+          initialMessage,
+        ).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
             git
               .renameBranch({
@@ -701,14 +775,14 @@ const make = Effect.gen(function* () {
             const removedBranch = createdBranch;
             // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
             yield* git
-              .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
+              .removeWorktree({ cwd: worktreeRepository, path: removedPath, force: true })
               .pipe(
                 Effect.andThen(
                   removedBranch === null
                     ? Effect.void
                     : git
                         .deleteLocalBranch({
-                          cwd: project.workspaceRoot,
+                          cwd: worktreeRepository,
                           refName: removedBranch,
                           force: true,
                         })
@@ -776,18 +850,18 @@ const make = Effect.gen(function* () {
             ),
           );
 
-  const reservePreparation = (commandId: CommandId) =>
+  const reservePreparation = (key: CommandId | RunId) =>
     Ref.modify(scheduledLaunches, (scheduled) => {
-      if (scheduled.has(commandId)) return [false, scheduled] as const;
+      if (scheduled.has(key)) return [false, scheduled] as const;
       const next = new Set(scheduled);
-      next.add(commandId);
+      next.add(key);
       return [true, next] as const;
     });
 
-  const releasePreparation = (commandId: CommandId) =>
+  const releasePreparation = (key: CommandId | RunId) =>
     Ref.update(scheduledLaunches, (scheduled) => {
       const next = new Set(scheduled);
-      next.delete(commandId);
+      next.delete(key);
       return next;
     });
 
@@ -822,17 +896,23 @@ const make = Effect.gen(function* () {
         );
       yield* Effect.raceFirst(prepare, interruption);
     });
+    const key = runId ?? input.commandId;
     yield* preparation.pipe(
       Effect.onError((cause) =>
-        failPreparedRun(
-          input,
-          threadId,
-          runId,
-          Cause.hasInterruptsOnly(cause) ? "Worktree setup cancelled." : Cause.squash(cause),
+        // Free the run first: a retry accepted once the failure lands must find it unreserved.
+        releasePreparation(key).pipe(
+          Effect.andThen(
+            failPreparedRun(
+              input,
+              threadId,
+              runId,
+              Cause.hasInterruptsOnly(cause) ? "Worktree setup cancelled." : Cause.squash(cause),
+            ),
+          ),
         ),
       ),
       Effect.ignoreCause,
-      Effect.ensuring(releasePreparation(input.commandId)),
+      Effect.ensuring(releasePreparation(key)),
       Effect.forkIn(preparationScope),
     );
   });
@@ -846,6 +926,16 @@ const make = Effect.gen(function* () {
         (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
+      const cloud =
+        input.workspaceStrategy.type === "cloud"
+          ? yield* CloudPreparation.resolveCloudLaunch(
+              input.projectId,
+              input.modelSelection.instanceId,
+            ).pipe(
+              Effect.provide(cloudServices),
+              Effect.mapError(mapError(input, "resolve-project")),
+            )
+          : null;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -917,8 +1007,18 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
+        const requestedStrategy: RunWorkspaceStrategy =
+          input.workspaceStrategy.type === "cloud"
+            ? {
+                type: "worktree",
+                baseRef: input.workspaceStrategy.baseRef,
+                ...(input.workspaceStrategy.branch === undefined
+                  ? {}
+                  : { branch: input.workspaceStrategy.branch }),
+              }
+            : input.workspaceStrategy;
+        const workspaceStrategy: RunWorkspaceStrategy =
+          requestedStrategy.type === "root" && Option.isNone(launchReceipt)
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -928,11 +1028,11 @@ const make = Effect.gen(function* () {
                   })
                   .pipe(Effect.mapError(mapError(input, "provision-worktree", candidateThreadId))),
                 {
-                  onNone: () => input.workspaceStrategy,
+                  onNone: () => requestedStrategy,
                   onSome: (worktreePath) => ({ type: "existing_worktree", worktreePath }),
                 },
               )
-            : input.workspaceStrategy;
+            : requestedStrategy;
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
@@ -981,6 +1081,21 @@ const make = Effect.gen(function* () {
             .threadId ?? candidateThreadId;
         if (project.id !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
+        }
+        const sandboxId =
+          cloud === null ? undefined : CloudPreparation.sandboxIdForLaunch(input.commandId);
+        if (cloud !== null && sandboxId !== undefined) {
+          yield* threads
+            .dispatch({
+              type: "sandbox.provision",
+              commandId: CommandId.make(`${input.commandId}:sandbox`),
+              threadId,
+              sandboxId,
+              projectId: input.projectId,
+              driverId: cloud.driverId,
+              size: cloud.size,
+            })
+            .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         }
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
@@ -1053,7 +1168,7 @@ const make = Effect.gen(function* () {
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
         const boundWorktreePath = projection.thread.worktreePath;
-        const preparationStrategy: ThreadLaunchWorkspaceStrategy =
+        const preparationStrategy: RunWorkspaceStrategy =
           Option.isSome(launchReceipt) &&
           workspaceStrategy.type === "root" &&
           boundWorktreePath !== null
@@ -1064,7 +1179,8 @@ const make = Effect.gen(function* () {
               }
             : workspaceStrategy;
         if (shouldSchedule) {
-          const ownsPreparation = yield* reservePreparation(input.commandId);
+          const preparationKey = runId ?? input.commandId;
+          const ownsPreparation = yield* reservePreparation(preparationKey);
           if (ownsPreparation) {
             yield* Effect.gen(function* () {
               const preparationStillRequired =
@@ -1078,14 +1194,14 @@ const make = Effect.gen(function* () {
                     );
               if (preparationStillRequired) {
                 yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
+                  { ...input, workspaceStrategy: preparationStrategy, sandboxId },
                   threadId,
                   runId,
                 );
               } else {
-                yield* releasePreparation(input.commandId);
+                yield* releasePreparation(preparationKey);
               }
-            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
+            }).pipe(Effect.onError(() => releasePreparation(preparationKey)));
           }
         }
 
@@ -1114,9 +1230,9 @@ const make = Effect.gen(function* () {
       const run = runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
-      if (!(yield* reservePreparation(input.commandId))) return;
+      if (!(yield* reservePreparation(input.runId))) return;
       yield* scheduleRunPreparation(input, thread, run, workspacePreparation).pipe(
-        Effect.onError(() => releasePreparation(input.commandId)),
+        Effect.onError(() => releasePreparation(input.runId)),
       );
     }).pipe(Effect.exit);
     if (Exit.isFailure(scheduled)) {
@@ -1133,6 +1249,16 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       runId: input.runId,
     });
+    // A cloud run failed by its machine needs the machine back before the checkout.
+    const shell = yield* threads.getThreadShell(input.threadId);
+    if (shell?.sandbox?.state === "failed" && shell.sandboxId !== undefined) {
+      yield* threads.dispatch({
+        type: "sandbox.retry",
+        commandId: CommandId.make(`${input.commandId}:sandbox-retry`),
+        threadId: shell.sandbox.ownerThreadId,
+        sandboxId: shell.sandboxId,
+      });
+    }
     yield* prepareRun(input);
     return dispatched;
   });
@@ -1141,13 +1267,26 @@ const make = Effect.gen(function* () {
     input: ThreadLaunchPreparationInput,
     thread: OrchestrationV2ThreadProjection["thread"],
     run: OrchestrationV2ThreadProjection["runs"][number],
-    workspacePreparation: ThreadLaunchWorkspaceStrategy,
+    workspacePreparation: RunWorkspaceStrategy,
   ) {
     const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
       messageIds: [run.userMessageId],
     });
     const message = messages.find((candidate) => candidate.id === run.userMessageId);
+    // Placement lives on the thread: a cloud worktree is (re)made in its sandbox, never locally.
+    const cloud =
+      thread.sandboxId !== undefined && workspacePreparation.type === "worktree"
+        ? {
+            sandboxId: thread.sandboxId,
+            existingWorktreePath: thread.worktreePath,
+            workspaceStrategy: {
+              ...workspacePreparation,
+              ...(thread.branch === null ? {} : { branch: thread.branch }),
+            },
+          }
+        : null;
     const reuse =
+      cloud === null &&
       workspacePreparation.type === "worktree" &&
       thread.worktreePath !== null &&
       thread.branch !== null
@@ -1166,6 +1305,7 @@ const make = Effect.gen(function* () {
         projectId: thread.projectId,
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
+        ...cloud,
         ...(message === undefined
           ? {}
           : {

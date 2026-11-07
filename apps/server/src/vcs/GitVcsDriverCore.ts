@@ -1732,6 +1732,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       },
     ).pipe(Effect.map((result) => result.exitCode === 0));
 
+  const readRemoteUrl: GitVcsDriver.GitVcsDriver["Service"]["readRemoteUrl"] = (input) =>
+    executeGit(
+      "GitVcsDriver.readRemoteUrl",
+      input.cwd,
+      ["remote", "get-url", "--", input.remoteName],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)));
+
+  const cloneRepository: GitVcsDriver.GitVcsDriver["Service"]["cloneRepository"] = (input) =>
+    runGit("GitVcsDriver.cloneRepository", input.cwd, ["clone", "--", input.url, input.path], {
+      // Cloning scales with the remote's size; let it finish or be cancelled.
+      timeoutMs: null,
+      fallbackErrorDetail: "git clone failed",
+    });
+
   const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
     remoteExists({ cwd, remoteName: "origin" });
 
@@ -5159,6 +5174,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }),
     remoteExists,
+    readRemoteUrl,
+    cloneRepository,
     remoteBranchExists,
     resolveRemoteTrackingCommit,
     resolveWorktreeBaseRemote,

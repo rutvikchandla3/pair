@@ -15,9 +15,12 @@ import {
   ComposerContextId,
   type ChatAttachment,
   CommandId,
+  ComputeDriverId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   GitCommandError,
   MessageId,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -32,8 +35,10 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -44,6 +49,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -68,6 +74,16 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as FakeComputeDriver from "../sandbox/compute/ComputeDriverTesting.ts";
+import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
+import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
+import * as SandboxCredentialRevocation from "../sandbox/credentials/SandboxCredentialRevocation.ts";
+import * as RunnerGrants from "../sandbox/runnerHub/RunnerGrants.ts";
+import * as RunnerHub from "../sandbox/runnerHub/RunnerHub.ts";
+import * as RunnerHubTesting from "../sandbox/runnerHub/RunnerHubTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -233,12 +249,14 @@ function makeHarness(options: HarnessOptions = {}) {
         folderForThread: () => Effect.succeedNone,
       }),
   );
+  const layerProjections = ProjectionStore.layer.pipe(Layer.provide(layerDatabase));
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerProjections,
         IdAllocator.layer,
       ),
     ),
@@ -285,6 +303,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerOutbox,
       layerDatabase,
       layerExternalServices,
+      layerProjections,
     ),
     createWorktree,
     removeWorktree,
@@ -2480,3 +2499,378 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+const cloudSettings = {
+  sandbox: {
+    drivers: [{ kind: "docker" as const, id: ComputeDriverId.make("docker"), label: "Docker" }],
+  },
+  // A managed Codex account signs in on a machine; one that signs in locally cannot.
+  providerInstances: {
+    [modelSelection.instanceId]: {
+      driver: ProviderDriverKind.make("codex"),
+      config: { setupMode: "managed" },
+    },
+  },
+};
+const cloudRemote = "https://github.com/acme/app.git";
+
+/** A cloud launch's git: the project has an origin, the sandbox has no clone yet, `main` is pushed. */
+function cloudHarness(git: Partial<GitWorkflow.GitWorkflowService["Service"]> = {}) {
+  const cloneRepository = vi.fn(
+    (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["cloneRepository"]>[0]) =>
+      Effect.void,
+  );
+  const harness = makeHarness({
+    serverSettings: cloudSettings,
+    createWorktree: (input) =>
+      Effect.succeed({
+        worktree: { path: input.path!, refName: input.newRefName!, headSha: "abc" },
+      } as never),
+    git: {
+      readRemoteUrl: () => Effect.succeed(cloudRemote),
+      isRepository: () => Effect.succeed(false),
+      cloneRepository,
+      hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+      ...git,
+    },
+  });
+  return { ...harness, cloneRepository };
+}
+
+const runReaching = (threadId: ThreadId, status: "starting" | "failed") =>
+  ThreadManagement.ThreadManagementService.use((threads) =>
+    threads.streamStoredEventsFrom({ threadId, eventType: "run.updated" }).pipe(
+      Stream.filter(
+        (stored) => stored.event.type === "run.updated" && stored.event.payload.status === status,
+      ),
+      Stream.runHead,
+    ),
+  );
+
+const cloudWorkspace = { type: "cloud" as const, baseRef: "main" };
+
+it.effect("launches a cloud thread and releases it on runner hello", () => {
+  const harness = cloudHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const commandId = CommandId.make("command:launch:cloud");
+    const launched = yield* launches.launch(
+      launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud",
+        message: "Fix the build",
+        workspace: cloudWorkspace,
+      }),
+    );
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    assert.equal(launched.projection.thread.sandboxId, sandboxId);
+    // Old clients decode the run: it records a worktree, and the thread holds the placement.
+    assert.deepInclude(launched.projection.runs[0] ?? {}, {
+      status: "preparing",
+      workspacePreparation: { type: "worktree", baseRef: "main" },
+    });
+    assert.deepInclude(
+      yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+        projections.getSandbox(sandboxId),
+      ),
+      { state: "provisioning", generation: 1, ownerThreadId: launched.threadId },
+    );
+    assert.equal(harness.cloneRepository.mock.calls.length, 0);
+
+    // What the runner hub sends on the runner's hello.
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+      threadId: launched.threadId,
+      sandboxId,
+      generation: 1,
+      runnerBootId: "boot",
+    });
+    yield* runReaching(launched.threadId, "starting");
+
+    const root = `/t3-sandbox/${sandboxId}`;
+    const clonePath = `${root}/repos/github.com/acme/app`;
+    assert.deepEqual(harness.cloneRepository.mock.calls[0]?.[0], {
+      cwd: root,
+      url: cloudRemote,
+      path: clonePath,
+    });
+    const worktree = harness.createWorktree.mock.calls[0]?.[0];
+    assert.equal(worktree?.cwd, clonePath);
+    assert.equal(worktree?.refName, "origin/main");
+    assert.isTrue(worktree?.path?.startsWith(`${root}/worktrees/`));
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.thread.worktreePath, worktree?.path);
+    // Branch names are generated by a local CLI, never in the sandbox.
+    assert.equal(harness.generateBranchName.mock.calls[0]?.[0].cwd, project.workspaceRoot);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  {
+    name: "its machine fails to start",
+    git: {},
+    machineFails: true,
+    reason: "Compute driver docker failed to create: capacity.",
+  },
+  {
+    name: "the project has no origin",
+    git: { readRemoteUrl: () => Effect.succeed(null) },
+    machineFails: false,
+    reason: "This project has no origin remote to clone in the cloud.",
+  },
+  {
+    name: "the base branch was never pushed",
+    git: { hasCommit: () => Effect.succeed(false) },
+    machineFails: false,
+    reason: "main is not on origin. Push main first.",
+  },
+])("fails a cloud launch's run when $name", ({ git, machineFails, reason }) => {
+  const harness = cloudHarness(git);
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const commandId = CommandId.make("command:launch:cloud-fails");
+    const launched = yield* launches.launch(
+      launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud-fails",
+        message: "Fix the build",
+        workspace: cloudWorkspace,
+      }),
+    );
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    const fields = { threadId: launched.threadId, sandboxId, generation: 1 };
+    yield* threads.dispatch(
+      machineFails
+        ? {
+            // What the create effect reports once its last attempt failed.
+            type: "sandbox.failed",
+            commandId: CommandId.make(`sandbox-failed:${sandboxId}:1:sandbox.create`),
+            ...fields,
+            failure: { code: "create-failed", message: reason, retryable: false },
+          }
+        : {
+            type: "sandbox.runner.attached",
+            commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+            ...fields,
+            runnerBootId: "boot",
+          },
+    );
+    yield* runReaching(launched.threadId, "failed");
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    const failure = projection.turnItems.find((item) => item.type === "error")?.failure;
+    assert.equal(failure?.code, ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE);
+    assert.include(failure?.message ?? "", reason);
+    assert.equal(projection.thread.worktreePath, null);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  {
+    name: "a project that turned cloud off",
+    settings: {
+      ...cloudSettings,
+      projectSettingsOverrides: { [projectId]: { sandboxAllowed: false } },
+    },
+    refusal: { _tag: "CloudLaunchError", reason: "project-disallowed" },
+  },
+  {
+    name: "an account that signs in only on this server",
+    settings: { sandbox: cloudSettings.sandbox },
+    refusal: { _tag: "ProviderCloudLocalOnlyError", instanceId: modelSelection.instanceId },
+  },
+])("refuses a cloud launch for $name before any thread or machine", ({ settings, refusal }) => {
+  const harness = makeHarness({ serverSettings: settings });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = launchInput({
+      command: "command:launch:cloud-off",
+      thread: "thread:launch:cloud-off",
+      message: "Fix the build",
+      workspace: cloudWorkspace,
+    });
+    const error = yield* Effect.flip(launches.launch(input));
+    assert.equal(error._tag, "ThreadLaunchError");
+    const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
+    assert.include(cause ?? {}, refusal);
+    assert.isNull(yield* threads.getThreadShell(input.threadId));
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("reuses the sandbox when a cloud launch is replayed", () => {
+  const harness = cloudHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const input = launchInput({
+      command: "command:launch:cloud-replay",
+      thread: "thread:launch:cloud-replay",
+      message: "Fix the build",
+      workspace: cloudWorkspace,
+    });
+    const first = yield* launches.launch(input);
+    const replayed = yield* launches.launch(input);
+    assert.isTrue(replayed.resumed);
+    assert.equal(replayed.projection.thread.sandboxId, first.projection.thread.sandboxId);
+    const creates = yield* EffectOutbox.EffectOutboxV2.use((outbox) =>
+      outbox.listByCommandId(CommandId.make("command:launch:cloud-replay:sandbox")),
+    );
+    assert.deepEqual(
+      creates.map((effect) => effect.request.type),
+      ["sandbox.create"],
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
+
+// Subprocess fixture: an in-process runner over the hub clones and checks out with real git.
+it.live("launches a cloud thread end to end: machine, runner hello, clone, release", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const hub = yield* RunnerHub.RunnerHub;
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-cloud-e2e-" });
+    const seed = `${directory}/seed`;
+    const origin = `${directory}/origin.git`;
+    // The loopback runner serves the local disk, so the sandbox root is a folder of ours.
+    const root = `${directory}/sandbox`;
+    yield* fs.makeDirectory(seed);
+    yield* fs.makeDirectory(root);
+    const run = (cwd: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation: "launch-cloud-e2e", cwd, args });
+    yield* run(seed, ["init", "-b", "main"]);
+    yield* run(seed, [
+      "-c",
+      "user.name=T",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "base",
+    ]);
+    const base = (yield* run(seed, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* run(seed, ["init", "--bare", origin]);
+    yield* run(seed, ["push", origin, "main"]);
+    const succeeds = (cwd: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation: "launch-cloud-e2e", cwd, args, allowNonZeroExit: true }).pipe(
+        Effect.map((result) => result.exitCode === 0),
+        Effect.orElseSucceed(() => false),
+      );
+
+    const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
+    const harness = makeHarness({
+      serverSettings: cloudSettings,
+      createWorktree: (input, options) => git.createWorktree(input, options),
+      git: {
+        readRemoteUrl: () => Effect.succeed(origin),
+        isRepository: (cwd) => succeeds(cwd, ["rev-parse", "--git-dir"]),
+        cloneRepository: git.cloneRepository,
+        fetchRemote: git.fetchRemote,
+        hasCommit: ({ cwd, refName }) =>
+          succeeds(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]),
+      },
+    });
+    const layerSandboxEffects = SandboxEffects.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FakeComputeDriver.layerRegistry(fake.driver),
+          // Only stop and destroy revoke credentials.
+          Layer.mock(SandboxCredentialRevocation.SandboxCredentialRevocation)({}),
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(
+              EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"),
+            ),
+          }),
+          // Enrolls with the real hub, as the server's bootstrap source does.
+          Layer.succeed(SandboxBootstrapSource.SandboxBootstrapSource, {
+            forGeneration: (input) =>
+              hub.mintEnrollment(input.sandboxId, input.generation).pipe(
+                Effect.map((enrollmentSecret) => ({
+                  ...input,
+                  runnerBuildId: "build",
+                  serverUrl: "unix:/run/pair-host/runner.sock",
+                  enrollmentSecret,
+                })),
+                Effect.orDie,
+              ),
+          }),
+        ),
+      ),
+      Layer.provide(harness.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const commandId = CommandId.make("command:launch:cloud-e2e");
+      const launched = yield* launches.launch(
+        launchInput({
+          command: commandId,
+          thread: "thread:launch:cloud-e2e",
+          message: "Fix the build",
+          workspace: cloudWorkspace,
+        }),
+      );
+      const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+
+      // The provision's create effect, as the effect worker runs it, answered by the driver.
+      const create = yield* (yield* SandboxEffects.SandboxEffects)
+        .execute({ type: "sandbox.create", sandboxId, generation: 1 })
+        .pipe(Effect.forkChild);
+      const call = yield* Queue.take(fake.calls);
+      if (call._tag !== "create") return yield* Effect.die(`Expected create, got ${call._tag}`);
+      yield* Deferred.succeed(call.reply, { driverRef: call.input.name, baseImage: null });
+      yield* Fiber.join(create);
+
+      // The machine boots: its runner enrolls with the bootstrap's secret and says hello.
+      const runner = yield* RunnerHubTesting.makeRunner(call.input.bootstrap.enrollmentSecret);
+      yield* runner.connect();
+      yield* hub.connection(sandboxId);
+      const host = yield* hosts.forPath(`/t3-sandbox/${sandboxId}`);
+      yield* hosts.register(root, host);
+      yield* threads.dispatch({
+        type: "sandbox.runner.attached",
+        commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+        threadId: launched.threadId,
+        sandboxId,
+        generation: 1,
+        runnerBootId: "boot",
+      });
+      yield* runReaching(launched.threadId, "starting");
+
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const worktreePath = projection.thread.worktreePath ?? "";
+      assert.isTrue(worktreePath.startsWith(`${root}/worktrees/`));
+      assert.equal((yield* hosts.forPath(worktreePath)).id, host.id);
+      assert.equal((yield* run(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), base);
+      assert.equal(projection.runs[0]?.status, "starting");
+      // The released run's turn is queued for the provider, which runs in the worktree there.
+      const released = yield* EffectOutbox.EffectOutboxV2.use((outbox) =>
+        outbox.listByCommandId(CommandId.make(`${commandId}:release`)),
+      );
+      assert.include(
+        released.map((effect) => effect.request.type),
+        "provider-turn.start",
+      );
+    }).pipe(
+      Effect.provideService(CloudPreparation.SandboxCheckoutRoot, () => root),
+      Effect.provide(Layer.merge(harness.layer, layerSandboxEffects)),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-cloud-git-" })),
+        Layer.provideMerge(RunnerHub.layer),
+        Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+        Layer.provide(RunnerGrants.layer),
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);

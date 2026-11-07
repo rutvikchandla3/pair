@@ -9,6 +9,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   isOrchestrationV2WorkActive,
+  type RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -16,9 +17,13 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 
+import { forkParked } from "../serverActivation.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -186,6 +191,9 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  // The server provides it; recovery tests that build no launch service re-arm nothing.
+  const threadLaunch = yield* Effect.serviceOption(ThreadLaunch.ThreadLaunchService);
+  const scope = yield* Scope.Scope;
   type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
   /** Shared sessions stop on their first recovered thread; later threads still decide wakes from pre-recovery liveness. */
   const sessionsLiveAtStart = (
@@ -213,6 +221,8 @@ export const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       let runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
+        // A cloud run waits on its machine, not on this process; `recover` re-arms it.
+        if (run.status === "preparing" && projection.thread.sandboxId !== undefined) continue;
         if (run.status === "waiting") {
           const checkpointEffects = yield* outbox
             .listByCommandId(CommandId.make(`command:effect:checkpoint.capture:${run.id}`))
@@ -808,7 +818,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const reconcile = Effect.fn("ProviderRuntimeRecoveryService.reconcile")(function* (
+  const reconcileThreads = Effect.fn("ProviderRuntimeRecoveryService.reconcileThreads")(function* (
     trigger: "startup" | "shutdown",
   ) {
     const continueAfterRestart = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -824,6 +834,7 @@ export const make = Effect.gen(function* () {
     let closedRequests = 0;
     let retiredEffects = 0;
     const stoppedThisPass = new Map<string, RecoverySession>();
+    const parkedCloudRuns: Array<{ readonly threadId: ThreadId; readonly runId: RunId }> = [];
     for (const threadId of threadIds) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
         Effect.mapError(
@@ -840,6 +851,13 @@ export const make = Effect.gen(function* () {
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
+      if (projection.thread.sandboxId !== undefined) {
+        for (const run of projection.runs) {
+          if (run.status === "preparing" && run.workspacePreparation !== undefined) {
+            parkedCloudRuns.push({ threadId, runId: run.id });
+          }
+        }
+      }
       for (const session of projection.providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
@@ -856,13 +874,19 @@ export const make = Effect.gen(function* () {
       ),
     );
     return {
-      terminalizedRuns,
-      stoppedSessions,
-      closedRequests,
-      retiredEffects: retiredEffects + outboxReconciliation.cancelled,
-      requeuedEffects: outboxReconciliation.requeued,
-    } satisfies ProviderRuntimeReconciliationSummary;
+      summary: {
+        terminalizedRuns,
+        stoppedSessions,
+        closedRequests,
+        retiredEffects: retiredEffects + outboxReconciliation.cancelled,
+        requeuedEffects: outboxReconciliation.requeued,
+      } satisfies ProviderRuntimeReconciliationSummary,
+      parkedCloudRuns,
+    };
   });
+
+  const reconcile = (trigger: "startup" | "shutdown") =>
+    reconcileThreads(trigger).pipe(Effect.map((result) => result.summary));
 
   const prepareForShutdown = Effect.gen(function* () {
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -904,7 +928,24 @@ export const make = Effect.gen(function* () {
   );
 
   const recover = Effect.gen(function* () {
-    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
+    const { summary, parkedCloudRuns } = yield* reconcileThreads("startup");
+    // Runs with no checkout to make are released by their machine's durable release-waiters.
+    if (Option.isSome(threadLaunch)) {
+      const launches = threadLaunch.value;
+      yield* Effect.forEach(
+        parkedCloudRuns,
+        ({ threadId, runId }) =>
+          forkParked(
+            launches.prepareRun({
+              commandId: CommandId.make(`sandbox-rearm:${runId}`),
+              threadId,
+              runId,
+            }),
+          ),
+        { discard: true },
+      ).pipe(Scope.provide(scope));
+    }
+    return summary satisfies ProviderRuntimeRecoverySummary;
   });
 
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });

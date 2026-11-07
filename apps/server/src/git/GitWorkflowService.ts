@@ -88,6 +88,9 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly remoteName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly readRemoteUrl: GitVcsDriver.GitVcsDriver["Service"]["readRemoteUrl"];
+    /** Runs in `cwd` without a repository there, so the clone's parent need not be one. */
+    readonly cloneRepository: GitVcsDriver.GitVcsDriver["Service"]["cloneRepository"];
     readonly remoteBranchExists: (input: {
       readonly cwd: string;
       readonly remoteName: string;
@@ -430,6 +433,14 @@ export const make = Effect.gen(function* () {
       return ensureGitCommand("GitWorkflowService.remoteExists", input.cwd).pipe(
         Effect.andThen(git.remoteExists(input)),
       );
+    }),
+    readRemoteUrl: Effect.fn("GitWorkflowService.readRemoteUrl")(function (input) {
+      return ensureGitCommand("GitWorkflowService.readRemoteUrl", input.cwd).pipe(
+        Effect.andThen(git.readRemoteUrl(input)),
+      );
+    }),
+    cloneRepository: Effect.fn("GitWorkflowService.cloneRepository")(function (input) {
+      return git.cloneRepository(input);
     }),
     remoteBranchExists: Effect.fn("GitWorkflowService.remoteBranchExists")(function (input) {
       return ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(

@@ -610,6 +610,7 @@ export const layerExecutor: Layer.Layer<
           case "sandbox.stop":
           case "sandbox.destroy":
           case "sandbox.status":
+          case "sandbox.release-waiters":
             return sandboxEffects.execute(effect.request).pipe(
               Effect.mapError(
                 (cause) =>
@@ -637,6 +638,7 @@ const EFFECT_TIMEOUTS: Partial<
   "sandbox.stop": Duration.seconds(60),
   "sandbox.destroy": Duration.seconds(60),
   "sandbox.status": Duration.seconds(60),
+  "sandbox.release-waiters": Duration.seconds(60),
 };
 
 const boundExecution =
