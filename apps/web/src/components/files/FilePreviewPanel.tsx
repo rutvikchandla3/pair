@@ -38,6 +38,7 @@ import {
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { StoppedFilesNotice, useStoppedFiles } from "~/components/sandbox/stoppedFilesNotice";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
@@ -1039,7 +1040,10 @@ export default function FilePreviewPanel({
     attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
-  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  const canWriteScope = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  // A stopped machine's files come from its latest checkpoint; the server refuses writes there.
+  const stoppedFiles = useStoppedFiles(attachment === undefined ? threadRef : null);
+  const canWriteFiles = canWriteScope && stoppedFiles === null;
   const file = useProjectFileQuery(
     environmentId,
     cwd,
@@ -1327,10 +1331,13 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+      {relativePath && !attachment && !isHostFile && !canWriteScope && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
         </div>
+      ) : null}
+      {stoppedFiles !== null ? (
+        <StoppedFilesNotice threadRef={threadRef} stopped={stoppedFiles} />
       ) : null}
       {previewPath &&
       attachment === undefined &&

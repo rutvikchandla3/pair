@@ -67,6 +67,16 @@ export const SandboxState = Schema.Literals([
 ]);
 export type SandboxState = typeof SandboxState.Type;
 
+/** A write to a stopped machine's files; on the wire it rides `ProjectWriteFileError` (P15). */
+export class SandboxAsleep extends Schema.TaggedError<SandboxAsleep>()("SandboxAsleep", {
+  sandboxId: SandboxId,
+  state: SandboxState,
+}) {
+  override get message() {
+    return "This machine is stopped. Wake it to make changes.";
+  }
+}
+
 export const SandboxSize = Schema.Literals(["small", "default", "large"]);
 export type SandboxSize = typeof SandboxSize.Type;
 

@@ -1,4 +1,5 @@
 import type {
+  SandboxAsleep,
   FilesystemEntryMetadata,
   FilesystemGetMetadataInput,
   FilesystemGetMetadataResult,
@@ -12,19 +13,24 @@ import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "./serverInternalPaths.ts";
-import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
+import type {
+  WorkspaceHost,
+  WorkspaceHostUnavailableError,
+} from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 
-const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
+export const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
 // NTFS reaches .git through trailing dots/spaces, stream suffixes and GIT~1; compare uppercased names.
 const isGitMetadataName = (segment: string) => {
@@ -120,7 +126,7 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
     >;
-    /** Writes inside a known workspace only. */
+    /** Writes inside a known workspace only; a stopped machine refuses with SandboxAsleep. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
@@ -128,6 +134,7 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
+      | SandboxAsleep
     >;
   }
 >()("t3/workspace/WorkspaceFileSystem") {}
@@ -140,11 +147,42 @@ export const make = Effect.gen(function* () {
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const isServerInternalPath = yield* makeIsServerInternalPath;
+  // Absent inside the runner, where every path is local.
+  const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
 
-  const hostForCwd = (cwd: string) =>
-    hosts
-      .forPath(path.resolve(cwd))
-      .pipe(Effect.mapError((cause) => new KnownWorkspaces.UnknownWorkspaceError({ cwd, cause })));
+  // Only a /t3-sandbox/ path fails here: its machine is stopped or not connected.
+  const hostForCwd = (cwd: string) => hosts.forPath(path.resolve(cwd));
+  const unknownWorkspace = (cwd: string, cause: WorkspaceHostUnavailableError) =>
+    new KnownWorkspaces.UnknownWorkspaceError({ cwd, cause });
+
+  const readStopped = (
+    input: ProjectReadFileInput,
+    error: WorkspaceHostUnavailableError,
+  ): Effect.Effect<
+    ProjectReadFileResult,
+    | WorkspaceFileSystemError
+    | WorkspacePaths.WorkspacePathOutsideRootError
+    | KnownWorkspaces.UnknownWorkspaceError
+  > => {
+    if (Option.isNone(stopped) || error.sandboxId === undefined) {
+      return Effect.fail(unknownWorkspace(input.cwd, error));
+    }
+    const reads = stopped.value;
+    return reads.viewFor(input.cwd, error.sandboxId).pipe(
+      Effect.flatMap((view) => reads.readFile(view, input)),
+      // No checkpoint synced yet: an empty file the client labels, not an error.
+      Effect.catchTags({
+        SandboxAsleep: () =>
+          Effect.succeed({
+            relativePath: input.relativePath.trim(),
+            contents: "",
+            byteLength: 0,
+            truncated: false,
+            exists: false,
+          }),
+      }),
+    );
+  };
 
   const operationError =
     (
@@ -327,67 +365,73 @@ export const make = Effect.gen(function* () {
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
-  )(function* (input) {
-    const host = yield* hostForCwd(input.cwd);
-    const target = yield* resolveReadTarget(input, host);
-    const absentResult = {
-      relativePath: target.relativePath,
-      contents: "",
-      byteLength: 0,
-      truncated: false,
-      exists: false,
-    };
-    const realTargetPath = target.realTargetPath;
-    if (realTargetPath === null) return absentResult;
-    if (yield* isServerInternalPath(realTargetPath)) {
-      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-      });
-    }
+  )(
+    function* (input) {
+      const host = yield* hostForCwd(input.cwd);
+      const target = yield* resolveReadTarget(input, host);
+      const absentResult = {
+        relativePath: target.relativePath,
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+        exists: false,
+      };
+      const realTargetPath = target.realTargetPath;
+      if (realTargetPath === null) return absentResult;
+      if (yield* isServerInternalPath(realTargetPath)) {
+        return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+      }
 
-    const file = yield* host.files.readFile(realTargetPath, PROJECT_READ_FILE_MAX_BYTES).pipe(
-      Effect.catchIf(
-        (error) =>
-          input.allowMissing === true && error.operation === "open" && error.code === "ENOENT",
-        () => Effect.succeed(null),
-      ),
-      Effect.mapError((cause) =>
-        operationError(
-          input,
-          realTargetPath,
-          realTargetPath,
-          cause.operation === "stat" || cause.operation === "read" || cause.operation === "close"
-            ? cause.operation
-            : "open",
-        )(cause),
-      ),
-    );
-    if (file === null) return absentResult;
-    if (file.kind === "not-file") {
-      return yield* new WorkspacePathNotFileError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-        resolvedPath: realTargetPath,
-      });
-    }
-    if (file.bytes.includes(0)) {
-      return yield* new WorkspaceBinaryFileError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-        resolvedPath: realTargetPath,
-      });
-    }
+      const file = yield* host.files.readFile(realTargetPath, PROJECT_READ_FILE_MAX_BYTES).pipe(
+        Effect.catchIf(
+          (error) =>
+            input.allowMissing === true && error.operation === "open" && error.code === "ENOENT",
+          () => Effect.succeed(null),
+        ),
+        Effect.mapError((cause) =>
+          operationError(
+            input,
+            realTargetPath,
+            realTargetPath,
+            cause.operation === "stat" || cause.operation === "read" || cause.operation === "close"
+              ? cause.operation
+              : "open",
+          )(cause),
+        ),
+      );
+      if (file === null) return absentResult;
+      if (file.kind === "not-file") {
+        return yield* new WorkspacePathNotFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: realTargetPath,
+        });
+      }
+      if (file.bytes.includes(0)) {
+        return yield* new WorkspaceBinaryFileError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: realTargetPath,
+        });
+      }
 
-    const truncated = file.size > PROJECT_READ_FILE_MAX_BYTES;
-    return {
-      relativePath: target.relativePath,
-      // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-      contents: new TextDecoder("utf-8").decode(file.bytes, { stream: truncated }),
-      byteLength: file.size,
-      truncated,
-    };
-  });
+      const truncated = file.size > PROJECT_READ_FILE_MAX_BYTES;
+      return {
+        relativePath: target.relativePath,
+        // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
+        contents: new TextDecoder("utf-8").decode(file.bytes, { stream: truncated }),
+        byteLength: file.size,
+        truncated,
+      };
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({ WorkspaceHostUnavailableError: (error) => readStopped(input, error) }),
+      ),
+  );
 
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
@@ -451,30 +495,43 @@ export const make = Effect.gen(function* () {
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
-  )(function* (input) {
-    const host = yield* hostForCwd(input.cwd);
-    yield* knownWorkspaces.assertContains(input.cwd);
-    const target = yield* resolveWriteTarget(input, host);
-    const realTargetPath = target.realTargetPath;
-    const replacesFile = yield* host.fileSystem
-      .exists(realTargetPath)
-      .pipe(Effect.orElseSucceed(() => false));
+  )(
+    function* (input) {
+      const host = yield* hostForCwd(input.cwd);
+      yield* knownWorkspaces.assertContains(input.cwd);
+      const target = yield* resolveWriteTarget(input, host);
+      const realTargetPath = target.realTargetPath;
+      const replacesFile = yield* host.fileSystem
+        .exists(realTargetPath)
+        .pipe(Effect.orElseSucceed(() => false));
 
-    const directory = path.dirname(realTargetPath);
-    yield* host.fileSystem
-      .makeDirectory(directory, { recursive: true })
-      .pipe(Effect.mapError(operationError(input, realTargetPath, directory, "make-directory")));
-    yield* host.files
-      .writeNoFollow(realTargetPath, input.contents)
-      .pipe(Effect.mapError(operationError(input, realTargetPath, realTargetPath, "write-file")));
-    // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
-    // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole
-    // workspace, and the save would wait for it.
-    if (!replacesFile) {
-      yield* workspaceEntries.refresh(input.cwd);
-    }
-    return { relativePath: target.relativePath };
-  });
+      const directory = path.dirname(realTargetPath);
+      yield* host.fileSystem
+        .makeDirectory(directory, { recursive: true })
+        .pipe(Effect.mapError(operationError(input, realTargetPath, directory, "make-directory")));
+      yield* host.files
+        .writeNoFollow(realTargetPath, input.contents)
+        .pipe(Effect.mapError(operationError(input, realTargetPath, realTargetPath, "write-file")));
+      // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
+      // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole
+      // workspace, and the save would wait for it.
+      if (!replacesFile) {
+        yield* workspaceEntries.refresh(input.cwd);
+      }
+      return { relativePath: target.relativePath };
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (error) =>
+            Option.isNone(stopped) || error.sandboxId === undefined
+              ? Effect.fail<KnownWorkspaces.UnknownWorkspaceError | SandboxAsleep>(
+                  unknownWorkspace(input.cwd, error),
+                )
+              : stopped.value.refuseWrite(error.sandboxId),
+        }),
+      ),
+  );
 
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
 });

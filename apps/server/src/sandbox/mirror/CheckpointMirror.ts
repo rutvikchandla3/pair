@@ -86,6 +86,10 @@ export class CheckpointMirror extends Context.Service<
   }
 >()("t3/sandbox/mirror/CheckpointMirror") {}
 
+/** For readers that never write, which need no lock and no seed (StoppedSandboxReads). */
+export const mirrorGitDir = (path: Path.Path, stateDir: string, projectId: ProjectId) =>
+  path.join(stateDir, "sandbox", "mirrors", `${Base64Url.encode(projectId)}.git`);
+
 /** A thread's own mirror namespace; the id is encoded because a ThreadId may not be a valid ref segment. */
 export const sandboxThreadRefPrefix = (threadId: ThreadId) =>
   `refs/t3/sandbox/${Base64Url.encode(threadId)}/`;
@@ -137,8 +141,7 @@ const make = Effect.gen(function* () {
   const mirrorsDir = path.join(stateDir, "sandbox", "mirrors");
   const writeLocks = yield* KeyedLock.make<ProjectId>();
 
-  const gitDir = (projectId: ProjectId) =>
-    path.join(mirrorsDir, `${Base64Url.encode(projectId)}.git`);
+  const gitDir = (projectId: ProjectId) => mirrorGitDir(path, stateDir, projectId);
 
   const fail =
     (

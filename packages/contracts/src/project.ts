@@ -15,6 +15,7 @@ import {
   TrimmedString,
   type UnknownUnionMember,
 } from "./baseSchemas.ts";
+import { SandboxId } from "./sandbox.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
@@ -479,6 +480,8 @@ type ProjectFileFailureContext = {
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly cause?: unknown;
+  readonly sandboxId?: SandboxId;
+  readonly message?: string;
 };
 
 export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileError>()(
@@ -556,6 +559,8 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(TrimmedNonEmptyString),
+    /** Set when the thread's machine is stopped; newer clients offer Wake. */
+    sandboxId: Schema.optionalKey(SandboxId),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

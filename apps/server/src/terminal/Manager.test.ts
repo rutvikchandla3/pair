@@ -259,6 +259,7 @@ interface CreateManagerOptions {
 }
 
 interface ManagerFixture {
+  readonly hosts: WorkspaceHosts.WorkspaceHosts["Service"];
   readonly baseDir: string;
   readonly logsDir: string;
   readonly ptyAdapter: FakePtyAdapter;
@@ -336,6 +337,7 @@ const createManager = (
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 
       return {
+        hosts,
         baseDir,
         logsDir,
         join,
@@ -688,6 +690,49 @@ it.layer(
         "closed",
       ]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("keeps a stopped machine's terminal exited and starts no new one there", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, hosts } = yield* createManager();
+      const root = "/t3-sandbox/sbx_0000000000000000000b";
+      const cwd = `${root}/worktrees/main`;
+      const machine = yield* Scope.make();
+      yield* hosts
+        .register(root, {
+          ...hosts.local,
+          fileSystem: {
+            ...hosts.local.fileSystem,
+            stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
+          },
+        })
+        .pipe(Scope.provide(machine));
+      const exited = yield* Deferred.make<void>();
+      const unsubscribeEvents = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeEvents));
+      yield* manager.open(openInput({ cwd }));
+      ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 });
+      yield* Deferred.await(exited);
+      // The machine stops: its root is no longer registered.
+      yield* Scope.close(machine, Exit.void);
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(
+        { ...openInput({ cwd }), restartIfNotRunning: true },
+        (event) => Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      expect(yield* Ref.get(attachEvents)).toEqual([
+        { type: "snapshot", snapshot: expect.objectContaining({ status: "exited" }) },
+      ]);
+      const fresh = yield* manager.open(openInput({ cwd, terminalId: "second" })).pipe(Effect.flip);
+      expect(fresh._tag).toBe("TerminalNotRunningError");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );
 

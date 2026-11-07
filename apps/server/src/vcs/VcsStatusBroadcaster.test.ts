@@ -26,6 +26,7 @@ import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -82,7 +83,7 @@ function layerTestFor(state: {
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
 }) {
   return VcsStatusBroadcaster.layer.pipe(
-    Layer.provide(WorkspaceHostTesting.layerFromContext),
+    Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(
       state.fileSystem
         ? Layer.succeed(FileSystem.FileSystem, state.fileSystem)
@@ -705,6 +706,59 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(polled);
       const status = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.deepStrictEqual(status.branchChanges, state.currentLocalStatus.branchChanges);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("keeps a stopped machine's last remote status without polling or backing off", () => {
+    const root = "/t3-sandbox/sbx_00000000000000000033";
+    const cwd = `${root}/worktrees/main`;
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      const machine = yield* Scope.make();
+      yield* hosts.register(root, hosts.local).pipe(Scope.provide(machine));
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd });
+      const subscribed = yield* Deferred.make<void>();
+      const polledAfterWake = yield* Deferred.make<VcsStatusRemoteResult | null>();
+      yield* broadcaster.streamStatus({ cwd }).pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+          if (event._tag === "remoteUpdated")
+            return Deferred.succeed(polledAfterWake, event.remote);
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+      assert.equal(state.remoteStatusCalls, 1);
+
+      // The machine stops; git there would fail, so a poll would back off and log.
+      yield* Scope.close(machine, Exit.void);
+      state.remoteStatusError = new GitManagerError({
+        operation: "VcsStatusBroadcaster.test",
+        cwd,
+        detail: "machine stopped",
+      });
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(state.remoteStatusCalls, 1);
+      const kept = yield* broadcaster.getStatus({ cwd });
+      assert.deepStrictEqual(kept.pr, remoteStatusWithPr.pr);
+
+      // Woken, the next regular poll runs: the stop cost no backoff.
+      yield* hosts.register(root, hosts.local);
+      delete state.remoteStatusError;
+      state.currentRemoteStatus = baseRemoteStatus;
+      yield* TestClock.adjust("30 seconds");
+      assert.deepStrictEqual(yield* Deferred.await(polledAfterWake), baseRemoteStatus);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 

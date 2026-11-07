@@ -16,11 +16,24 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectFileFailure,
 } from "./project.ts";
+import { SandboxAsleep, SandboxId } from "./sandbox.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const encodeWriteError = Schema.encodeUnknownSync(ProjectWriteFileError);
+const decodeWriteError = Schema.decodeUnknownSync(ProjectWriteFileError);
+// The write error as clients from before `sandboxId` decode it.
+const decodeOldWriteError = Schema.decodeUnknownSync(
+  Schema.TaggedStruct("ProjectWriteFileError", {
+    cwd: Schema.optional(Schema.String),
+    relativePath: Schema.optional(Schema.String),
+    failure: Schema.optional(ProjectFileFailure),
+    message: Schema.String,
+  }),
+);
 
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
@@ -70,7 +83,6 @@ describe("project RPC errors", () => {
 
   it("decodes legacy message-only errors during rolling upgrades", () => {
     const decodeSearchError = Schema.decodeUnknownSync(ProjectSearchEntriesError);
-    const decodeWriteError = Schema.decodeUnknownSync(ProjectWriteFileError);
 
     const searchError = decodeSearchError({
       _tag: "ProjectSearchEntriesError",
@@ -90,6 +102,29 @@ describe("project RPC errors", () => {
     expect(writeError.message).toBe("Legacy project write failure.");
     expect(writeError.relativePath).toBeUndefined();
     expect(writeError.failure).toBeUndefined();
+  });
+
+  it("carries a stopped machine's write refusal in a shape older clients decode", () => {
+    const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+    const asleep = new SandboxAsleep({ sandboxId, state: "sleeping" });
+    const encoded = encodeWriteError(
+      new ProjectWriteFileError({
+        cwd: "/t3-sandbox/sbx_0123456789abcdef0123/repo",
+        relativePath: "src/index.ts",
+        failure: "operation_failed",
+        sandboxId,
+        message: asleep.message,
+      }),
+    );
+
+    expect(decodeOldWriteError(encoded)).toEqual({
+      _tag: "ProjectWriteFileError",
+      cwd: "/t3-sandbox/sbx_0123456789abcdef0123/repo",
+      relativePath: "src/index.ts",
+      failure: "operation_failed",
+      message: "This machine is stopped. Wake it to make changes.",
+    });
+    expect(decodeWriteError(encoded).sandboxId).toBe(sandboxId);
   });
 });
 

@@ -138,6 +138,7 @@ import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
+import * as StoppedSandboxReads from "./sandbox/mirror/StoppedSandboxReads.ts";
 import * as MirrorSync from "./sandbox/mirror/MirrorSync.ts";
 import * as MirrorSyncWorker from "./sandbox/mirror/MirrorSyncWorker.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
@@ -533,10 +534,20 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
-const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
+const layerStoppedSandboxReads = StoppedSandboxReads.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(VcsProcess.layer),
+);
+
+// Both read StoppedSandboxReads optionally at construction; without it stopped machines' files fail.
+const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provide(layerStoppedSandboxReads),
+);
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
+  Layer.provide(layerStoppedSandboxReads),
   Layer.provide(layerWorkspaceEntries),
   Layer.provide(layerKnownWorkspaces),
 );

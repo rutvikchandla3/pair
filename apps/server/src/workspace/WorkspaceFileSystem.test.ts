@@ -11,7 +11,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import { SandboxAsleep, SandboxId } from "@t3tools/contracts";
+
 import * as ServerConfig from "../config.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
@@ -508,6 +511,42 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(error).toBeInstanceOf(KnownWorkspaces.UnknownWorkspaceError);
         expect(yield* fileSystem.readDirectory(cwd)).toEqual([]);
+      }),
+    );
+
+    it.effect("refuses a write to a stopped machine's checkout without touching disk", () =>
+      Effect.gen(function* () {
+        const sandboxId = SandboxId.make("sbx_00000000000000000033");
+        const files = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provide(layerKnownWorkspacesTest),
+          Effect.provideService(
+            StoppedSandboxReads.StoppedSandboxReads,
+            StoppedSandboxReads.StoppedSandboxReads.of({
+              viewFor: () => Effect.die("a write never reads"),
+              refuseWrite: (id) =>
+                Effect.fail(new SandboxAsleep({ sandboxId: id, state: "sleeping" })),
+              list: () => Effect.die("unused"),
+              search: () => Effect.die("unused"),
+              searchContents: () => Effect.die("unused"),
+              browse: () => Effect.die("unused"),
+              readFile: () => Effect.die("unused"),
+            }),
+          ),
+        );
+        const realpath = vi.mocked(NodeFSP.realpath).mockClear();
+        const open = vi.mocked(NodeFSP.open).mockClear();
+
+        const error = yield* files
+          .writeFile({
+            cwd: `/t3-sandbox/${sandboxId}/worktrees/main`,
+            relativePath: "a.txt",
+            contents: "x",
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toEqual(new SandboxAsleep({ sandboxId, state: "sleeping" }));
+        expect(realpath).not.toHaveBeenCalled();
+        expect(open).not.toHaveBeenCalled();
       }),
     );
 

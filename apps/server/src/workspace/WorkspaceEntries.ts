@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Result from "effect/Result";
@@ -24,12 +25,14 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import type {
   CoarseOperationError,
   CoarseOperations,
   WorkspaceHost,
   WorkspaceHostFileError,
+  WorkspaceHostUnavailableError,
 } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -270,6 +273,32 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  // Absent inside the runner, where every path is local.
+  const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
+
+  /**
+   * Only a /t3-sandbox/ path fails `forPath`: its machine is stopped (or not connected), so the read
+   * comes from the mirror's latest checkpoint. With none synced yet it is empty, never an error.
+   */
+  const readStopped = <A, E>(
+    cwd: string,
+    error: WorkspaceHostUnavailableError,
+    empty: A,
+    unavailable: () => E,
+    read: (
+      reads: StoppedSandboxReads.StoppedSandboxReads["Service"],
+      view: StoppedSandboxReads.StoppedView,
+    ) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E> =>
+    Option.isNone(stopped) || error.sandboxId === undefined
+      ? Effect.fail(unavailable())
+      : stopped.value.viewFor(cwd, error.sandboxId).pipe(
+          Effect.flatMap((view) => read(stopped.value, view)),
+          Effect.catchTags({ SandboxAsleep: () => Effect.succeed(empty) }),
+        );
+
+  const unavailableEntriesError = (cwd: string, cause: unknown) => () =>
+    new WorkspaceEntriesReadDirectoryError({ cwd, partialPath: cwd, parentPath: cwd, cause });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -291,17 +320,17 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  // A sandbox host runs the whole call on its own disk (02 §5); an unavailable one takes the
-  // local path, which fails closed as before.
+  // A sandbox host runs the whole call on its own disk (02 §5).
   const coarseFor = (cwd: string) =>
-    hosts.forPath(path.resolve(cwd)).pipe(
-      Effect.map((host): CoarseOperations | undefined => host.invoke),
-      Effect.orElseSucceed(() => undefined),
-    );
+    hosts
+      .forPath(path.resolve(cwd))
+      .pipe(Effect.map((host): CoarseOperations | undefined => host.invoke));
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
-      const coarse = yield* coarseFor(cwd);
+      // A stopped machine's files can't change, and its checkpoint has no index to refresh.
+      const coarse = yield* coarseFor(cwd).pipe(Effect.orElseSucceed(() => null));
+      if (coarse === null) return;
       if (coarse !== undefined) return yield* coarse.refreshSearch(cwd);
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
@@ -345,19 +374,7 @@ export const make = Effect.gen(function* () {
     function* (input) {
       // Without a project, browsing picks a project root, and those live on the server.
       const host =
-        input.cwd === undefined
-          ? hosts.local
-          : yield* hosts.forPath(path.resolve(input.cwd)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new WorkspaceEntriesReadDirectoryError({
-                    cwd: input.cwd,
-                    partialPath: input.partialPath,
-                    parentPath: input.partialPath,
-                    cause,
-                  }),
-              ),
-            );
+        input.cwd === undefined ? hosts.local : yield* hosts.forPath(path.resolve(input.cwd));
       const resolvedInputPath = yield* resolveBrowseTarget(input, path, host);
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
@@ -400,6 +417,25 @@ export const make = Effect.gen(function* () {
         entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
       };
     },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (error) =>
+            readStopped(
+              input.cwd ?? input.partialPath,
+              error,
+              { parentPath: input.partialPath, entries: [] },
+              () =>
+                new WorkspaceEntriesReadDirectoryError({
+                  cwd: input.cwd,
+                  partialPath: input.partialPath,
+                  parentPath: input.partialPath,
+                  cause: error,
+                }),
+              (reads, view) => reads.browse(view, input),
+            ),
+        }),
+      ),
   );
 
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
@@ -431,35 +467,63 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (error) =>
+            readStopped(
+              input.cwd,
+              error,
+              { entries: [], truncated: false },
+              unavailableEntriesError(input.cwd, error),
+              (reads, view) => reads.search(view, input),
+            ),
+        }),
+      ),
   );
 
   const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
     "WorkspaceEntries.searchContents",
-  )(function* (input) {
-    const coarse = yield* coarseFor(input.cwd);
-    if (coarse !== undefined) {
-      return yield* coarse.searchContents(input).pipe(
-        Effect.mapError((error) =>
-          coarseEntriesError(input.cwd, error, {
-            length: input.query.length,
-            limit: input.limit,
-          }),
+  )(
+    function* (input) {
+      const coarse = yield* coarseFor(input.cwd);
+      if (coarse !== undefined) {
+        return yield* coarse.searchContents(input).pipe(
+          Effect.mapError((error) =>
+            coarseEntriesError(input.cwd, error, {
+              length: input.query.length,
+              limit: input.limit,
+            }),
+          ),
+        );
+      }
+      const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      yield* hostForRoot(input.cwd, normalizedCwd);
+      return yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        return yield* searchIndex.searchContents(input);
+      }).pipe(
+        Effect.provide(
+          workspaceSearchIndexes.get(
+            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
+          ),
         ),
       );
-    }
-    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-    yield* hostForRoot(input.cwd, normalizedCwd);
-    return yield* Effect.gen(function* () {
-      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-      return yield* searchIndex.searchContents(input);
-    }).pipe(
-      Effect.provide(
-        workspaceSearchIndexes.get(
-          WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
-        ),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (error) =>
+            readStopped(
+              input.cwd,
+              error,
+              { matches: [], truncated: false },
+              unavailableEntriesError(input.cwd, error),
+              (reads, view) => reads.searchContents(view, input),
+            ),
+        }),
       ),
-    );
-  });
+  );
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
@@ -649,11 +713,30 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (error) =>
+            readStopped(
+              input.cwd,
+              error,
+              { entries: [], truncated: false },
+              unavailableEntriesError(input.cwd, error),
+              (reads, view) => reads.list(view, input),
+            ),
+        }),
+      ),
   );
 
   const listIgnoredFiles: WorkspaceEntries["Service"]["listIgnoredFiles"] = Effect.fn(
     "WorkspaceEntries.listIgnoredFiles",
   )(function* (input) {
+    // A stopped machine's checkpoint follows .gitignore, so it holds no ignored files.
+    const reachable = yield* hosts.forPath(path.resolve(input.cwd)).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!reachable) return { files: [], truncated: false };
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
     const host = yield* hostForRoot(input.cwd, normalizedCwd);
     // `--directory` reports a folder holding nothing but ignored files as one

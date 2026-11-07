@@ -189,32 +189,44 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   it.effect.each([
     {
       worktree: "a linked worktree",
+      worktreePath: "/workspace/worktree",
       existingPaths: ["/workspace/worktree", "/workspace/worktree/.git"],
       unreadablePaths: [],
-      cwd: "/workspace/worktree",
+      lookups: ["/workspace/worktree"],
     },
     // A folder that outlived its .git makes git fail with not_a_repository.
     {
       worktree: "a folder without .git",
+      worktreePath: "/workspace/worktree",
       existingPaths: ["/workspace/worktree"],
       unreadablePaths: [],
-      cwd: "/workspace/project",
+      lookups: ["/workspace/project"],
     },
     {
       worktree: "a folder whose .git cannot be checked",
+      worktreePath: "/workspace/worktree",
       existingPaths: ["/workspace/worktree"],
       unreadablePaths: ["/workspace/worktree/.git"],
-      cwd: "/workspace/worktree",
+      lookups: ["/workspace/worktree"],
     },
     {
       worktree: "a missing folder",
+      worktreePath: "/workspace/worktree",
       existingPaths: [],
       unreadablePaths: [],
-      cwd: "/workspace/project",
+      lookups: ["/workspace/project"],
+    },
+    // Nothing wakes a stopped machine, and its branch can't move: the last link stays.
+    {
+      worktree: "a stopped machine's checkout",
+      worktreePath: "/t3-sandbox/sbx_00000000000000000033/worktrees/main",
+      existingPaths: [],
+      unreadablePaths: [],
+      lookups: [],
     },
   ] as const)(
-    "looks up a branch whose worktree is $worktree in $cwd",
-    ({ existingPaths, unreadablePaths, cwd }) =>
+    "looks up a branch whose worktree is $worktree in $lookups",
+    ({ worktreePath, existingPaths, unreadablePaths, lookups }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const thread = {
@@ -222,7 +234,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             settledOverride: "settled" as const,
             settledAt: NOW,
             branch: "feature/worktree",
-            worktreePath: "/workspace/worktree",
+            worktreePath,
           };
           const project: OrchestrationProjectShell = {
             id: thread.projectId,
@@ -308,7 +320,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             ),
           );
 
-          expect(lookupCwds).toEqual([cwd]);
+          expect(lookupCwds).toEqual(lookups);
         }),
       ),
   );

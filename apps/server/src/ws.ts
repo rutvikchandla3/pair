@@ -72,6 +72,8 @@ import {
   type ApplicationStoredEvent,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  type SandboxAsleep,
+  type SandboxId,
   type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
@@ -552,15 +554,21 @@ function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
     | WorkspacePaths.WorkspacePathOutsideRootError
-    | KnownWorkspaces.UnknownWorkspaceError,
+    | KnownWorkspaces.UnknownWorkspaceError
+    | SandboxAsleep,
 ): {
   readonly failure: ProjectFileFailure;
   readonly resolvedPath?: string;
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly sandboxId?: SandboxId;
+  readonly message?: string;
 } {
   switch (error._tag) {
+    // Older clients show the message; newer ones offer Wake for the sandbox (P15).
+    case "SandboxAsleep":
+      return { failure: "operation_failed", sandboxId: error.sandboxId, message: error.message };
     case "WorkspacePathOutsideRootError":
     case "UnknownWorkspaceError":
       return { failure: "workspace_path_outside_root" };

@@ -2106,12 +2106,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (cwd: string) {
-    // A sandbox path is refused here and never stat'ed on the server's disk.
-    const host = yield* hosts.forPath(cwd).pipe(
-      Effect.catchTags({
-        WorkspaceHostUnavailableError: () => new TerminalCwdNotFoundError({ cwd }),
-      }),
-    );
+    // A sandbox path whose machine is stopped fails here and is never stat'ed on the server's disk.
+    const host = yield* hosts.forPath(cwd);
     const stats = yield* host.fileSystem.stat(cwd).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -2844,7 +2840,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     requestedInput: TerminalOpenInput,
   ) {
     const terminalId = requestedInput.terminalId;
-    const host = yield* assertValidCwd(requestedInput.cwd);
+    const host = yield* assertValidCwd(requestedInput.cwd).pipe(
+      Effect.catchTags({ WorkspaceHostUnavailableError: () => Effect.succeed(null) }),
+    );
+    // A stopped machine spawns nothing (wake is explicit): a terminal keeps its exited snapshot
+    // and history, and a new one is not running.
+    if (host === null) {
+      const stopped = yield* getSession(requestedInput.threadId, terminalId);
+      if (Option.isSome(stopped)) return snapshot(stopped.value);
+      return yield* new TerminalNotRunningError({ threadId: requestedInput.threadId, terminalId });
+    }
 
     const sessionKey = toSessionKey(requestedInput.threadId, terminalId);
     const input = withSharedGrid(sessionKey, requestedInput);

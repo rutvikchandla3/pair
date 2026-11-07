@@ -582,6 +582,13 @@ export const make = Effect.gen(function* () {
         return activeInterval;
       }
 
+      // A stopped machine's branch can't move, and nothing here wakes it: keep the last status.
+      const reachable = yield* hosts.forPath(cwd).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!reachable) return activeInterval;
+
       const exit = yield* refreshRemoteStatus(cwd, {
         refreshUpstream: !Duration.isZero(configuredInterval),
         policyCwds: [...demandCwds.keys()],

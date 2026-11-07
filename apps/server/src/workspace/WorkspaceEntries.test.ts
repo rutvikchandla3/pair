@@ -11,7 +11,11 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { vi } from "vite-plus/test";
 
+import { SandboxAsleep, SandboxId, ThreadId } from "@t3tools/contracts";
+
 import * as ServerConfig from "../config.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
@@ -100,6 +104,53 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect(
+      "lists a stopped machine's checkout from its checkpoint, empty before one syncs",
+      () =>
+        Effect.gen(function* () {
+          const synced = SandboxId.make("sbx_00000000000000000033");
+          const pending = SandboxId.make("sbx_00000000000000000034");
+          const entries = yield* WorkspaceEntries.make.pipe(
+            Effect.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+            Effect.provideService(
+              StoppedSandboxReads.StoppedSandboxReads,
+              StoppedSandboxReads.StoppedSandboxReads.of({
+                viewFor: (cwd, sandboxId) =>
+                  sandboxId === synced
+                    ? Effect.succeed({
+                        sandboxId,
+                        threadId: ThreadId.make("thread:stopped"),
+                        turn: 3,
+                        commit: "0".repeat(40),
+                        gitDir: "/mirror.git",
+                        prefix: "",
+                        cwd,
+                      })
+                    : Effect.fail(new SandboxAsleep({ sandboxId, state: "sleeping" })),
+                refuseWrite: () => Effect.die("unused"),
+                list: (view) =>
+                  Effect.succeed({
+                    entries: [{ path: `turn-${view.turn}.md`, kind: "file" as const }],
+                    truncated: false,
+                  }),
+                search: () => Effect.die("unused"),
+                searchContents: () => Effect.die("unused"),
+                browse: () => Effect.die("unused"),
+                readFile: () => Effect.die("unused"),
+              }),
+            ),
+          );
+
+          expect(
+            yield* entries.list({ cwd: `/t3-sandbox/${synced}/worktrees/main`, directoryPath: "" }),
+          ).toEqual({ entries: [{ path: "turn-3.md", kind: "file" }], truncated: false });
+          expect(yield* entries.list({ cwd: `/t3-sandbox/${pending}/worktrees/main` })).toEqual({
+            entries: [],
+            truncated: false,
+          });
+        }),
+    );
+
     it.effect("lists immediate children including ignored and empty directories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });

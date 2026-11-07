@@ -174,20 +174,25 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          const worktreePath = first.worktreePath;
+          // A stopped machine's branch can't move, and discovery never wakes it: keep the last link.
+          const worktreeHost =
+            worktreePath === null ? null : yield* hosts.forPath(worktreePath).pipe(Effect.option);
+          if (worktreeHost !== null && Option.isNone(worktreeHost)) return finishBackfill(group);
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
             });
           if (first.branch !== null && repository === null) return finishBackfill(group);
           // A worktree folder can outlive its .git, and git there fails with not_a_repository.
-          // An unreadable .git or an unavailable host keeps the worktree rather than failing the group.
-          const worktreePath = first.worktreePath;
+          // An unreadable .git keeps the worktree rather than failing the group.
           const cwd =
             worktreePath !== null &&
-            (yield* hosts.forPath(worktreePath).pipe(
-              Effect.flatMap((host) => host.fileSystem.exists(path.join(worktreePath, ".git"))),
-              Effect.orElseSucceed(() => true),
-            ))
+            worktreeHost !== null &&
+            Option.isSome(worktreeHost) &&
+            (yield* worktreeHost.value.fileSystem
+              .exists(path.join(worktreePath, ".git"))
+              .pipe(Effect.orElseSucceed(() => true)))
               ? worktreePath
               : project.workspaceRoot;
           const detected =
