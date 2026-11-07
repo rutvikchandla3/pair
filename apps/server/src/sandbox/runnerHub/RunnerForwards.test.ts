@@ -5,16 +5,7 @@ import * as NodeNet from "node:net";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  ComputeDriverId,
-  EnvironmentId,
-  type OrchestrationV2Sandbox,
-  ProjectId,
-  ProviderInstanceId,
-  SandboxId,
-  ThreadId,
-} from "@t3tools/contracts";
-import type { RunnerGitCredentialRequest } from "@t3tools/contracts/runner";
+import { EnvironmentId, ProviderInstanceId, SandboxId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,12 +18,10 @@ import * as Stream from "effect/Stream";
 
 import type { McpThreadInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
-import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { CodexManagedTokenBroker } from "../../provider/CodexManagedTokenBroker.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { GitCredentialService } from "../credentials/GitCredentialService.ts";
 import {
-  answerGitCredential,
   codexForwardAllows,
   exposeServerEndpoint,
   mcpForwardAllows,
@@ -64,73 +53,21 @@ const scopeFor = (providerSessionId: string, threadId = threadA): McpThreadInvoc
   client: undefined,
 });
 
-const sandboxRecord = (id: SandboxId, ownerThreadId: ThreadId): OrchestrationV2Sandbox => ({
-  id,
-  projectId: ProjectId.make("project"),
-  ownerThreadId,
-  ownerMemberId: null,
-  driverId: ComputeDriverId.make("docker"),
-  size: "default",
-  state: "ready",
-  generation: 1,
-  driverRef: "ref",
-  admission: null,
-  runnerLostAt: null,
-  sleepReason: null,
-  failure: null,
-  createdAt: expiresAt,
-  updatedAt: expiresAt,
-});
-
-/** Sandbox A is thread A's, B is thread B's. */
-const projections = {
-  getSandbox: (id: SandboxId) =>
-    Effect.succeed(
-      id === sandboxA
-        ? sandboxRecord(sandboxA, threadA)
-        : id === sandboxB
-          ? sandboxRecord(sandboxB, threadB)
-          : null,
-    ),
-  listSandboxThreads: (id: SandboxId) =>
-    Effect.succeed(
-      id === sandboxA || id === sandboxB
-        ? [
-            {
-              threadId: id === sandboxA ? threadA : threadB,
-              attachedAt: expiresAt,
-              archived: false,
-            },
-          ]
-        : [],
-    ),
-};
-
 type GitAnswerInput = Parameters<GitCredentialService["Service"]["answer"]>[0];
 
-/** Records each call and answers with a password naming the thread. */
+/** Records each call and answers with a password naming the sandbox the request arrived from. */
 const recordingCredentials = (calls: Queue.Queue<GitAnswerInput>) =>
   GitCredentialService.of({
     answer: (input) =>
       Queue.offer(calls, input).pipe(
         Effect.as({
+          _tag: "Credential" as const,
           username: "x-access-token",
-          password: Redacted.make(`token-for-${input.threadId}`),
+          password: Redacted.make(`token-for-${input.sandboxId}`),
           expiresAt,
         }),
       ),
   });
-
-const gitRequest = (
-  patch: Partial<RunnerGitCredentialRequest> = {},
-): RunnerGitCredentialRequest => ({
-  version: 1,
-  operation: "get",
-  protocol: "https",
-  host: "github.com",
-  path: "org/repo.git",
-  ...patch,
-});
 
 describe("forward checks", () => {
   it.each([
@@ -149,30 +86,6 @@ describe("forward checks", () => {
     const request = { version: 1 as const, instanceId, environmentId: "env", profileKey };
     expect(codexForwardAllows(request, "instance-a")).toBe(allowed);
   });
-
-  it.effect("git asks the service only for a thread that uses the sandbox", () =>
-    Effect.gen(function* () {
-      const calls = yield* Queue.unbounded<GitAnswerInput>();
-      const deps = { projections, credentials: recordingCredentials(calls) };
-      expect(yield* answerGitCredential(deps, sandboxA, gitRequest({ threadId: threadB }))).toBe(
-        null,
-      );
-      expect(yield* answerGitCredential(deps, sandboxA, gitRequest({ operation: "store" }))).toBe(
-        null,
-      );
-      expect(yield* Queue.size(calls)).toBe(0);
-      // A terminal carries no thread id: the owner thread answers.
-      const owner = yield* answerGitCredential(deps, sandboxA, gitRequest());
-      expect(owner?.username).toBe("x-access-token");
-      expect(yield* Queue.take(calls)).toEqual({
-        sandboxId: sandboxA,
-        threadId: threadA,
-        protocol: "https",
-        host: "github.com",
-        path: "org/repo.git",
-      });
-    }),
-  );
 });
 
 /** A stand-in for the server's own `/mcp` listener: records what reaches it. */
@@ -284,7 +197,6 @@ describe("RunnerForwards", () => {
             Layer.mock(CodexManagedTokenBroker)({
               endpoint: Effect.succeed(`${tmp}/broker.sock`),
             }),
-            Layer.mock(ProjectionStoreV2)(projections),
             Layer.succeed(GitCredentialService, recordingCredentials(gitCalls)),
           ),
         ),
@@ -363,31 +275,37 @@ describe("RunnerForwards", () => {
         );
         expect(yield* Queue.take(brokerFrames)).toBe(`${codexFrame("instance-a")}\n`);
 
-        // Git: a thread of the other sandbox gets nothing, and the service is never asked.
+        // Git: the sandbox is the socket's; the request's thread id is passed on for the
+        // service to check, never trusted to pick the sandbox.
         const ask = (threadId?: ThreadId) =>
           unixRoundTrip(
             gitA,
             JSON.stringify({
               version: 1,
-              operation: "get",
               protocol: "https",
               host: "github.com",
+              path: "org/repo.git",
               ...(threadId === undefined ? {} : { threadId }),
             }),
           ).pipe(Effect.map((line) => JSON.parse(line) as unknown));
-        expect(yield* ask(threadB)).toEqual({ version: 1, credential: null });
-        expect(yield* ask(threadA)).toEqual({
+        expect(yield* ask(threadB)).toEqual({
           version: 1,
-          credential: {
+          answer: {
+            _tag: "Credential",
             username: "x-access-token",
-            password: "token-for-thread-a",
+            password: `token-for-${sandboxA}`,
             expiresAt: "2026-11-07T13:00:00.000Z",
           },
         });
-        expect(yield* Queue.take(gitCalls)).toMatchObject({
+        expect(yield* Queue.take(gitCalls)).toEqual({
           sandboxId: sandboxA,
-          threadId: threadA,
+          threadId: threadB,
+          protocol: "https",
+          host: "github.com",
+          path: "org/repo.git",
         });
+        yield* ask();
+        expect((yield* Queue.take(gitCalls)).threadId).toBeUndefined();
         expect(yield* Queue.size(gitCalls)).toBe(0);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

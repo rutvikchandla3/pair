@@ -14,8 +14,10 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { WorkspaceHost, WorkspaceHostId } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
@@ -109,6 +111,22 @@ const layerWith = (settings: Parameters<typeof ServerSettings.layerTest>[0]) => 
         getSandbox: (id) => Effect.succeed(id === sandboxId ? record : null),
       }),
     ),
+    // The server's own git identity; the sandbox has none.
+    Layer.provide(
+      Layer.mock(ProcessRunner.ProcessRunner)({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args.includes("user.name") ? "Ada Lovelace\n" : "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(input.args.includes("user.name") ? 0 : 1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      }),
+    ),
   );
   return { reads, layer };
 };
@@ -144,7 +162,7 @@ describe("SandboxProcessEnvironment", () => {
     vi.stubEnv("SANDBOX_TEST_SERVER_ONLY", "server-secret");
     return Effect.gen(function* () {
       const service = yield* SandboxProcessEnvironment.SandboxProcessEnvironment;
-      const env = yield* service.forProcess(yield* sandboxHost);
+      const env = yield* service.forProcess(yield* sandboxHost, "thread-a");
 
       expect(env).toEqual({
         IMAGE_TOOL: "team",
@@ -157,6 +175,10 @@ describe("SandboxProcessEnvironment", () => {
         SHARED: "project",
         TEAM_ONLY: "team",
         DB_PASSWORD: "s3cret",
+        // No user.email on the server: the checkpoint committer's.
+        GIT_COMMITTER_NAME: "Ada Lovelace",
+        GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        T3CODE_THREAD_ID: "thread-a",
       });
       expect(Object.values(env)).not.toContain("server-secret");
       expect(reads).toEqual([[readable]]);
@@ -175,7 +197,7 @@ describe("SandboxProcessEnvironment", () => {
     });
     return Effect.gen(function* () {
       const service = yield* SandboxProcessEnvironment.SandboxProcessEnvironment;
-      const error = yield* service.forProcess(yield* sandboxHost).pipe(Effect.flip);
+      const error = yield* service.forProcess(yield* sandboxHost, undefined).pipe(Effect.flip);
 
       expect(error._tag).toBe("SandboxEnvironmentError");
       expect(error.sandboxId).toBe(sandboxId);

@@ -1444,9 +1444,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
   // Local: inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
   // Sandbox: never the server's environment, only the host's base and cloud env layers.
-  const hostEnvironment = (host: WorkspaceHost, info: WorkspaceHostInfo) =>
+  const hostEnvironment = (host: WorkspaceHost, info: WorkspaceHostInfo, threadId: string) =>
     host.kind === "sandbox"
-      ? (options.sandboxEnvironment?.(host) ?? Effect.succeed(info.environment))
+      ? (options.sandboxEnvironment?.(host, threadId) ?? Effect.succeed(info.environment))
       : Effect.succeed(options.env ?? info.environment);
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
@@ -2436,7 +2436,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const host = yield* hosts.forPath(session.cwd);
             const info = yield* host.info;
             const { platform } = info;
-            const baseEnv = yield* hostEnvironment(host, info);
+            const baseEnv = yield* hostEnvironment(host, info, session.threadId);
             const shellResolver =
               options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);

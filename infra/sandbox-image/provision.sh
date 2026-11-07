@@ -51,8 +51,10 @@ gh_dir="gh_${GH_VERSION}_linux_${arch}"
 fetch "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_dir}.tar.gz" \
   "$(indirect "GH_SHA256_${suffix}")" "$work/gh.tar.gz"
 tar -xzf "$work/gh.tar.gz" -C "$work"
-install -m 0755 "$work/$gh_dir/bin/gh" /usr/local/bin/gh
+install -m 0755 "$work/$gh_dir/bin/gh" /usr/bin/gh
 cp -a "$work/$gh_dir/share/man" /usr/local/share/
+# The shim, ahead of the real gh on PATH, hands gh the token git would get for origin.
+install -m 0755 "$here/gh-shim.sh" /usr/local/bin/gh
 
 # 3. Codex, in the layout CodexInstallation.ts checks.
 codex_url="$(indirect "CODEX_URL_${suffix}")"
@@ -84,15 +86,27 @@ printf 'prefix=/home/t3/.npm-global\n' >/home/t3/.npmrc
 chown t3:t3 /home/t3/.npmrc
 echo 'export PATH="/home/t3/.npm-global/bin:$PATH"' >/etc/profile.d/pair.sh
 
-# 7. Directories other components fill in.
+# 7. Git asks the server for every credential through the runner and never stores one; SSH
+# remotes on github.com go over HTTPS so the helper answers them too. No user.name: the server
+# sets the committer per process.
+cat >/etc/gitconfig <<'GITCONFIG'
+[credential]
+	helper = !t3 runner git-credential
+	useHttpPath = true
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
+GITCONFIG
+
+# 8. Directories other components fill in.
 install -d -m 0700 /etc/pair-runner
 install -d -m 0755 /opt/pair-runner /t3-sandbox
 
-# 8. What this image runs, keyed by the model manifest's driver names.
+# 9. What this image runs, keyed by the model manifest's driver names.
 printf '{"pairVersion":"%s","providers":{"claudeAgent":"%s","codex":"%s"}}\n' \
   "${PAIR_VERSION:-dev}" "$claude_version" "$CODEX_VERSION" >/etc/pair-image.json
 
-# 9. The CLIs must start as the agent user, and be the versions pinned above.
+# 10. The CLIs must start as the agent user, and be the versions pinned above.
 sudo -u t3 -H claude --version | grep -qF "$claude_version"
 sudo -u t3 -H codex --version | grep -qF "$CODEX_VERSION"
 rm -rf /tmp/node-compile-cache

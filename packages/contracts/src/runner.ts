@@ -785,24 +785,37 @@ const RunnerTcpCloseRpc = Rpc.make(RUNNER_METHODS.tcpClose, {
 
 export const RunnerGitCredentialRequest = Schema.Struct({
   version: Schema.Literal(1),
-  operation: Schema.Literals(["get", "store", "erase"]),
   protocol: Schema.String,
   host: Schema.String,
+  /** `owner/name.git`, from `credential.useHttpPath`. */
   path: Schema.optionalKey(Schema.String),
-  /** `T3CODE_THREAD_ID` of the helper's environment; terminals and scripts have none. */
+  /** `T3CODE_THREAD_ID` of the helper's environment; a process without one asks as the owner thread. */
   threadId: Schema.optionalKey(ThreadId),
 });
 export type RunnerGitCredentialRequest = typeof RunnerGitCredentialRequest.Type;
 
+export const RunnerGitCredentialAnswer = Schema.Union([
+  Schema.TaggedStruct("Credential", {
+    username: Schema.String,
+    password: Schema.Redacted(Schema.String),
+    /** Null for a member's own token, which the server refreshes on its own schedule. */
+    expiresAt: Schema.NullOr(Schema.DateTimeUtc),
+  }),
+  Schema.TaggedStruct("Refused", {
+    code: Schema.Literals([
+      "github-credential-missing",
+      "not-this-repository",
+      "unsupported-host",
+      "unavailable",
+    ]),
+    message: Schema.String,
+  }),
+]);
+export type RunnerGitCredentialAnswer = typeof RunnerGitCredentialAnswer.Type;
+
 export const RunnerGitCredentialResponse = Schema.Struct({
   version: Schema.Literal(1),
-  credential: Schema.NullOr(
-    Schema.Struct({
-      username: Schema.String,
-      password: Schema.Redacted(Schema.String),
-      expiresAt: Schema.DateTimeUtc,
-    }),
-  ),
+  answer: RunnerGitCredentialAnswer,
 });
 export type RunnerGitCredentialResponse = typeof RunnerGitCredentialResponse.Type;
 

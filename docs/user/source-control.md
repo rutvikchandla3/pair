@@ -44,6 +44,22 @@ over that choice; a host turned off stays off either way.
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. The Pair server treats a
 custom server name as GitHub once it has a credential for that host.
 
+#### Pushing from cloud threads
+
+Git and `gh` in a cloud thread never see the server's GitHub sign-in. The server answers each
+push or pull with a credential for the thread's own repository, or a fork of it, on github.com:
+
+1. With a GitHub App set in **Settings → Source control → GitHub**, a one-hour token for that one
+   repository. Create the App in your GitHub account or organization, install it on the
+   repositories your team works in, and give it these repository permissions: **Contents** read
+   and write, **Pull requests** read and write, and **Metadata** read. Enter its App ID and paste
+   the private key (`.pem`) it generates.
+2. Without an App, or for a repository it is not installed on, the thread owner's own GitHub,
+   connected in **Settings → Team** on their row.
+3. Otherwise the push fails with "Connect GitHub to push".
+
+Cloud threads can't push to other repositories, or to hosts other than github.com, yet.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

@@ -6,11 +6,13 @@ import {
 import type { RunnerInfo } from "@t3tools/contracts/runner";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import { SettingsSecretUnresolvedError } from "../../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
@@ -81,22 +83,46 @@ export class SandboxProcessEnvironment extends Context.Service<
   SandboxProcessEnvironment,
   {
     /**
-     * The host's base, then the team's cloud env, then the project's, with secrets read now.
-     * Pair's own names (`T3CODE_*`, homes, credentials) are the caller's to spread after.
+     * The host's base, then the team's cloud env, then the project's, with secrets read now,
+     * then the server's git committer and the thread the process runs for (git's credential
+     * helper sends it). Other Pair names (homes, credentials) are the caller's to spread after.
      */
     readonly forProcess: (
       host: WorkspaceHost,
+      threadId: string | undefined,
     ) => Effect.Effect<Record<string, string>, SandboxEnvironmentError>;
   }
 >()("t3/sandbox/credentials/SandboxProcessEnvironment") {}
+
+/** `GitVcsDriver`'s checkpoint committer, for a server whose git has no identity. */
+const FALLBACK_COMMITTER = { name: "T3 Code", email: "t3code@users.noreply.github.com" };
 
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const projections = yield* ProjectionStoreV2;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+
+  // The sandbox has no global git identity; commits name the server's, as local threads do.
+  const globalGitConfig = (key: string) =>
+    processRunner
+      .run({
+        command: "git",
+        args: ["config", "--global", "--get", key],
+        timeout: Duration.seconds(5),
+      })
+      .pipe(
+        Effect.map((output) => (output.code === 0 ? output.stdout.trim() : "")),
+        Effect.orElseSucceed(() => ""),
+      );
+  const committer = {
+    GIT_COMMITTER_NAME: (yield* globalGitConfig("user.name")) || FALLBACK_COMMITTER.name,
+    GIT_COMMITTER_EMAIL: (yield* globalGitConfig("user.email")) || FALLBACK_COMMITTER.email,
+  };
 
   const forProcess = Effect.fn("SandboxProcessEnvironment.forProcess")(function* (
     host: WorkspaceHost,
+    threadId: string | undefined,
   ) {
     if (host.kind !== "sandbox") {
       return yield* Effect.die(new Error("SandboxProcessEnvironment is for sandbox hosts only"));
@@ -115,7 +141,12 @@ const make = Effect.gen(function* () {
     for (const [name, value] of Object.entries((yield* host.info).environment)) {
       if (value !== undefined) base[name] = value;
     }
-    return { ...base, ...layered };
+    return {
+      ...base,
+      ...layered,
+      ...committer,
+      ...(threadId === undefined ? {} : { T3CODE_THREAD_ID: threadId }),
+    };
   });
 
   return SandboxProcessEnvironment.of({ forProcess });

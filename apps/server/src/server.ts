@@ -128,6 +128,7 @@ import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
+import * as GitHubAppInstallationTokens from "./sandbox/credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxProcessEnvironment from "./sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
@@ -512,6 +513,7 @@ const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.laye
 const layerSandboxProcessEnvironment = SandboxProcessEnvironment.layer.pipe(
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provide(SecretResolver.layer),
+  Layer.provide(ProcessRunner.layer),
 );
 
 const layerTerminal = TerminalManager.layer.pipe(
@@ -771,8 +773,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // Forwards reach the broker, the hub below and the MCP registry provided at the root.
   Layer.provideMerge(
     RunnerForwards.layer.pipe(
-      Layer.provide(GitCredentialService.layerNone),
-      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(
+        GitCredentialService.layer.pipe(
+          Layer.provide(GitHubAppInstallationTokens.layer),
+          Layer.provide(layerRepositoryIdentityResolver),
+          Layer.provide(layerSourceControlProviderRegistry),
+          Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+        ),
+      ),
       Layer.provideMerge(CodexManagedTokenBroker.layer),
     ),
   ),

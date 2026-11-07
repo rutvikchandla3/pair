@@ -6,8 +6,7 @@ import * as NodeStream from "node:stream";
 import type { SandboxId } from "@t3tools/contracts";
 import {
   type RunnerCallError,
-  type RunnerGitCredentialRequest,
-  RunnerGitCredentialRequest as GitCredentialRequestSchema,
+  RunnerGitCredentialRequest,
   RunnerGitCredentialResponse,
   type RunnerLostError,
 } from "@t3tools/contracts/runner";
@@ -23,10 +22,6 @@ import * as Stream from "effect/Stream";
 
 import type { McpThreadInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
-import {
-  ProjectionStoreV2,
-  type ProjectionStoreV2Shape,
-} from "../../orchestration-v2/ProjectionStore.ts";
 import { CodexManagedTokenBroker } from "../../provider/CodexManagedTokenBroker.ts";
 import * as CodexManagedTokenProtocol from "../../provider/CodexManagedTokenProtocol.ts";
 import {
@@ -54,7 +49,7 @@ const decodeCodexRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(CodexManagedTokenProtocol.Request),
 );
 const decodeGitRequest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.toCodecJson(GitCredentialRequestSchema)),
+  Schema.fromJsonString(Schema.toCodecJson(RunnerGitCredentialRequest)),
 );
 const encodeGitResponse = Schema.encodeEffect(
   Schema.fromJsonString(Schema.toCodecJson(RunnerGitCredentialResponse)),
@@ -105,35 +100,6 @@ const readLine = Effect.fn("RunnerForwards.readLine")(
     orElse: () => Effect.fail(new ForwardFrameError()),
   }),
 );
-
-/**
- * The `git-credential` answer for a thread of `sandboxId`: the helper's `T3CODE_THREAD_ID`, or the
- * sandbox's owner thread for terminals and scripts, which carry none. A thread that does not use
- * the sandbox gets `null` without reaching the service.
- */
-export const answerGitCredential = Effect.fn("RunnerForwards.answerGitCredential")(function* (
-  deps: {
-    readonly projections: Pick<ProjectionStoreV2Shape, "getSandbox" | "listSandboxThreads">;
-    readonly credentials: GitCredentialService["Service"];
-  },
-  sandboxId: SandboxId,
-  request: RunnerGitCredentialRequest,
-) {
-  // The server mints; nothing is stored or erased.
-  if (request.operation !== "get") return null;
-  const threadId =
-    request.threadId ?? (yield* deps.projections.getSandbox(sandboxId))?.ownerThreadId;
-  if (threadId === undefined) return null;
-  const threads = yield* deps.projections.listSandboxThreads(sandboxId);
-  if (!threads.some((row) => row.threadId === threadId)) return null;
-  return yield* deps.credentials.answer({
-    sandboxId,
-    threadId,
-    protocol: request.protocol,
-    host: request.host,
-    path: request.path,
-  });
-});
 
 const bearer = (header: string | undefined) => {
   const match = header === undefined ? null : /^Bearer\s+(\S+)\s*$/i.exec(header);
@@ -230,7 +196,6 @@ const make = Effect.gen(function* () {
   const hub = yield* RunnerHub;
   const registry = yield* McpSessionRegistry;
   const broker = yield* CodexManagedTokenBroker;
-  const projections = yield* ProjectionStoreV2;
   const credentials = yield* GitCredentialService;
   const layerScope = yield* Effect.scope;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -364,19 +329,15 @@ const make = Effect.gen(function* () {
         const request = yield* readLine(connection.read, GIT_REQUEST_BYTES).pipe(
           Effect.flatMap(decodeGitRequest),
         );
-        const credential = yield* answerGitCredential(
-          { projections, credentials },
+        // The sandbox is the socket's, never the request's.
+        const answer = yield* credentials.answer({
           sandboxId,
-          request,
-        ).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("could not answer a sandbox git credential request", {
-              sandboxId,
-              cause,
-            }).pipe(Effect.as(null)),
-          ),
-        );
-        const line = yield* encodeGitResponse({ version: 1, credential });
+          threadId: request.threadId,
+          protocol: request.protocol,
+          host: request.host,
+          path: request.path,
+        });
+        const line = yield* encodeGitResponse({ version: 1, answer });
         yield* connection.write(encoder.encode(`${line}\n`));
         yield* connection.close;
       }).pipe(

@@ -1934,9 +1934,9 @@ it.layer(
         env: { SERVER_ONLY: "server-secret", PATH: "/server/bin" },
         sandbox: {
           environment: { PATH: "/opt/pair-runner/build:/usr/bin", HOME: "/home/t3" },
-          forProcess: (host) =>
+          forProcess: (host, threadId) =>
             Effect.sync(() => {
-              seen.push(host.id);
+              seen.push(`${host.id} ${threadId}`);
               return { PATH: "/opt/pair-runner/build:/usr/bin", HOME: "/home/t3", TEAM: "1" };
             }),
         },
@@ -1945,7 +1945,8 @@ it.layer(
       yield* manager.open(openInput({ cwd: baseDir, env: { T3CODE_PROJECT_ROOT: "/repo" } }));
 
       const env = ptyAdapter.spawnInputs[0]?.env;
-      expect(seen).toEqual(["sbx_0000000000000000000a"]);
+      // git's credential helper answers for the terminal's thread.
+      expect(seen).toEqual(["sbx_0000000000000000000a thread-1"]);
       expect(env?.TEAM).toBe("1");
       expect(env?.PATH).toBe("/opt/pair-runner/build:/usr/bin");
       expect(env?.T3CODE_PROJECT_ROOT).toBe("/repo");
