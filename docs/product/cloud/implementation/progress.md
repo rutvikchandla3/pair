@@ -10,14 +10,14 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (49 of 57):**
+**Landed on `feat/pair` (50 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (38): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.38, 1.44. Plus two follow-ups: `perf-pty` (runner
+- M1 (39): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.38, 1.43, 1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
-**In flight (2026-11-07, second session):** 1.17, 1.39, 1.42, 1.43, each in `../pair-wt/<id>` on
+**In flight (2026-11-07, second session):** 1.17, 1.39, 1.42, each in `../pair-wt/<id>` on
 `wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
 and relaunch those PRs.
 
@@ -610,6 +610,12 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - `useWorktreeSetup.ts` unchanged (cloud sends never call local setup tracking; the snapshot still shows 1.24's sandbox setup script).
 - For 1.39: "new-thread-on-branch" in `useThreadActionMenu.ts` and `Sidebar.tsx` passes a cloud thread's `/t3-sandbox` `worktreePath` into a local worktree draft; map it to `envMode: "cloud"`. `useHandleNewThread`'s `envMode` already accepts `"cloud"` for `chat.newCloud`. Web bindings for `createSandboxEnvironmentAtoms` are not added yet.
 - Owed in the integrated pass: the spec's `test-t3-app` steps 1–4 and captures (browser tests cannot launch here).
+
+## 1.43 machine-failed push (landed)
+
+- `ThreadNotificationKind` gains `machine-failed`, routed with `failed`; MemberPushNotifier picks it from `thread.sandbox?.state === "failed"` in the failed-run branch. Ordering verified: `sandbox.failed` commits `state: "failed"` and enqueues `release-waiters` in one transaction, so the shell is already failed when the run's `run.updated` arrives.
+- Accepted edges: a Retry pressed before the notifier reads falls back to "Thread failed"; an unrelated run failure while the machine is failed reads "Machine failed". The web in-app coordinator keeps its own kind list without it.
+- Owed in the integrated pass: two-member Docker transcript and the `test-t3-mobile` push title check.
 
 ## Open follow-ups and risks
 
