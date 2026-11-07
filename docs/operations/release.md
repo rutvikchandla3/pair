@@ -464,6 +464,22 @@ verify that the update stops before restart and run `npx t3@<version> service up
 server machine. Also test the manual or desktop-managed guidance when those environments are
 available.
 
+## Sandbox base image
+
+- Workflow: `.github/workflows/sandbox-image.yml`, separate from `release.yml` because that
+  workflow's jobs only run for `pingdotgg/t3code`. It runs on the same stable tags and publishes
+  `ghcr.io/<owner of the running repo, lowercased>/t3-sandbox:<version>` for amd64 and arm64, so a
+  fork publishes its own image unchanged.
+- The tag must equal `apps/server/package.json`'s `version`: a server pulls that exact string, and
+  there is no `latest` tag. A release fails before any build if the image's pinned Claude Code or
+  Codex is not `supported` by the manifest bundled with that version (`check-providers`).
+- Version tags are never re-pushed. The workflow refuses to tag a version that already exists, so
+  a bad image is fixed with a new version.
+- A fork proves the pipeline with `workflow_dispatch` and a `version` input. It publishes
+  `<version>-dryrun.<run id>`, never a release tag.
+- One-time step: after the first push, set the `t3-sandbox` package to public in the owner's
+  package settings. A private package makes every pull from a team server fail with an auth error.
+
 ## Desktop auto-update notes
 
 - Updater runtime: `apps/desktop/src/updates/DesktopUpdates.ts`.

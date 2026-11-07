@@ -6,7 +6,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { CODEX_RELEASES } from "../src/provider/codexReleases.ts";
 import { BUNDLED_MODEL_MANIFEST } from "../src/provider/ModelManifest.ts";
 import type { ProviderCompatibilityPolicy } from "../src/provider/providerCompatibility.ts";
-import { checkProviderPins, codexEnv, readProviderPins } from "./sandbox-image.ts";
+import { checkProviderPins, codexEnv, planRelease, readProviderPins } from "./sandbox-image.ts";
 
 it.layer(NodeServices.layer)("codexEnv", (it) => {
   it.effect("maps both Linux releases", () =>
@@ -100,3 +100,63 @@ it.layer(NodeServices.layer)("readProviderPins", (it) => {
     }),
   );
 });
+
+it.effect(
+  "planRelease publishes the server's exact version to the running repo's lowercased GHCR",
+  () =>
+    Effect.gen(function* () {
+      const base = {
+        eventName: "push",
+        refName: `v${packageJson.version}`,
+        inputVersion: "",
+        runId: "42",
+        repositoryOwner: "Acme-Fork",
+        serverVersion: packageJson.version,
+      };
+      const image = "ghcr.io/acme-fork/t3-sandbox";
+      const cases = [
+        {
+          name: "a tag matching the server version publishes that version",
+          input: base,
+          expected: {
+            version: packageJson.version,
+            tag: packageJson.version,
+            image,
+            dryRun: false,
+          },
+        },
+        {
+          name: "a manual run publishes a dry-run tag",
+          input: {
+            ...base,
+            eventName: "workflow_dispatch",
+            refName: "main",
+            inputVersion: "v9.9.9",
+          },
+          expected: { version: "9.9.9", tag: "9.9.9-dryrun.42", image, dryRun: true },
+        },
+        {
+          name: "a tag that is not the server version fails",
+          input: { ...base, refName: "v9.9.9" },
+          error: "does not match the server version",
+        },
+        {
+          name: "a manual run needs a release version",
+          input: { ...base, eventName: "workflow_dispatch", inputVersion: "latest" },
+          error: "not a release version",
+        },
+        {
+          name: "a pull request never publishes",
+          input: { ...base, eventName: "pull_request" },
+          error: "pull_request",
+        },
+      ];
+      for (const { name, input, ...outcome } of cases) {
+        if ("error" in outcome) {
+          assert.include((yield* Effect.flip(planRelease(input))).message, outcome.error, name);
+        } else {
+          assert.deepStrictEqual(yield* planRelease(input), outcome.expected, name);
+        }
+      }
+    }),
+);

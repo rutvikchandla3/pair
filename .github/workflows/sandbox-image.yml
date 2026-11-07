@@ -1,6 +1,19 @@
 name: Sandbox image
 
 on:
+  push:
+    # The same filter as release.yml.
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
+      - "!v*-preview.*"
+  # Fork dry runs: publishes <version>-dryrun.<run id>, never a release tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to label the dry-run image with (for example 1.2.3)."
+        required: true
+        type: string
   pull_request:
     paths:
       - infra/sandbox-image/**
@@ -12,11 +25,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: sandbox-image-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: sandbox-image-${{ github.event.pull_request.number || github.ref }}
+  # A release run is never cancelled halfway through a push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check-providers:
+    if: github.event_name == 'pull_request'
     name: Check pinned provider CLIs
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -38,6 +53,7 @@ jobs:
         run: node apps/server/scripts/sandbox-image.ts check-providers
 
   build:
+    if: github.event_name == 'pull_request'
     needs: check-providers
     name: Build base image (${{ matrix.arch }})
     # Native runners per architecture, so no QEMU.
@@ -72,13 +88,217 @@ jobs:
         run: docker buildx build --target base --load -t t3-sandbox:ci "$RUNNER_TEMP/ctx"
 
       - name: Smoke test
+        run: .github/scripts/sandbox-image-smoke.sh t3-sandbox:ci
+
+  # Release runs, below, publish to the GHCR of the repository running the workflow, so a fork
+  # publishes its own image unchanged.
+  bundle:
+    if: github.event_name != 'pull_request'
+    name: Build runner bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      image: ${{ steps.plan.outputs.image }}
+      runner-build-id: ${{ steps.bundle.outputs.runner-build-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3...
+
+      - name: Plan the release
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ github.run_id }}
+          OWNER: ${{ github.repository_owner }}
         run: |
-          docker run --rm --user t3 --entrypoint bash t3-sandbox:ci -lc \
-            'claude --version && codex --version && node --version && gh --version && sudo -n true'
-          pinned() {
-            docker run --rm --user t3 --entrypoint jq t3-sandbox:ci -r ".providers.$1" /etc/pair-image.json
-          }
-          claude_version="$(pinned claudeAgent)"
-          codex_version="$(pinned codex)"
-          docker run --rm --user t3 --entrypoint claude t3-sandbox:ci --version | grep -qF "$claude_version"
-          docker run --rm --user t3 --entrypoint codex t3-sandbox:ci --version | grep -qF "$codex_version"
+          node apps/server/scripts/sandbox-image.ts release-plan \
+            --event "$EVENT_NAME" --ref-name "$REF_NAME" --input-version "$INPUT_VERSION" \
+            --run-id "$RUN_ID" --owner "$OWNER" >> "$GITHUB_OUTPUT"
+
+      # Before any build or push: the image's CLIs must be supported by this release.
+      - name: Check pinned provider CLIs
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: node apps/server/scripts/sandbox-image.ts check-providers --version "$VERSION"
+
+      - name: Build runner bundle
+        id: bundle
+        run: |
+          node apps/server/scripts/cli.ts build-runner --out apps/server/dist/runner
+          echo "runner-build-id=$(jq -r .runnerBuildId apps/server/dist/runner/MANIFEST.json)" >> "$GITHUB_OUTPUT"
+          # A tar keeps the exec bits and symlinks that an artifact upload would drop.
+          tar -C apps/server/dist/runner -cf "$RUNNER_TEMP/runner.tar" .
+
+      - name: Upload runner bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: runner-${{ steps.bundle.outputs.runner-build-id }}
+          path: ${{ runner.temp }}/runner.tar
+          if-no-files-found: error
+
+  image:
+    needs: bundle
+    name: Publish base image (${{ matrix.arch }})
+    # Native runners per architecture, so no QEMU.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: ${{ needs.bundle.outputs.image }}
+      VERSION: ${{ needs.bundle.outputs.version }}
+      RUNNER_BUILD_ID: ${{ needs.bundle.outputs.runner-build-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3...
+
+      - name: Download runner bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: runner-${{ needs.bundle.outputs.runner-build-id }}
+          path: ${{ runner.temp }}/bundle
+
+      - name: Unpack runner bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/runner/$RUNNER_BUILD_ID"
+          tar -C "$RUNNER_TEMP/runner/$RUNNER_BUILD_ID" -xf "$RUNNER_TEMP/bundle/runner.tar"
+
+      - name: Assemble build context
+        run: node apps/server/scripts/sandbox-image.ts context "$RUNNER_TEMP/ctx"
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runner layer is last, so a release that bumps no provider rebuilds only it.
+      - name: Build and push by digest
+        env:
+          ARCH: ${{ matrix.arch }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          docker buildx build "$RUNNER_TEMP/ctx" \
+            --target with-runner \
+            --build-context "runner=$RUNNER_TEMP/runner/$RUNNER_BUILD_ID" \
+            --build-arg "PAIR_VERSION=$VERSION" \
+            --platform "linux/$ARCH" \
+            --cache-from "type=gha,scope=$ARCH" \
+            --cache-to "type=gha,mode=max,scope=$ARCH" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "t3.runner-build=$RUNNER_BUILD_ID" \
+            --metadata-file "$RUNNER_TEMP/metadata.json" \
+            --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true"
+          digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/metadata.json")"
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+
+      - name: Smoke test the pushed image
+        run: .github/scripts/sandbox-image-smoke.sh "$IMAGE@$DIGEST"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+
+  manifest:
+    needs: [bundle, image]
+    name: Publish image tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.bundle.outputs.image }}
+      TAG: ${{ needs.bundle.outputs.tag }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Version tags are never re-pushed. Only a missing manifest clears the way, so a registry
+      # or auth error cannot look like a free tag.
+      - name: Refuse an existing tag
+        run: |
+          if output="$(docker buildx imagetools inspect "$IMAGE:$TAG" 2>&1)"; then
+            echo "::error::$IMAGE:$TAG already exists and is never overwritten."
+            exit 1
+          fi
+          if ! grep -qiE 'not found|manifest unknown|404' <<<"$output"; then
+            echo "$output"
+            echo "::error::Could not tell whether $IMAGE:$TAG exists."
+            exit 1
+          fi
+
+      # No latest tag: servers pull exact versions only.
+      - name: Create the multi-arch tag
+        run: |
+          refs=()
+          for digest in "$RUNNER_TEMP"/digests/*; do refs+=("$IMAGE@sha256:$(basename "$digest")"); done
+          if [ "${#refs[@]}" -ne 2 ]; then
+            echo "::error::Expected an amd64 and an arm64 digest, got ${#refs[@]}."
+            exit 1
+          fi
+          docker buildx imagetools create -t "$IMAGE:$TAG" "${refs[@]}"
+
+      - name: Summarize
+        run: |
+          {
+            echo "### $IMAGE:$TAG"
+            echo
+            echo "Index digest: \`$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

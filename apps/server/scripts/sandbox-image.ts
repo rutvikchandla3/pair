@@ -2,6 +2,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -40,6 +41,15 @@ export class SandboxImageDockerError extends Schema.TaggedError<SandboxImageDock
 
 export class SandboxImageProviderPinError extends Schema.TaggedError<SandboxImageProviderPinError>()(
   "SandboxImageProviderPinError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export class SandboxImageReleaseError extends Schema.TaggedError<SandboxImageReleaseError>()(
+  "SandboxImageReleaseError",
   { detail: Schema.String },
 ) {
   override get message(): string {
@@ -147,6 +157,95 @@ export const checkProviderPins = (
     return status === "supported" ? [] : [{ driver, version: pins[driver], status }];
   });
 
+export interface ReleaseInput {
+  readonly eventName: string;
+  /** The tag for a tag push; the branch for a manual run. */
+  readonly refName: string;
+  /** The `version` input of a manual run. */
+  readonly inputVersion: string;
+  readonly runId: string;
+  readonly repositoryOwner: string;
+  readonly serverVersion: string;
+}
+
+export interface ReleasePlan {
+  readonly version: string;
+  readonly tag: string;
+  readonly image: string;
+  readonly dryRun: boolean;
+}
+
+// Also a valid Docker tag: no build metadata, which `+` would make unpushable.
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$/;
+
+/**
+ * What a workflow run publishes. The server pulls `<image>:<server version>` and nothing else, so a
+ * release tag must equal the server's own version; a manual run can only publish a dry-run tag.
+ */
+export const planRelease = Effect.fn("sandboxImage.planRelease")(function* (input: ReleaseInput) {
+  const image = `ghcr.io/${input.repositoryOwner.toLowerCase()}/t3-sandbox`;
+  if (input.eventName !== "push" && input.eventName !== "workflow_dispatch") {
+    return yield* new SandboxImageReleaseError({
+      detail: `Cannot publish the sandbox image for a ${input.eventName} event.`,
+    });
+  }
+  const dryRun = input.eventName === "workflow_dispatch";
+  const version = (dryRun ? input.inputVersion : input.refName).replace(/^v/, "");
+  if (!RELEASE_VERSION.test(version)) {
+    return yield* new SandboxImageReleaseError({
+      detail: `"${version}" is not a release version like 1.2.3.`,
+    });
+  }
+  if (!dryRun && version !== input.serverVersion) {
+    return yield* new SandboxImageReleaseError({
+      detail: `Tag ${input.refName} does not match the server version ${input.serverVersion}, which is the version a server pulls.`,
+    });
+  }
+  return {
+    version,
+    tag: dryRun ? `${version}-dryrun.${input.runId}` : version,
+    image,
+    dryRun,
+  } satisfies ReleasePlan;
+});
+
+const releasePlanCommand = Command.make(
+  "release-plan",
+  {
+    event: Flag.String("event").pipe(Flag.withDescription("GITHUB_EVENT_NAME.")),
+    refName: Flag.String("ref-name").pipe(Flag.withDescription("GITHUB_REF_NAME.")),
+    inputVersion: Flag.String("input-version").pipe(
+      Flag.withDefault(""),
+      Flag.withDescription("The version input of a manual run."),
+    ),
+    runId: Flag.String("run-id").pipe(Flag.withDescription("GITHUB_RUN_ID.")),
+    owner: Flag.String("owner").pipe(Flag.withDescription("GITHUB_REPOSITORY_OWNER.")),
+  },
+  (flags) =>
+    Effect.gen(function* () {
+      const plan = yield* planRelease({
+        eventName: flags.event,
+        refName: flags.refName,
+        inputVersion: flags.inputVersion,
+        runId: flags.runId,
+        repositoryOwner: flags.owner,
+        serverVersion: packageJson.version,
+      });
+      yield* Console.log(
+        [
+          `version=${plan.version}`,
+          `tag=${plan.tag}`,
+          `image=${plan.image}`,
+          `dry-run=${plan.dryRun}`,
+        ].join("\n"),
+      );
+    }),
+).pipe(
+  Command.withDescription(
+    "Print the version, image tag and image name a workflow run publishes, as GITHUB_OUTPUT lines.",
+  ),
+);
+
 const checkProvidersCommand = Command.make(
   "check-providers",
   {
@@ -220,7 +319,12 @@ const buildCommand = Command.make(
 
 const cli = Command.make("sandbox-image").pipe(
   Command.withDescription("Build the Pair sandbox base image."),
-  Command.withSubcommands([contextCommand, buildCommand, checkProvidersCommand]),
+  Command.withSubcommands([
+    contextCommand,
+    buildCommand,
+    checkProvidersCommand,
+    releasePlanCommand,
+  ]),
 );
 
 if (import.meta.main) {
