@@ -951,6 +951,38 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   });
 }
 
+interface EnvironmentRpcCommandOptions<R, TTag extends EnvironmentUnaryRpcTag, Input> {
+  readonly label: string;
+  readonly tag: TTag;
+  readonly execute?: (
+    input: Input,
+  ) => Effect.Effect<
+    EnvironmentRpcSuccess<TTag>,
+    EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
+    EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry | R
+  >;
+  readonly scheduler?: AtomCommandScheduler;
+  readonly concurrency?: AtomCommandConcurrency<{
+    readonly environmentId: EnvironmentIdType;
+    readonly input: NoInfer<Input>;
+  }>;
+  readonly onSuccess?: (
+    target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: NoInfer<Input>;
+    },
+    registry: AtomRegistry.AtomRegistry,
+    result: EnvironmentRpcSuccess<TTag>,
+  ) => Effect.Effect<void, never, R>;
+  readonly onSettled?: (
+    target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: NoInfer<Input>;
+    },
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.Effect<void, never, R>;
+}
+
 export function createEnvironmentRpcCommand<
   R,
   ER,
@@ -958,37 +990,25 @@ export function createEnvironmentRpcCommand<
   Input extends EnvironmentRpcInput<TTag> = EnvironmentRpcInput<TTag>,
 >(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
-  options: {
-    readonly label: string;
-    readonly tag: TTag;
-    readonly execute?: (
-      input: Input,
-    ) => Effect.Effect<
-      EnvironmentRpcSuccess<TTag>,
-      EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
-      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
-    >;
-    readonly scheduler?: AtomCommandScheduler;
-    readonly concurrency?: AtomCommandConcurrency<{
-      readonly environmentId: EnvironmentIdType;
-      readonly input: NoInfer<Input>;
-    }>;
-    readonly onSuccess?: (
-      target: {
-        readonly environmentId: EnvironmentIdType;
-        readonly input: NoInfer<Input>;
-      },
-      registry: AtomRegistry.AtomRegistry,
-      result: EnvironmentRpcSuccess<TTag>,
-    ) => Effect.Effect<void, never, R>;
-    readonly onSettled?: (
-      target: {
-        readonly environmentId: EnvironmentIdType;
-        readonly input: NoInfer<Input>;
-      },
-      registry: AtomRegistry.AtomRegistry,
-    ) => Effect.Effect<void, never, R>;
+  options: EnvironmentRpcCommandOptions<R, TTag, Input>,
+): ReturnType<typeof makeEnvironmentRpcCommand<R, ER, TTag, Input>>;
+/** With `execute`, the command's input may differ from the RPC's, such as a command builder's. */
+export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnaryRpcTag, Input>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentRpcCommandOptions<R, TTag, Input> & {
+    readonly execute: NonNullable<EnvironmentRpcCommandOptions<R, TTag, Input>["execute"]>;
   },
+): ReturnType<typeof makeEnvironmentRpcCommand<R, ER, TTag, Input>>;
+export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnaryRpcTag, Input>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentRpcCommandOptions<R, TTag, Input>,
+) {
+  return makeEnvironmentRpcCommand(runtime, options);
+}
+
+function makeEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnaryRpcTag, Input>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentRpcCommandOptions<R, TTag, Input>,
 ) {
   const permissions = createCommandPermissions(runtime, options.tag);
   const command = createEnvironmentCommand(runtime, {
@@ -1003,7 +1023,12 @@ export function createEnvironmentRpcCommand<
       // Routing requires consent on the origin as well as the actual destination.
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
-        Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
+        Effect.andThen(
+          () =>
+            options.execute?.(input) ??
+            // Only the first overload omits execute, and it constrains Input to the RPC's input.
+            requestGuarded(options.tag, input as EnvironmentRpcInput<TTag>),
+        ),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>
             createCommandPermissions(runtime, method).authorize(registry, id, payload),

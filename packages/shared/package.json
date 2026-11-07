@@ -171,6 +171,10 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./sandbox": {
+      "types": "./src/sandbox.ts",
+      "import": "./src/sandbox.ts"
+    },
     "./providerInstanceOwnership": {
       "types": "./src/providerInstanceOwnership.ts",
       "import": "./src/providerInstanceOwnership.ts"

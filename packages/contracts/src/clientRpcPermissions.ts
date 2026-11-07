@@ -1,3 +1,4 @@
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
@@ -82,6 +83,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
+// Reads only `type`, so guarding sandbox commands never decodes the whole command union.
+const isSandboxCommandInput = (input: unknown) =>
+  Predicate.hasProperty(input, "type") &&
+  typeof input.type === "string" &&
+  input.type.startsWith("sandbox.");
+
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
@@ -89,6 +96,9 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  // The server requires operate for every dispatch; this makes a sandbox command fail closed.
+  if (method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand && isSandboxCommandInput(input))
+    return [AuthOrchestrationOperateScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

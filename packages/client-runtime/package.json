@@ -303,6 +303,10 @@
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
     },
+    "./state/sandbox": {
+      "types": "./src/state/sandbox.ts",
+      "default": "./src/state/sandbox.ts"
+    },
     "./state/team": {
       "types": "./src/state/team.ts",
       "default": "./src/state/team.ts"

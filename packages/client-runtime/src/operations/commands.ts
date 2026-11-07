@@ -24,6 +24,7 @@ import {
   type RunId,
   type RuntimeMode,
   type RuntimeRequestId,
+  type SandboxId,
   type ThreadId,
   type ThreadEnvMode,
   type UploadChatAttachment,
@@ -83,6 +84,10 @@ export interface CreateThreadInput extends CommandMetadata {
 
 export interface ThreadCommandInput extends CommandMetadata {
   readonly threadId: ThreadId;
+}
+
+export interface SandboxCommandInput extends ThreadCommandInput {
+  readonly sandboxId: SandboxId;
 }
 
 export interface DeleteThreadInput extends ThreadCommandInput {
@@ -442,6 +447,41 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
     threadId: input.threadId,
     ...(input.onlyIfUnused === undefined ? {} : { onlyIfUnused: input.onlyIfUnused }),
   });
+});
+
+function sandboxCommand(
+  type: "sandbox.wake" | "sandbox.sleep" | "sandbox.retry" | "sandbox.discard",
+  input: SandboxCommandInput,
+) {
+  return allocateCommandId(input).pipe(
+    Effect.flatMap((commandId) =>
+      dispatch({ type, commandId, threadId: input.threadId, sandboxId: input.sandboxId }),
+    ),
+  );
+}
+
+export const wakeSandbox = Effect.fn("EnvironmentCommands.wakeSandbox")(function* (
+  input: SandboxCommandInput,
+) {
+  return yield* sandboxCommand("sandbox.wake", input);
+});
+
+export const sleepSandbox = Effect.fn("EnvironmentCommands.sleepSandbox")(function* (
+  input: SandboxCommandInput,
+) {
+  return yield* sandboxCommand("sandbox.sleep", input);
+});
+
+export const retrySandbox = Effect.fn("EnvironmentCommands.retrySandbox")(function* (
+  input: SandboxCommandInput,
+) {
+  return yield* sandboxCommand("sandbox.retry", input);
+});
+
+export const discardSandbox = Effect.fn("EnvironmentCommands.discardSandbox")(function* (
+  input: SandboxCommandInput,
+) {
+  return yield* sandboxCommand("sandbox.discard", input);
 });
 
 export type CloseGuestShareInput = ThreadCommandInput;

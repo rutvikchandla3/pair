@@ -200,6 +200,31 @@ describe("command permissions", () => {
         }),
       ),
   );
+  it.effect("requires operate for sandbox commands and leaves other dispatches unguarded", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const dispatch = createCommandPermissions(
+          runtime,
+          ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        );
+        const wake = { type: "sandbox.wake" };
+        const archive = { type: "thread.archive" };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(dispatch.requiredScopes(wake)).toEqual([AuthOrchestrationOperateScope]);
+        expect(registry.get(dispatch.permissionAtom(env, wake))).toBe(false);
+        expect(
+          (yield* dispatch.authorize(registry, env, wake).pipe(Effect.flip)).requiredScope,
+        ).toBe(AuthOrchestrationOperateScope);
+        expect(dispatch.requiredScopes(archive)).toEqual([]);
+        expect(registry.get(dispatch.permissionAtom(env, archive))).toBe(true);
+        yield* dispatch.authorize(registry, env, archive);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(dispatch.permissionAtom(env, wake))).toBe(true);
+        yield* dispatch.authorize(registry, env, wake);
+      }),
+    ),
+  );
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

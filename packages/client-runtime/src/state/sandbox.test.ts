@@ -1,0 +1,262 @@
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  MemberId,
+  ThreadId,
+  type AuthSessionState,
+  type OrchestrationV2ThreadShellSandbox,
+  type TeamMember,
+} from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  createSandboxEnvironmentAtoms,
+  sandboxStatePresentation,
+  type SandboxAction,
+  type SandboxStatePresentation,
+} from "./sandbox.ts";
+import type { TeamMembers, createTeamEnvironmentAtoms } from "./team.ts";
+
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
+}));
+const sessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
+);
+
+const ownerThreadId = ThreadId.make("thread-owner");
+const since = "2036-04-07T00:00:00.000Z" as NonNullable<
+  OrchestrationV2ThreadShellSandbox["admission"]
+>["since"];
+const summary = (
+  fields: Partial<OrchestrationV2ThreadShellSandbox>,
+): OrchestrationV2ThreadShellSandbox => ({ state: "ready", ownerThreadId, ...fields });
+
+describe("sandboxStatePresentation", () => {
+  it.each<
+    [
+      string,
+      OrchestrationV2ThreadShellSandbox,
+      boolean,
+      Omit<SandboxStatePresentation, "ownerOnly">,
+    ]
+  >([
+    [
+      "waiting at the team cap",
+      summary({ state: "provisioning", admission: { reason: "team-cap", since } }),
+      false,
+      {
+        label: "Waiting for a machine: team limit reached",
+        rowWord: "Waiting",
+        tone: "warning",
+        composer: "queues",
+        actions: [],
+      },
+    ],
+    [
+      "waiting for an unknown reason",
+      summary({ state: "provisioning", admission: { reason: null, since } }),
+      false,
+      {
+        label: "Waiting for a machine",
+        rowWord: "Waiting",
+        tone: "warning",
+        composer: "queues",
+        actions: [],
+      },
+    ],
+    [
+      "starting",
+      summary({ state: "provisioning" }),
+      false,
+      {
+        label: "Starting machine",
+        rowWord: "Starting",
+        tone: "neutral",
+        composer: "queues",
+        actions: [],
+      },
+    ],
+    [
+      "ready and idle",
+      summary({ state: "ready", runnerConnected: true }),
+      false,
+      {
+        label: null,
+        rowWord: null,
+        tone: "neutral",
+        composer: "normal",
+        actions: ["sleep", "discard"],
+      },
+    ],
+    [
+      "ready with an active run",
+      summary({ state: "ready" }),
+      true,
+      { label: null, rowWord: null, tone: "neutral", composer: "normal", actions: [] },
+    ],
+    [
+      "ready with the runner disconnected",
+      summary({ state: "ready", runnerConnected: false }),
+      false,
+      {
+        label: "Reconnecting to machine",
+        rowWord: null,
+        tone: "warning",
+        composer: "queues",
+        actions: [],
+      },
+    ],
+    [
+      "asleep",
+      summary({ state: "sleeping" }),
+      false,
+      {
+        label: "Asleep",
+        rowWord: "Asleep",
+        tone: "neutral",
+        composer: "queues",
+        actions: ["wake", "discard"],
+      },
+    ],
+    [
+      "waking",
+      summary({ state: "waking" }),
+      false,
+      { label: "Waking machine", rowWord: null, tone: "neutral", composer: "queues", actions: [] },
+    ],
+    [
+      "failed with a known code",
+      summary({ state: "failed", failureCode: "driver-removed" }),
+      false,
+      {
+        label: "The machine's driver was removed",
+        rowWord: "Failed",
+        tone: "danger",
+        composer: "disabled",
+        actions: ["retry", "discard"],
+      },
+    ],
+    [
+      "failed with an unknown code",
+      summary({ state: "failed", failureCode: "boot-timeout" }),
+      false,
+      {
+        label: "Machine failed",
+        rowWord: "Failed",
+        tone: "danger",
+        composer: "disabled",
+        actions: ["retry", "discard"],
+      },
+    ],
+    [
+      "discarded",
+      summary({ state: "destroyed" }),
+      false,
+      {
+        label: "Machine discarded",
+        rowWord: null,
+        tone: "neutral",
+        composer: "normal",
+        actions: [],
+      },
+    ],
+    [
+      "a state from a newer server",
+      summary({ state: null }),
+      false,
+      {
+        label: "Machine status unknown",
+        rowWord: null,
+        tone: "neutral",
+        composer: "normal",
+        actions: [],
+      },
+    ],
+  ])("%s", (_name, sandbox, hasActiveRun, expected) => {
+    expect(sandboxStatePresentation(sandbox, { hasActiveRun })).toEqual({
+      ...expected,
+      ownerOnly: ["sleep", "discard"],
+    });
+  });
+});
+
+describe("actionAllowedAtom", () => {
+  const env = EnvironmentId.make("sandbox-env");
+  const ownerId = MemberId.make("member-owner");
+  const adminId = MemberId.make("member-admin");
+  const otherId = MemberId.make("member-other");
+  const member = (id: MemberId, role: TeamMember["role"]): TeamMember => ({
+    id,
+    name: id,
+    role,
+    color: "hsl(10 60% 50%)",
+    isOwner: false,
+    createdAt: since,
+    removedAt: null,
+  });
+  const members: TeamMembers = new Map([
+    [ownerId, member(ownerId, "member")],
+    [adminId, member(adminId, "admin")],
+    [otherId, member(otherId, "member")],
+  ]);
+  const currentMemberId = Atom.make<MemberId | null>(null);
+  const team = {
+    membersValueAtom: () => Atom.make(members),
+    currentMemberIdAtom: () => currentMemberId,
+  } as unknown as ReturnType<typeof createTeamEnvironmentAtoms>;
+  const runtime = Atom.runtime(
+    Layer.succeed(EnvironmentRegistry, {
+      run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) => effect,
+    } as unknown as EnvironmentRegistry["Service"]).pipe(
+      Layer.provideMerge(SecureRandom.layerWebCrypto),
+    ),
+  );
+  const sandbox = createSandboxEnvironmentAtoms(runtime, { team });
+  const actions: ReadonlyArray<SandboxAction> = ["wake", "sleep", "retry", "discard"];
+
+  it("grants wake and retry to any operator, sleep and discard to the owner or an admin", () => {
+    const registry = AtomRegistry.make();
+    registry.mount(sessions(env));
+    const allowed = () =>
+      actions.filter((action) =>
+        registry.get(
+          sandbox.actionAllowedAtom({ environmentId: env, action, ownerMemberId: ownerId }),
+        ),
+      );
+    try {
+      const operator: AuthSessionState = {
+        authenticated: true,
+        auth: {
+          policy: "remote-reachable",
+          bootstrapMethods: [],
+          sessionMethods: [],
+          sessionCookieName: "test",
+        },
+        scopes: [AuthOrchestrationOperateScope],
+        permissions: [AuthOrchestrationOperateScope],
+      };
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...operator, scopes: [], permissions: [] }),
+      );
+      registry.set(currentMemberId, adminId);
+      expect(allowed()).toEqual([]);
+
+      registry.set(sessions(env), AsyncResult.success(operator));
+      registry.set(currentMemberId, otherId);
+      expect(allowed()).toEqual(["wake", "retry"]);
+      registry.set(currentMemberId, adminId);
+      expect(allowed()).toEqual(actions);
+      registry.set(currentMemberId, ownerId);
+      expect(allowed()).toEqual(actions);
+    } finally {
+      registry.dispose();
+    }
+  });
+});
