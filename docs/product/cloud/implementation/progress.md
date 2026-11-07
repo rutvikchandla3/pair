@@ -10,20 +10,22 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (40 of 57):**
+**Landed on `feat/pair` (41 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.12 sessions on sandbox hosts (critical path)
-- 1.28a owner's GitHub
+- 1.29 revocation
+- 1.35 push and PR
+- fix-flaky-kill
 
-**Not started (15), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (12), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -535,6 +537,13 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Web: apps/web/src/state/sandbox.ts (sandboxEnvironment atoms — 1.38/1.39 reuse), components/sandbox/stoppedFilesNotice.tsx ("As of turn N" + Wake; FilePreviewPanel read-only while stopped).
 - Helpers: `CheckpointMirror.mirrorGitDir`, exported `WorkspaceFileSystem.PROJECT_READ_FILE_MAX_BYTES`. Still failing on stopped machines: asset-URL reads, HtmlRender.
 - Env: web browser tests can't launch here (Playwright wants chromium_headless_shell-1223; /opt/pw-browsers has 1243).
+
+## 1.28a owner's GitHub token (landed)
+
+- Contracts: `TeamMemberGitHub.source` ForwardCompatibleOptional(`app`|`token`); RPCs `team.githubTokenSet {token}` / `team.githubTokenClear` (operate scope, own member only); `GitManagerError.code?` (1.35 sets `github-credential-missing` and renders copy from it).
+- Migration 090_MemberGitHubSource (`members.github_source`; backfill `app` where github_user_id not null). Next free migration id: 91.
+- MemberGitHub `setToken` (validates via GitHub /user, refuses an account another member holds, secret store only `github-member-token-<id>`), `clearToken`, `credentialFor` returns a pasted token without the App client id. Token and device-flow session replace each other.
+- client-runtime `setGitHubToken`/`clearGitHubToken`, `cloudPushCredential({appConfigured,…})` (1.41 reuses). Web: Settings → Team own row "Use a token instead"; `components/sandbox/cloudPushBanner.tsx` in ChatView (attention group). docs/user/team.md "Bring your own GitHub token".
 
 ## Open follow-ups and risks
 
