@@ -14,6 +14,19 @@ export class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderIn
 
 export { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 
+/** Raised before any adapter code runs for a provider that cannot run in a sandbox yet. */
+export class ProviderCloudUnsupportedError extends Schema.TaggedError<ProviderCloudUnsupportedError>()(
+  "ProviderCloudUnsupportedError",
+  {
+    threadId: Schema.String,
+    driver: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.driver} is not supported in cloud yet. Pick Claude or Codex.`;
+  }
+}
+
 export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWorkspaceMissingError>()(
   "ProviderWorkspaceMissingError",
   {

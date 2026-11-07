@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as RunnerGrants from "../sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerHub from "../sandbox/runnerHub/RunnerHub.ts";
+import type * as RunnerTesting from "../sandbox/runner/runnerTesting.ts";
 import * as RunnerHubTesting from "../sandbox/runnerHub/RunnerHubTesting.ts";
 import { SANDBOX_ROOT } from "./WorkspaceHost.ts";
 import * as WorkspaceHosts from "./WorkspaceHosts.ts";
@@ -32,13 +33,14 @@ const LOOPBACK_SANDBOX_ID = SandboxId.make("sbx_00000000000000000100");
  * disk (02 §7). The hub registers the boot under `/t3-sandbox/<id>` as in production; this layer
  * also registers `root`, so tests use their own temp folders. Paths outside `root` stay local.
  */
-export const layerLoopback = (root: string) =>
+export const layerLoopback = (root: string, options: RunnerTesting.RunnerTestingOptions = {}) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const hosts = yield* WorkspaceHosts.WorkspaceHosts;
       const hub = yield* RunnerHub.RunnerHub;
       const runner = yield* RunnerHubTesting.makeRunner(
         yield* hub.mintEnrollment(LOOPBACK_SANDBOX_ID, 1),
+        options,
       );
       const socket = yield* runner.connect();
       yield* hub.connection(LOOPBACK_SANDBOX_ID);

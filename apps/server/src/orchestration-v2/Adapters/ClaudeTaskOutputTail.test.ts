@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 
@@ -72,6 +73,41 @@ describe("tailClaudeTaskOutput", () => {
         yield* fileSystem.writeFileString(file, "ok\n");
         yield* Deferred.succeed(stop, undefined);
         assert.equal(yield* Queue.take(chunks), "ok\n");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // A sandbox's watch replaces the poll: on the test clock, which never advances, only a change
+  // or the stop can make it read.
+  it.effect("reads on each change and once more when stopped", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { root, tasks, file } = yield* makeTaskFile;
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        yield* fileSystem.writeFileString(file, "one\n");
+        const changes = yield* Queue.unbounded<void>();
+        const chunks = yield* Queue.unbounded<string>();
+        const stop = yield* Deferred.make<void>();
+        const fiber = yield* tailClaudeTaskOutput({
+          fileSystem,
+          root,
+          sessionId: SESSION_ID,
+          taskId: TASK_ID,
+          stop,
+          onChunk: (chunk) => Queue.offer(chunks, chunk),
+          changes: Stream.fromQueue(changes),
+        }).pipe(Effect.forkScoped);
+        assert.equal(yield* Queue.take(chunks), "one\n");
+
+        yield* fileSystem.writeFileString(file, "one\ntwo\n");
+        yield* Queue.offer(changes, undefined);
+        assert.equal(yield* Queue.take(chunks), "two\n");
+
+        yield* fileSystem.writeFileString(file, "one\ntwo\nthree\n");
+        yield* Deferred.succeed(stop, undefined);
+        yield* Fiber.join(fiber);
+        assert.equal(yield* Queue.take(chunks), "three\n");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

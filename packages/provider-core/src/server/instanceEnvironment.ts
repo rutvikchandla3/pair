@@ -12,9 +12,9 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
     return baseEnv;
   }
 
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M1 (1.12): facts of the machine the base came from, the server's for every caller today
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: instance env is the server's; a sandbox session builds its own from the sandbox host
   const home = yield* HostProcess.HomeDirectory;
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M1 (1.12): as above
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: as above
   const windows = (yield* HostProcess.Platform) === "win32";
   const next: NodeJS.ProcessEnv = { ...baseEnv };
   for (const variable of environment) {

@@ -43,6 +43,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
+import { LOCAL_WORKSPACE_HOST_ID } from "../../workspaceHost/WorkspaceHost.ts";
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
@@ -195,8 +196,26 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Effect.provideService(
             CodexAdapterV2.CodexAppServerClientFactory,
             CodexAdapterV2.CodexAppServerClientFactory.of({
+              // Records what a local session launches with: the runtime resolved for this machine.
               open: (launch) =>
-                Effect.sync(() => launches.push(launch)).pipe(
+                Effect.gen(function* () {
+                  const runtime =
+                    launch.resolveRuntime === undefined
+                      ? undefined
+                      : yield* launch.resolveRuntime({
+                          id: LOCAL_WORKSPACE_HOST_ID,
+                          kind: "local",
+                          info: Effect.die("a local runtime reads no host facts"),
+                          exposeServerEndpoint: () =>
+                            Effect.die("a local runtime opens no forward"),
+                        });
+                  launches.push({
+                    ...launch,
+                    settings: runtime?.config ?? launch.settings,
+                    environment: runtime?.environment ?? launch.environment,
+                  });
+                }).pipe(
+                  Effect.orDie,
                   Effect.andThen(Effect.die("The fixture stops after recording the launch")),
                 ),
             }),

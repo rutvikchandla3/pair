@@ -175,6 +175,8 @@ export interface AcpAdapterV2RuntimeInput {
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly processEnvironment?: NodeJS.ProcessEnv;
+  /** Set when the session runs in a sandbox: the bundle's `t3` there. */
+  readonly sandboxExecutablePath?: string;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -1706,10 +1708,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  const { flavor, selfInvocation: self } = options;
+  const { flavor } = options;
   // The session's launch policy fixes the git author for its process; a new holder waits for relaunch.
   const mcpContextReader =
-    (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+    (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy, self: SelfInvocation) =>
     (threadId: ThreadId | null) =>
       (threadId === null
         ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
@@ -1743,7 +1745,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 environment: yield* HostProcess.Environment,
               }
             : yield* host.sessionProcesses(input.runtimePolicy.cwd ?? process.cwd());
-        const readMcpContext = mcpContextReader(input.runtimePolicy);
+        const sandboxExecutablePath = sessionProcesses.sandboxExecutablePath;
+        // In a sandbox the MCP bridge is the bundle's `t3`, never the server's own executable.
+        const readMcpContext = mcpContextReader(
+          input.runtimePolicy,
+          sandboxExecutablePath === undefined
+            ? options.selfInvocation
+            : { command: sandboxExecutablePath, entrypoint: undefined },
+        );
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);
@@ -2400,6 +2409,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ...(mcpContext.processEnvironment === undefined
               ? {}
               : { processEnvironment: mcpContext.processEnvironment }),
+            ...(sandboxExecutablePath === undefined ? {} : { sandboxExecutablePath }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {

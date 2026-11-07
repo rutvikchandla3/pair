@@ -209,7 +209,9 @@ export const make = Effect.fn("SandboxWorkspaceHost.make")(function* (
     return env;
   };
 
-  const spawnStandard = Effect.fnUntraced(function* (command: ChildProcess.StandardCommand) {
+  const spawnStandard = Effect.fn("RunnerConnection.spawn")(function* (
+    command: ChildProcess.StandardCommand,
+  ) {
     const { options } = command;
     const badArgument = (description: string) =>
       PlatformError.badArgument({ module: MODULE, method: "spawn", description });

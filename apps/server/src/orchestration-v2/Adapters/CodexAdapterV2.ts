@@ -104,7 +104,11 @@ import { ChildProcess } from "effect/process";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
-import type { WorkspaceHostInfo } from "../../workspaceHost/WorkspaceHost.ts";
+import type { WorkspaceHost, WorkspaceHostInfo } from "../../workspaceHost/WorkspaceHost.ts";
+import {
+  ensureSandboxProviderHome,
+  sandboxEnvironmentFor,
+} from "../../sandbox/providers/SandboxProviderHome.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1364,6 +1368,10 @@ type CodexSubAgentActivityItem = Extract<
   { readonly type: "subAgentActivity" }
 >;
 
+export type CodexRuntimeResolver = (
+  host: Pick<WorkspaceHost, "id" | "kind" | "info" | "exposeServerEndpoint">,
+) => Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+
 export interface CodexAppServerClientFactoryShape {
   readonly open: (input: {
     readonly instanceId: ProviderInstanceId;
@@ -1372,6 +1380,8 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    /** A managed runtime for the session's machine; it replaces `settings` and `environment`. */
+    readonly resolveRuntime?: CodexRuntimeResolver | undefined;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1590,6 +1600,7 @@ export const layerAppServerClientFactory: Layer.Layer<
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const portDiscovery = yield* PortScanner.PortDiscovery;
+    const sandboxEnvironment = yield* sandboxEnvironmentFor;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
@@ -1608,30 +1619,50 @@ export const layerAppServerClientFactory: Layer.Layer<
                     }),
                 ),
               );
-        const environment = {
-          ...codexAppServerEnvironment(input.environment),
-          ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
-        };
+        const openError = (cause: unknown) =>
+          new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: CODEX_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause,
+          });
+        const facts = yield* host.info;
+        const runtime =
+          input.resolveRuntime === undefined
+            ? undefined
+            : yield* input.resolveRuntime(host).pipe(Effect.mapError(openError));
+        const settings = runtime?.config ?? input.settings;
+        // A sandbox runs the image's pinned `codex` on its own environment and its own home
+        // (README P1), never the server's binary, CODEX_HOME or shadow home.
+        const environment =
+          host.kind === "sandbox"
+            ? {
+                ...codexAppServerEnvironment(
+                  // One app-server serves many threads: each shell gets its own id (thread config).
+                  yield* sandboxEnvironment(host, undefined).pipe(Effect.mapError(openError)),
+                ),
+                CODEX_HOME: yield* ensureSandboxProviderHome(host, input.instanceId).pipe(
+                  Effect.mapError(openError),
+                ),
+              }
+            : {
+                ...codexAppServerEnvironment(runtime?.environment ?? input.environment),
+                ...(settings.homePath ? { CODEX_HOME: settings.homePath } : {}),
+              };
         const command = yield* makeCodexAppServerSpawnCommand({
-          command: input.settings.binaryPath || "codex",
+          command: host.kind === "sandbox" ? "codex" : settings.binaryPath || "codex",
           args: codexAppServerArgs(
-            resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            resolveCodexLaunchArgs(
+              settings.launchArgs,
+              host.kind === "sandbox" ? environment : (runtime?.environment ?? input.environment),
+            ),
           ),
           env: environment,
           threadId: input.threadId,
-          facts: yield* host.info,
+          facts,
         }).pipe(Effect.provideService(AgentScope, host.agentScope));
-        const handle = yield* host.spawner.spawn(command).pipe(
-          Effect.provideService(Scope.Scope, scope),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: CODEX_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-          ),
-        );
+        const handle = yield* host.spawner
+          .spawn(command)
+          .pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(openError));
         // Its shells carry each thread's T3CODE_THREAD_ID, so port discovery reads listeners' threads.
         yield* Effect.acquireRelease(Effect.sync(portDiscovery.trackAgent), (release) =>
           Effect.sync(release),
@@ -1677,7 +1708,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const digest = yield* Digest.Digest;
   // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments, MCP app snapshots and the shadow home
   const fileSystem = yield* FileSystem.FileSystem;
-  // Instance env is the local host's; 1.12 rebuilds it per session on a sandbox host.
+  // Instance env is the local host's; the client factory builds a sandbox session's own.
   const hostEnvironment = (yield* (yield* WorkspaceHosts.WorkspaceHosts).local.info).environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
@@ -1723,7 +1754,7 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
-  readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  readonly resolveRuntime?: CodexRuntimeResolver;
   readonly compatibility?: (
     version: string,
   ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
@@ -1760,26 +1791,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     openSession: Effect.fn("CodexAdapterV2.openSession")(
       function* (input) {
         const scope = yield* Scope.Scope;
-        const resolvedRuntime =
-          adapterOptions.resolveRuntime === undefined
-            ? undefined
-            : yield* adapterOptions.resolveRuntime.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterOpenSessionError({
-                      driver: CODEX_PROVIDER,
-                      providerSessionId: input.providerSessionId,
-                      cause,
-                    }),
-                ),
-              );
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          settings: adapterOptions.settings,
+          environment: adapterOptions.environment,
+          resolveRuntime: adapterOptions.resolveRuntime,
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<

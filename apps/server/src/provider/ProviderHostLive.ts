@@ -14,8 +14,53 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import {
+  sandboxEnvironmentFor,
+  type SandboxEnvironmentFor,
+} from "../sandbox/providers/SandboxProviderHome.ts";
 import * as DocumentText from "./DocumentText.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
+
+/** A session cwd's machine: its spawner and agent scope, and the env its provider starts on. */
+export const sessionProcessesFor = (
+  workspaceHosts: WorkspaceHosts.WorkspaceHosts["Service"],
+  sandboxEnvironment: SandboxEnvironmentFor,
+): NonNullable<ProviderHost.ProviderHost["Service"]["sessionProcesses"]> =>
+  Effect.fn("ProviderHost.sessionProcesses")(function (cwd) {
+    return workspaceHosts.forPath(cwd).pipe(
+      Effect.mapError(
+        (error) => new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId ?? "" }),
+      ),
+      Effect.flatMap((host) =>
+        Effect.gen(function* () {
+          const info = yield* host.info;
+          if (host.kind === "local") {
+            return {
+              spawner: host.spawner,
+              agentScope: host.agentScope,
+              environment: info.environment,
+            };
+          }
+          // An ACP agent's helpers carry no thread: git answers for the sandbox's owner thread.
+          const environment = yield* sandboxEnvironment(host, undefined).pipe(
+            Effect.mapError(
+              (error) =>
+                new ProviderSessionHostUnavailableError({
+                  sandboxId: error.sandboxId,
+                  detail: error.message,
+                }),
+            ),
+          );
+          return {
+            spawner: host.spawner,
+            agentScope: host.agentScope,
+            environment,
+            sandboxExecutablePath: info.executablePath,
+          };
+        }),
+      ),
+    );
+  });
 
 export const layer = Layer.effect(
   ProviderHost.ProviderHost,
@@ -27,6 +72,7 @@ export const layer = Layer.effect(
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
     const workspaceHosts = yield* WorkspaceHosts.WorkspaceHosts;
+    const sandboxEnvironment = yield* sandboxEnvironmentFor;
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -51,21 +97,7 @@ export const layer = Layer.effect(
         },
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       ),
-      sessionProcesses: Effect.fn("ProviderHost.sessionProcesses")(function (cwd) {
-        return workspaceHosts.forPath(cwd).pipe(
-          Effect.flatMap((host) =>
-            Effect.map(host.info, (info) => ({
-              spawner: host.spawner,
-              agentScope: host.agentScope,
-              environment: info.environment,
-            })),
-          ),
-          Effect.mapError(
-            (error) =>
-              new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId ?? "" }),
-          ),
-        );
-      }),
+      sessionProcesses: sessionProcessesFor(workspaceHosts, sandboxEnvironment),
       credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
         return ProviderCredentialStore.make(namespace, bindingId).pipe(
           Effect.map((store) => ({

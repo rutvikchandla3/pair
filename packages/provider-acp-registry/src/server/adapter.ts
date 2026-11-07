@@ -131,6 +131,32 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   });
 }
 
+const SANDBOX_REPLAY_AGENT = "replay/dev-replay-agent.mjs";
+
+/**
+ * The only ACP agent that runs in a sandbox is the bundled dev Replay agent (the session manager
+ * refuses the others), started with the sandbox's own Node. Nothing resolves on the server's PATH.
+ */
+function sandboxReplayAgent(
+  executablePath: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): AcpRegistrySupport.ResolvedAcpRegistryAgent {
+  const bundleDirectory = executablePath.slice(0, executablePath.lastIndexOf("/"));
+  return {
+    distribution: "local",
+    spawn: {
+      command: "node",
+      args: [`${bundleDirectory}/${SANDBOX_REPLAY_AGENT}`],
+      cwd,
+      // The session's sandbox environment, cloud env included; nothing from the server's.
+      env,
+      extendEnv: false,
+      shell: false,
+    },
+  };
+}
+
 function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
@@ -143,18 +169,19 @@ function makeAcpRegistryRuntime(
     ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { processEnvironment, ...runtimeInput } = input;
-      const resolved = yield* catalog
-        .resolve(options.settings, input.cwd, options.environment)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EffectAcpErrors.AcpSpawnError({
-                command: options.settings.agentId || ACP_REGISTRY_PROVIDER,
-                cause,
-              }),
-          ),
-        );
+      const { processEnvironment, sandboxExecutablePath, ...runtimeInput } = input;
+      const resolved =
+        sandboxExecutablePath === undefined
+          ? yield* catalog.resolve(options.settings, input.cwd, options.environment).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EffectAcpErrors.AcpSpawnError({
+                    command: options.settings.agentId || ACP_REGISTRY_PROVIDER,
+                    cause,
+                  }),
+              ),
+            )
+          : sandboxReplayAgent(sandboxExecutablePath, input.cwd, yield* HostProcess.Environment);
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,

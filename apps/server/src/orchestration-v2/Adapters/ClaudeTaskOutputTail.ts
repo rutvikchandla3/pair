@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
 /** The SDK withholds stdout until tool results; tail task_started files for live output.
  * The private Claude layout can change; failures omit live output and retain the final result. */
@@ -67,15 +69,26 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly taskId: string;
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
+  /** Changes under `root`, such as a sandbox's watch: each one reads instead of the poll timer. */
+  readonly changes?: Stream.Stream<void, unknown> | undefined;
 }) {
   const { fileSystem } = input;
-  const pause = Deferred.await(input.stop).pipe(
-    Effect.as(true),
+  const stopped = Deferred.await(input.stop).pipe(Effect.as(true));
+  let pause = stopped.pipe(
     Effect.timeoutOrElse({
       duration: CLAUDE_TASK_OUTPUT_POLL_MS,
       orElse: () => Effect.succeed(false),
     }),
   );
+  if (input.changes !== undefined) {
+    const changed = yield* Queue.sliding<void>(1);
+    yield* input.changes.pipe(
+      Stream.runForEach(() => Queue.offer(changed, undefined)),
+      Effect.ignore,
+      Effect.forkChild,
+    );
+    pause = Effect.raceFirst(stopped, Queue.take(changed).pipe(Effect.as(false)));
+  }
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {
     file = yield* locate(input);

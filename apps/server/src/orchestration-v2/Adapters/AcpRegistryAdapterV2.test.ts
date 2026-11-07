@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -40,6 +41,13 @@ import {
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpRegistryLiveConfiguration } from "@t3tools/provider-acp-registry/testing";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DEV_REPLAY_INSTANCE_ID } from "../../provider/ProviderInstanceRegistryHydration.ts";
+import { sessionProcessesFor } from "../../provider/ProviderHostLive.ts";
+import { sandboxEnvironmentFor } from "../../sandbox/providers/SandboxProviderHome.ts";
+import * as WorkspaceHostLoopback from "../../workspaceHost/WorkspaceHostLoopback.ts";
+import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
@@ -2341,5 +2349,95 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(yield* runTurn(2), "completed");
       assert.equal(spawned, restarts ? 2 : 1);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+});
+
+describe("AcpRegistryAdapterV2 in a sandbox", () => {
+  // Subprocess fixture: the runner spawns the real Replay agent.
+  it.live("runs Replay (dev) from the bundle through the sandbox host", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // The dev bundle's layout: Replay beside `t3`, with the sandbox's `node` first on PATH.
+      const bundle = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-replay-bundle-" });
+      yield* fileSystem.makeDirectory(path.join(bundle, "replay"));
+      yield* fileSystem.symlink(
+        yield* path.fromFileUrl(new URL("../../../scripts/dev-replay-agent.ts", import.meta.url)),
+        path.join(bundle, "replay", "dev-replay-agent.mjs"),
+      );
+      yield* fileSystem.symlink(yield* HostProcess.ExecutablePath, path.join(bundle, "node"));
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-replay-sandbox-" });
+      yield* Effect.gen(function* () {
+        const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+        const { runner } = yield* WorkspaceHostLoopback.LoopbackRunner;
+        const providerHost = yield* ProviderHost.ProviderHost;
+        const instanceId = DEV_REPLAY_INSTANCE_ID;
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          // The server's paths: a sandbox session must not resolve or run them.
+          settings: yield* decodeAcpRegistryAdapterSettings({
+            source: "local",
+            commandPath: "/server-only/node",
+            commandArgs: ["/server-only/dev-replay-agent.ts"],
+          }),
+          environment: { SERVER_ONLY: "1" },
+        }).pipe(
+          Effect.provide(layerInjectedRuntimeCatalog),
+          Effect.provideService(ProviderHost.ProviderHost, {
+            ...providerHost,
+            sessionProcesses: sessionProcessesFor(hosts, yield* sandboxEnvironmentFor),
+          }),
+        );
+        const threadId = ThreadId.make("thread-replay-sandbox");
+        const modelSelection = { instanceId, model: "todo-list" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: root,
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-replay-sandbox"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const terminal = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Deferred.succeed(terminal, event) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        // The agent is a process of the runner, not of this server.
+        assert.isAbove((yield* runner.table.live).length, 0);
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            now: yield* DateTime.now,
+          }),
+        );
+        const event = yield* Deferred.await(terminal);
+        assert.isTrue(event.type === "turn.terminal" && event.status === "completed");
+      }).pipe(
+        // The session closes before its runner goes.
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            WorkspaceHostLoopback.layerLoopback(root, { bundleDirectory: bundle }),
+            layerTest,
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

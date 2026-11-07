@@ -1251,6 +1251,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
     readonly threadId: ThreadId;
+    /** The thread's sandbox: a shared process never serves threads on two machines. */
+    readonly sandboxId: string | undefined;
   }) =>
     input.adapter.getCapabilities().pipe(
       Effect.flatMap((capabilities) =>
@@ -1258,6 +1260,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? Effect.succeed(
               idAllocator.derive.providerSession({
                 providerInstanceId: input.providerInstanceId,
+                sandboxId: input.sandboxId,
               }),
             )
           : idAllocator.allocate.providerSession({
@@ -2405,6 +2408,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
               threadId,
+              sandboxId: projection.thread.sandboxId,
             }),
           ),
           Effect.mapError(
@@ -5712,6 +5716,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             adapter: targetAdapter,
             providerInstanceId: input.modelSelection.instanceId,
             threadId: input.command.threadId,
+            sandboxId: input.projection.thread.sandboxId,
           }),
         ));
       const targetProviderThreadBase: OrchestrationV2ProviderThread =
@@ -7021,6 +7026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             adapter,
             providerInstanceId: modelSelection.instanceId,
             threadId: command.threadId,
+            sandboxId: projection.thread.sandboxId,
           }),
         ));
       const providerThreadId =
@@ -7416,6 +7422,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           adapter,
           providerInstanceId: modelSelection.instanceId,
           threadId: command.threadId,
+          sandboxId: projection.thread.sandboxId,
         }),
       ));
     const existingProviderSession = projection.providerSessions.find(

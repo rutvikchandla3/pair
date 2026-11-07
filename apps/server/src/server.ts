@@ -742,6 +742,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(ProviderRegistry.layer),
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  // Provider sessions in a sandbox start on the same cloud env as its terminals.
+  Layer.provideMerge(layerSandboxProcessEnvironment),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),

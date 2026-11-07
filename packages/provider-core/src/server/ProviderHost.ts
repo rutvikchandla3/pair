@@ -36,6 +36,8 @@ export interface ProviderSessionProcesses {
   readonly agentScope: AgentScopeShape;
   /** Base env of every process the session starts. */
   readonly environment: NodeJS.ProcessEnv;
+  /** Set only on a sandbox: the bundle's `t3`, beside the bundled dev Replay agent. */
+  readonly sandboxExecutablePath?: string;
 }
 
 export class ProviderHost extends Context.Service<

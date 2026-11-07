@@ -39,7 +39,11 @@ import {
   providerTurnsTotal,
   withMetrics,
 } from "../observability/Metrics.ts";
-import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import {
+  ProviderCloudUnsupportedError,
+  ProviderWorkspaceMissingError,
+} from "../provider/Errors.ts";
+import { DEV_REPLAY_INSTANCE_ID } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
@@ -52,6 +56,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -144,6 +149,7 @@ export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSes
 export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
   ProviderWorkspaceMissingError,
+  ProviderCloudUnsupportedError,
   ProviderSessionLookupError,
   ProviderSessionCloseError,
   ProviderSessionReleaseError,
@@ -215,7 +221,15 @@ export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2Shape
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
+/** Claude, Codex and the dev Replay agent; every other provider runs on the server's machine only. */
+const runsInSandbox = (driver: string, instanceId: ProviderInstanceId) =>
+  driver === "claudeAgent" ||
+  driver === "codex" ||
+  (driver === "acpRegistry" && instanceId === DEV_REPLAY_INSTANCE_ID);
+
 interface LiveSessionEntry {
+  /** Where the session's processes run; undefined for a session without a cwd (local). */
+  readonly host: WorkspaceHost | undefined;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
@@ -518,6 +532,22 @@ export const layerWithOptions = (
                 }),
               ),
             );
+
+      // A sandbox agent reaches /mcp through a forward its runner listens on while the scope lasts.
+      const exposeMcpToSandbox = Effect.fn("ProviderSessionManager.exposeMcpToSandbox")(function* (
+        host: WorkspaceHost | undefined,
+        threadId: ThreadId,
+      ) {
+        if (host?.kind !== "sandbox") return;
+        const config = yield* mcpSessions.read(threadId);
+        if (config === undefined) return;
+        const address = yield* host.exposeServerEndpoint({
+          name: "mcp",
+          address: mcpSessionRegistry.endpoint,
+          ownerKey: config.providerSessionId,
+        });
+        yield* mcpSessions.useEndpoint(threadId, address);
+      });
 
       const publishToSubscribers = (
         subscribers: Ref.Ref<
@@ -1371,6 +1401,16 @@ export const layerWithOptions = (
               }
               const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
               if (entry !== undefined) {
+                yield* exposeMcpToSandbox(entry.host, input.threadId).pipe(
+                  Scope.provide(entry.scope),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionActivityError({
+                        providerSessionId: input.providerSessionId,
+                        cause,
+                      }),
+                  ),
+                );
                 yield* withActivityError(
                   input.providerSessionId,
                   writeProviderSessionEvents({
@@ -2124,8 +2164,9 @@ export const layerWithOptions = (
             input.providerSessionId,
             Effect.gen(function* () {
               const cwd = input.runtimePolicy.cwd;
+              let host: WorkspaceHost | undefined;
               if (cwd !== null) {
-                const host = yield* hosts
+                host = yield* hosts
                   .forPath(cwd)
                   .pipe(
                     Effect.mapError(
@@ -2146,6 +2187,14 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
+                // A shared session's processes run on one machine.
+                if ((existing.host?.id ?? host?.id) !== (host?.id ?? existing.host?.id)) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: "The provider session runs on another machine than this thread.",
+                  });
+                }
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2174,6 +2223,15 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              if (
+                host?.kind === "sandbox" &&
+                !runsInSandbox(adapter.driver, input.modelSelection.instanceId)
+              ) {
+                return yield* new ProviderCloudUnsupportedError({
+                  threadId: input.threadId,
+                  driver: adapter.driver,
+                });
+              }
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
@@ -2188,61 +2246,63 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
-              const runtime = yield* adapter
-                .openSession({
-                  threadId: input.threadId,
-                  providerSessionId: input.providerSessionId,
-                  modelSelection: input.modelSelection,
-                  runtimePolicy: input.runtimePolicy,
-                  ...(input.resumeFromSession === undefined
-                    ? {}
-                    : { resumeFromSession: input.resumeFromSession }),
-                  ...(input.initialNativeThreadId === undefined
-                    ? {}
-                    : { initialNativeThreadId: input.initialNativeThreadId }),
-                  ...(input.initialProviderItemIdentityVersion === undefined
-                    ? {}
-                    : {
-                        initialProviderItemIdentityVersion:
-                          input.initialProviderItemIdentityVersion,
-                      }),
-                })
-                .pipe(
-                  Effect.provideService(Scope.Scope, sessionScope),
-                  // Bound scope close after cleanup; a wedged finalizer must not hold the open lock or interrupter.
-                  Effect.onError(() =>
-                    dropReservation.pipe(
-                      Effect.andThen(
-                        prepared.issued
-                          ? clearMcpSession(input.threadId, mcpCredentialId)
-                          : Effect.void,
-                      ),
-                      Effect.ensuring(
-                        closeScopeWithin(sessionScope, {
-                          providerSessionId: input.providerSessionId,
-                          reason: "open_failed",
+              const runtime = yield* exposeMcpToSandbox(host, input.threadId).pipe(
+                Effect.andThen(
+                  adapter.openSession({
+                    threadId: input.threadId,
+                    providerSessionId: input.providerSessionId,
+                    modelSelection: input.modelSelection,
+                    runtimePolicy: input.runtimePolicy,
+                    ...(input.resumeFromSession === undefined
+                      ? {}
+                      : { resumeFromSession: input.resumeFromSession }),
+                    ...(input.initialNativeThreadId === undefined
+                      ? {}
+                      : { initialNativeThreadId: input.initialNativeThreadId }),
+                    ...(input.initialProviderItemIdentityVersion === undefined
+                      ? {}
+                      : {
+                          initialProviderItemIdentityVersion:
+                            input.initialProviderItemIdentityVersion,
                         }),
-                      ),
+                  }),
+                ),
+                Effect.provideService(Scope.Scope, sessionScope),
+                // Bound scope close after cleanup; a wedged finalizer must not hold the open lock or interrupter.
+                Effect.onError(() =>
+                  dropReservation.pipe(
+                    Effect.andThen(
+                      prepared.issued
+                        ? clearMcpSession(input.threadId, mcpCredentialId)
+                        : Effect.void,
+                    ),
+                    Effect.ensuring(
+                      closeScopeWithin(sessionScope, {
+                        providerSessionId: input.providerSessionId,
+                        reason: "open_failed",
+                      }),
                     ),
                   ),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderSessionOpenError({
-                        instanceId: input.modelSelection.instanceId,
-                        providerSessionId: input.providerSessionId,
-                        cause,
-                      }),
-                  ),
-                  withMetrics({
-                    counter: providerSessionsTotal,
-                    attributes: { provider: adapter.driver, operation: "open" },
-                  }),
-                );
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+                withMetrics({
+                  counter: providerSessionsTotal,
+                  attributes: { provider: adapter.driver, operation: "open" },
+                }),
+              );
               const eventSubscribers = yield* Ref.make<
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
+                host,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:

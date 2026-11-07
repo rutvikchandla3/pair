@@ -127,8 +127,10 @@ export interface IdAllocatorV2Allocate {
 }
 
 export interface IdAllocatorV2Derive {
+  /** A shared process per instance and machine: threads in one sandbox share theirs. */
   readonly providerSession: (input: {
     readonly providerInstanceId: ProviderInstanceId;
+    readonly sandboxId?: string | undefined;
   }) => ProviderSessionId;
   readonly delegatedTaskNode: (input: { readonly commandId: CommandId }) => NodeId;
   readonly delegatedTaskThread: (input: { readonly commandId: CommandId }) => ThreadId;
@@ -255,7 +257,15 @@ const randomId =
 export const derive: IdAllocatorV2Derive = {
   providerSession: (input) =>
     ProviderSessionId.make(
-      joinId("provider-session", "provider-instance", input.providerInstanceId, "shared"),
+      input.sandboxId === undefined
+        ? joinId("provider-session", "provider-instance", input.providerInstanceId, "shared")
+        : joinId(
+            "provider-session",
+            "provider-instance",
+            input.providerInstanceId,
+            "sandbox",
+            input.sandboxId,
+          ),
     ),
   delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
   delegatedTaskThread: (input) =>

@@ -128,6 +128,7 @@ export interface TestRunner {
  */
 export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
   enrollment: Redacted.Redacted<string>,
+  options: RunnerTesting.RunnerTestingOptions = {},
 ) {
   const sockets = yield* Queue.unbounded<readonly [Socket.Socket, Deferred.Deferred<void>]>();
   const socketServer = SocketServer.SocketServer.of({
@@ -148,7 +149,7 @@ export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
       Layer.provide(RunnerMain.layerProtocol),
       Layer.provide(Layer.succeed(SocketServer.SocketServer, socketServer)),
       Layer.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: 256 * 1024 + 1024 })),
-      Layer.provideMerge(Layer.fresh(RunnerTesting.layer)),
+      Layer.provideMerge(Layer.fresh(RunnerTesting.layerWith(options))),
     ),
   );
   const credential = Context.get(context, RunnerCredential);

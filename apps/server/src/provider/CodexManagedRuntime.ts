@@ -12,6 +12,8 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import { sandboxProviderHome } from "../sandbox/providers/SandboxProviderHome.ts";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -58,20 +60,30 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     options.config,
   );
   const homePath = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+  // Establish renewal availability before auth.access can consume a refresh token.
+  const brokerEndpoint = broker.endpoint.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: "runtime",
+          detail:
+            "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
+          cause,
+        }),
+    ),
+  );
+  // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
+  const withoutTokenOverrides = (base: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+    const environment = { ...base };
+    delete environment.ACCESS_TOKEN;
+    delete environment.T3CODE_CODEX_LAUNCH_ARGS;
+    delete environment.OPENAI_API_KEY;
+    delete environment.OPENAI_BASE_URL;
+    return environment;
+  };
   const resolve = Effect.gen(function* () {
-    // Establish renewal availability before auth.access can consume a refresh token.
-    const endpoint = yield* broker.endpoint.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderSetupError({
-            instanceId: options.instanceId,
-            operation: "runtime",
-            detail:
-              "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
-            cause,
-          }),
-      ),
-    );
+    const endpoint = yield* brokerEndpoint;
     const executable = yield* installation.acquire().pipe(
       Effect.mapError(
         () =>
@@ -113,15 +125,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
           }),
       ),
     );
-    // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
-    const environment: NodeJS.ProcessEnv = {
-      ...options.environment,
-      CODEX_HOME: homePath,
-    };
-    delete environment.ACCESS_TOKEN;
-    delete environment.T3CODE_CODEX_LAUNCH_ARGS;
-    delete environment.OPENAI_API_KEY;
-    delete environment.OPENAI_BASE_URL;
+    const environment = withoutTokenOverrides({ ...options.environment, CODEX_HOME: homePath });
     return {
       config: decodeSettings({
         enabled: options.enabled,
@@ -134,5 +138,55 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       revision: profileKey,
     } satisfies CodexEffectiveRuntime;
   });
-  return { auth, resolve, installation, homePath, homeLayout };
+  /**
+   * In a sandbox the image's `codex` asks the bundle's `t3` for tokens through a forward to the
+   * broker (06 §3). Nothing is installed or written: no shadow home, no `auth.json`.
+   */
+  const resolveFor = (
+    host: Pick<WorkspaceHost, "id" | "kind" | "info" | "exposeServerEndpoint">,
+  ) =>
+    host.kind === "local"
+      ? resolve
+      : Effect.gen(function* () {
+          const endpoint = yield* brokerEndpoint;
+          const credentials = yield* auth.access;
+          const profileKey = yield* auth.profileKey(credentials);
+          const socket = yield* host
+            .exposeServerEndpoint({
+              name: "codex-token",
+              address: endpoint,
+              ownerKey: options.instanceId,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSetupError({
+                    instanceId: options.instanceId,
+                    operation: "runtime",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+          const info = yield* host.info;
+          return {
+            config: decodeSettings({
+              enabled: options.enabled,
+              setupMode: "managed",
+              binaryPath: "codex",
+              homePath: sandboxProviderHome(host, options.instanceId),
+              launchArgs: managedCodexLaunchArgs(info.executablePath, [
+                "__managed-chatgpt-token",
+                socket,
+                options.instanceId,
+                environmentId,
+                profileKey,
+              ]),
+            }),
+            // The client factory builds a sandbox's environment itself.
+            environment: {},
+            revision: profileKey,
+          } satisfies CodexEffectiveRuntime;
+        });
+  return { auth, resolve, resolveFor, installation, homePath, homeLayout };
 });

@@ -29,9 +29,10 @@ export class ProviderCredentialError extends Schema.TaggedError<ProviderCredenti
 
 export class ProviderSessionHostUnavailableError extends Schema.TaggedError<ProviderSessionHostUnavailableError>()(
   "ProviderSessionHostUnavailableError",
-  { sandboxId: Schema.String },
+  /** `detail`: the machine is connected but a process cannot start there, such as an unread secret. */
+  { sandboxId: Schema.String, detail: Schema.optionalKey(Schema.String) },
 ) {
   override get message(): string {
-    return "This thread's machine is not connected.";
+    return this.detail ?? "This thread's machine is not connected.";
   }
 }

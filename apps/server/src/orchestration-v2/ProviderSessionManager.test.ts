@@ -33,8 +33,13 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
-import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import {
+  ProviderCloudUnsupportedError,
+  ProviderWorkspaceMissingError,
+} from "../provider/Errors.ts";
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -440,6 +445,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly driver?: ProviderDriverKind;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -458,7 +464,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   );
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
-    driver: CODEX_DRIVER,
+    driver: options.driver ?? CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -590,6 +596,9 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly driver?: ProviderDriverKind;
+  /** Replaces the hosts built from the test's own services, e.g. to register a sandbox. */
+  readonly workspaceHostsLayer?: Layer.Layer<WorkspaceHosts.WorkspaceHosts>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -626,6 +635,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.driver === undefined ? {} : { driver: input.driver }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -669,7 +679,7 @@ function layerTest(input: {
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
           layerTestStores,
-          WorkspaceHostTesting.layerFromContext,
+          input.workspaceHostsLayer ?? WorkspaceHostTesting.layerFromContext,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -3922,6 +3932,94 @@ it.effect(
         );
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+/** WorkspaceHosts with `root` on a sandbox whose forwards are recorded, not opened. */
+const layerSandboxAt = (root: string, forwarded: Array<string>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      yield* hosts.register(root, {
+        ...hosts.local,
+        id: "sbx_00000000000000000123" as WorkspaceHostId,
+        kind: "sandbox",
+        exposeServerEndpoint: (endpoint) =>
+          Effect.sync(() => {
+            forwarded.push(`${endpoint.name}:${endpoint.ownerKey}`);
+            return "http://127.0.0.1:9/mcp";
+          }),
+      });
+    }),
+  ).pipe(Layer.provideMerge(WorkspaceHostTesting.layerFromContext));
+
+it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-ready driver", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped();
+    const open = (driver: ProviderDriverKind) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
+        const forwarded: Array<string> = [];
+        return yield* Effect.gen(function* () {
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const threadId = ThreadId.make(`thread-sandbox-${driver}`);
+          yield* eventSink.write({
+            events: [
+              yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+            ],
+          });
+          const exit = yield* manager
+            .open({
+              threadId,
+              providerSessionId: yield* idAllocator.allocate.providerSession({
+                providerInstanceId: modelSelection.instanceId,
+                threadId,
+              }),
+              modelSelection,
+              runtimePolicy: { ...runtimePolicy, cwd: root },
+            })
+            .pipe(Effect.exit);
+          return {
+            exit,
+            openCount: (yield* Ref.get(state)).openCount,
+            mcpConfigs: yield* Ref.get(mcpConfigs),
+            forwarded,
+          };
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              state,
+              idleTimeoutMs: 60_000,
+              driver,
+              mcpConfigs,
+              spawnBeforeOpen: true,
+              workspaceHostsLayer: layerSandboxAt(root, forwarded),
+            }),
+          ),
+        );
+      });
+
+    const cursor = yield* open(ProviderDriverKind.make("cursor"));
+    assert.isTrue(Exit.isFailure(cursor.exit));
+    if (Exit.isFailure(cursor.exit)) {
+      const error = Cause.squash(cursor.exit.cause);
+      assert.instanceOf(error, ProviderCloudUnsupportedError);
+      assert.equal(error.message, "cursor is not supported in cloud yet. Pick Claude or Codex.");
+    }
+    assert.equal(cursor.openCount, 0);
+
+    // The agent reaches /mcp through the forward its session opened, with its own credential.
+    const codex = yield* open(CODEX_DRIVER);
+    assert.isTrue(Exit.isSuccess(codex.exit));
+    const config = codex.mcpConfigs[0];
+    assert.equal(config?.endpoint, "http://127.0.0.1:9/mcp");
+    assert.deepEqual(codex.forwarded, [`mcp:${config?.providerSessionId}`]);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(

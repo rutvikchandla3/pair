@@ -23,6 +23,16 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
+import type { WorkspaceHostId, WorkspaceHostInfo } from "../workspaceHost/WorkspaceHost.ts";
+
+const sandboxInfo = Effect.succeed({
+  platform: "linux",
+  architecture: "x64",
+  homeDirectory: "/home/t3",
+  environment: { PATH: "/opt/pair-runner/b:/usr/bin" },
+  userId: 1000,
+  executablePath: "/opt/pair-runner/b/t3",
+} satisfies WorkspaceHostInfo);
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
@@ -208,6 +218,47 @@ it.live.each(
             assert.notInclude(JSON.stringify(effective.environment), secret);
           }
           assert.strictEqual(ambient.CODEX_HOME, "/user/.codex");
+
+          // In a sandbox: the bundle's `t3` asks the broker through a forward; nothing installs.
+          const forwards: Array<string> = [];
+          const leased = leases;
+          const sandboxHostInfo = {
+            ...(yield* sandboxInfo),
+            executablePath: "/opt/pair-runner/b/t3",
+          };
+          const inSandbox = yield* runtime.resolveFor({
+            id: "sbx_00000000000000000123" as WorkspaceHostId,
+            kind: "sandbox",
+            info: Effect.succeed(sandboxHostInfo),
+            exposeServerEndpoint: (endpoint) =>
+              Effect.sync(() => {
+                forwards.push(`${endpoint.name}:${endpoint.ownerKey}`);
+                return "/run/pair-runner/codex-token.sock";
+              }),
+          });
+          assert.strictEqual(leases, leased);
+          assert.deepEqual(forwards, [`codex-token:${instanceId}`]);
+          assert.equal(inSandbox.config.binaryPath, "codex");
+          assert.equal(
+            inSandbox.config.homePath,
+            `/t3-sandbox/sbx_00000000000000000123/homes/${instanceId}`,
+          );
+          const sandboxProvider = codexAppServerArgs(inSandbox.config.launchArgs).find((arg) =>
+            arg.startsWith("model_providers.openai_token_sharing="),
+          )!;
+          const sandboxCommand = /auth=\{command=(.*),args=(\[.*\]),timeout_ms=/u.exec(
+            sandboxProvider,
+          );
+          assert.deepEqual(decodeCommand(`[${sandboxCommand![1]},${sandboxCommand![2]}]`), [
+            "/opt/pair-runner/b/t3",
+            [
+              "__managed-chatgpt-token",
+              "/run/pair-runner/codex-token.sock",
+              instanceId,
+              "00000000-0000-4000-8000-000000000001",
+              inSandbox.revision,
+            ],
+          ]);
         }).pipe(Effect.scoped);
         assert.strictEqual(leases, 0);
         yield* runtime.auth.controller.logout(Effect.void);

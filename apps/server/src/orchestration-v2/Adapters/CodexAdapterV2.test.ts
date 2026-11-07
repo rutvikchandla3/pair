@@ -72,7 +72,9 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import type { WorkspaceHostId } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -955,6 +957,119 @@ describe("CodexAdapterV2 process exit", () => {
       assert.equal(runningAgents, 0);
     }).pipe(Effect.provide(factoryLayer));
   });
+});
+
+describe("CodexAdapterV2 app-server in a sandbox", () => {
+  it.effect(
+    "runs the image's codex with a sandbox CODEX_HOME and the runtime's launch args",
+    () => {
+      const root = "/t3-sandbox/sbx_00000000000000000123/worktrees/a";
+      const spawned: Array<{ command: string; args: ReadonlyArray<string>; env: unknown }> = [];
+      const files: Array<string> = [];
+      const resolvedOn: Array<string> = [];
+      const neverEnding = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(999_999_998),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.never,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+      const sandboxSpawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag === "StandardCommand") {
+            spawned.push({
+              command: command.command,
+              args: command.args.map(String),
+              env: command.options.env,
+            });
+          }
+          return command._tag === "StandardCommand" && command.command === "mkdir"
+            ? { ...neverEnding, exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)) }
+            : neverEnding;
+        }),
+      );
+      const layerSandbox = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+          const localInfo = yield* hosts.local.info;
+          yield* hosts.register("/t3-sandbox/sbx_00000000000000000123", {
+            ...hosts.local,
+            id: "sbx_00000000000000000123" as WorkspaceHostId,
+            kind: "sandbox",
+            spawner: sandboxSpawner,
+            // Every file call is recorded: a sandbox open writes no credential file.
+            fileSystem: new Proxy(hosts.local.fileSystem, {
+              get: (target, key) => {
+                files.push(String(key));
+                return Reflect.get(target, key);
+              },
+            }),
+            info: Effect.succeed({
+              ...localInfo,
+              environment: { PATH: "/opt/pair-runner/b:/usr/bin", HOME: "/home/t3" },
+              executablePath: "/opt/pair-runner/b/t3",
+            }),
+          });
+        }),
+      ).pipe(Layer.provideMerge(WorkspaceHostTesting.layerFromContext));
+      const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
+        Layer.provide(Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined })),
+        Layer.provide(
+          Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+            native: undefined,
+            canonical: undefined,
+          }),
+        ),
+        Layer.provide(layerSandbox),
+      );
+      return Effect.gen(function* () {
+        const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
+        yield* Effect.scoped(
+          factory.open({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            threadId: ThreadId.make("thread-codex-sandbox"),
+            providerSessionId: ProviderSessionId.make("session-codex-sandbox"),
+            runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, cwd: root },
+            settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath: "/server/bin/codex" },
+            environment: { SERVER_ONLY: "1", CODEX_HOME: "/server/codex-home" },
+            resolveRuntime: (host) =>
+              Effect.sync(() => {
+                resolvedOn.push(host.id);
+                return {
+                  config: {
+                    ...DEFAULT_CODEX_SETTINGS,
+                    binaryPath: "codex",
+                    launchArgs: '-c "auth.command=/opt/pair-runner/b/t3"',
+                  },
+                  environment: {},
+                  revision: "profile",
+                };
+              }),
+          }),
+        );
+        const home = "/t3-sandbox/sbx_00000000000000000123/homes/codex";
+        assert.deepEqual(resolvedOn, ["sbx_00000000000000000123"]);
+        assert.deepEqual(
+          spawned.map(({ command, args }) => [command, ...args]),
+          [
+            ["mkdir", "-p", home],
+            ["codex", "app-server", "-c", "auth.command=/opt/pair-runner/b/t3"],
+          ],
+        );
+        const env = spawned[1]?.env as Record<string, string>;
+        assert.equal(env.CODEX_HOME, home);
+        assert.equal(env.PATH, "/opt/pair-runner/b:/usr/bin");
+        assert.isUndefined(env.SERVER_ONLY);
+        assert.deepEqual(files, []);
+      }).pipe(Effect.provide(factoryLayer.pipe(Layer.provide(NodeServices.layer))));
+    },
+  );
 });
 
 describe("CodexAdapterV2 session initialize", () => {

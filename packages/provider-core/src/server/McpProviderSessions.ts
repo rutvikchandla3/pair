@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 
 import type { McpProviderSessionConfig } from "./mcpSession.ts";
 
@@ -33,6 +34,14 @@ export class McpProviderSessions extends Context.Service<
     readonly set: (config: McpProviderSessionConfig) => Effect.Effect<void>;
     readonly read: (threadId: ThreadId) => Effect.Effect<McpProviderSessionConfig | undefined>;
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
+    /**
+     * Until the scope closes, `read` gives the thread's current credential this endpoint instead:
+     * the address its agent reaches the server at from a sandbox.
+     */
+    readonly useEndpoint: (
+      threadId: ThreadId,
+      endpoint: string,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: { readonly html: string; readonly title: string; readonly height: number },
@@ -77,8 +86,15 @@ const matchingPageIndex = (
   return matches.length === 1 ? matches[0]! : -1;
 };
 
+interface EndpointOverride {
+  readonly providerSessionId: string;
+  readonly endpoint: string;
+}
+
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
+  // Bound to the credential it was opened for: a sandbox forward admits only that one.
+  const endpoints = new Map<ThreadId, EndpointOverride>();
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
@@ -93,7 +109,27 @@ const make = Effect.gen(function* () {
       yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
     }),
     read: Effect.fn("McpProviderSessions.read")(function (threadId) {
-      return Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId)));
+      return Ref.get(sessions).pipe(
+        Effect.map((current) => {
+          const config = current.get(threadId);
+          const override = endpoints.get(threadId);
+          return config === undefined || override?.providerSessionId !== config.providerSessionId
+            ? config
+            : { ...config, endpoint: override.endpoint };
+        }),
+      );
+    }),
+    useEndpoint: Effect.fn("McpProviderSessions.useEndpoint")(function* (threadId, endpoint) {
+      const config = (yield* Ref.get(sessions)).get(threadId);
+      if (config === undefined) return;
+      const override = { providerSessionId: config.providerSessionId, endpoint };
+      yield* Effect.acquireRelease(
+        Effect.sync(() => endpoints.set(threadId, override)),
+        () =>
+          Effect.sync(() => {
+            if (endpoints.get(threadId) === override) endpoints.delete(threadId);
+          }),
+      );
     }),
     clear: Effect.fn("McpProviderSessions.clear")(function (threadId) {
       return Ref.update(sessions, (current) => {

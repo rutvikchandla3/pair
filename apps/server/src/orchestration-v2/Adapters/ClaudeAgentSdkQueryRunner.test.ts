@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -28,6 +29,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { spawnProcessGroup as spawnClaudeProcessGroup } from "../../workspaceHost/LocalWorkspaceHost.ts";
+import * as WorkspaceHostLoopback from "../../workspaceHost/WorkspaceHostLoopback.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import {
   ClaudeAgentSdkQueryRunner,
@@ -59,10 +61,11 @@ const writeClaudeSession = Effect.fnUntraced(function* (
       content: [{ type: "text", text: "hi" }],
     }),
   ],
+  project = "-repo",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectDir = path.join(configDir, "projects", "-repo");
+  const projectDir = path.join(configDir, "projects", project);
   yield* fileSystem.makeDirectory(projectDir, { recursive: true });
   yield* fileSystem.writeFileString(
     path.join(projectDir, `${FORK_SESSION_ID}.jsonl`),
@@ -117,6 +120,65 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+/**
+ * A loopback sandbox whose bundle directory is `dir`: the bridge runs `claude`, and the history
+ * worker `node <dir>/claude-history-worker.mjs`, from there.
+ */
+const sandboxQueryRunner = (dir: string) =>
+  layerQueryRunner.pipe(
+    Layer.provide(PortScanner.layerTest),
+    Layer.provide(Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined })),
+    Layer.provideMerge(WorkspaceHostLoopback.layerLoopback(dir, { bundleDirectory: dir })),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+
+// Subprocess fixture: the bundle's worker runs on the loopback runner.
+it.live("forks a sandbox session in the bundle's history worker on that machine", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bundle = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-worker-" });
+    yield* fileSystem.symlink(
+      yield* path.fromFileUrl(new URL("../../claude-history-worker.ts", import.meta.url)),
+      path.join(bundle, "claude-history-worker.mjs"),
+    );
+    // The sandbox's home: CLAUDE_CONFIG_DIR is the instance's, under the sandbox (README P1).
+    const configDir = path.join(bundle, "homes", "claudeAgent");
+    // The session's checkout is in the sandbox; Claude Code names its project after that path.
+    const checkout = path.join(bundle, "worktrees", "repo");
+    yield* fileSystem.makeDirectory(checkout, { recursive: true });
+    const projectDir = yield* writeClaudeSession(
+      configDir,
+      undefined,
+      checkout.replace(/[^a-zA-Z0-9]/g, "-"),
+    );
+    const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
+    yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
+    yield* Effect.gen(function* () {
+      const { runner } = yield* WorkspaceHostLoopback.LoopbackRunner;
+      const workerExited = yield* runner.table.events.pipe(
+        Stream.filter((event) => event._tag === "handle.exited"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const forked = yield* (yield* ClaudeAgentSdkQueryRunner).forkSession({
+        sessionId: FORK_SESSION_ID,
+        options: { dir: checkout },
+        environment: { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+        threadId: ThreadId.make("thread-fork-sandbox"),
+        providerSessionId: ProviderSessionId.make("session-fork-sandbox"),
+      });
+      assert.isTrue(Option.isSome(yield* Fiber.join(workerExited)));
+      assert.include(
+        yield* fileSystem.readFileString(path.join(projectDir, `${forked.sessionId}.jsonl`)),
+        '"content":"hello"',
+      );
+      assert.isString(forked.headMessageId);
+      assert.equal(inProcessFork.mock.calls.length, 0);
+    }).pipe(Effect.scoped, Effect.provide(sandboxQueryRunner(bundle)));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("forked Claude sessions keep their compaction chain", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -517,7 +579,7 @@ function fakeClaudeCli(script: string): string {
   return cli;
 }
 
-const openFakeCli = (cli: string, env?: NodeJS.ProcessEnv) =>
+const openFakeCli = (cli: string, env?: NodeJS.ProcessEnv, cwd?: string) =>
   Effect.gen(function* () {
     const runner = yield* ClaudeAgentSdkQueryRunner;
     return yield* runner.open({
@@ -530,6 +592,7 @@ const openFakeCli = (cli: string, env?: NodeJS.ProcessEnv) =>
         permissionMode: "default",
         pathToClaudeCodeExecutable: cli,
         ...(env === undefined ? {} : { env }),
+        ...(cwd === undefined ? {} : { cwd }),
       },
     });
   });
@@ -586,43 +649,55 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
-  const startupFailureMessage = (stderr: string) =>
-    Effect.gen(function* () {
-      const cli = fakeClaudeCli(`printf '%s\\n' '${stderr}' >&2\nexit 1`);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
-      );
-      const session = yield* openFakeCli(cli);
-      const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(exit));
-      return Exit.isFailure(exit)
-        ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
-        : "";
-    });
+  describe.each(["local", "sandbox"] as const)("on a %s host", (placement) => {
+    const startupFailureMessage = (stderr: string) =>
+      Effect.gen(function* () {
+        const cli = fakeClaudeCli(`printf '%s\\n' '${stderr}' >&2\nexit 1`);
+        const dir = NodePath.dirname(cli);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+        );
+        return yield* Effect.gen(function* () {
+          const session = yield* openFakeCli(
+            cli,
+            undefined,
+            placement === "sandbox" ? dir : undefined,
+          );
+          const exit = yield* Stream.runDrain(session.messages).pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(exit));
+          return Exit.isFailure(exit)
+            ? makeProviderFailure({ cause: exit.cause, class: "transport_error" }).message
+            : "";
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(placement === "local" ? realQueryRunner : sandboxQueryRunner(dir)),
+        );
+      });
 
-  // Claude Code refuses bypassPermissions as root and explains why only on
-  // stderr, so the turn failure has to carry that line.
-  it.effect("reports the CLI's root refusal when it exits before answering", () =>
-    Effect.gen(function* () {
-      assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
+    // Claude Code refuses bypassPermissions as root and explains why only on
+    // stderr, so the turn failure has to carry that line.
+    it.live("reports the CLI's root refusal when it exits before answering", () =>
+      Effect.gen(function* () {
+        assert.include(yield* startupFailureMessage(rootRefusal), rootRefusal);
+      }).pipe(Effect.scoped),
+    );
 
-  // Startup stderr can carry paths, tokens, or settings, so only the known
-  // refusal reaches the failure the client shows.
-  it.effect("keeps other startup stderr out of the turn failure", () =>
-    Effect.gen(function* () {
-      const surrounded = yield* startupFailureMessage(
-        `token=sk-private-123\n${rootRefusal}\nat /home/private/settings.json`,
-      );
-      assert.include(surrounded, rootRefusal);
-      assert.notInclude(surrounded, "sk-private-123");
-      assert.notInclude(surrounded, "/home/private");
+    // Startup stderr can carry paths, tokens, or settings, so only the known
+    // refusal reaches the failure the client shows.
+    it.live("keeps other startup stderr out of the turn failure", () =>
+      Effect.gen(function* () {
+        const surrounded = yield* startupFailureMessage(
+          `token=sk-private-123\n${rootRefusal}\nat /home/private/settings.json`,
+        );
+        assert.include(surrounded, rootRefusal);
+        assert.notInclude(surrounded, "sk-private-123");
+        assert.notInclude(surrounded, "/home/private");
 
-      const unknown = yield* startupFailureMessage("token=sk-private-123");
-      assert.notInclude(unknown, "sk-private-123");
-    }).pipe(Effect.provide(realQueryRunner)),
-  );
+        const unknown = yield* startupFailureMessage("token=sk-private-123");
+        assert.notInclude(unknown, "sk-private-123");
+      }).pipe(Effect.scoped),
+    );
+  });
 
   // The CLI keeps running its turn after its pipes close, so a server that
   // crashed would leave it working next to the session it resumes.

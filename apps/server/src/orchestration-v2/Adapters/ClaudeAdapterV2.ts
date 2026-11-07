@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- routed in M1 (1.12): in-process history and transcripts; server-scoped: attachments, MCP app snapshots, extracted text, the CLAUDE_CONFIG_DIR the in-process SDK reads, the CLI install, and host facts where no session host is given */
+/* oxlint-disable t3code/workspace-host-boundary -- server-scoped: local sessions' in-process history and transcripts (a sandbox's run in its bundle worker), attachments, MCP app snapshots, extracted text, the CLAUDE_CONFIG_DIR the in-process SDK reads, the CLI install, and host facts where no session host is given */
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
   compactDynamicToolOutput,
@@ -148,6 +148,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -171,10 +172,18 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import type {
+  WorkspaceHost,
   WorkspaceHostInfo,
   WorkspaceHostUnavailableError,
 } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
+import { makeSandboxClaudeProcess } from "../../sandbox/providers/ClaudeSandboxProcess.ts";
+import {
+  ensureSandboxProviderHome,
+  sandboxEnvironmentFor,
+  sandboxProviderHome,
+} from "../../sandbox/providers/SandboxProviderHome.ts";
+import type { SandboxEnvironmentError } from "../../sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -335,6 +344,7 @@ function mergeClaudeStreamUsage(
   };
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
+const CLAUDE_TASK_OUTPUT_WATCH_RETRY = "250 millis";
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
@@ -658,6 +668,8 @@ export interface ClaudeAgentSdkSubagentLookupInput {
   readonly sessionId: string;
   readonly agentId: string;
   readonly dir: string | null;
+  /** The session's environment; its CLAUDE_CONFIG_DIR locates the transcript in a sandbox. */
+  readonly environment: NodeJS.ProcessEnv;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -1043,6 +1055,13 @@ function makeClaudeAgentSdkProtocolLogger(input: {
 }
 
 const encodeClaudeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeClaudeSubagentLookup = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({ parent_tool_use_id: Schema.optional(Schema.NullOr(Schema.String)) }),
+    ),
+  ),
+);
 const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({ sessionId: Schema.String, headMessageId: Schema.optionalKey(Schema.String) }),
@@ -1055,14 +1074,51 @@ const claudeConfigDirOf = (
   homeDirectory: string,
 ) => path.resolve(environment.CLAUDE_CONFIG_DIR ?? path.join(homeDirectory, ".claude"));
 
+interface ClaudeWorkerInput {
+  readonly method: "forkSession" | "getSubagentMessages" | "resolveSettings";
+  readonly sessionId: string;
+  readonly options?: unknown;
+  readonly environment: NodeJS.ProcessEnv;
+}
+
+const claudeWorkerArguments = (input: ClaudeWorkerInput) => [
+  input.method,
+  input.sessionId,
+  encodeClaudeJson(input.options ?? {}),
+];
+
+/** The bundle's worker beside the sandbox's `t3`, with the session's environment only. */
+const runClaudeWorkerInSandbox = Effect.fn("runClaudeWorkerInSandbox")(function* (
+  sandbox: {
+    readonly spawner: WorkspaceHost["spawner"];
+    readonly info: Effect.Effect<Pick<WorkspaceHostInfo, "executablePath">>;
+  },
+  input: ClaudeWorkerInput,
+) {
+  const { executablePath } = yield* sandbox.info;
+  const worker = `${executablePath.slice(0, executablePath.lastIndexOf("/"))}/claude-history-worker.mjs`;
+  const result = yield* spawnAndCollect(
+    "node",
+    ChildProcess.make("node", [worker, ...claudeWorkerArguments(input)], {
+      env: input.environment,
+      extendEnv: false,
+    }),
+  ).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sandbox.spawner),
+    Effect.timeout("30 seconds"),
+  );
+  if (result.code !== 0) {
+    return yield* new ClaudeAgentSdkQueryRunnerError({
+      method: input.method,
+      cause: result.stderr.trim() || `Claude history worker exited with code ${result.code}.`,
+    });
+  }
+  return result.stdout;
+});
+
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
-const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
-  readonly method: "forkSession";
-  readonly sessionId: string;
-  readonly options?: ForkSessionOptions;
-  readonly environment: NodeJS.ProcessEnv;
-}) {
+const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: ClaudeWorkerInput) {
   const path = yield* Path.Path;
   const fromSource = import.meta.url.endsWith(".ts");
   // A single executable hosts the worker itself; it has no sibling script.
@@ -1080,16 +1136,12 @@ const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
   const executablePath = yield* HostProcess.ExecutablePath;
   const result = yield* spawnAndCollect(
     executablePath,
-    ChildProcess.make(
-      executablePath,
-      [...workerArguments, input.method, input.sessionId, encodeClaudeJson(input.options ?? {})],
-      {
-        env: {
-          ...input.environment,
-          ELECTRON_RUN_AS_NODE: "1",
-        },
+    ChildProcess.make(executablePath, [...workerArguments, ...claudeWorkerArguments(input)], {
+      env: {
+        ...input.environment,
+        ELECTRON_RUN_AS_NODE: "1",
       },
-    ),
+    }),
   ).pipe(Effect.timeout("30 seconds"));
   if (result.code !== 0) {
     return yield* new ClaudeAgentSdkQueryRunnerError({
@@ -1102,10 +1154,14 @@ const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
 
 const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(function* (
   input: ClaudeAgentSdkSessionForkInput,
+  sandbox: WorkspaceHost | undefined,
 ) {
-  return yield* runClaudeWorker({ ...input, method: "forkSession" }).pipe(
-    Effect.flatMap(decodeClaudeHistoryFork),
-  );
+  const workerInput = { ...input, method: "forkSession" as const };
+  return yield* (
+    sandbox === undefined
+      ? runClaudeWorker(workerInput)
+      : runClaudeWorkerInSandbox(sandbox, workerInput)
+  ).pipe(Effect.flatMap(decodeClaudeHistoryFork));
 });
 
 export const layerQueryRunner: Layer.Layer<
@@ -1196,6 +1252,9 @@ export const layerQueryRunner: Layer.Layer<
           };
           const spawnProcess =
             options.spawnClaudeCodeProcess ??
+            (host.kind === "sandbox"
+              ? yield* makeSandboxClaudeProcess({ host, onStderr: appendStderr })
+              : undefined) ??
             ((spawnOptions: ClaudeSpawnOptions) => {
               // Node can report "exit" before it has read the stderr the CLI wrote.
               let stderrDone = () => {};
@@ -1531,11 +1590,13 @@ export const layerQueryRunner: Layer.Layer<
             options: input.options,
           },
         });
+        const host = yield* hostForPath(input.options.dir, "forkSession");
         const hostEnvironment = yield* HostProcess.Environment;
         const homeDirectory = yield* HostProcess.HomeDirectory;
         const usesHostConfig =
+          host.kind === "local" &&
           claudeConfigDirOf(path, input.environment, homeDirectory) ===
-          claudeConfigDirOf(path, hostEnvironment, homeDirectory);
+            claudeConfigDirOf(path, hostEnvironment, homeDirectory);
         const fork: Effect.Effect<
           ForkSessionResult & { readonly headMessageId?: string },
           unknown
@@ -1544,13 +1605,8 @@ export const layerQueryRunner: Layer.Layer<
               try: () => forkClaudeSession(input.sessionId, input.options),
               catch: (cause) => queryRunnerError(cause, "forkSession"),
             })
-          : forkClaudeSessionInWorker(input).pipe(
-              Effect.provideServiceEffect(
-                ChildProcessSpawner.ChildProcessSpawner,
-                hostForPath(input.options.dir, "forkSession").pipe(
-                  Effect.map((host) => host.spawner),
-                ),
-              ),
+          : forkClaudeSessionInWorker(input, host.kind === "sandbox" ? host : undefined).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, host.spawner),
               Effect.provideService(Path.Path, path),
             );
         const result = yield* fork.pipe(
@@ -1599,15 +1655,24 @@ export const layerQueryRunner: Layer.Layer<
               agentId: input.agentId,
             },
           });
-          const messages = yield* Effect.tryPromise({
-            try: () =>
-              getSubagentMessages(input.sessionId, input.agentId, {
-                ...(input.dir === null ? {} : { dir: input.dir }),
-                limit: 1,
-              }),
-            catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
-          });
-          const toolUseId = messages[0]?.parent_tool_use_id ?? null;
+          const host = yield* hostForPath(input.dir ?? undefined, "getSubagentMessages");
+          const lookup = { ...(input.dir === null ? {} : { dir: input.dir }), limit: 1 };
+          const toolUseId =
+            host.kind === "sandbox"
+              ? yield* runClaudeWorkerInSandbox(host, {
+                  method: "getSubagentMessages",
+                  sessionId: input.sessionId,
+                  options: { ...lookup, agentId: input.agentId },
+                  environment: input.environment,
+                }).pipe(
+                  Effect.flatMap(decodeClaudeSubagentLookup),
+                  Effect.map((messages) => messages[0]?.parent_tool_use_id ?? null),
+                  Effect.mapError((cause) => queryRunnerError(cause, "getSubagentMessages")),
+                )
+              : yield* Effect.tryPromise({
+                  try: () => getSubagentMessages(input.sessionId, input.agentId, lookup),
+                  catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
+                }).pipe(Effect.map((messages) => messages[0]?.parent_tool_use_id ?? null));
           yield* logProtocolEvent({
             direction: "incoming",
             stage: "decoded",
@@ -4798,6 +4863,14 @@ export interface ClaudeAdapterV2Options {
   readonly hostForPath?: (
     cwd: string,
   ) => Effect.Effect<ClaudeSessionHost, WorkspaceHostUnavailableError>;
+  /** The cloud env of a sandbox cwd's processes. Absent: the sandbox host's own base. */
+  readonly sandboxEnvironmentAt?: (
+    cwd: string,
+    threadId: string,
+  ) => Effect.Effect<
+    Record<string, string>,
+    WorkspaceHostUnavailableError | SandboxEnvironmentError
+  >;
   readonly path: Path.Path;
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -4812,8 +4885,16 @@ export interface ClaudeAdapterV2Options {
 }
 
 interface ClaudeSessionHost {
+  readonly id: string;
+  readonly kind: "local" | "sandbox";
   readonly fileSystem: FileSystem.FileSystem;
-  readonly info: Effect.Effect<Pick<WorkspaceHostInfo, "platform" | "homeDirectory" | "userId">>;
+  readonly spawner: WorkspaceHost["spawner"];
+  readonly info: Effect.Effect<
+    Pick<
+      WorkspaceHostInfo,
+      "platform" | "homeDirectory" | "userId" | "environment" | "executablePath"
+    >
+  >;
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -4847,15 +4928,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
   const serverHost: ClaudeSessionHost = {
+    id: "local",
+    kind: "local",
     fileSystem,
+    spawner,
     info: Effect.gen(function* () {
       return {
         platform: yield* HostProcess.Platform,
         homeDirectory: yield* HostProcess.HomeDirectory,
         userId: yield* HostProcess.UserId,
+        environment: yield* HostProcess.Environment,
+        executablePath: yield* HostProcess.ExecutablePath,
       };
     }),
   };
+  // A sandbox CLI's home is its own (README P1); its settings resolve there, in the bundle's worker.
+  const sandboxHomeOf = (host: ClaudeSessionHost) =>
+    host.kind === "sandbox" ? sandboxProviderHome(host, adapterOptions.instanceId) : undefined;
+  const resolveSandboxSettings = Effect.fn("ClaudeAdapterV2.resolveSandboxSettings")(function* (
+    host: ClaudeSessionHost,
+    home: string,
+    request: { readonly cwd: string | null; readonly serverManagedSettings?: unknown },
+  ) {
+    const { environment } = yield* host.info;
+    return yield* runClaudeWorkerInSandbox(host, {
+      method: "resolveSettings",
+      sessionId: "-",
+      options: {
+        ...(request.cwd === null ? {} : { cwd: request.cwd }),
+        settingSources: ["user", "project", "local"],
+        ...(request.serverManagedSettings === undefined
+          ? {}
+          : { serverManagedSettings: request.serverManagedSettings }),
+      },
+      environment: { ...environment, CLAUDE_CONFIG_DIR: home },
+    });
+  });
   // Settings, skills and host facts read for a cwd come from the machine that cwd lives on.
   const hostAt = (cwd: string | null) =>
     cwd === null || adapterOptions.hostForPath === undefined
@@ -4875,23 +4983,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     function* (cwd: string | null) {
       // resolveSettings does not initialize remote-cache eligibility in the SDK host.
       // Keep the payload intact so the SDK also honors managedSourcesBehavior.
-      const cwdFileSystem = yield* fileSystemAt(cwd);
+      const cwdHost = yield* hostAt(cwd);
+      const cwdFileSystem = cwdHost.fileSystem;
+      const sandboxHome = sandboxHomeOf(cwdHost);
       const remote = yield* readBypassSettings(
         cwdFileSystem,
-        path.join(homePath, "remote-settings.json"),
+        path.join(sandboxHome ?? homePath, "remote-settings.json"),
       );
-      const home = customHome
-        ? yield* readBypassSettings(cwdFileSystem, path.join(homePath, "settings.json"))
-        : {};
-      const resolved = yield* Effect.tryPromise({
-        try: () =>
-          resolveClaudeSettings({
-            ...(cwd === null ? {} : { cwd }),
-            settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
-            serverManagedSettings: claudeSdkBypassSettings(remote),
-          }),
-        catch: (cause) => queryRunnerError(cause, "resolveSettings"),
-      });
+      const home =
+        customHome && sandboxHome === undefined
+          ? yield* readBypassSettings(cwdFileSystem, path.join(homePath, "settings.json"))
+          : {};
+      const effective =
+        sandboxHome === undefined
+          ? (yield* Effect.tryPromise({
+              try: () =>
+                resolveClaudeSettings({
+                  ...(cwd === null ? {} : { cwd }),
+                  settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
+                  serverManagedSettings: claudeSdkBypassSettings(remote),
+                }),
+              catch: (cause) => queryRunnerError(cause, "resolveSettings"),
+            })).effective
+          : yield* resolveSandboxSettings(cwdHost, sandboxHome, {
+              cwd,
+              serverManagedSettings: claudeSdkBypassSettings(remote),
+            }).pipe(
+              Effect.flatMap(decodeClaudeBypassSettings),
+              Effect.mapError((cause) => queryRunnerError(cause, "resolveSettings")),
+            );
       const launchArgSettings = yield* readClaudeLaunchArgSettings({
         settings: adapterOptions.settings,
         cwd,
@@ -4899,7 +5019,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         path,
       });
       const launch = yield* decodeClaudeLaunchArgBypassSettings(launchArgSettings ?? {});
-      const sources = [resolved.effective, home, remote, launch].map(claudeBypassAvailability);
+      const sources = [effective, home, remote, launch].map(claudeBypassAvailability);
       return {
         bypassDisabled: sources.some((source) => source.bypassDisabled),
         autoDisabled: sources.some((source) => source.autoDisabled),
@@ -4915,6 +5035,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         adapterOptions.environment.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL,
       );
       if (Option.isSome(fromEnvironment)) return fromEnvironment.value;
+      const cwdHost = yield* hostAt(cwd);
+      const sandboxHome = sandboxHomeOf(cwdHost);
+      if (sandboxHome !== undefined) {
+        return yield* resolveSandboxSettings(cwdHost, sandboxHome, { cwd }).pipe(
+          Effect.flatMap(decodeClaudeSubagentCacheSettings),
+          Effect.map((settings) => settings.subagentPromptCacheTtl),
+          Effect.orElseSucceed(() => undefined),
+        );
+      }
       const resolved = yield* Effect.tryPromise({
         try: () =>
           resolveClaudeSettings({
@@ -5001,7 +5130,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
               path.join(cwd, ".claude", "settings.json"),
             ]),
-        path.join(homePath, "settings.json"),
+        path.join(sandboxHomeOf(cwdHost) ?? homePath, "settings.json"),
       ];
       for (const settingsFile of settingsFiles) {
         const value = yield* readToolSearchSetting(cwdFileSystem, settingsFile);
@@ -5043,6 +5172,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const sessionHost = yield* hostAt(input.runtimePolicy.cwd);
+        // A sandbox session runs on the sandbox's environment and its own home (README P1).
+        const sessionEnvironment =
+          sessionHost.kind === "sandbox"
+            ? {
+                ...(input.runtimePolicy.cwd === null ||
+                adapterOptions.sandboxEnvironmentAt === undefined
+                  ? (yield* sessionHost.info).environment
+                  : yield* adapterOptions.sandboxEnvironmentAt(
+                      input.runtimePolicy.cwd,
+                      input.threadId,
+                    )),
+                CLAUDE_CONFIG_DIR: yield* ensureSandboxProviderHome(
+                  sessionHost,
+                  adapterOptions.instanceId,
+                ),
+              }
+            : adapterOptions.environment;
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -6169,6 +6316,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               sessionId: resume.nativeThreadId,
               agentId: resume.taskId,
               dir: resume.context.input.runtimePolicy.cwd,
+              environment: sessionEnvironment,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
             })
@@ -6524,13 +6672,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   transcriptDir,
                   agentId,
                   cursor,
-                  ...(adapterOptions.environment.CLAUDE_CONFIG_DIR === undefined
+                  ...(sessionEnvironment.CLAUDE_CONFIG_DIR === undefined
                     ? {}
                     : {
-                        configDir: path.resolve(
-                          session.cwd,
-                          adapterOptions.environment.CLAUDE_CONFIG_DIR,
-                        ),
+                        configDir: path.resolve(session.cwd, sessionEnvironment.CLAUDE_CONFIG_DIR),
                       }),
                 }).pipe(Effect.option);
               const drain = Effect.fnUntraced(function* () {
@@ -9072,7 +9217,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
-                  configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
+                  configDir: sessionEnvironment.CLAUDE_CONFIG_DIR,
                   cwd: path.resolve(context.input.runtimePolicy.cwd ?? "."),
                 });
               }
@@ -9424,6 +9569,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       itemId,
                       chunk,
                     }),
+                  // A sandbox's files are a round trip away: read on its watch, not a timer.
+                  // Until the CLI makes the root, each retry wakes one read.
+                  ...(sessionHost.kind === "sandbox"
+                    ? {
+                        changes: Stream.concat(
+                          Stream.make(undefined),
+                          sessionHost.fileSystem
+                            .watch(liveQuery.taskOutputRoot, { recursive: true })
+                            .pipe(Stream.as(undefined)),
+                        ).pipe(Stream.retry(Schedule.spaced(CLAUDE_TASK_OUTPUT_WATCH_RETRY))),
+                      }
+                    : {}),
                 }).pipe(
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -9764,7 +9921,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   Array.isArray(claudeTaskField(outputValue, "tasks"))
                 )
                   ? yield* readClaudeTaskList({
-                      environment: adapterOptions.environment,
+                      environment: sessionEnvironment,
                       cwd: context.input.runtimePolicy.cwd,
                       nativeThreadId: liveQuery.nativeThreadId,
                     }).pipe(
@@ -10874,7 +11031,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
             environment: {
               ...claudeQueryEnvironment(
-                adapterOptions.environment,
+                sessionEnvironment,
                 turnInput.appThread,
                 turnInput.appThread.lineage.relationshipToParent === "subagent"
                   ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
@@ -10960,7 +11117,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
             modelLedger: new Map(),
             taskOutputRoot: claudeTaskOutputRoot(
-              adapterOptions.environment,
+              sessionEnvironment,
               path,
               resolvedTurnCwd,
               turnHostInfo.platform,
@@ -11675,7 +11832,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const claudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(function* (
           nativeThreadId: string,
         ) {
-          const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+          const configuredDir = sessionEnvironment.CLAUDE_CONFIG_DIR?.trim() ?? "";
           const projectsDir = path.join(
             configuredDir.length > 0
               ? path.resolve(session.cwd, configuredDir)
@@ -11685,15 +11842,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Any message in any transcript copy means Claude may still resume it.
           let found = false;
           let unreadable = false;
-          for (const project of yield* fileSystem.readDirectory(projectsDir)) {
+          const transcriptFileSystem =
+            sessionHost.kind === "sandbox" ? sessionHost.fileSystem : fileSystem;
+          for (const project of yield* transcriptFileSystem.readDirectory(projectsDir)) {
             const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
             // Stray files beside the project dirs fail with ENOTDIR.
             if (
-              !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
+              !(yield* transcriptFileSystem
+                .exists(transcriptPath)
+                .pipe(Effect.orElseSucceed(() => false)))
             ) {
               continue;
             }
-            const conversationLine = yield* fileSystem
+            const conversationLine = yield* transcriptFileSystem
               .stream(transcriptPath)
               .pipe(
                 Stream.decodeText,
@@ -12209,7 +12370,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
-                environment: adapterOptions.environment,
+                environment: sessionEnvironment,
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
               });
@@ -12299,8 +12460,9 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
-    // Instance env is the local host's; 1.12 rebuilds it per session on a sandbox host.
+    // Instance env is the local host's; a sandbox session builds its own (openSession).
     const hostEnvironment = (yield* hosts.local.info).environment;
+    const sandboxEnvironment = yield* sandboxEnvironmentFor;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -12324,6 +12486,8 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       hostForPath: hosts.forPath,
+      sandboxEnvironmentAt: (cwd, threadId) =>
+        Effect.flatMap(hosts.forPath(cwd), (host) => sandboxEnvironment(host, threadId)),
       path,
       random,
       idAllocator,
