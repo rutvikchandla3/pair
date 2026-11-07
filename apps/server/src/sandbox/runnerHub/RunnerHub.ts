@@ -28,6 +28,8 @@ import type { RpcClientError } from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import type { CoarseOperations } from "../../workspaceHost/WorkspaceHost.ts";
+import * as RunnerOpsClient from "./RunnerOpsClient.ts";
 import {
   RunnerAuthError,
   type RunnerGrant,
@@ -73,6 +75,7 @@ export type RunnerClient = RpcClient.FromGroup<typeof RunnerRpcGroup, RpcClientE
 export interface RunnerConnection {
   readonly client: RunnerClient;
   readonly info: RunnerInfo;
+  readonly ops: CoarseOperations;
 }
 
 export type RunnerConnectionStatus =
@@ -447,7 +450,8 @@ const make = Effect.gen(function* () {
             ? { sandboxToken: runner.sandboxToken.value }
             : {}),
         });
-        const current = yield* attach(slot, socketId, runner, { client, info }).pipe(locked);
+        const ops = yield* RunnerOpsClient.make(client);
+        const current = yield* attach(slot, socketId, runner, { client, info, ops }).pipe(locked);
         if (current) yield* Deferred.await(disconnected);
       }).pipe(
         Effect.raceFirst(Deferred.await(close)),

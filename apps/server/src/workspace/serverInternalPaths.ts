@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect's realPath keeps the requested letter case.
+// oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: resolves the server's own state and secrets folders
 import * as NodeFSP from "node:fs/promises";
 
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
-import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
+import { isWithinRoot } from "./WorkspacePaths.ts";
 
 /** Builds a check for the server's own state files, which client file reads do not serve. */
 export const makeIsServerInternalPath = Effect.gen(function* () {

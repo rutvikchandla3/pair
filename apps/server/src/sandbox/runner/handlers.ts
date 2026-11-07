@@ -11,8 +11,6 @@ import {
   RUNNER_METHODS,
   RUNNER_PROTOCOL_VERSION,
   RunnerCoreRpcGroup,
-  RunnerOpsError,
-  RunnerOpsRpcGroup,
   RunnerSystemError,
   type RunnerFileInfo,
   type RunnerWatchEvent,
@@ -230,17 +228,3 @@ export const layer = RunnerCoreRpcGroup.toLayer(
     });
   }),
 );
-
-const opsFailure = (operation: RunnerOpsError["operation"]) =>
-  new RunnerOpsError({ operation, failure: "failed" });
-
-/** Coarse operations land with their services in a later change. */
-export const opsLayer = RunnerOpsRpcGroup.toLayer({
-  [RUNNER_METHODS.opsSearchEntries]: () => Effect.fail(opsFailure("search.entries")),
-  [RUNNER_METHODS.opsSearchContents]: () => Effect.fail(opsFailure("search.contents")),
-  [RUNNER_METHODS.opsSearchRefresh]: () => Effect.fail(opsFailure("search.refresh")),
-  [RUNNER_METHODS.opsEntriesBrowse]: () => Effect.fail(opsFailure("entries.browse")),
-  [RUNNER_METHODS.opsProcessesTable]: () => Stream.fail(opsFailure("processes.table")),
-  [RUNNER_METHODS.opsPortsListeners]: () => Stream.fail(opsFailure("ports.listeners")),
-  [RUNNER_METHODS.opsCheckpointCapture]: () => Effect.fail(opsFailure("checkpoint.capture")),
-});

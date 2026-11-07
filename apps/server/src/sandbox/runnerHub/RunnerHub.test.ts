@@ -93,6 +93,10 @@ it.effect(
         const connection = yield* Fiber.join(waiting);
         assert.equal(connection.info.runnerBootId, attached.runnerBootId);
         assert.isTrue((yield* connection.client["fs.stat"]({ path: "/" })).type === "Directory");
+        // Coarse operations ride the same socket; a second read is the subscription's latest table.
+        const table = yield* connection.ops.processTable;
+        assert.isTrue(table.some((entry) => entry.pid === process.pid));
+        assert.strictEqual(yield* connection.ops.processTable, table);
 
         // The token came in `runner.hello`; the reconnect uses it and attaches nothing new.
         const bearer = yield* runner.authorization;

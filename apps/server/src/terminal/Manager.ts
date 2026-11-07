@@ -79,6 +79,11 @@ import {
   type WorkspaceHostInfo,
 } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import {
+  readPosixProcessTable,
+  resolvePosixPsCommand,
+  TerminalSubprocessCheckError,
+} from "./processTable.ts";
 
 export {
   TerminalCwdError,
@@ -133,28 +138,6 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
-
-class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocessCheckError>()(
-  "TerminalSubprocessCheckError",
-  {
-    cause: Schema.optional(Schema.Defect()),
-    command: Schema.Literals(["powershell", "ps", "resource-monitor", "workspace-host"]),
-    exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
-    timedOut: Schema.optional(Schema.Boolean),
-    stdoutTruncated: Schema.optional(Schema.Boolean),
-  },
-) {
-  override get message(): string {
-    const details = [
-      this.exitCode !== undefined && this.exitCode !== null ? `exit code ${this.exitCode}` : null,
-      this.timedOut ? "timed out" : null,
-      this.stdoutTruncated ? "output truncated" : null,
-    ]
-      .filter((detail) => detail !== null)
-      .join(", ");
-    return `Failed to inspect terminal subprocesses with ${this.command}${details.length > 0 ? ` (${details})` : ""}`;
-  }
-}
 
 class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSignalError>()(
   "TerminalProcessSignalError",
@@ -706,24 +689,6 @@ function subprocessSnapshotPollDelayMs(
   );
 }
 
-function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
-  const childrenByParent = new Map<number, number[]>();
-  const commandById = new Map<number, string>();
-  for (const line of stdout.split(/\r?\n/g)) {
-    // The final comm column can contain spaces; only the first two tokens are structural.
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    const ppid = Number(match[2]);
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    commandById.set(pid, (match[3] ?? "").trim());
-    const children = childrenByParent.get(ppid) ?? [];
-    children.push(pid);
-    childrenByParent.set(ppid, children);
-  }
-  return { childrenByParent, commandById };
-}
-
 function processTableSnapshotFromProcesses(
   processes: ReadonlyArray<ResourceMonitorProcessTableEntry>,
 ): TerminalProcessTableSnapshot {
@@ -776,60 +741,6 @@ function deriveSubprocessInspectResult(
     processIds: [...processIds],
   };
 }
-
-const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
-
-// Resolve ps once; bare-name spawns repeatedly probe long PATHs during one-second polling.
-const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(function* (
-  host: WorkspaceHost,
-) {
-  for (const candidate of POSIX_PS_ABSOLUTE_PATHS) {
-    const exists = yield* host.fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
-    if (exists) return candidate;
-  }
-  return "ps";
-});
-
-const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
-  host: WorkspaceHost,
-  psCommand: string,
-  timeout: Duration.Input,
-): Effect.fn.Return<
-  TerminalProcessTableSnapshot,
-  TerminalSubprocessCheckError,
-  ProcessRunner.ProcessRunner
-> {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-  const result = yield* processRunner
-    .run({
-      host,
-      command: psCommand,
-      args: ["-eo", "pid=,ppid=,comm="],
-      timeout,
-      maxOutputBytes: 524_288,
-      outputMode: "truncate",
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new TerminalSubprocessCheckError({
-            cause,
-            command: "ps",
-          }),
-      ),
-    );
-  if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
-    // Reject partial tables; treating them as authoritative would clear process ids and mark terminals idle.
-    return yield* new TerminalSubprocessCheckError({
-      command: "ps",
-      exitCode: result.code,
-      timedOut: result.timedOut,
-      stdoutTruncated: result.stdoutTruncated,
-    });
-  }
-  return parsePosixProcessTable(result.stdout);
-});
 
 const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(function* (
   host: WorkspaceHost,
@@ -1566,7 +1477,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const query =
       info.platform === "win32"
         ? windowsProcessTableSnapshot(host, timeout)
-        : posixProcessTableSnapshot(host, yield* posixPsCommandFor(host), timeout);
+        : readPosixProcessTable(host, yield* posixPsCommandFor(host), timeout).pipe(
+            Effect.map(processTableSnapshotFromProcesses),
+          );
     return yield* query.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       Effect.result,

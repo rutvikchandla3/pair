@@ -682,6 +682,12 @@ const RunnerTcpCloseRpc = Rpc.make(RUNNER_METHODS.tcpClose, {
 // Coarse operations run existing server services inside the runner, with the payloads and
 // results of the client RPCs they back.
 
+/**
+ * A list result streams in pages of about this many bytes of entries, so every frame stays
+ * under the 256 KiB cap. Concatenated, the pages are the client RPC's result.
+ */
+export const RUNNER_OPS_PAGE_BYTES = 192 * 1024;
+
 export const RunnerOpsCheckpointCaptureInput = Schema.Union([
   Schema.TaggedStruct("baseline", { cwd: RunnerPath, checkpointRef: CheckpointRef }),
   Schema.TaggedStruct("turn", {
@@ -723,16 +729,19 @@ export class RunnerOpsError extends Schema.TaggedError<RunnerOpsError>()("Runner
 
 const RunnerOpsCallError = Schema.Union([RunnerLostError, RunnerSystemError, RunnerOpsError]);
 
+/** Pages of `RUNNER_OPS_PAGE_BYTES`, as are contents and browse. */
 const RunnerOpsSearchEntriesRpc = Rpc.make(RUNNER_METHODS.opsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
   error: RunnerOpsCallError,
+  stream: true,
 });
 
 const RunnerOpsSearchContentsRpc = Rpc.make(RUNNER_METHODS.opsSearchContents, {
   payload: ProjectSearchContentsInput,
   success: ProjectSearchContentsResult,
   error: RunnerOpsCallError,
+  stream: true,
 });
 
 const RunnerOpsSearchRefreshRpc = Rpc.make(RUNNER_METHODS.opsSearchRefresh, {
@@ -744,6 +753,7 @@ const RunnerOpsEntriesBrowseRpc = Rpc.make(RUNNER_METHODS.opsEntriesBrowse, {
   payload: ProjectListEntriesInput,
   success: ProjectListEntriesResult,
   error: RunnerOpsCallError,
+  stream: true,
 });
 
 /** A snapshot first, then one on each change. */
@@ -754,7 +764,10 @@ const RunnerOpsProcessesTableRpc = Rpc.make(RUNNER_METHODS.opsProcessesTable, {
   stream: true,
 });
 
-/** A snapshot first, then one on each change. The runner knows no threads, so it sends null. */
+/**
+ * A snapshot first, then one on each change. Every listener is listed with a null terminal, which
+ * the server fills; an agent's server carries the thread its process inherited.
+ */
 const RunnerOpsPortsListenersRpc = Rpc.make(RUNNER_METHODS.opsPortsListeners, {
   payload: Schema.Struct({ configuredUrls: Schema.Array(Schema.String) }),
   success: Schema.Array(DiscoveredLocalServer),

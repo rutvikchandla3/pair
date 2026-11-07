@@ -451,8 +451,10 @@ const isNoSuchProcess = (cause: unknown): boolean =>
 const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
   PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound";
 
-/** @public */
-export const make = Effect.gen(function* PortDiscoveryMake() {
+const makeScanner = Effect.fn("PortDiscovery.make")(function* (options: {
+  /** Lists unowned listeners too, leaving their terminal for the caller to fill. */
+  readonly allListeners: boolean;
+}) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
@@ -722,7 +724,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       if (probe.isWeb) configured.set(group.configuredKey, { ...group.server, url: group.url });
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
-    return { discovered: servers.filter(isOwned), configured } satisfies WebProbeSnapshot;
+    return {
+      discovered: options.allListeners ? servers : servers.filter(isOwned),
+      configured,
+    } satisfies WebProbeSnapshot;
   });
 
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
@@ -797,10 +802,16 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // still found one.
     const agentsPossible =
       hostPlatform !== "win32" &&
-      (runningAgents > 0 ||
+      (options.allListeners ||
+        runningAgents > 0 ||
         agentScanPending ||
         [...(yield* Ref.get(agentThreadsRef)).values()].some((threadId) => threadId !== null));
-    if (terminalOwners.size === 0 && configuredUrls.length === 0 && !agentsPossible) {
+    if (
+      !options.allListeners &&
+      terminalOwners.size === 0 &&
+      configuredUrls.length === 0 &&
+      !agentsPossible
+    ) {
       return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
     }
     const resolveOwners = (pids: ReadonlyArray<number>) =>
@@ -1084,9 +1095,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     trackAgent,
     stopServer,
   });
-}).pipe(Effect.withSpan("PortDiscovery.make"));
+});
+
+/** @public */
+export const make = makeScanner({ allListeners: false });
 
 export const layer = Layer.effect(PortDiscovery, make);
+
+/**
+ * Every loopback listener, owned or not, for the runner: agent servers carry the thread their
+ * process inherited in `T3CODE_THREAD_ID`, and the server fills terminal owners itself.
+ */
+export const layerAllListeners = Layer.effect(PortDiscovery, makeScanner({ allListeners: true }));
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
 export const layerTest = Layer.mock(PortDiscovery)({ trackAgent: () => () => undefined });

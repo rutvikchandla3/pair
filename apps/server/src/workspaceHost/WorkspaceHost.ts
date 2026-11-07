@@ -1,9 +1,26 @@
+import type {
+  DiscoveredLocalServer,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
+  ProjectSearchContentsInput,
+  ProjectSearchContentsResult,
+  ProjectSearchEntriesInput,
+  ProjectSearchEntriesResult,
+  ResourceMonitorProcessTableEntry,
+} from "@t3tools/contracts";
+import type {
+  RunnerLostError,
+  RunnerOpsCheckpointCaptureInput,
+  RunnerOpsCheckpointCaptureResult,
+  RunnerOpsError,
+} from "@t3tools/contracts/runner";
 import type { AgentScopeShape } from "@t3tools/shared/AgentScope";
 import type * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type * as Brand from "effect/Brand";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as Stream from "effect/Stream";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the Claude Agent SDK's process type uses Node streams.
 import type * as NodeStream from "node:stream";
 import * as Schema from "effect/Schema";
@@ -80,6 +97,38 @@ export interface WorkspaceHost {
     input: ProcessGroupSpawnInput,
     hooks: ProcessGroupHooks,
   ) => ProcessGroupProcess;
+}
+
+export type CoarseOperationError = RunnerOpsError | RunnerLostError;
+
+/**
+ * Existing server services run on the host's own disk, one call each where primitives would
+ * cost many round trips (02 §5). Results are what the matching client RPCs return.
+ */
+export interface CoarseOperations {
+  readonly searchEntries: (
+    input: ProjectSearchEntriesInput,
+  ) => Effect.Effect<ProjectSearchEntriesResult, CoarseOperationError>;
+  readonly searchContents: (
+    input: ProjectSearchContentsInput,
+  ) => Effect.Effect<ProjectSearchContentsResult, CoarseOperationError>;
+  readonly listEntries: (
+    input: ProjectListEntriesInput,
+  ) => Effect.Effect<ProjectListEntriesResult, CoarseOperationError>;
+  /** Failures are logged, as `WorkspaceEntries.refresh` does. */
+  readonly refreshSearch: (cwd: string) => Effect.Effect<void>;
+  /** The latest table, kept current while the connection lives; no round trip per read. */
+  readonly processTable: Effect.Effect<
+    ReadonlyArray<ResourceMonitorProcessTableEntry>,
+    CoarseOperationError
+  >;
+  /** A snapshot, then one on each change. Thread fields are left for the server to fill. */
+  readonly portListeners: (
+    configuredUrls: ReadonlyArray<string>,
+  ) => Stream.Stream<ReadonlyArray<DiscoveredLocalServer>, CoarseOperationError>;
+  readonly checkpointCapture: (
+    input: RunnerOpsCheckpointCaptureInput,
+  ) => Effect.Effect<RunnerOpsCheckpointCaptureResult, CoarseOperationError>;
 }
 
 export type WorkspaceFileKind = "File" | "Directory" | "SymbolicLink" | "Other";

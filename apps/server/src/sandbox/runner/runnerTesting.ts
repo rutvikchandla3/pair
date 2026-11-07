@@ -8,6 +8,8 @@ import * as Ref from "effect/Ref";
 import * as NodePtyAdapter from "../../terminal/NodePtyAdapter.ts";
 import * as HandleTable from "./HandleTable.ts";
 import * as Handlers from "./handlers.ts";
+import * as OpsHandlers from "./opsHandlers.ts";
+import * as OpsLayer from "./opsLayer.ts";
 import { RunnerConfig } from "./RunnerConfig.ts";
 import { RunnerCredential } from "./RunnerSocketServer.ts";
 
@@ -31,8 +33,9 @@ const layerMemoryCredential = Layer.effect(
  * The runner's handlers in process, against real child processes, PTYs and files. Serve them
  * with `RpcTest.makeClient(RunnerRpcGroup)` or an `RpcServer` over an in-memory socket.
  */
-export const layer = Layer.mergeAll(Handlers.layer, Handlers.opsLayer).pipe(
+export const layer = Layer.mergeAll(Handlers.layer, OpsHandlers.layer).pipe(
   Layer.provideMerge(HandleTable.layer),
+  Layer.provideMerge(OpsLayer.layer),
   Layer.provideMerge(layerMemoryCredential),
   Layer.provide(
     Layer.succeed(RunnerConfig, {

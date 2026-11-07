@@ -16,6 +16,7 @@ import { describe, expect } from "vite-plus/test";
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
+import * as CheckpointCapture from "./CheckpointCapture.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -141,9 +142,12 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       const checkpointStore = Context.get(context, CheckpointStore.CheckpointStore);
       const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("thread-op-count"), 1);
 
-      expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
-      expect(yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef })).toBe(false);
-      yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+      // The baseline the server and the runner both run: detection, ref lookup, then capture.
+      const baseline = yield* CheckpointCapture.captureBaseline({ cwd: tmp, checkpointRef }).pipe(
+        Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore),
+      );
+      expect(baseline.status).toBe("ready");
+      expect(baseline.commitOid).toMatch(/^[0-9a-f]{40}$/);
 
       // Each of the three detections probes `.t3code/vcs.json` in every folder up to the root and
       // checks three paths on disk; the first, a cache miss, checks them twice.

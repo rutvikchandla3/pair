@@ -31,3 +31,21 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(WorkspaceHosts, make);
+
+/**
+ * Every path is local, the reserved root included. Only for the runner: inside a sandbox its
+ * `/t3-sandbox/<id>/` is local disk.
+ */
+export const layerLocalOnly = Layer.effect(
+  WorkspaceHosts,
+  Effect.gen(function* () {
+    const local = yield* LocalWorkspaceHost.make;
+    // Untraced, as in `make`: every workspace operation resolves here.
+    return WorkspaceHosts.of({
+      local,
+      forPath: Effect.fnUntraced(function* () {
+        return local;
+      }),
+    });
+  }),
+);

@@ -186,8 +186,9 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
     yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
     const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
 
-    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const commitOid = yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
+    assert.strictEqual(commitOid, (yield* git(["rev-parse", checkpointRef])).stdout.trim());
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", nested])).stdout, "");
@@ -332,8 +333,9 @@ it.effect("checkpoint capture keeps LF files that core.safecrlf would refuse to 
     yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
     const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
 
-    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    const commitOid = yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
+    assert.strictEqual(commitOid, (yield* git(["rev-parse", checkpointRef])).stdout.trim());
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
     assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);

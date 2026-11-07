@@ -44,13 +44,13 @@ import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEm
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
-import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { resolveWorktreesDirectory } from "../worktreePaths.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
-import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { makeIsServerInternalPath } from "../workspace/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 

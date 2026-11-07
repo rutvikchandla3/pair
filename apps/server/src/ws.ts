@@ -70,7 +70,6 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadStreamItem,
   type ApplicationStoredEvent,
-  type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
   type ProjectMutation,
@@ -526,63 +525,6 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
     { concurrency: 2 },
   );
 });
-
-function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
-  readonly failure: ProjectEntriesFailure;
-  readonly normalizedCwd?: string;
-  readonly timeout?: string;
-  readonly detail?: string;
-} {
-  switch (error._tag) {
-    case "WorkspaceRootNotExistsError":
-      return {
-        failure: "workspace_root_not_found",
-        normalizedCwd: error.normalizedWorkspaceRoot,
-      };
-    case "WorkspaceRootCreateFailedError":
-      return {
-        failure: "workspace_root_create_failed",
-        normalizedCwd: error.normalizedWorkspaceRoot,
-      };
-    case "WorkspaceRootStatFailedError":
-      return {
-        failure: "workspace_root_stat_failed",
-        normalizedCwd: error.normalizedWorkspaceRoot,
-        detail: error.phase,
-      };
-    case "WorkspaceRootNotDirectoryError":
-      return {
-        failure: "workspace_root_not_directory",
-        normalizedCwd: error.normalizedWorkspaceRoot,
-      };
-    case "WorkspaceEntriesReadDirectoryError":
-      return {
-        failure: "directory_list_failed",
-        ...(error.cwd !== undefined ? { normalizedCwd: error.cwd } : {}),
-        detail: error.message,
-      };
-    case "WorkspaceSearchIndexCreateFailed":
-      return {
-        failure: "search_index_create_failed",
-        normalizedCwd: error.cwd,
-        detail: error.reason,
-      };
-    case "WorkspaceSearchIndexScanTimedOut":
-      return {
-        failure: "search_index_scan_timed_out",
-        normalizedCwd: error.cwd,
-        timeout: error.timeout,
-      };
-    case "WorkspaceSearchIndexSearchFailed":
-      return {
-        failure: "search_index_search_failed",
-        normalizedCwd: error.cwd,
-        detail: error.reason,
-      };
-    default:
-      return unexpectedCompatibilityError(error);
-  }
-}
 
 function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntriesBrowseError): {
   readonly failure: FilesystemBrowseFailure;
@@ -3105,7 +3047,7 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   queryLength: input.query.length,
                   limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
+                  ...WorkspaceEntries.entriesFailureContext(cause),
                   cause,
                 }),
             ),
@@ -3118,7 +3060,7 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   queryLength: input.query.length,
                   limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
+                  ...WorkspaceEntries.entriesFailureContext(cause),
                   cause,
                 }),
             ),
@@ -3129,7 +3071,7 @@ export const layerWsRpc = (
               (cause) =>
                 new ProjectListEntriesError({
                   ...input,
-                  ...projectEntriesFailureContext(cause),
+                  ...WorkspaceEntries.entriesFailureContext(cause),
                   cause,
                 }),
             ),
@@ -3140,7 +3082,7 @@ export const layerWsRpc = (
               (cause) =>
                 new ProjectListEntriesError({
                   ...input,
-                  ...projectEntriesFailureContext(cause),
+                  ...WorkspaceEntries.entriesFailureContext(cause),
                   cause,
                 }),
             ),

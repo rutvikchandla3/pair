@@ -9,6 +9,8 @@ import { RunnerRpcGroup } from "@t3tools/contracts/runner";
 import * as NodePtyAdapter from "../../terminal/NodePtyAdapter.ts";
 import * as HandleTable from "./HandleTable.ts";
 import * as Handlers from "./handlers.ts";
+import * as OpsHandlers from "./opsHandlers.ts";
+import * as OpsLayer from "./opsLayer.ts";
 import { RunnerConfig, readRunnerConfig, type RunnerConfigShape } from "./RunnerConfig.ts";
 import * as RunnerSocketServer from "./RunnerSocketServer.ts";
 
@@ -17,11 +19,12 @@ const MAX_FRAME_BYTES = 256 * 1024 + 1024;
 
 const RunnerServerLayer = (config: RunnerConfigShape) =>
   RpcServer.layer(RunnerRpcGroup).pipe(
-    Layer.provide([Handlers.layer, Handlers.opsLayer]),
+    Layer.provide([Handlers.layer, OpsHandlers.layer]),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RunnerSocketServer.layer),
     Layer.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: MAX_FRAME_BYTES })),
     Layer.provide(HandleTable.layer),
+    Layer.provide(OpsLayer.layer),
     Layer.provide(RunnerSocketServer.layerCredential),
     Layer.provide(NodePtyAdapter.layer),
     Layer.provide(Layer.succeed(RunnerConfig, config)),

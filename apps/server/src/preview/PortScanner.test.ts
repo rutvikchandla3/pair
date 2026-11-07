@@ -86,11 +86,13 @@ const layerLsofScanner = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly stdout?: () => string;
+  readonly scanner?: typeof PortScanner.layer;
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }) =>
-  PortScanner.layer.pipe(
+  (input.scanner ?? PortScanner.layer).pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerNoProc,
+        input.fileSystem ?? layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
@@ -374,6 +376,51 @@ effectIt.effect("discovers owned listeners without sending HTTP or TLS probes", 
     expect(requests).toEqual([]);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt.effect(
+  "lists unowned listeners for the runner, with agents from their environment",
+  () => {
+    const stdout = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\np5678\ncvite\nn127.0.0.1:${LSOF_TEST_PORT + 1}\n`;
+    const missing = FileSystem.makeNoop({});
+    const fileSystem = FileSystem.layerNoop({
+      readFileString: (path) =>
+        path === "/proc/5678/environ"
+          ? Effect.succeed("PATH=/bin\0T3CODE_THREAD_ID=thread-agent\0")
+          : missing.readFileString(path),
+    });
+    const layer = layerLsofScanner({
+      pid: () => 1234,
+      fetch: globalThis.fetch,
+      stdout: () => stdout,
+      scanner: PortScanner.layerAllListeners,
+      fileSystem,
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toEqual([
+        {
+          host: "localhost",
+          port: LSOF_TEST_PORT,
+          url: `http://localhost:${LSOF_TEST_PORT}`,
+          processName: "node",
+          pid: 1234,
+          terminal: null,
+          agent: null,
+        },
+        {
+          host: "localhost",
+          port: LSOF_TEST_PORT + 1,
+          url: `http://localhost:${LSOF_TEST_PORT + 1}`,
+          processName: "vite",
+          pid: 5678,
+          terminal: null,
+          agent: { threadId: "thread-agent" },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 effectIt.effect(
   "excludes configured URLs answering with HTTP errors, non-navigation responses, or non-documents",

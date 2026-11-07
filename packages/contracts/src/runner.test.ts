@@ -7,8 +7,10 @@ import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 
 import { CheckpointRef } from "./baseSchemas.ts";
+import type { ProjectEntry } from "./project.ts";
 import {
   RUNNER_METHODS,
+  RUNNER_OPS_PAGE_BYTES,
   RUNNER_PROTOCOL_VERSION,
   RunnerCoreRpcGroup,
   RunnerHandleId,
@@ -462,6 +464,36 @@ describe("runner protocol codec", () => {
     expect(Redacted.isRedacted(decoded.sandboxToken)).toBe(true);
     expect(Redacted.value(decoded.sandboxToken as Redacted.Redacted<string>)).toBe("sandbox-token");
   });
+
+  it.effect("fits a page of a 25,000-entry listing in one frame", () =>
+    Effect.gen(function* () {
+      const serialization = yield* RpcSerialization.RpcSerialization;
+      const browse = rpcSchemas(RunnerRpcGroup.requests.get(RUNNER_METHODS.opsEntriesBrowse)!);
+      const frame = Effect.fn(function* (entries: ReadonlyArray<ProjectEntry>) {
+        const values = yield* Schema.encodeUnknownEffect(
+          serialization.codecFor(Schema.NonEmptyArray(browse.success)),
+        )([{ entries, truncated: false }]);
+        return serialization.makeUnsafe().encode({ _tag: "Chunk", requestId: "1", values });
+      });
+      const entries = Array.from({ length: 25_000 }, (_, index) => ({
+        path: `packages/feature-${Math.floor(index / 50)}/src/module-${index}.ts`,
+        kind: "file" as const,
+      }));
+      // The runner pages by each entry's JSON size, which is never below its binary size.
+      let bytes = 0;
+      const page = entries.filter(
+        (entry) => (bytes += JSON.stringify(entry).length) <= RUNNER_OPS_PAGE_BYTES,
+      );
+
+      const whole = yield* frame(entries);
+      const first = yield* frame(page);
+
+      expect(() => serialization.makeUnsafe().decode(whole!)).toThrow(/maxFrameSize/);
+      expect(serialization.makeUnsafe().decode(first!)).toHaveLength(1);
+    }).pipe(
+      Effect.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: 256 * 1024 + 1024 })),
+    ),
+  );
 
   it.effect("fits a 256 KiB output chunk in the frame cap and rejects one twice that size", () =>
     Effect.gen(function* () {
