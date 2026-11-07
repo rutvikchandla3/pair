@@ -10,18 +10,17 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (44 of 57):**
+**Landed on `feat/pair` (45 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29, 1.26.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29, 1.26, 1.35.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.16 cloud launch (critical path)
-- 1.35 push and PR (done on `wt/1.35`, rebasing onto 1.29)
 - 1.34 attachments
 
 **Not started (9), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
@@ -570,7 +569,7 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 ## 1.35 push + PR from cloud threads (landed)
 
 - sandbox/credentials/SandboxGitHooks.ts: Context.Reference (default no-op); real layer acts only on `/t3-sandbox/` cwds: picks the thread (caller if attached → thread whose worktreePath is the cwd → owner), refuses `cloud-push-unsupported-host` (non-GitHub) / `github-credential-missing` before git runs, else returns `{ T3CODE_THREAD_ID }`.
-- GitCredentialService `sourceFor(threadId)` (`app-installation` | `member-account` | none; never mints). GitManager `pushCurrentBranch(threadId)` uses the hook env; GitVcsDriver `pushCurrentBranch(options.env)`. server.ts `layerGitCredentialService` shared by RunnerForwards and the hook.
+- GitCredentialService `sourceFor(threadId)` (`app-installation` | `member-account` | none; never mints). GitManager `pushCurrentBranch(threadId)` uses the hook env; GitVcsDriver `pushCurrentBranch(options.env)`. Shared `makeSourceFor` (used by GitCredentialService.sourceFor and SandboxGitHooks; returns `member-token` for a pasted token) — a shared GitCredentialService layer would cycle through OrchestratorV2 → GitManager after 1.29.
 - client-runtime `state/vcsAction.ts` `vcsActionErrorMessage` (codes → copy); used by web GitActionsControl toast. 1.41 reuses it.
 - Gaps: App key set but not installed → hook allows, helper fallback decides (missing owner credential shows as git stderr). SourceControlRepositoryService publish push doesn't use the hook.
 
