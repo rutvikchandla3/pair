@@ -10,18 +10,17 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (39 of 57):**
+**Landed on `feat/pair` (40 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.12 sessions on sandbox hosts (critical path)
-- 1.33 stopped reads
 - 1.28a owner's GitHub
 
 **Not started (15), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
@@ -29,7 +28,7 @@ pushed — if the container is gone, restart these from their spec):
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
 | after 1.12 | 1.16 cloud launch (critical), 1.26 provider credentials (also 1.13, 1.25), 1.34 attachments                          |
-| now        | 1.33 stopped reads (in flight next)                                                                                  |
+| now        | 1.29 revocation (needs 1.19, 1.28 — landed)                                                                          |
 | after 1.16 | 1.17 shared sandboxes, 1.24 setup scripts, 1.38 web Cloud mode (also 1.37), 1.42 MCP + CLI, 1.43 machine-failed push |
 | after 1.28 | 1.28a owner's GitHub, then 1.29 revocation (also 1.19), 1.35 push + PR (also 1.31)                                   |
 | after 1.17 | 1.18 admission                                                                                                       |
@@ -528,7 +527,19 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - `SandboxProcessEnvironment.forProcess(host, threadId)` adds GIT_COMMITTER_NAME/EMAIL (server global git config, fallback "T3 Code") and T3CODE_THREAD_ID.
 - Image: provision.sh writes /etc/gitconfig, real gh → /usr/bin/gh, gh-shim.sh at /usr/local/bin/gh. `t3-sandbox:dev` must be REBUILT for real-container tests. docs/user/source-control.md has the App section.
 
+## 1.33 stopped reads (landed)
+
+- sandbox/mirror/StoppedSandboxReads.ts: `viewFor` (→ `StoppedView` incl. cwd; newest checkpoint by committer date, ties → innermost checkout, higher turn), `refuseWrite`, `list`, `search`, `searchContents`, `browse`, `readFile` — git against the mirror under live caps (25k entries, 1 MiB, 250 ms); `..`/`~`/`.git` refused. No synced checkpoint → empty results (`readFile` exists:false).
+- WorkspaceEntries/WorkspaceFileSystem catch WorkspaceHostUnavailableError; writes fail `SandboxAsleep{sandboxId, state}` (contracts sandbox.ts) → ws.ts maps to `ProjectWriteFileError{failure:"operation_failed", sandboxId, message}` (new optional field, old clients decode).
+- Terminal on stopped machine: existing → exited snapshot; new → TerminalNotRunningError. VcsStatusBroadcaster keeps last status silently. ThreadPullRequestService skips stopped machines (replaces 0.8 fallback). Restore safety/rollback fallbacks untouched.
+- Web: apps/web/src/state/sandbox.ts (sandboxEnvironment atoms — 1.38/1.39 reuse), components/sandbox/stoppedFilesNotice.tsx ("As of turn N" + Wake; FilePreviewPanel read-only while stopped).
+- Helpers: `CheckpointMirror.mirrorGitDir`, exported `WorkspaceFileSystem.PROJECT_READ_FILE_MAX_BYTES`. Still failing on stopped machines: asset-URL reads, HtmlRender.
+- Env: web browser tests can't launch here (Playwright wants chromium_headless_shell-1223; /opt/pw-browsers has 1243).
+
 ## Open follow-ups and risks
+
+- FLAKY: `SandboxWorkspaceHost.test.ts` "closing a spawn scope signals with killSignal and escalates on the runner" fails ~1 in 2 under load (fix in flight as `fix-flaky-kill`).
+- Web browser tests can't launch in this container (Playwright browser version mismatch); environment only.
 
 - Runner PTY budgets (1.44) still miss after the perf-pty fix under load; re-benchmark on an idle machine and decide whether to batch acks in the hub.
 - 1.16 must warm `RunnerBundle.current` outside the 60 s sandbox effect (source-run servers build the bundle on first use), and add `sandbox.release-waiters` to the boot-timeout arm (1.19).
