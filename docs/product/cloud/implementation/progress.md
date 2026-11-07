@@ -10,21 +10,21 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (38 of 57):**
+**Landed on `feat/pair` (39 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.12 sessions on sandbox hosts (critical path)
-- 1.28 git credentials
 - 1.33 stopped reads
+- 1.28a owner's GitHub
 
-**Not started (16), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (15), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -518,6 +518,15 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 
 - runner HandleTable `OutputBuffer.push` wakes the reader on `setImmediate` for a lone write; pushes <0.5 ms apart wait up to 1 ms or 64 KiB. Applies to all buffers. Benchmark loopback runner gets `PAIR_AGENT_USER`.
 - Under load (4–8 on 4 CPUs): mean frame 5.4 → ~27 KiB, CPU/MB ~16 → ~9 ms, PTY 32 → 38 MB/s loopback, Docker 25 → 29 MB/s. Budgets (≥50 MB/s, ≤5 ms/MB) still miss; stdout p99 noisy under load. RE-RUN `vp run bench:runner` on an IDLE machine in the integrated pass before judging. Remaining hub CPU: per-frame ack writev + websocket receive.
+
+## 1.28 git credentials (landed)
+
+- contracts runner.ts: git-credential request has no `operation`; response `{version, answer}` with `Credential{username, password: Redacted, expiresAt}` | `Refused{code, message}` (codes incl. `unavailable`).
+- credentials/GitHubAppInstallationTokens.ts: JWT (RS256, PKCS#1→PKCS#8) from App settings; per-repo token with contents/pull_requests write + metadata read (never workflows); 15 s per call; server-side cache per `<sandboxId>\0<repo>` until 5 min before expiry, locked; no bodies in errors. 1.29 adds `forget`.
+- credentials/GitCredentialService.ts (real layer): https github.com only; helper's thread id trusted only if attached to the socket's sandbox (else owner thread); project repo via RepositoryIdentityResolver or a verified fork (cached); order App → `MemberGitHub.credentialFor(thread.ownerId)` → refusal; always answers, 45 s bound. `GitCredentialError` deleted. `sourceFor` left to 1.35.
+- RunnerForwards git forward calls `credentials.answer` (membership check moved into the service). gitCredentialHelper: refusal → `quit=1` + stderr; `token [--host]` mode for the gh shim.
+- `SandboxProcessEnvironment.forProcess(host, threadId)` adds GIT_COMMITTER_NAME/EMAIL (server global git config, fallback "T3 Code") and T3CODE_THREAD_ID.
+- Image: provision.sh writes /etc/gitconfig, real gh → /usr/bin/gh, gh-shim.sh at /usr/local/bin/gh. `t3-sandbox:dev` must be REBUILT for real-container tests. docs/user/source-control.md has the App section.
 
 ## Open follow-ups and risks
 
