@@ -17,8 +17,9 @@ no specs yet ([README](./README.md): write them after M1 lands).
 - M1 (36): 1.1–1.16, 1.19–1.23, 1.25–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
-**In flight:** nothing. Work paused on 2026-11-07 after 1.16 landed; every worktree was merged
-and removed, so a fresh container loses nothing.
+**In flight (2026-11-07, second session):** 1.17, 1.38, 1.42, 1.24, each in `../pair-wt/<id>` on
+`wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
+and relaunch those PRs.
 
 **Not started (10)**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
