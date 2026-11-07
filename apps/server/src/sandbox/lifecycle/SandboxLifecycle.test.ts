@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   MemberId,
   MessageId,
+  NodeId,
   type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
@@ -16,6 +17,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -41,12 +43,14 @@ import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProviderRuntimeRecovery from "../../orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderTurnControl from "../../orchestration-v2/ProviderTurnControlService.ts";
 import * as ProviderTurnStart from "../../orchestration-v2/ProviderTurnStartService.ts";
 import * as RunFinalization from "../../orchestration-v2/RunFinalizationService.ts";
 import * as RuntimeRequests from "../../orchestration-v2/RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadTitles from "../../orchestration-v2/ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -1114,5 +1118,147 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
         driverRef: `pair-0f1e2d3c-${sandboxId}-g1`,
       });
     }).pipe(Effect.scoped),
+  );
+});
+
+const delegate = (
+  parentThreadId: ThreadId,
+  parentRun: { readonly id: RunId; readonly rootNodeId: NodeId | null },
+  key: string,
+  placement: Pick<
+    Extract<OrchestrationV2ServerCommand, { readonly type: "delegated_task.request" }>,
+    "workspaceStrategy" | "sandbox"
+  > = {},
+) =>
+  dispatch({
+    type: "delegated_task.request",
+    commandId: CommandId.make(`delegate:${key}`),
+    parentThreadId,
+    parentRunId: parentRun.id,
+    parentNodeId: parentRun.rootNodeId ?? NodeId.make("missing"),
+    task: "Fix the cache.",
+    modelSelection: { instanceId, model: "gpt-5.1-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "agent",
+    creationSource: "mcp",
+    ...placement,
+  }).pipe(
+    Effect.map((sent) => {
+      const created = sent.storedEvents.find(
+        (stored) =>
+          stored.event.type === "thread.created" && stored.event.threadId !== parentThreadId,
+      );
+      if (created?.event.type !== "thread.created") throw new Error("Expected a child thread");
+      const run = sent.storedEvents.find(
+        (stored) =>
+          stored.event.type === "run.created" && stored.event.threadId === created.event.threadId,
+      );
+      if (run?.event.type !== "run.created") throw new Error("Expected a child run");
+      return { sent, child: created.event.payload, run: run.event.payload };
+    }),
+  );
+
+// Recovery reads every thread in the database, so these get one of their own.
+it.layer(layerTest)("delegated cloud tasks", (it) => {
+  it.effect("a cloud task's own machine commits with it, once, and recovery re-arms it", () =>
+    Effect.gen(function* () {
+      const { threadId: parent, sandboxId: parentSandboxId } = yield* provisioned("delegate-cloud");
+      const { run: parentRun } = yield* prompt(parent, "delegate-cloud");
+      const sandboxId = SandboxId.make("sbx_de1e9a7ec10dde1e9a7e");
+      const placement = {
+        workspaceStrategy: { type: "worktree" as const, baseRef: "feature/cache" },
+        sandbox: { sandboxId, driverId: ComputeDriverId.make("docker"), size: "default" as const },
+      };
+      const { sent, child, run } = yield* delegate(parent, parentRun, "cloud", placement);
+
+      assert.equal(child.sandboxId, sandboxId);
+      assert.notEqual(child.sandboxId, parentSandboxId);
+      const provisioning = sent.storedEvents.find(
+        (stored) => stored.event.type === "sandbox.updated",
+      )?.event;
+      assert.deepInclude(provisioning?.type === "sandbox.updated" ? provisioning.payload : {}, {
+        id: sandboxId,
+        ownerThreadId: child.id,
+        state: "provisioning",
+      });
+      assert.deepInclude(run, {
+        status: "preparing",
+        workspacePreparation: { type: "worktree", baseRef: "feature/cache" },
+      });
+      const creates = () =>
+        effectsOf("delegate:cloud").pipe(
+          Effect.map((effects) =>
+            effects
+              .filter((effect) => effect.request.type === "sandbox.create")
+              .map((effect) => effect.threadId),
+          ),
+        );
+      assert.deepEqual(yield* creates(), [child.id]);
+
+      // A retried delegation replays its receipt: no second machine.
+      const replayed = yield* delegate(parent, parentRun, "cloud", placement);
+      assert.isTrue(replayed.sent.replayed);
+      assert.equal((yield* sandboxEvents(child.id)).length, 1);
+      assert.deepEqual(yield* creates(), [child.id]);
+
+      // The server dies before anything else runs: recovery prepares the child on its machine.
+      const rearmed = yield* Deferred.make<ThreadLaunch.ThreadLaunchPreparationInput>();
+      const layerRecovery = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            Layer.mock(ThreadLaunch.ThreadLaunchService)({
+              prepareRun: (input) =>
+                input.threadId === child.id
+                  ? Deferred.succeed(rearmed, input).pipe(Effect.asVoid)
+                  : Effect.void,
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+        assert.deepEqual(yield* Deferred.await(rearmed), {
+          commandId: CommandId.make(`sandbox-rearm:${run.id}`),
+          threadId: child.id,
+          runId: run.id,
+        });
+      }).pipe(Effect.provide(layerRecovery));
+    }),
+  );
+});
+
+// A started parent run leaves a provider turn queued, which no other test's worker may claim.
+it.layer(layerTest)("delegated shared tasks", (it) => {
+  it.effect("a shared task on a stopped machine waits and asks for a wake", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId: parent, sandboxId } = yield* provisioned("delegate-shared");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, parent, sandboxId, 1);
+      const { run: parentRun } = yield* prompt(parent, "delegate-shared");
+      assert.equal(parentRun.status, "starting");
+      // The backend stopped under the running turn.
+      yield* dispatch({
+        type: "sandbox.stopped",
+        commandId: CommandId.make("stopped:delegate-shared"),
+        threadId: parent,
+        sandboxId,
+        generation: 1,
+      });
+
+      const { child, run } = yield* delegate(parent, parentRun, "shared");
+      assert.equal(child.sandboxId, sandboxId);
+      assert.equal(run.status, "preparing");
+      assert.isUndefined(run.workspacePreparation);
+      assert.deepEqual(
+        (yield* effectsOf("delegate:shared")).map((effect) => [
+          effect.request.type,
+          effect.threadId,
+        ]),
+        [["sandbox.request-wake", child.id]],
+      );
+    }),
   );
 });

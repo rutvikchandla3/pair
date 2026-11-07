@@ -8490,19 +8490,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
+      if (command.sandbox !== undefined && command.workspaceStrategy?.type !== "worktree") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "A cloud task needs a worktree checkout on its machine.",
+        });
+      }
+      const { sandboxId: parentSandboxId, ...subagentThread } = makeSubagentChildThread({
+        parentThread: parentProjection.thread,
+        childThreadId,
+        parentNodeId: taskNodeId,
+        activeProviderThreadId: null,
+        providerInstanceId: command.modelSelection.instanceId,
+        modelSelection: command.modelSelection,
+        title: taskTitle,
+        now,
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
+      });
+      // A shared task runs on its parent's machine; a cloud task gets its own.
+      const sandboxId = command.sandbox?.sandboxId ?? parentSandboxId;
       const childThread: OrchestrationV2AppThread = {
-        ...makeSubagentChildThread({
-          parentThread: parentProjection.thread,
-          childThreadId,
-          parentNodeId: taskNodeId,
-          activeProviderThreadId: null,
-          providerInstanceId: command.modelSelection.instanceId,
-          modelSelection: command.modelSelection,
-          title: taskTitle,
-          now,
-          createdBy: command.createdBy,
-          creationSource: command.creationSource,
-        }),
+        ...subagentThread,
+        ...(sandboxId === undefined ? {} : { sandboxId }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
@@ -8581,6 +8592,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: childThread,
       });
+      if (command.sandbox !== undefined) {
+        yield* dispatchSandboxCommand(
+          {
+            type: "sandbox.provision",
+            commandId: command.commandId,
+            threadId: childThreadId,
+            projectId: childThread.projectId,
+            ...command.sandbox,
+          },
+          events,
+          effects,
+          childThread,
+        );
+      }
       yield* emitEvent({
         type: "node.updated",
         threadId: command.parentThreadId,
@@ -8628,7 +8653,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? { type: "start_immediately" }
             : { type: "defer_start", workspaceStrategy: command.workspaceStrategy },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
-      yield* dispatchMessage(childMessageCommand, events, effects);
+      // A shared task's first prompt waits on its parent's machine as a side chat's does.
+      yield* dispatchMessage(
+        yield* gateCloudMessage(childMessageCommand, childThread, events, effects),
+        events,
+        effects,
+      );
 
       const childProjection = yield* getProjectionWithPendingEvents(childThreadId, events);
       const childRun = childProjection.runs[0];
@@ -10820,15 +10850,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: SandboxCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    /** A thread created earlier in this commit, which the store cannot read yet. */
+    pendingThread?: OrchestrationV2AppThread,
   ) {
     const mapProjection = Effect.mapError(
       (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
     );
     const record = yield* projectionStore.getSandbox(command.sandboxId).pipe(mapProjection);
     const thread =
-      command.type === "sandbox.provision" || command.type === "sandbox.adopt"
+      pendingThread ??
+      (command.type === "sandbox.provision" || command.type === "sandbox.adopt"
         ? yield* projectionStore.getThread(command.threadId).pipe(mapProjection)
-        : null;
+        : null);
     // A candidate deleted since the hand-over read it refuses without a receipt; it tries the next.
     if (
       command.type === "sandbox.adopt" &&

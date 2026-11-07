@@ -7,6 +7,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   TurnItemId,
+  type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -2472,17 +2473,12 @@ const make = Effect.gen(function* () {
         workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
       }
       // The child's machine clones the remote, so it starts from the pushed branch, never the
-      // parent's commit. Its run records `worktree`; the machine comes after the thread exists.
-      let cloudPlacement: Effect.Success<ReturnType<typeof threadLaunch.checkCloudLaunch>> | null =
-        null;
+      // parent's commit. Its run records `worktree`; the request provisions the machine with it.
+      let sandbox: Extract<
+        OrchestrationV2Command,
+        { readonly type: "delegated_task.request" }
+      >["sandbox"];
       if (input.isolation === "cloud") {
-        // Its child would inherit this thread's machine; it needs one of its own.
-        if (parent.thread.sandboxId !== undefined) {
-          return yield* failure(
-            "invalid_request",
-            "This thread already runs on a cloud machine. Use isolation 'shared' for a task on it.",
-          );
-        }
         const baseRef = parent.thread.branch;
         if (baseRef === null) {
           return yield* failure(
@@ -2490,7 +2486,7 @@ const make = Effect.gen(function* () {
             "A cloud task starts from a pushed branch; this thread has none. Use isolation 'worktree'.",
           );
         }
-        cloudPlacement = yield* threadLaunch
+        const placement = yield* threadLaunch
           .checkCloudLaunch({
             projectId: parent.thread.projectId,
             instanceId: target.modelSelection.instanceId,
@@ -2503,6 +2499,7 @@ const make = Effect.gen(function* () {
             ),
           );
         workspaceStrategy = { type: "worktree", baseRef };
+        sandbox = { sandboxId: CloudPreparation.sandboxIdForLaunch(commandId), ...placement };
       }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
@@ -2522,6 +2519,7 @@ const make = Effect.gen(function* () {
           runtimeMode,
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          ...(sandbox === undefined ? {} : { sandbox }),
           // Async delegations wake the parent on every child terminal; wait
           // delegations deliver through the blocking tool call, so a wake is
           // only needed if the parent settled first (timeout, disconnect).
@@ -2557,23 +2555,6 @@ const make = Effect.gen(function* () {
         childRunEvent?.event.type === "run.created" &&
         childRunEvent.event.payload.workspacePreparation !== undefined
       ) {
-        if (cloudPlacement !== null) {
-          yield* threadLaunch
-            .provisionCloud({
-              commandId,
-              threadId: childThreadId,
-              projectId: parent.thread.projectId,
-              placement: cloudPlacement,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                failure(
-                  "orchestration_error",
-                  `Unable to start the task's machine: ${errorMessage(error)}`,
-                ),
-              ),
-            );
-        }
         yield* threadLaunch.prepareRun({
           commandId,
           threadId: childThreadId,

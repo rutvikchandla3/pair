@@ -205,20 +205,6 @@ export class ThreadLaunchService extends Context.Service<
       CloudPlacement,
       Effect.Error<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>
     >;
-    /**
-     * Gives a thread created without one, such as a delegated task's child, its machine before
-     * its run is prepared. The machine derives from `commandId`, so a replay provisions the same one.
-     */
-    readonly provisionCloud: (input: {
-      readonly commandId: CommandId;
-      readonly threadId: ThreadId;
-      readonly projectId: ProjectId;
-      readonly placement: CloudPlacement;
-    }) => Effect.Effect<
-      void,
-      | Orchestrator.OrchestratorV2Error
-      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
-    >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -292,9 +278,13 @@ const make = Effect.gen(function* () {
       Effect.provide(cloudServices),
     );
 
-  const provisionCloud: ThreadLaunchService["Service"]["provisionCloud"] = Effect.fn(
-    "ThreadLaunchService.provisionCloud",
-  )(function* (input) {
+  /** The machine derives from `commandId`, so a replayed launch provisions the same one. */
+  const provisionCloud = Effect.fn("ThreadLaunchService.provisionCloud")(function* (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly placement: CloudPlacement;
+  }) {
     yield* threads.dispatch({
       type: "sandbox.provision",
       commandId: CommandId.make(`${input.commandId}:sandbox`),
@@ -1361,7 +1351,6 @@ const make = Effect.gen(function* () {
     launch,
     checkWorktreeBase,
     checkCloudLaunch,
-    provisionCloud,
     retryPreparation,
     prepareRun,
   });

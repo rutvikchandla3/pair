@@ -2049,7 +2049,6 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
         checkCloudLaunch: launches.checkCloudLaunch,
-        provisionCloud: launches.provisionCloud,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
       }),

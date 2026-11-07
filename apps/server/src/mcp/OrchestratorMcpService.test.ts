@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   ComputeDriverId,
+  SandboxId,
   ContextTransferId,
   EnvironmentId,
   GitCommandError,
@@ -66,6 +67,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import {
   idleThreadProjection,
@@ -1949,8 +1951,13 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect.each([
     { name: "starts its own machine from the parent's pushed branch", branch: "feature/cache" },
+    {
+      name: "starts its own machine from a parent on a machine",
+      branch: "feature/cache",
+      parentSandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+    },
     { name: "needs a parent branch", branch: null },
-  ])("a cloud task $name", ({ branch }) =>
+  ])("a cloud task $name", ({ branch, parentSandboxId }) =>
     Effect.gen(function* () {
       const steps = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const record = (step: unknown) => Ref.update(steps, (all) => [...all, step]);
@@ -1974,7 +1981,14 @@ describe("OrchestratorMcpService provider resolution", () => {
       };
       const parent = () => {
         const projection = parentProjection(delegated ? [task] : []);
-        return { ...projection, thread: { ...projection.thread, branch } };
+        return {
+          ...projection,
+          thread: {
+            ...projection.thread,
+            branch,
+            ...(parentSandboxId === undefined ? {} : { sandboxId: parentSandboxId }),
+          },
+        };
       };
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -2041,7 +2055,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.provide(
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
             checkCloudLaunch: () => Effect.succeed(placement),
-            provisionCloud: (input) => record({ provision: input }),
             prepareRun: (input) => record({ prepare: input }),
           }),
         ),
@@ -2066,23 +2079,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           return;
         }
         assert.isTrue(Result.isSuccess(result));
-        // The child's run records a worktree of the pushed branch; its machine comes before it.
-        const [request, provision, prepare] = yield* Ref.get(steps);
+        // The child's run records a worktree of the pushed branch, its machine in the same request.
+        const [request, prepare, ...rest] = yield* Ref.get(steps);
+        const commandId = (request as { commandId: CommandId }).commandId;
         assert.deepInclude(request, {
           type: "delegated_task.request",
           workspaceStrategy: { type: "worktree", baseRef: "feature/cache" },
+          sandbox: { sandboxId: CloudPreparation.sandboxIdForLaunch(commandId), ...placement },
         });
-        assert.deepInclude(provision, {
-          provision: {
-            commandId: (request as { commandId: CommandId }).commandId,
-            threadId: childThreadId,
-            projectId,
-            placement,
-          },
-        });
+        assert.deepEqual(rest, []);
         assert.deepInclude(prepare, {
           prepare: {
-            commandId: (request as { commandId: CommandId }).commandId,
+            commandId,
             threadId: childThreadId,
             runId: childRunId,
           },
