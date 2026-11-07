@@ -13943,6 +13943,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               "runtimeRequests",
               "subagents",
               "providerSessions",
+              "checkpoints",
             ])
             .pipe(
               Effect.mapError(

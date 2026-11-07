@@ -25,7 +25,7 @@ export class CheckpointMirrorError extends Schema.TaggedError<CheckpointMirrorEr
   "CheckpointMirrorError",
   {
     projectId: ProjectId,
-    operation: Schema.Literals(["seed", "import", "delete-refs", "remove"]),
+    operation: Schema.Literals(["seed", "import", "delete-refs", "remove", "maintain"]),
     reason: Schema.Literals([
       "missing-project",
       "missing-prerequisite",
@@ -66,10 +66,17 @@ export class CheckpointMirror extends Context.Service<
       readonly bundlePath: string;
       readonly refs: ReadonlyArray<MirrorRefUpdate>;
     }) => Effect.Effect<ReadonlyMap<string, string>, CheckpointMirrorError>;
+    /** Points refs (target -> oid) at objects the mirror already holds; a missing object fails. */
+    readonly updateRefs: (
+      projectId: ProjectId,
+      refs: ReadonlyMap<string, string>,
+    ) => Effect.Effect<void, CheckpointMirrorError>;
     readonly deleteRefs: (
       projectId: ProjectId,
       refs: ReadonlyArray<string>,
     ) => Effect.Effect<void, CheckpointMirrorError>;
+    /** `git maintenance run --auto`, which also prunes objects of deleted refs. */
+    readonly maintain: (projectId: ProjectId) => Effect.Effect<void, CheckpointMirrorError>;
     /** Deletes refs under `sandboxThreadRefPrefix(threadId)`. */
     readonly deleteThreadNamespace: (
       projectId: ProjectId,
@@ -91,6 +98,7 @@ interface BundleHeader {
 }
 
 const OID = "[0-9a-f]{40}";
+const OID_ONLY = new RegExp(`^${OID}$`);
 const PREREQUISITE_LINE = new RegExp(`^-(${OID})(?: .*)?$`);
 const REF_LINE = new RegExp(`^(${OID}) (refs/\\S+|HEAD)$`);
 
@@ -369,6 +377,38 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const updateRefs: CheckpointMirror["Service"]["updateRefs"] = Effect.fn(
+    "CheckpointMirror.updateRefs",
+  )(function* (projectId, refs) {
+    if (refs.size === 0) return;
+    // Oids come from the sandbox; a stray newline would smuggle another update-ref command.
+    for (const oid of refs.values()) {
+      if (!OID_ONLY.test(oid)) {
+        return yield* fail(projectId, "import", "invalid-objects")(`Not an object id: ${oid}`);
+      }
+    }
+    yield* writeLocks.withLock(
+      projectId,
+      runInMirror(projectId, "import", ["update-ref", "--stdin"], {
+        stdin: [...refs].map(([target, oid]) => `update ${target} ${oid}\n`).join(""),
+      }),
+    );
+  });
+
+  const maintain: CheckpointMirror["Service"]["maintain"] = Effect.fn("CheckpointMirror.maintain")(
+    function* (projectId) {
+      yield* writeLocks.withLock(
+        projectId,
+        Effect.gen(function* () {
+          if (!(yield* mirrorExists(projectId, "maintain"))) return;
+          yield* runInMirror(projectId, "maintain", ["maintenance", "run", "--auto", "--quiet"], {
+            timeoutMs: LONG_GIT_TIMEOUT_MS,
+          });
+        }),
+      );
+    },
+  );
+
   const deleteMirrorRefs = (
     projectId: ProjectId,
     refs: ReadonlyArray<string>,
@@ -447,7 +487,9 @@ const make = Effect.gen(function* () {
     ensure,
     tips,
     importBundle,
+    updateRefs,
     deleteRefs,
+    maintain,
     deleteThreadNamespace,
     remove,
   });

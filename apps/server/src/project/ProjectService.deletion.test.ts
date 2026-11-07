@@ -164,7 +164,9 @@ it.effect("retries a partial project deletion without repeating child events or 
         ensure: unused,
         tips: unused,
         importBundle: unused,
+        updateRefs: unused,
         deleteRefs: unused,
+        maintain: unused,
         deleteThreadNamespace: unused,
         remove: (id) => Effect.sync(() => void removedMirrors.push(id)),
       });
@@ -490,6 +492,7 @@ it.effect("deletes a project without force once its imported threads were delete
           "runtimeRequests",
           "subagents",
           "providerSessions",
+          "checkpoints",
         ]),
         attachmentIds: [],
         now,

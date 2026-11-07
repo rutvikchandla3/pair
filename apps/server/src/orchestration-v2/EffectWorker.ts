@@ -28,6 +28,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
+import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -102,6 +103,8 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const sandboxEffects = yield* SandboxEffects.SandboxEffects;
+    // Optional like ProjectService's, so executor tests need no mirror; the server provides it.
+    const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
@@ -552,6 +555,22 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "sandbox.mirror.forget-thread": {
+            if (Option.isNone(checkpointMirror)) return Effect.void;
+            const mirror = checkpointMirror.value;
+            const { projectId, checkpointRefs } = effect.request;
+            return mirror.deleteRefs(projectId, checkpointRefs).pipe(
+              Effect.andThen(mirror.deleteThreadNamespace(projectId, effect.threadId)),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({

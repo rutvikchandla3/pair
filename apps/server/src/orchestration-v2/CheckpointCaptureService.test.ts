@@ -31,6 +31,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 
 const layerProjectionStoreTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -670,10 +671,22 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         capturedAt: cancelledAt,
       };
       const commits = yield* Ref.make(0);
+      // The commit count each mirror hook call saw, and the checkpoints it got.
+      const hookCalls = yield* Ref.make<Array<readonly [number, ReadonlyArray<CheckpointId>]>>([]);
       const layerCapture = CheckpointCaptureService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            Layer.succeed(MirrorSync.MirrorHooks, {
+              afterCapture: ({ checkpoints }) =>
+                Effect.flatMap(Ref.get(commits), (seen) =>
+                  Ref.update(hookCalls, (calls) => [
+                    ...calls,
+                    [seen, checkpoints.map((checkpoint) => checkpoint.id)] as const,
+                  ]),
+                ),
+              afterRollback: () => Effect.void,
+            }),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -706,6 +719,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       }).pipe(Effect.provide(layerCapture));
 
       assert.equal(yield* Ref.get(commits), 1);
+      // The mirror sync runs before the commit, once: a retried capture of a settled run skips it.
+      assert.deepEqual(yield* Ref.get(hookCalls), [[0, [captured.id]]]);
       const projected = yield* projectionStore.getCheckpointCaptureContext(cancelledThreadId, {
         runId: cancelledRunId,
         scopeId: cancelledScopeId,

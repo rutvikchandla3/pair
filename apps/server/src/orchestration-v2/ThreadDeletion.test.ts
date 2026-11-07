@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EventId,
   MessageId,
@@ -14,6 +17,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -296,5 +300,39 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
     );
+
+    // A cloud thread also drops its mirror refs.
+    const checkpointRefs = [0, 1].map((ordinal) =>
+      CheckpointRef.make(`refs/t3/delete-plan/${ordinal}`),
+    );
+    const cloudPlan = yield* planThreadDeletion({
+      command,
+      projection: {
+        ...projection,
+        thread: { ...projection.thread, sandboxId: SandboxId.make("sbx_00000000000000000001") },
+        checkpoints: checkpointRefs.map((ref, ordinal) => ({
+          id: CheckpointId.make(`checkpoint:delete-plan:${ordinal}`),
+          threadId,
+          scopeId: CheckpointScopeId.make("scope:delete-plan"),
+          runId: null,
+          nodeId: NodeId.make("node:delete-plan"),
+          parentCheckpointId: null,
+          ordinalWithinScope: ordinal,
+          appRunOrdinal: null,
+          ref,
+          status: ordinal === 0 ? ("ready" as const) : ("stale" as const),
+          files: [],
+          capturedAt: createdAt,
+        })),
+      },
+      attachmentIds: [],
+      now: deletedAt,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+    });
+    assert.deepEqual(cloudPlan.effects.map((effect) => effect.request).at(-1), {
+      type: "sandbox.mirror.forget-thread",
+      projectId: ProjectId.make("project:delete-plan"),
+      checkpointRefs,
+    });
   }).pipe(Effect.provide(IdAllocator.layer)),
 );

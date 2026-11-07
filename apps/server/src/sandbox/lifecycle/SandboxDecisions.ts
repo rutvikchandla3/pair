@@ -35,7 +35,7 @@ export type SandboxCommand = Extract<
 
 export type SandboxEffectRequest = Extract<
   OrchestrationEffectRequestV2,
-  { readonly type: `sandbox.${string}` }
+  { readonly type: `sandbox.${string}`; readonly generation: number }
 >;
 
 /** A live thread using the sandbox, as the shared thread row says (never one member's view). */

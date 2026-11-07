@@ -18,7 +18,14 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
+    | "thread"
+    | "runs"
+    | "attempts"
+    | "nodes"
+    | "runtimeRequests"
+    | "subagents"
+    | "providerSessions"
+    | "checkpoints"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
@@ -226,6 +233,19 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
   });
+  // 07 §9: a deleted cloud thread's mirror refs go now; maintenance prunes their objects.
+  if (projection.thread.sandboxId !== undefined) {
+    effects.push({
+      id: `effect:${command.commandId}:sandbox.mirror.forget-thread`,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      request: {
+        type: "sandbox.mirror.forget-thread",
+        projectId: projection.thread.projectId,
+        checkpointRefs: projection.checkpoints.map((checkpoint) => checkpoint.ref),
+      },
+    });
+  }
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {
     effects.push({

@@ -26,6 +26,7 @@ import {
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
+import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import type { SandboxEffectRequest } from "./SandboxDecisions.ts";
 
@@ -62,7 +63,9 @@ const isRunnerRouteError = Schema.is(RunnerEndpoint.RunnerRouteError);
 
 export const isSandboxEffectRequest = (
   request: OrchestrationEffectRequestV2,
-): request is SandboxEffectRequest => request.type.startsWith("sandbox.");
+): request is SandboxEffectRequest =>
+  // `sandbox.mirror.forget-thread` shares the prefix but is a thread's effect, not a driver call.
+  request.type.startsWith("sandbox.") && "generation" in request;
 
 export class SandboxEffects extends Context.Service<
   SandboxEffects,
@@ -127,6 +130,8 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  // The server provides it; lifecycle tests run without a mirror.
+  const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
 
   /** The record when this request's generation is still current, otherwise null. */
   const currentRecord = Effect.fn("SandboxEffects.currentRecord")(function* (
@@ -236,6 +241,8 @@ const make = Effect.gen(function* () {
           return yield* call(driver.start(driverRef, yield* bootstrap));
         }
         case "sandbox.stop":
+          // A settled thread's last diff must be in the mirror before its disk goes away.
+          if (Option.isSome(mirrorSync)) yield* mirrorSync.value.flush(record.id);
           if (record.driverRef !== null) yield* callIgnoringMissing(driver.stop(record.driverRef));
           return yield* report(record, {
             type: "sandbox.stopped",

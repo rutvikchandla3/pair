@@ -46,6 +46,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
@@ -561,12 +562,20 @@ const seedRollbackHistory = Effect.gen(function* () {
   const rollbackCounts: number[] = [];
   const restored: CheckpointId[] = [];
   const deletedRefs: CheckpointId[] = [];
+  const mirrorDeletedRefs: string[] = [];
   const committed: OrchestrationV2DomainEvent[] = [];
   const serviceLayer = layerCheckpointRollbackService.pipe(
     Layer.provide(
       Layer.mergeAll(
         ThreadCommandExecutor.layer,
         IdAllocator.layer,
+        Layer.succeed(MirrorSync.MirrorHooks, {
+          afterCapture: () => Effect.void,
+          afterRollback: ({ deletedRefs: refs }) =>
+            Effect.sync(() => {
+              mirrorDeletedRefs.push(...refs);
+            }),
+        }),
         Layer.mock(CheckpointService.CheckpointServiceV2)({
           restore: ({ checkpoint }) =>
             Effect.sync(() => {
@@ -629,6 +638,7 @@ const seedRollbackHistory = Effect.gen(function* () {
     rollbackCounts,
     restored,
     deletedRefs,
+    mirrorDeletedRefs,
     committed,
   };
 });
@@ -665,6 +675,10 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         assert.deepEqual(history.rollbackCounts, [4]);
         assert.deepEqual(history.restored, [checkpointId(2)]);
         assert.sameMembers(history.deletedRefs, [3, 4, 5, 6].map(checkpointId));
+        assert.sameMembers(
+          history.mirrorDeletedRefs,
+          [3, 4, 5, 6].map((ordinal) => `refs/t3/rollback-history/${ordinal}`),
+        );
         const runs = yield* sql<{ ordinal: number; status: string }>`
           SELECT ordinal, status FROM orchestration_v2_projection_runs
           WHERE thread_id = ${threadId} ORDER BY ordinal`;

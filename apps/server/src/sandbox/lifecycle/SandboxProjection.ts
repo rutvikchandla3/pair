@@ -262,3 +262,17 @@ export const listSandboxThreads = Effect.fn("SandboxProjection.listSandboxThread
     archived: row.archived === 1,
   }));
 });
+
+/** Threads attached to a sandbox that is not destroyed. */
+export const listLiveSandboxThreadIds = Effect.fn("SandboxProjection.listLiveSandboxThreadIds")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT st.thread_id
+      FROM orchestration_v2_projection_sandbox_threads st
+      JOIN orchestration_v2_projection_sandboxes s ON s.sandbox_id = st.sandbox_id
+      WHERE s.state <> 'destroyed'
+    `;
+    return rows.map((row) => ThreadId.make(row.thread_id));
+  },
+);

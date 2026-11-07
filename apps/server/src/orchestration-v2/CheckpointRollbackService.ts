@@ -22,6 +22,7 @@ import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -137,6 +138,7 @@ export const layer: Layer.Layer<
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+    const mirrorHooks = yield* MirrorSync.MirrorHooks;
 
     // An unavailable host counts as existing: a sandbox checkout is never recreated on this disk.
     const worktreeExists = (worktreePath: string) =>
@@ -301,6 +303,11 @@ export const layer: Layer.Layer<
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       if (staleCheckpoints.length > 0) {
         yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+        yield* mirrorHooks.afterRollback({
+          threadId: input.threadId,
+          scope,
+          deletedRefs: staleCheckpoints.map((stale) => stale.ref),
+        });
       }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

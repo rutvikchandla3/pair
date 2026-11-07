@@ -166,6 +166,13 @@ it.effect("imports only the requested refs from a bundle whose prerequisite it h
     const tips = yield* mirror.tips(projectId, [target, "refs/heads/work", "refs/heads/extra"]);
     assert.deepEqual([...tips], [[target, work]]);
     assert.equal(yield* mirrorGit(["show", `${work}:work.txt`]), "work");
+
+    // Oids from a sandbox can't smuggle a second update-ref command.
+    const smuggled = yield* mirror
+      .updateRefs(projectId, new Map([[target, `${work}\ndelete refs/heads/main`]]))
+      .pipe(Effect.flip);
+    assert.equal(smuggled.reason, "invalid-objects");
+    assert.isTrue((yield* mirror.tips(projectId, ["refs/heads/main"])).has("refs/heads/main"));
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

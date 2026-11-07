@@ -137,6 +137,8 @@ import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
+import * as MirrorSync from "./sandbox/mirror/MirrorSync.ts";
+import * as MirrorSyncWorker from "./sandbox/mirror/MirrorSyncWorker.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -589,7 +591,14 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+// The capture and rollback services read MirrorHooks at construction; SandboxEffects flushes the worker.
+const layerMirrorSync = MirrorSyncWorker.layer.pipe(
+  Layer.provide(MirrorSync.layer),
+  Layer.provide(ProjectionStoreV2.layer),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerMirrorSync),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderUsageAnalytics.layer),
   Layer.provide(layerCheckpointStore),
