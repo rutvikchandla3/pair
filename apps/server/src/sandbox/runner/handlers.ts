@@ -96,18 +96,18 @@ export const layer = RunnerCoreRpcGroup.toLayer(
         if (arch !== "x64" && arch !== "arm64") {
           return yield* runnerBadArgument("runner.hello", `unsupported architecture ${arch}`);
         }
+        const { runnerBootId, handles } = yield* table.hello(input);
         return {
-          runnerBootId: table.runnerBootId,
+          runnerBootId,
           runnerBuildId: config.runnerBuildId,
           protocolVersion: RUNNER_PROTOCOL_VERSION,
           arch,
           cpus: NodeOS.cpus().length,
           memoryBytes: NodeOS.totalmem(),
-          handles: yield* table.live,
+          handles,
         };
       }),
-      [RUNNER_METHODS.events]: () =>
-        table.exited.pipe(Stream.map((handle) => ({ _tag: "handle.exited" as const, handle }))),
+      [RUNNER_METHODS.events]: () => table.events,
       [RUNNER_METHODS.drain]: ({ graceMs }) => table.drain(graceMs),
 
       [RUNNER_METHODS.processSpawn]: (input) => table.spawn(input),

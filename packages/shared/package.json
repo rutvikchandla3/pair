@@ -543,6 +543,10 @@
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
     },
+    "./rpcOutputWindow": {
+      "types": "./src/rpcOutputWindow.ts",
+      "import": "./src/rpcOutputWindow.ts"
+    },
     "./markdownMath": {
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"

@@ -19,17 +19,22 @@ import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Headers from "effect/http/Headers";
 import * as RpcClient from "effect/rpc/RpcClient";
-import type { RpcClientError } from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import type { CoarseOperations } from "../../workspaceHost/WorkspaceHost.ts";
 import * as RunnerOpsClient from "./RunnerOpsClient.ts";
+import {
+  type AwaitClient,
+  makeRunnerConnection,
+  type RunnerClient,
+  type RunnerConnection,
+} from "./RunnerConnection.ts";
 import {
   RunnerAuthError,
   type RunnerGrant,
@@ -39,7 +44,7 @@ import {
 
 /** Processes survive a socket drop this long (03 §3.1); one value until a driver needs another. */
 const LEASE = Duration.seconds(120);
-const LIMITS: RunnerLimits = {
+const DEFAULT_LIMITS: RunnerLimits = {
   windowBytes: 256 * 1024,
   windowChunks: 16,
   handleBufferBytes: 4 * 1024 * 1024,
@@ -48,6 +53,7 @@ const LIMITS: RunnerLimits = {
 };
 /** The runner's own cap (runner/main.ts): a 256 KiB chunk plus its envelope. */
 const MAX_FRAME_BYTES = 256 * 1024 + 1024;
+const isRunnerLost = Schema.is(RunnerLostError);
 const PROTOCOL_HEADER = "x-pair-runner-protocol";
 const CREDENTIAL = /^(Enroll|Bearer) ([A-Za-z0-9_-]+)$/;
 
@@ -68,15 +74,6 @@ export class RunnerUnavailableError extends Schema.TaggedError<RunnerUnavailable
   "RunnerUnavailableError",
   { sandboxId: SandboxId },
 ) {}
-
-export type RunnerClient = RpcClient.FromGroup<typeof RunnerRpcGroup, RpcClientError>;
-
-/** One socket's typed client. 1.8 adds resumable wrappers; callers must not keep it across drops. */
-export interface RunnerConnection {
-  readonly client: RunnerClient;
-  readonly info: RunnerInfo;
-  readonly ops: CoarseOperations;
-}
 
 export type RunnerConnectionStatus =
   | { readonly _tag: "absent" }
@@ -143,7 +140,10 @@ export class RunnerHub extends Context.Service<
 
 interface SlotState {
   readonly status: RunnerConnectionStatus;
-  readonly connection: RunnerConnection | undefined;
+  /** The current boot's connection, from its first hello until another boot replaces it. */
+  readonly boot: RunnerConnection | undefined;
+  /** The live socket's client; undefined while reconnecting or lost. */
+  readonly client: RunnerClient | undefined;
   readonly lostReason: RunnerLostError["reason"];
 }
 
@@ -156,21 +156,28 @@ interface Slot {
   live: { readonly id: number; readonly close: Deferred.Deferred<void> } | undefined;
   /** Bumped whenever a pending lease must not fire. */
   leaseEpoch: number;
+  /**
+   * Bumped on each lease expiry and sent in `hello.serverBootId`, so a runner whose own timer has
+   * not fired yet still drops the handles the hub already failed.
+   */
+  expiries: number;
 }
 
 const absent: SlotState = {
   status: { _tag: "absent" },
-  connection: undefined,
+  boot: undefined,
+  client: undefined,
   lostReason: "lease-expired",
 };
 
-const make = Effect.gen(function* () {
+const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
   const grants = yield* RunnerGrants;
   const random = yield* SecureRandom.SecureRandom;
   const serialization = yield* RpcSerialization.RpcSerialization.pipe(
     Effect.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: MAX_FRAME_BYTES })),
   );
   const serverBootId = yield* random.uuidV4();
+  const hubScope = yield* Effect.scope;
   const facts = yield* Queue.unbounded<RunnerHubFact>();
   const leases = yield* FiberMap.make<SandboxId>();
   // Every slot change runs under this lock; nothing slow runs inside it.
@@ -189,6 +196,7 @@ const make = Effect.gen(function* () {
       boot: undefined,
       live: undefined,
       leaseEpoch: 0,
+      expiries: 0,
     };
     slots.set(sandboxId, slot);
     return slot;
@@ -199,7 +207,8 @@ const make = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(slot.state);
     const same =
       current.status._tag === next.status._tag &&
-      current.connection === next.connection &&
+      current.boot === next.boot &&
+      current.client === next.client &&
       ("runnerBootId" in current.status ? current.status.runnerBootId : undefined) ===
         ("runnerBootId" in next.status ? next.status.runnerBootId : undefined);
     if (!same) yield* SubscriptionRef.set(slot.state, next);
@@ -223,9 +232,11 @@ const make = Effect.gen(function* () {
     if (slot.leaseEpoch !== epoch || status._tag !== "reconnecting" || slot.boot === undefined) {
       return;
     }
+    slot.expiries += 1;
     yield* setState(slot, {
+      ...(yield* SubscriptionRef.get(slot.state)),
       status: { _tag: "lost", runnerBootId: status.runnerBootId },
-      connection: undefined,
+      client: undefined,
       lostReason: "lease-expired",
     });
     Queue.offerUnsafe(facts, {
@@ -251,25 +262,57 @@ const make = Effect.gen(function* () {
       { startImmediately: true },
     );
     yield* setState(slot, {
+      ...(yield* SubscriptionRef.get(slot.state)),
       status: {
         _tag: "reconnecting",
         since: yield* DateTime.now,
         runnerBootId: status.runnerBootId,
       },
-      connection: undefined,
-      lostReason: "lease-expired",
+      client: undefined,
     });
+  });
+
+  /** A boot's next live client other than `failed`; fails once that boot is gone. */
+  const awaitClient =
+    (slot: Slot, info: RunnerInfo): AwaitClient =>
+    (failed) =>
+      SubscriptionRef.changes(slot.state).pipe(
+        Stream.map((state): RunnerClient | RunnerLostError | undefined => {
+          // The `info` of the hello that made the boot identifies it.
+          if (state.boot?.info !== info) return new RunnerLostError({ reason: "runner-restarted" });
+          if (state.status._tag === "lost")
+            return new RunnerLostError({ reason: state.lostReason });
+          return state.client !== failed ? state.client : undefined;
+        }),
+        Stream.filter((next): next is RunnerClient | RunnerLostError => next !== undefined),
+        Stream.runHead,
+        Effect.flatMap((next) =>
+          Option.isNone(next)
+            ? Effect.fail(new RunnerLostError({ reason: "runner-restarted" }))
+            : isRunnerLost(next.value)
+              ? Effect.fail(next.value)
+              : Effect.succeed(next.value),
+        ),
+      );
+
+  const newBoot = Effect.fnUntraced(function* (slot: Slot, info: RunnerInfo) {
+    const liveClient = awaitClient(slot, info);
+    // The ops' process table outlives sockets; once the boot is gone its reads fail fast.
+    const ops = yield* RunnerOpsClient.make(liveClient(undefined)).pipe(Scope.provide(hubScope));
+    return makeRunnerConnection(info, liveClient, ops);
   });
 
   const attach = Effect.fnUntraced(function* (
     slot: Slot,
     socketId: number,
     runner: AuthenticatedRunner,
-    connection: RunnerConnection,
+    client: RunnerClient,
+    info: RunnerInfo,
   ) {
     if (slot.live?.id !== socketId) return false;
-    const { status } = yield* SubscriptionRef.get(slot.state);
-    const { runnerBootId } = connection.info;
+    const current = yield* SubscriptionRef.get(slot.state);
+    const { status } = current;
+    const { runnerBootId } = info;
     const previous = slot.boot;
     const alive = status._tag === "connected" || status._tag === "reconnecting";
     const sameBoot =
@@ -291,9 +334,12 @@ const make = Effect.gen(function* () {
         sandboxId: slot.sandboxId,
         generation: runner.generation,
         runnerBootId,
-        info: connection.info,
+        info,
       });
     }
+    // Resumable wrappers live as long as the boot: a reconnect hands them the new client.
+    const boot =
+      alive && sameBoot && current.boot !== undefined ? current.boot : yield* newBoot(slot, info);
     slot.boot = { generation: runner.generation, runnerBootId };
     yield* cancelLease(slot);
     yield* setState(slot, {
@@ -301,9 +347,10 @@ const make = Effect.gen(function* () {
         _tag: "connected",
         generation: runner.generation,
         runnerBootId,
-        info: connection.info,
+        info,
       },
-      connection,
+      boot,
+      client,
       lostReason: "lease-expired",
     });
     return true;
@@ -337,8 +384,9 @@ const make = Effect.gen(function* () {
           slot.boot === undefined
             ? absent
             : {
+                ...(yield* SubscriptionRef.get(slot.state)),
                 status: { _tag: "lost", runnerBootId: slot.boot.runnerBootId },
-                connection: undefined,
+                client: undefined,
                 lostReason: "drained",
               },
         );
@@ -358,10 +406,10 @@ const make = Effect.gen(function* () {
           orElse: () => Effect.fail(new RunnerUnavailableError({ sandboxId })),
         }),
       );
-      if (settled.connection === undefined) {
+      if (settled.status._tag !== "connected" || settled.boot === undefined) {
         return yield* new RunnerLostError({ reason: settled.lostReason });
       }
-      return settled.connection;
+      return settled.boot;
     },
   );
 
@@ -441,17 +489,22 @@ const make = Effect.gen(function* () {
         const client = yield* RpcClient.make(RunnerRpcGroup).pipe(
           Effect.provideService(RpcClient.Protocol, protocol),
         );
-        const info = yield* client["runner.hello"]({
+        const hello = yield* client["runner.hello"]({
           protocolVersion: RUNNER_PROTOCOL_VERSION,
-          serverBootId,
+          serverBootId: `${serverBootId}:${slot.expiries}`,
           leaseMs: Duration.toMillis(LEASE),
-          limits: LIMITS,
+          limits,
           ...(Option.isSome(runner.sandboxToken)
             ? { sandboxToken: runner.sandboxToken.value }
             : {}),
-        });
-        const ops = yield* RunnerOpsClient.make(client);
-        const current = yield* attach(slot, socketId, runner, { client, info, ops }).pipe(locked);
+        }).pipe(
+          Effect.asSome,
+          // A drop before the answer does not always reach the pending call.
+          Effect.raceFirst(Deferred.await(disconnected).pipe(Effect.as(Option.none()))),
+        );
+        if (Option.isNone(hello)) return;
+        const info = hello.value;
+        const current = yield* attach(slot, socketId, runner, client, info).pipe(locked);
         if (current) yield* Deferred.await(disconnected);
       }).pipe(
         Effect.raceFirst(Deferred.await(close)),
@@ -482,4 +535,8 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(RunnerHub, make);
+/** `limits` reach the runner in `runner.hello`; tests pass tiny ones. */
+export const layerWith = (options: { readonly limits?: RunnerLimits } = {}) =>
+  Layer.effect(RunnerHub, make(options.limits ?? DEFAULT_LIMITS));
+
+export const layer = layerWith();

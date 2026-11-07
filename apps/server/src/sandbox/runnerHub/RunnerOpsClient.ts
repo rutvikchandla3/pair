@@ -16,7 +16,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 
 import type { CoarseOperationError, CoarseOperations } from "../../workspaceHost/WorkspaceHost.ts";
-import type { RunnerClient } from "./RunnerHub.ts";
+import type { RunnerClient } from "./RunnerConnection.ts";
 
 type ProcessTable = ReadonlyArray<ResourceMonitorProcessTableEntry>;
 
@@ -33,11 +33,17 @@ const toOperationError =
       : new RunnerOpsError({ operation, failure: "failed" });
 
 /**
- * The coarse operations of one runner connection. List results arrive in pages and are joined
- * here. The process table subscription starts on the first read and lives with the connection's
- * scope, so a poll costs no round trip.
+ * The coarse operations of one runner boot, each on the live socket's client. List results arrive
+ * in pages and are joined here. The process table subscription starts on the first read and lives
+ * in the given scope, so a poll costs no round trip; a drop fails it and the next read restarts it.
  */
-export const make = Effect.fn("RunnerOpsClient.make")(function* (client: RunnerClient) {
+export const make = Effect.fn("RunnerOpsClient.make")(function* (
+  liveClient: Effect.Effect<RunnerClient, RunnerLostError>,
+) {
+  const call = <A, E>(f: (client: RunnerClient) => Effect.Effect<A, E>) =>
+    Effect.flatMap(liveClient, f);
+  const stream = <A, E>(f: (client: RunnerClient) => Stream.Stream<A, E>) =>
+    Stream.unwrap(Effect.map(liveClient, f));
   const scope = yield* Effect.scope;
   const table = yield* SubscriptionRef.make(
     Option.none<Exit.Exit<ProcessTable, CoarseOperationError>>(),
@@ -45,7 +51,7 @@ export const make = Effect.fn("RunnerOpsClient.make")(function* (client: RunnerC
   const starting = yield* Semaphore.make(1);
   let subscription: Fiber.Fiber<void> | undefined;
 
-  const subscribeTable = client[RUNNER_METHODS.opsProcessesTable]({}).pipe(
+  const subscribeTable = stream((client) => client[RUNNER_METHODS.opsProcessesTable]({})).pipe(
     Stream.runForEach((entries) => SubscriptionRef.set(table, Option.some(Exit.succeed(entries)))),
     Effect.catch((error) =>
       SubscriptionRef.set(
@@ -77,36 +83,36 @@ export const make = Effect.fn("RunnerOpsClient.make")(function* (client: RunnerC
 
   return {
     searchEntries: (input) =>
-      client[RUNNER_METHODS.opsSearchEntries](input).pipe(
+      stream((client) => client[RUNNER_METHODS.opsSearchEntries](input)).pipe(
         Stream.runCollect,
         Effect.map((pages) => ({ ...pages[0]!, entries: pages.flatMap((page) => page.entries) })),
         Effect.mapError(toOperationError("search.entries")),
       ),
     searchContents: (input) =>
-      client[RUNNER_METHODS.opsSearchContents](input).pipe(
+      stream((client) => client[RUNNER_METHODS.opsSearchContents](input)).pipe(
         Stream.runCollect,
         Effect.map((pages) => ({ ...pages[0]!, matches: pages.flatMap((page) => page.matches) })),
         Effect.mapError(toOperationError("search.contents")),
       ),
     listEntries: (input) =>
-      client[RUNNER_METHODS.opsEntriesBrowse](input).pipe(
+      stream((client) => client[RUNNER_METHODS.opsEntriesBrowse](input)).pipe(
         Stream.runCollect,
         Effect.map((pages) => ({ ...pages[0]!, entries: pages.flatMap((page) => page.entries) })),
         Effect.mapError(toOperationError("entries.browse")),
       ),
     refreshSearch: (cwd) =>
-      client[RUNNER_METHODS.opsSearchRefresh]({ cwd }).pipe(
+      call((client) => client[RUNNER_METHODS.opsSearchRefresh]({ cwd })).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Failed to refresh workspace search index", { cwd, cause }),
         ),
       ),
     processTable,
     portListeners: (configuredUrls) =>
-      client[RUNNER_METHODS.opsPortsListeners]({ configuredUrls }).pipe(
+      stream((client) => client[RUNNER_METHODS.opsPortsListeners]({ configuredUrls })).pipe(
         Stream.mapError(toOperationError("ports.listeners")),
       ),
     checkpointCapture: (input) =>
-      client[RUNNER_METHODS.opsCheckpointCapture](input).pipe(
+      call((client) => client[RUNNER_METHODS.opsCheckpointCapture](input)).pipe(
         Effect.mapError(toOperationError("checkpoint.capture")),
       ),
   } satisfies CoarseOperations;

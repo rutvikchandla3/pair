@@ -199,6 +199,14 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     this.process.resize(cols, rows);
   }
 
+  pause(): void {
+    this.process.pause();
+  }
+
+  resume(): void {
+    this.process.resume();
+  }
+
   kill(signal?: string): void {
     // node-pty terminates the Windows process tree without a POSIX signal.
     this.process.kill(this.platform === "win32" ? undefined : signal);

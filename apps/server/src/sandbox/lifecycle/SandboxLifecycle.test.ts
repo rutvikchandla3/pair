@@ -46,7 +46,7 @@ import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
-import { RunnerHub, type RunnerHubFact } from "../runnerHub/RunnerHub.ts";
+import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
 import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
@@ -490,6 +490,38 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         ),
       ).pipe(Effect.map(Option.getOrThrow));
       assert.equal(stored.commandId, `sandbox-attached:${sandboxId}:1:boot-1`);
+    }).pipe(Effect.scoped),
+  );
+});
+
+it.layer(layerTest)("runner return after a restart", (it) => {
+  it.effect("loses a ready sandbox whose runner does not dial back within the lease", () =>
+    Effect.gen(function* () {
+      const { threadId, sandboxId } = yield* provisioned("restart-lost");
+      yield* attach(threadId, sandboxId, 1);
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+      yield* Layer.build(
+        RunnerHubFacts.layer.pipe(
+          Layer.provide(
+            Layer.mock(RunnerHub)({
+              facts: Stream.never,
+              // The real hub fails this once the lease passes with no runner.
+              connection: (id) => Effect.fail(new RunnerUnavailableError({ sandboxId: id })),
+            }),
+          ),
+        ),
+      );
+
+      const stored = yield* EventSink.EventSinkV2.use((sink) =>
+        sink.stream({ threadId, eventType: "sandbox.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "sandbox.updated" && stored.event.payload.runnerLostAt !== null,
+          ),
+          Stream.runHead,
+        ),
+      ).pipe(Effect.map(Option.getOrThrow));
+      assert.equal(stored.commandId, `sandbox-lost:${sandboxId}:1:unattached`);
     }).pipe(Effect.scoped),
   );
 });

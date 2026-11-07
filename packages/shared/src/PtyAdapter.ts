@@ -28,6 +28,9 @@ export interface PtyProcess {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
+  /** Stops reading the PTY, so the child blocks on write; adapters without flow control omit it. */
+  pause?(): void;
+  resume?(): void;
   onData(callback: (data: string) => void): () => void;
   onExit(callback: (event: PtyExitEvent) => void): () => void;
 }

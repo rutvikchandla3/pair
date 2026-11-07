@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -14,38 +15,53 @@ import * as RpcServer from "effect/rpc/RpcServer";
 import * as Socket from "effect/socket/Socket";
 import * as SocketServer from "effect/socket/SocketServer";
 
+import * as HandleTable from "../runner/HandleTable.ts";
+import * as RunnerMain from "../runner/main.ts";
 import { RunnerCredential } from "../runner/RunnerSocketServer.ts";
 import * as RunnerTesting from "../runner/runnerTesting.ts";
 import { RunnerHub } from "./RunnerHub.ts";
 
 const closed = new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) });
 
+/** Faults armed before the pair carries its first frame. */
+export interface PairFaults {
+  /** Once this many bytes have gone runner to hub, the next frame vanishes and the pair closes. */
+  readonly dropAfterBytes?: number;
+}
+
 /**
  * Two in-memory sockets joined back to back. Either side ending its reader, writing a close
  * event, or `drop` closes both, and every pending `pull` fails as a WebSocket's would.
  */
-const socketPair = Effect.gen(function* () {
+const socketPair = Effect.fnUntraced(function* (faults: PairFaults) {
   const toHub = yield* Queue.unbounded<Uint8Array | string>();
   const toRunner = yield* Queue.unbounded<Uint8Array | string>();
   const done = yield* Deferred.make<void>();
   const close = Deferred.succeed(done, undefined);
+  const hubReading = Latch.makeUnsafe(true);
+  let halfOpen = false;
+  let bytesToHub = 0;
   const end = (
     inbox: Queue.Queue<Uint8Array | string>,
     outbox: Queue.Queue<Uint8Array | string>,
+    reading: Latch.Latch | undefined,
   ): Socket.Socket => {
-    const write = (chunk: Uint8Array | string | Socket.CloseEvent) =>
-      Socket.isCloseEvent(chunk)
-        ? close.pipe(Effect.asVoid)
-        : Deferred.isDone(done).pipe(
-            Effect.flatMap((isDone) =>
-              isDone ? Effect.fail(closed) : Queue.offer(outbox, chunk).pipe(Effect.asVoid),
-            ),
-          );
+    const write = Effect.fnUntraced(function* (chunk: Uint8Array | string | Socket.CloseEvent) {
+      if (Socket.isCloseEvent(chunk)) return yield* close;
+      if (yield* Deferred.isDone(done)) return yield* closed;
+      if (halfOpen) return;
+      if (outbox === toHub && faults.dropAfterBytes !== undefined) {
+        if (bytesToHub >= faults.dropAfterBytes) return yield* close;
+        bytesToHub += chunk.length;
+      }
+      yield* Queue.offer(outbox, chunk);
+    });
+    const take = Queue.takeAll(inbox);
     return Socket.make({
       reader: Effect.acquireRelease(
         Effect.succeed({
           pull: Effect.raceFirst(
-            Queue.takeAll(inbox),
+            reading === undefined ? take : take.pipe(Effect.tap(() => reading.await)),
             Deferred.await(done).pipe(Effect.andThen(Effect.fail(closed))),
           ),
           upgrade: () => Effect.void,
@@ -59,10 +75,15 @@ const socketPair = Effect.gen(function* () {
     });
   };
   return {
-    hub: end(toHub, toRunner),
-    runner: end(toRunner, toHub),
+    hub: end(toHub, toRunner, hubReading),
+    runner: end(toRunner, toHub, undefined),
     drop: close.pipe(Effect.asVoid),
     closed: Deferred.await(done),
+    stallReader: Effect.sync(() => hubReading.closeUnsafe()),
+    resumeReader: Effect.sync(() => hubReading.openUnsafe()),
+    halfOpen: Effect.sync(() => {
+      halfOpen = true;
+    }),
   };
 });
 
@@ -71,6 +92,13 @@ export interface TestRunnerConnection {
   readonly drop: Effect.Effect<void>;
   /** Waits until either side has closed the pair. */
   readonly closed: Effect.Effect<void>;
+  /** Waits until the runner has finished with its end of the pair (its lease is running). */
+  readonly runnerEnded: Effect.Effect<void>;
+  /** The hub stops reading: frames to it queue up, as behind a stalled TCP window. */
+  readonly stallReader: Effect.Effect<void>;
+  readonly resumeReader: Effect.Effect<void>;
+  /** Frames either way vanish and nothing closes, as after a silent network change. */
+  readonly halfOpen: Effect.Effect<void>;
   readonly served: Fiber.Fiber<void>;
 }
 
@@ -78,8 +106,11 @@ export interface TestRunner {
   /** What the runner would dial with now: its enrollment, then the token `runner.hello` gave it. */
   readonly authorization: Effect.Effect<Redacted.Redacted<string>>;
   /** Authenticates with the hub, as the route does, and serves the pair until it ends. */
+  /** The runner's own table, for what the socket cannot show (pressure, live handles). */
+  readonly table: HandleTable.HandleTable["Service"];
   readonly connect: (
     authorization?: Redacted.Redacted<string>,
+    faults?: PairFaults,
   ) => Effect.Effect<
     TestRunnerConnection,
     Effect.Error<ReturnType<RunnerHub["Service"]["authenticate"]>>,
@@ -88,30 +119,37 @@ export interface TestRunner {
 }
 
 /**
- * One in-process runner: 1.6's real handlers behind a real `RpcServer`, joined to the hub by
- * `socketPair`. Each call is a new runner boot (its own `runnerBootId` and handle table).
+ * One in-process runner: the real handlers behind a real `RpcServer` with the runner's own
+ * windowed, leased protocol, joined to the hub by `socketPair`. Each call is a new runner boot
+ * (its own `runnerBootId` and handle table).
  */
 export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
   enrollment: Redacted.Redacted<string>,
 ) {
-  const sockets = yield* Queue.unbounded<Socket.Socket>();
+  const sockets = yield* Queue.unbounded<readonly [Socket.Socket, Deferred.Deferred<void>]>();
   const socketServer = SocketServer.SocketServer.of({
     address: NetAddress.unixPathAddress("in-process-runner"),
     run: Effect.fn("RunnerHubTesting.acceptSockets")(function* <R, E, _>(
       handler: (socket: Socket.Socket) => Effect.Effect<_, E, R>,
     ) {
-      while (true) yield* Effect.forkChild(handler(yield* Queue.take(sockets)));
+      while (true) {
+        const [socket, ended] = yield* Queue.take(sockets);
+        yield* Effect.forkChild(
+          handler(socket).pipe(Effect.ensuring(Deferred.succeed(ended, undefined))),
+        );
+      }
     }),
   });
   const context = yield* Layer.build(
     RpcServer.layer(RunnerRpcGroup).pipe(
-      Layer.provide(RpcServer.layerProtocolSocketServer),
+      Layer.provide(RunnerMain.layerProtocol),
       Layer.provide(Layer.succeed(SocketServer.SocketServer, socketServer)),
       Layer.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: 256 * 1024 + 1024 })),
       Layer.provideMerge(Layer.fresh(RunnerTesting.layer)),
     ),
   );
   const credential = Context.get(context, RunnerCredential);
+  const table = Context.get(context, HandleTable.HandleTable);
   let enrolled = false;
   const authorization = credential.authorization.pipe(
     Effect.map((current) =>
@@ -119,22 +157,32 @@ export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
     ),
   );
 
-  const connect: TestRunner["connect"] = Effect.fn("RunnerHubTesting.connect")(
-    function* (explicit) {
-      const hub = yield* RunnerHub;
-      const runner = yield* hub.authenticate(
-        Headers.fromInput({
-          authorization: Redacted.value(explicit ?? (yield* authorization)),
-          "x-pair-runner-protocol": String(RUNNER_PROTOCOL_VERSION),
-        }),
-      );
-      enrolled = true;
-      const pair = yield* socketPair;
-      yield* Queue.offer(sockets, pair.runner);
-      const served = yield* hub.serve(runner, pair.hub).pipe(Effect.forkScoped);
-      return { drop: pair.drop, closed: pair.closed, served };
-    },
-  );
+  const connect: TestRunner["connect"] = Effect.fn("RunnerHubTesting.connect")(function* (
+    explicit,
+    faults = {},
+  ) {
+    const hub = yield* RunnerHub;
+    const runner = yield* hub.authenticate(
+      Headers.fromInput({
+        authorization: Redacted.value(explicit ?? (yield* authorization)),
+        "x-pair-runner-protocol": String(RUNNER_PROTOCOL_VERSION),
+      }),
+    );
+    enrolled = true;
+    const pair = yield* socketPair(faults);
+    const ended = yield* Deferred.make<void>();
+    yield* Queue.offer(sockets, [pair.runner, ended]);
+    const served = yield* hub.serve(runner, pair.hub).pipe(Effect.forkScoped);
+    return {
+      drop: pair.drop,
+      closed: pair.closed,
+      runnerEnded: Deferred.await(ended),
+      stallReader: pair.stallReader,
+      resumeReader: pair.resumeReader,
+      halfOpen: pair.halfOpen,
+      served,
+    };
+  });
 
-  return { authorization, connect } satisfies TestRunner;
+  return { authorization, table, connect } satisfies TestRunner;
 });

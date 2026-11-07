@@ -1,9 +1,12 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -20,7 +23,9 @@ import {
   RunnerLostError,
   RunnerSystemError,
   type RunnerCallError,
+  type RunnerEvent,
   type RunnerHandleState,
+  type RunnerLimits,
   type RunnerProcessExit,
   type RunnerProcessSpawnInput,
   type RunnerPtyExit,
@@ -91,52 +96,212 @@ const signalPid = (method: string, pid: number, signal: RunnerSignal) =>
     catch: (cause) => signalError(method, cause),
   });
 
-const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number): A =>
-  (typeof data === "string" ? data.slice(offset) : data.subarray(offset)) as A;
+const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number, end?: number): A =>
+  (typeof data === "string" ? data.slice(offset, end) : data.subarray(offset, end)) as A;
+
+const concat = <A extends Uint8Array | string>(parts: ReadonlyArray<A>): A => {
+  if (parts.length === 1) return parts[0]!;
+  if (typeof parts[0] === "string") return parts.join("") as A;
+  let length = 0;
+  for (const part of parts) length += part.length;
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts as ReadonlyArray<Uint8Array>) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out as A;
+};
+
+/** One `output` element holds at most this much (03 4.5 batching). */
+const BATCH_UNITS = 64 * 1024;
+/** Lease expiry: SIGTERM every group, SIGKILL this long after. */
+const LEASE_KILL_GRACE_MS = 10_000;
+
+/** The hub's values; a runner uses them until its first `runner.hello` says otherwise. */
+const DEFAULT_RUNNER_LIMITS: RunnerLimits = {
+  windowBytes: 256 * 1024,
+  windowChunks: 16,
+  handleBufferBytes: 4 * 1024 * 1024,
+  ptyBufferBytes: 1024 * 1024,
+  sandboxBufferBytes: 64 * 1024 * 1024,
+};
+
+export interface RunnerPressure {
+  readonly bufferedBytes: number;
+  readonly pausedHandles: number;
+}
+
+export interface RunnerBufferStats extends RunnerPressure {
+  readonly highWater: number;
+  readonly pausedMs: number;
+}
+
+/**
+ * Table-wide accounting of unsent output. A buffer pauses its source at its own limit and every
+ * source pauses at the sandbox cap; each resumes below half (03 4.5).
+ */
+class Flow {
+  limits = DEFAULT_RUNNER_LIMITS;
+  unsent = 0;
+  highWater = 0;
+  sandboxPaused = false;
+  pausedHandles = 0;
+  pausedMsTotal = 0;
+  readonly buffers = new Set<OutputBuffer<Uint8Array | string>>();
+
+  readonly now: () => number;
+  private readonly publish: (pressure: RunnerPressure) => void;
+
+  constructor(now: () => number, publish: (pressure: RunnerPressure) => void) {
+    this.now = now;
+    this.publish = publish;
+  }
+
+  added(buffer: OutputBuffer<Uint8Array | string>, delta: number): void {
+    this.unsent += delta;
+    if (this.unsent > this.highWater) this.highWater = this.unsent;
+    this.evaluate(buffer);
+  }
+
+  evaluate(buffer?: OutputBuffer<Uint8Array | string>): void {
+    const cap = this.limits.sandboxBufferBytes;
+    let all = buffer === undefined;
+    if (!this.sandboxPaused && cap > 0 && this.unsent >= cap) {
+      this.sandboxPaused = all = true;
+    } else if (this.sandboxPaused && this.unsent < cap / 2) {
+      this.sandboxPaused = false;
+      all = true;
+    }
+    const before = this.pausedHandles;
+    if (all) for (const each of this.buffers) each.settle(this.sandboxPaused);
+    else buffer?.settle(this.sandboxPaused);
+    if (all || this.pausedHandles !== before) {
+      this.publish({ bufferedBytes: this.unsent, pausedHandles: this.pausedHandles });
+    }
+  }
+
+  pausedMs(): number {
+    let total = this.pausedMsTotal;
+    const now = this.now();
+    for (const buffer of this.buffers) if (buffer.paused) total += now - buffer.pausedAt;
+    return total;
+  }
+}
 
 /**
  * One output stream's bytes (or UTF-16 units), stamped with their offset. Readers never hold the
- * handle's scope. It frees only below the latest `fromSeq` asked for; 1.8 bounds it.
+ * handle's scope. It keeps every unit the newest reader has not taken plus a tail of taken ones
+ * that covers what the window and one batch can have in flight, so a resume never falls behind.
  */
 class OutputBuffer<A extends Uint8Array | string> {
-  private chunks: Array<OutputChunk<A>> = [];
+  private chunks: Array<OutputChunk<A> | undefined> = [];
+  private head = 0;
   private baseSeq = 0;
   nextSeq = 0;
+  private cursor = 0;
+  private confirmed = 0;
+  private reader = 0;
   private eof = false;
   private lost: RunnerLostError | undefined;
   private wake = Deferred.makeUnsafe<void>();
   readonly ended = Deferred.makeUnsafe<void>();
+  private overLimit = false;
+  paused = false;
+  pausedAt = 0;
+  /** Open while the source may be read. */
+  readonly gate = Latch.makeUnsafe(true);
+
+  private readonly flow: Flow;
+  private readonly limit: (limits: RunnerLimits) => number;
+  private readonly onPause: (paused: boolean) => void;
+
+  constructor(
+    flow: Flow,
+    limit: (limits: RunnerLimits) => number,
+    onPause: (paused: boolean) => void = () => undefined,
+  ) {
+    this.flow = flow;
+    this.limit = limit;
+    this.onPause = onPause;
+    flow.buffers.add(this as OutputBuffer<Uint8Array | string>);
+  }
+
+  private get self(): OutputBuffer<Uint8Array | string> {
+    return this as OutputBuffer<Uint8Array | string>;
+  }
 
   push(data: A): void {
-    if (data.length === 0) return;
+    if (data.length === 0 || this.lost !== undefined) return;
     this.chunks.push({ seq: this.nextSeq, data });
     this.nextSeq += data.length;
+    this.flow.added(this.self, data.length);
     this.notify();
   }
 
   end(): void {
     this.eof = true;
     Deferred.doneUnsafe(this.ended, Exit.void);
+    this.flow.evaluate(this.self);
     this.notify();
   }
 
-  fail(error: RunnerLostError): void {
+  /** Fails every reader, frees the buffer and lets the source run to EOF unread. */
+  discard(error: RunnerLostError): void {
     this.lost ??= error;
+    this.chunks = [];
+    this.head = 0;
+    const unsent = this.nextSeq - this.cursor;
+    this.cursor = this.nextSeq;
+    this.flow.added(this.self, -unsent);
+    this.settle(false);
+    this.flow.buffers.delete(this.self);
     this.notify();
+  }
+
+  /** Recomputes the pause from this buffer's limit and the sandbox cap. */
+  settle(sandboxPaused: boolean): void {
+    const limit = this.limit(this.flow.limits);
+    const unsent = this.nextSeq - this.cursor;
+    if (!this.overLimit && limit > 0 && unsent >= limit) this.overLimit = true;
+    else if (this.overLimit && unsent < limit / 2) this.overLimit = false;
+    const paused = !this.eof && this.lost === undefined && (this.overLimit || sandboxPaused);
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (paused) {
+      this.pausedAt = this.flow.now();
+      this.flow.pausedHandles += 1;
+      this.gate.closeUnsafe();
+    } else {
+      this.flow.pausedMsTotal += this.flow.now() - this.pausedAt;
+      this.flow.pausedHandles -= 1;
+      this.gate.openUnsafe();
+    }
+    this.onPause(paused);
   }
 
   read(handle: RunnerHandleId, fromSeq: number): Stream.Stream<OutputChunk<A>, RunnerLostError> {
     return Stream.suspend(() => {
-      if (fromSeq < this.baseSeq) {
+      if (this.lost !== undefined) return Stream.fail(this.lost);
+      if (fromSeq < this.baseSeq || fromSeq > this.nextSeq) {
         return Stream.fail(new RunnerLostError({ reason: "resume-behind-buffer", handle }));
       }
-      this.freeBelow(Math.min(fromSeq, this.nextSeq));
-      return Stream.paginate(fromSeq, (cursor) => Effect.suspend(() => this.pull(handle, cursor)));
+      // The server holds everything below `fromSeq`, and this reader replaces any older one.
+      const reader = ++this.reader;
+      this.confirmed = fromSeq;
+      const delta = this.cursor - fromSeq;
+      this.cursor = fromSeq;
+      this.flow.added(this.self, delta);
+      this.trim();
+      return Stream.paginate(fromSeq, (cursor) =>
+        Effect.suspend(() => this.pull(handle, reader, cursor)),
+      );
     });
   }
 
   private pull(
     handle: RunnerHandleId,
+    reader: number,
     cursor: number,
   ): Effect.Effect<
     readonly [ReadonlyArray<OutputChunk<A>>, Option.Option<number>],
@@ -146,19 +311,36 @@ class OutputBuffer<A extends Uint8Array | string> {
     if (cursor < this.baseSeq) {
       return Effect.fail(new RunnerLostError({ reason: "resume-behind-buffer", handle }));
     }
-    const out: Array<OutputChunk<A>> = [];
-    for (let index = this.firstChunkEndingAfter(cursor); index < this.chunks.length; index++) {
-      const chunk = this.chunks[index]!;
-      const offset = Math.max(0, cursor - chunk.seq);
-      out.push(offset === 0 ? chunk : { seq: cursor, data: sliceFrom(chunk.data, offset) });
+    if (cursor < this.nextSeq) {
+      const parts: Array<A> = [];
+      let end = cursor;
+      for (
+        let index = this.firstChunkEndingAfter(cursor);
+        index < this.chunks.length && end - cursor < BATCH_UNITS;
+        index++
+      ) {
+        const chunk = this.chunks[index]!;
+        const from = end - chunk.seq;
+        const to = Math.min(chunk.data.length, from + BATCH_UNITS - (end - cursor));
+        parts.push(
+          from === 0 && to === chunk.data.length ? chunk.data : sliceFrom(chunk.data, from, to),
+        );
+        end += to - from;
+      }
+      if (reader === this.reader && end > this.cursor) {
+        const taken = end - this.cursor;
+        this.cursor = end;
+        this.flow.added(this.self, -taken);
+        this.trim();
+      }
+      return Effect.succeed([[{ seq: cursor, data: concat(parts) }], Option.some(end)] as const);
     }
-    if (out.length > 0) return Effect.succeed([out, Option.some(this.nextSeq)] as const);
     if (this.eof) return Effect.succeed([[], Option.none()] as const);
     return Deferred.await(this.wake).pipe(Effect.as([[], Option.some(cursor)] as const));
   }
 
   private firstChunkEndingAfter(seq: number): number {
-    let low = 0;
+    let low = this.head;
     let high = this.chunks.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
@@ -169,15 +351,24 @@ class OutputBuffer<A extends Uint8Array | string> {
     return low;
   }
 
-  private freeBelow(seq: number): void {
-    if (seq <= this.baseSeq) return;
-    const keep = this.firstChunkEndingAfter(seq);
-    this.chunks = this.chunks.slice(keep);
-    const first = this.chunks[0];
-    if (first !== undefined && first.seq < seq) {
-      this.chunks[0] = { seq, data: sliceFrom(first.data, seq - first.seq) };
+  /** Frees whole chunks below the tail; unsent units are never freed. */
+  private trim(): void {
+    const tail = this.flow.limits.windowBytes + 2 * BATCH_UNITS;
+    const floor = Math.min(this.cursor, Math.max(this.confirmed, this.cursor - tail));
+    let head = this.head;
+    while (head < this.chunks.length) {
+      const chunk = this.chunks[head]!;
+      if (chunk.seq + chunk.data.length > floor) break;
+      this.chunks[head] = undefined;
+      head += 1;
     }
-    this.baseSeq = seq;
+    if (head === this.head) return;
+    this.head = head;
+    this.baseSeq = this.chunks[head]?.seq ?? this.nextSeq;
+    if (head * 2 >= this.chunks.length) {
+      this.chunks = this.chunks.slice(head);
+      this.head = 0;
+    }
   }
 
   private notify(): void {
@@ -215,8 +406,23 @@ const makeInput = (apply: InputChannel["apply"]): InputChannel => ({
 export class HandleTable extends Context.Service<
   HandleTable,
   {
-    /** Minted per runner process: handle ids from any other boot are unknown. */
-    readonly runnerBootId: string;
+    /**
+     * Answers `runner.hello`: takes its lease and limits and returns the boot id and live handles.
+     * A new `serverBootId` first kills every handle of the old one and mints a new boot id.
+     */
+    readonly hello: (input: {
+      readonly serverBootId: string;
+      readonly leaseMs: number;
+      readonly limits: RunnerLimits;
+    }) => Effect.Effect<{
+      readonly runnerBootId: string;
+      readonly handles: ReadonlyArray<RunnerHandleState>;
+    }>;
+    /**
+     * Wraps one socket's life. When the last socket ends the lease starts; a hello stops it, and
+     * expiry kills every group and mints a new boot id, so each boot id attaches once.
+     */
+    readonly session: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     readonly spawn: (
       input: RunnerProcessSpawnInput,
     ) => Effect.Effect<{ readonly handle: RunnerHandleId; readonly pid: number }, RunnerCallError>;
@@ -253,20 +459,45 @@ export class HandleTable extends Context.Service<
     /** SIGTERM to every group, SIGKILL after `graceMs`; then refuses new work. */
     readonly drain: (graceMs: number) => Effect.Effect<void>;
     readonly live: Effect.Effect<ReadonlyArray<RunnerHandleState>>;
-    readonly exited: Stream.Stream<RunnerHandleId>;
+    /** The current limits; the output window reads them per chunk. */
+    readonly limits: () => RunnerLimits;
+    /** `handle.exited`, and `resource.pressure` whenever the paused set changes. */
+    readonly events: Stream.Stream<RunnerEvent>;
+    /** The current pressure, then each change. */
+    readonly pressure: Stream.Stream<RunnerPressure>;
+    readonly stats: Effect.Effect<RunnerBufferStats>;
   }
 >()("t3/sandbox/runner/HandleTable") {}
+
+const fdLimit = (limits: RunnerLimits) => limits.handleBufferBytes;
+const ptyLimit = (limits: RunnerLimits) => limits.ptyBufferBytes;
 
 const make = Effect.fn("HandleTable.make")(function* () {
   const tableScope = yield* Effect.scope;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const fs = yield* FileSystem.FileSystem;
-  const runnerBootId = SecureRandom.uuidV4Unsafe();
-  const exits = yield* PubSub.unbounded<RunnerHandleId>();
+  const clock = yield* Clock.Clock;
+  let runnerBootId = SecureRandom.uuidV4Unsafe();
+  const events = yield* PubSub.unbounded<RunnerEvent>();
+  const pressure = yield* PubSub.unbounded<RunnerPressure>({ replay: 1 });
+  const flow = new Flow(
+    () => clock.currentTimeMillisUnsafe(),
+    (current) => {
+      PubSub.publishUnsafe(pressure, current);
+      PubSub.publishUnsafe(events, { _tag: "resource.pressure", ...current });
+    },
+  );
+  PubSub.publishUnsafe(pressure, { bufferedBytes: 0, pausedHandles: 0 });
   const entries = new Map<RunnerHandleId, Entry>();
   let counter = 0;
   let drained = false;
+  let serverBootId: string | undefined;
+  let leaseMs: number | undefined;
+  let lease: Fiber.Fiber<void> | undefined;
+  let sockets = 0;
+  // Boot changes (hello, lease expiry, drain) run one at a time.
+  const bootLocked = Semaphore.withPermit(Semaphore.makeUnsafe(1));
 
   const lostError = (handle: RunnerHandleId) =>
     new RunnerLostError({ reason: drained ? "drained" : "runner-restarted", handle });
@@ -301,7 +532,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
     (handle: RunnerHandleId, exit: Deferred.Deferred<ExitInfo, RunnerLostError>) =>
     (info: ExitInfo) => {
       Deferred.doneUnsafe(exit, Exit.succeed(info));
-      PubSub.publishUnsafe(exits, handle);
+      PubSub.publishUnsafe(events, { _tag: "handle.exited", handle });
     };
 
   const pump = (
@@ -309,11 +540,13 @@ const make = Effect.fn("HandleTable.make")(function* () {
     buffer: OutputBuffer<Uint8Array>,
     source: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
   ) =>
-    Stream.runForEach(source, (chunk) => Effect.sync(() => buffer.push(chunk))).pipe(
-      Effect.ignore,
-      Effect.ensuring(Effect.sync(() => buffer.end())),
-      Effect.forkIn(scope),
-    );
+    // Waiting on the gate stops reading the pipe, so a paused child blocks on its write.
+    Stream.runForEach(source, (chunk) =>
+      Effect.andThen(
+        Effect.sync(() => buffer.push(chunk)),
+        buffer.gate.await,
+      ),
+    ).pipe(Effect.ignore, Effect.ensuring(Effect.sync(() => buffer.end())), Effect.forkIn(scope));
 
   const spawn: HandleTable["Service"]["spawn"] = Effect.fn("HandleTable.spawn")(function* (input) {
     const allocated = yield* allocate;
@@ -380,7 +613,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
           }
         }
         for (const [key, source] of sources) {
-          const buffer = new OutputBuffer<Uint8Array>();
+          const buffer = new OutputBuffer<Uint8Array>(flow, fdLimit);
           outputs.set(key, buffer);
           yield* pump(allocated.scope, buffer, source);
         }
@@ -450,7 +683,9 @@ const make = Effect.fn("HandleTable.make")(function* () {
               ),
             );
           // Listen before any await: node-pty drops output emitted with no listener.
-          const buffer = new OutputBuffer<string>();
+          const buffer = new OutputBuffer<string>(flow, ptyLimit, (paused) =>
+            paused ? pty.pause?.() : pty.resume?.(),
+          );
           const exit = Deferred.makeUnsafe<ExitInfo, RunnerLostError>();
           const stopData = pty.onData((data) => buffer.push(data));
           pty.onExit((event) => {
@@ -647,7 +882,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
   const closeEntry = (handle: RunnerHandleId, entry: Entry, error: RunnerLostError) =>
     Effect.suspend(() => {
       entries.delete(handle);
-      for (const buffer of entry.outputs.values()) buffer.fail(error);
+      for (const buffer of entry.outputs.values()) buffer.discard(error);
       return Scope.close(entry.scope, Exit.void);
     });
 
@@ -659,23 +894,38 @@ const make = Effect.fn("HandleTable.make")(function* () {
         : closeEntry(handle, entry, new RunnerLostError({ reason: "runner-restarted", handle }));
     });
 
-  const drain: HandleTable["Service"]["drain"] = Effect.fn("HandleTable.drain")(
-    function* (graceMs) {
-      drained = true;
-      const live = [...entries].filter(([, entry]) => entry.kind !== "file");
-      for (const [, entry] of live) yield* Effect.ignore(signalPid("drain", -entry.pid, "SIGTERM"));
-      yield* Effect.forEach(live, ([, entry]) => Deferred.await(entry.exit), {
-        concurrency: "unbounded",
-        discard: true,
-      }).pipe(Effect.ignore, Effect.timeoutOption(graceMs));
-      for (const [, entry] of live) yield* Effect.ignore(signalPid("drain", -entry.pid, "SIGKILL"));
-      for (const [handle, entry] of entries) {
-        const error = new RunnerLostError({ reason: "drained", handle });
-        yield* Deferred.fail(entry.exit, error);
-        yield* closeEntry(handle, entry, error);
+  /** SIGTERM to every group, SIGKILL after `graceMs`, then every handle fails with `reason`. */
+  const terminateAll = Effect.fnUntraced(function* (
+    reason: RunnerLostError["reason"],
+    graceMs: number,
+  ) {
+    const all = [...entries];
+    // Unread output must not hold a dying child on a paused pipe.
+    for (const [handle, entry] of all) {
+      for (const buffer of entry.outputs.values()) {
+        buffer.discard(new RunnerLostError({ reason, handle }));
       }
-    },
-  );
+    }
+    const live = all.filter(([, entry]) => entry.kind !== "file");
+    for (const [, entry] of live) yield* Effect.ignore(signalPid(reason, -entry.pid, "SIGTERM"));
+    yield* Effect.forEach(live, ([, entry]) => Deferred.await(entry.exit), {
+      concurrency: "unbounded",
+      discard: true,
+    }).pipe(Effect.ignore, Effect.timeoutOption(graceMs));
+    for (const [, entry] of live) yield* Effect.ignore(signalPid(reason, -entry.pid, "SIGKILL"));
+    for (const [handle, entry] of all) {
+      const error = new RunnerLostError({ reason, handle });
+      yield* Deferred.fail(entry.exit, error);
+      yield* closeEntry(handle, entry, error);
+    }
+  });
+
+  const drain: HandleTable["Service"]["drain"] = Effect.fn("HandleTable.drain")(function* (
+    graceMs,
+  ) {
+    drained = true;
+    yield* terminateAll("drained", graceMs);
+  }, bootLocked);
 
   const live: HandleTable["Service"]["live"] = Effect.sync(() =>
     [...entries].map(([handle, entry]) => {
@@ -686,8 +936,66 @@ const make = Effect.fn("HandleTable.make")(function* () {
     }),
   );
 
+  const expireLease = Effect.fn("HandleTable.expireLease")(function* () {
+    lease = undefined;
+    yield* Effect.logWarning("runner lease expired; stopping every process", {
+      handles: entries.size,
+    });
+    yield* terminateAll("lease-expired", LEASE_KILL_GRACE_MS);
+    runnerBootId = SecureRandom.uuidV4Unsafe();
+  }, bootLocked);
+
+  const stopLease = Effect.suspend(() => {
+    const running = lease;
+    lease = undefined;
+    return running === undefined ? Effect.void : Fiber.interrupt(running);
+  });
+
+  const hello: HandleTable["Service"]["hello"] = Effect.fn("HandleTable.hello")(function* (input) {
+    yield* stopLease;
+    if (serverBootId !== undefined && serverBootId !== input.serverBootId) {
+      // A server restart, or a lease the server expired first: nobody owns these handles.
+      yield* terminateAll("server-restarted", LEASE_KILL_GRACE_MS);
+      runnerBootId = SecureRandom.uuidV4Unsafe();
+    }
+    serverBootId = input.serverBootId;
+    leaseMs = input.leaseMs;
+    flow.limits = input.limits;
+    flow.evaluate();
+    return { runnerBootId, handles: yield* live };
+  }, bootLocked);
+
+  const socketEnded = Effect.suspend(() => {
+    sockets -= 1;
+    if (sockets > 0 || leaseMs === undefined || lease !== undefined || drained) return Effect.void;
+    return Effect.sleep(leaseMs).pipe(
+      Effect.andThen(expireLease()),
+      // Sleeping before the socket's end returns, so the lease counts from the drop.
+      Effect.forkIn(tableScope, { startImmediately: true }),
+      Effect.tap((fiber) =>
+        Effect.sync(() => {
+          lease = fiber;
+        }),
+      ),
+    );
+  });
+
+  const session: HandleTable["Service"]["session"] = (effect) =>
+    Effect.suspend(() => {
+      sockets += 1;
+      return effect;
+    }).pipe(Effect.ensuring(socketEnded));
+
+  const stats: HandleTable["Service"]["stats"] = Effect.sync(() => ({
+    bufferedBytes: flow.unsent,
+    highWater: flow.highWater,
+    pausedHandles: flow.pausedHandles,
+    pausedMs: flow.pausedMs(),
+  }));
+
   return HandleTable.of({
-    runnerBootId,
+    hello,
+    session,
     spawn,
     openPty,
     openFileWriter,
@@ -699,7 +1007,10 @@ const make = Effect.fn("HandleTable.make")(function* () {
     release,
     drain,
     live,
-    exited: Stream.fromPubSub(exits),
+    limits: () => flow.limits,
+    events: Stream.fromPubSub(events),
+    pressure: Stream.fromPubSub(pressure),
+    stats,
   });
 });
 
