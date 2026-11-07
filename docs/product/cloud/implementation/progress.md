@@ -10,33 +10,31 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (46 of 57):**
+**Landed on `feat/pair` (47 of 57):**
 
-- M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
+- M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29, 1.26, 1.35, 1.34.
+- M1 (36): 1.1–1.16, 1.19–1.23, 1.25–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
+  output coalescing) and the runner revoke fix.
 
-**In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
-pushed — if the container is gone, restart these from their spec):
+**In flight:** nothing. Work paused on 2026-11-07 after 1.16 landed; every worktree was merged
+and removed, so a fresh container loses nothing.
 
-- 1.16 cloud launch (critical path)
+**Not started (10)**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
-**Not started (9), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+| Start when | PRs                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| now        | 1.17 shared sandboxes (critical), 1.24 setup scripts, 1.38 web Cloud mode, 1.42 MCP + CLI, 1.43 machine-failed push |
+| after 1.17 | 1.18 admission                                                                                                      |
+| after 1.38 | 1.39 web header + menus                                                                                             |
+| after 1.18 | 1.40 Settings → Cloud (also 1.16, 1.23, 1.25, 1.30 — landed)                                                        |
+| after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                                                |
+| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes                                            |
 
-| Next when  | PRs                                                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| after 1.12 | 1.16 cloud launch (critical), 1.26 provider credentials (also 1.13, 1.25), 1.34 attachments                          |
-| now        | 1.29 revocation (needs 1.19, 1.28 — landed)                                                                          |
-| after 1.16 | 1.17 shared sandboxes, 1.24 setup scripts, 1.38 web Cloud mode (also 1.37), 1.42 MCP + CLI, 1.43 machine-failed push |
-| after 1.28 | 1.28a owner's GitHub, then 1.29 revocation (also 1.19), 1.35 push + PR (also 1.31)                                   |
-| after 1.17 | 1.18 admission                                                                                                       |
-| after 1.38 | 1.39 web header + menus                                                                                              |
-| after 1.18 | 1.40 Settings → Cloud (also 1.16, 1.23, 1.25, 1.30)                                                                  |
-| after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                                                 |
-| last       | 1.45 cloud guide, then the M0 and M1 integrated passes                                                               |
+Before the integrated pass: rebuild `t3-sandbox:dev` (1.28 changed the image), re-run
+`vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
 
-Critical path left: 1.12 → 1.16 → 1.17 → 1.18 → 1.40 → 1.41.
+Critical path left: 1.17 → 1.18 → 1.40 → 1.41.
 
 ## How to resume
 
@@ -191,7 +189,8 @@ branch into `feat/pair`. Several workers run at once in sibling worktrees on thi
 - The container can restart without warning (background shells die). Commit work-in-progress to
   `wt/<PR>` every time a meaningful piece compiles (`wip:` commits are fine; squash before your
   final report). Don't park long test runs in background shells you wait on.
-- Do not commit plans or scratch notes.
+- Do not commit plans or scratch notes, and do not edit `docs/product/cloud/implementation/progress.md`
+  (the lead owns it).
 
 ## Your final message (the lead reads only this)
 
@@ -585,12 +584,21 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - ProviderTurnStartService stages after session open, before startRootRun; ProviderTurnControlService.steer stages before steerTurn. Both layers need `SandboxAttachmentStaging` (layer or Layer.mock).
 - Claude prompt uses sandbox paths (`promptAttachmentPath`); image/PDF bytes still read server-side. Codex `toCodexInput` names sandbox paths (`hostForPath`).
 
+## 1.16 cloud launch (landed)
+
+- Contracts: `OrchestrationV2ThreadLaunchCloudStrategy` + a launch-only union used solely by `OrchestrationV2ThreadLaunchInput` (runs, defer_start, MCP, scheduled tasks never take `cloud`).
+- sandbox/lifecycle/CloudPreparation.ts: `CloudLaunchError`, `resolveCloudLaunch`, `awaitSandboxReady` (also waits for `RunnerHub.connection`), `checkoutInSandbox`, `sandboxIdForLaunch`, `SandboxCheckoutRoot` Reference (test seam). Git `readRemoteUrl`, `cloneRepository`.
+- ThreadLaunchService: three-commit launch; refuses LocalOnly/Unsupported credentials before any thread or machine; retry dispatches `sandbox.retry` first; preparation reserved per run id; requires ProjectionStoreV2. ws.ts shows refusal reasons.
+- Lifecycle: `sandbox.release-waiters` on `ready` and every `failed` (incl. boot timeout). `decideCloudPrompt` + `gateCloudMessage` park prompts, wake, or re-provision after discard. Recovery re-arms cloud `preparing` runs with `sandbox-rearm:<runId>`. Runner bundle warmed at startup when a driver is configured.
+- SandboxEffects/recovery use `Effect.serviceOption(ThreadLaunchService)` (production wiring not asserted by a test).
+- E2E test (ThreadLaunchService.test.ts, it.live): fake driver + real hub + in-process runner → ready → real clone/worktree → deferred run released (stops before a provider turn).
+- For later: 1.17 replaces the non-owner refusal in `decideCloudPrompt` with `request-wake`; 1.24 setup scripts still get sandbox paths without sandbox handling; 1.42 MCP schema lacks `cloud`. Cloud threads' own `root`/`existing_worktree` delegation strategies unhandled.
+
 ## Open follow-ups and risks
 
 - Web browser tests can't launch in this container (Playwright browser version mismatch); environment only.
 
 - Runner PTY budgets (1.44) still miss after the perf-pty fix under load; re-benchmark on an idle machine and decide whether to batch acks in the hub.
-- 1.16 must warm `RunnerBundle.current` outside the 60 s sandbox effect (source-run servers build the bundle on first use), and add `sandbox.release-waiters` to the boot-timeout arm (1.19).
 - The runner's fs ops run as root: anything the server writes into a sandbox that the `t3` agent must modify needs chown (1.12, 1.16, 1.24, 1.34).
 - `DEFAULT_BASE_IMAGE_REPOSITORY` is `ghcr.io/rutvikchandla3/t3-sandbox` (1.23): maintainers to confirm the owner.
 - Old runner builds under `<stateDir>/runner/` are never pruned (1.9).
