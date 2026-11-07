@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import type { OrchestrationV2Sandbox } from "./orchestrationV2.ts";
 
 /** Path-safe: the server addresses a sandbox's files under `/t3-sandbox/<id>/`. */
 export const SandboxId = TrimmedNonEmptyString.check(Schema.isPattern(/^sbx_[0-9a-f]{20}$/)).pipe(
@@ -46,3 +47,20 @@ export const SandboxFailure = Schema.Struct({
   retryable: Schema.Boolean,
 });
 export type SandboxFailure = typeof SandboxFailure.Type;
+
+/** The image a sandbox booted from, as the driver resolved it. */
+export const SandboxBaseImageInfo = Schema.Struct({
+  ref: TrimmedNonEmptyString,
+  digest: TrimmedNonEmptyString,
+  /** The image's `org.opencontainers.image.version` label; null for an image without one. */
+  version: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type SandboxBaseImageInfo = typeof SandboxBaseImageInfo.Type;
+
+/** What clients show as the machine's image; null once a team build replaces the base (M3). */
+export const sandboxImageLabel = (sandbox: Pick<OrchestrationV2Sandbox, "baseImage">): string =>
+  sandbox.baseImage === undefined
+    ? "Pair base"
+    : sandbox.baseImage.version !== null
+      ? `Pair base ${sandbox.baseImage.version}`
+      : `Base image ${sandbox.baseImage.ref}`;

@@ -208,10 +208,22 @@ interface FakeContainer {
   generation: number;
 }
 
-/** An Engine API answering from memory; `calls` records `METHOD /path` for each request. */
-const fakeEngine = (containers: Map<string, FakeContainer>) => {
+interface FakeImages {
+  /** Image ref to the daemon's id for it; a ref not in here is not on the daemon. */
+  readonly present: Map<string, string>;
+  /** The daemon's answer to a pull; a body that never ends is a pull in progress. */
+  readonly pull: (ref: string) => Response;
+}
+
+/**
+ * An Engine API answering from memory; `calls` records `METHOD /path` for each request. Without
+ * `images`, every image is on the daemon as `sha256:base`.
+ */
+const fakeEngine = (containers: Map<string, FakeContainer>, images?: FakeImages) => {
   const calls: Array<string> = [];
   const archives: Array<Uint8Array> = [];
+  /** The image each created container was asked to boot from. */
+  const createdImages = new Map<string, string | undefined>();
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       const path = decodeURIComponent(url.pathname.replace(/^\/v1\.41/, ""));
@@ -227,7 +239,17 @@ const fakeEngine = (containers: Map<string, FakeContainer>) => {
       if (path === "/info") {
         return reply(200, { NCPU: 4, MemTotal: 16 * 2 ** 30, Runtimes: { runc: {} } });
       }
-      if (path.startsWith("/images/")) return reply(200, { Id: "sha256:base" });
+      if (path === "/images/create") {
+        const ref = `${url.searchParams.get("fromImage")}:${url.searchParams.get("tag")}`;
+        return HttpClientResponse.fromWeb(request, images!.pull(ref));
+      }
+      if (path.startsWith("/images/")) {
+        const id =
+          images === undefined
+            ? "sha256:base"
+            : images.present.get(path.slice("/images/".length, -"/json".length));
+        return id === undefined ? reply(404, {}) : reply(200, { Id: id });
+      }
       if (path.startsWith("/networks/")) {
         return reply(200, { Id: "net", IPAM: { Config: [{ Subnet: "172.30.0.0/16" }] } });
       }
@@ -237,7 +259,9 @@ const fakeEngine = (containers: Map<string, FakeContainer>) => {
         if (containers.has(name)) return reply(409, { message: "Conflict" });
         const body = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
           readonly Labels?: Record<string, string>;
+          readonly Image?: string;
         };
+        createdImages.set(name, body.Image);
         containers.set(name, { labels: body.Labels ?? {}, status: "created", generation: 0 });
         return reply(201, { Id: name });
       }
@@ -278,7 +302,7 @@ const fakeEngine = (containers: Map<string, FakeContainer>) => {
       return reply(204);
     }),
   );
-  return { engine: makeDockerEngine(client, "http://docker"), calls, archives };
+  return { engine: makeDockerEngine(client, "http://docker"), calls, archives, createdImages };
 };
 
 const withDriver = <A, E>(
@@ -286,9 +310,10 @@ const withDriver = <A, E>(
   use: (
     driver: Effect.Success<ReturnType<typeof makeWithEngine>>,
     fake: ReturnType<typeof fakeEngine>,
-  ) => Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E, ServerSettingsService>,
+  options: { readonly images?: FakeImages; readonly fromSource?: boolean } = {},
 ) => {
-  const fake = fakeEngine(containers);
+  const fake = fakeEngine(containers, options.images);
   return makeWithEngine(
     { kind: "docker", id: driverId, label: "Local" },
     installId,
@@ -297,6 +322,7 @@ const withDriver = <A, E>(
       route: Effect.succeed({ serverUrl: "unix:/srv/t3/runner/runner.sock" }),
       bundle: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
     },
+    { version: "1.2.3", fromSource: options.fromSource ?? false },
   ).pipe(
     Effect.flatMap((driver) => use(driver, fake)),
     Effect.provide(ServerSettingsService.layerTest()),
@@ -333,6 +359,11 @@ describe("DockerComputeDriver", () => {
         Effect.gen(function* () {
           const result = yield* driver.create(createInput);
           assert.strictEqual(result.driverRef, name);
+          assert.deepStrictEqual(result.baseImage, {
+            ref: "ghcr.io/rutvikchandla3/t3-sandbox:1.2.3",
+            digest: "sha256:base",
+            version: null,
+          });
           assert.notInclude(fake.calls, `POST /containers/${name}/stop`);
           assert.notInclude(fake.calls, `PUT /containers/${name}/archive`);
         }),
@@ -377,4 +408,72 @@ describe("DockerComputeDriver", () => {
       }),
     );
   });
+
+  it.effect(
+    "fails a create while the image downloads, then boots from the override's image id",
+    () => {
+      const present = new Map<string, string>();
+      const published = "ghcr.io/rutvikchandla3/t3-sandbox:1.2.3";
+      return withDriver(
+        new Map(),
+        (driver, fake) =>
+          Effect.gen(function* () {
+            const pulling = yield* Effect.flip(driver.create(createInput));
+            assert.deepStrictEqual(
+              [pulling.reason, pulling.retryable, pulling.image],
+              ["unavailable", true, { ref: published, state: "pulling" }],
+            );
+            assert.include(pulling.message, "still downloading");
+            const health = yield* driver.health;
+            assert.deepStrictEqual(health.baseImage, { pulling: published });
+            assert.isFalse(health.privateNetworkBlock.applied);
+            assert.isFalse(fake.createdImages.has(name));
+
+            present.set("registry.example.com/base:7", "sha256:custom");
+            yield* (yield* ServerSettingsService).updateSettings({
+              sandbox: { baseImage: "registry.example.com/base:7" },
+            });
+            const created = yield* driver.create(createInput);
+            assert.deepStrictEqual(created.baseImage, {
+              ref: "registry.example.com/base:7",
+              digest: "sha256:custom",
+              version: null,
+            });
+            assert.strictEqual(fake.createdImages.get(name), "sha256:custom");
+          }),
+        { images: { present, pull: () => new Response(new ReadableStream()) } },
+      );
+    },
+  );
+
+  it.effect.each([
+    { fromSource: true, hint: "Run `vp run sandbox-image:build`" },
+    { fromSource: false, hint: "Could not pull ghcr.io/rutvikchandla3/t3-sandbox:1.2.3." },
+  ])("reports a refused pull as missing with the hint for fromSource=$fromSource", (scenario) =>
+    withDriver(
+      new Map(),
+      (driver) =>
+        Effect.gen(function* () {
+          const health = yield* driver.health;
+          assert.isTrue(
+            health.baseImage !== null &&
+              "missing" in health.baseImage &&
+              health.baseImage.hint.includes(scenario.hint),
+          );
+          const error = yield* Effect.flip(driver.create(createInput));
+          assert.deepStrictEqual(
+            [error.reason, error.retryable, error.image?.state],
+            ["not-found", false, "missing"],
+          );
+          assert.include(error.message, scenario.hint);
+        }),
+      {
+        fromSource: scenario.fromSource,
+        images: {
+          present: new Map(),
+          pull: () => new Response('{"message":"manifest unknown"}', { status: 404 }),
+        },
+      },
+    ),
+  );
 });

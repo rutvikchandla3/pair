@@ -111,6 +111,23 @@ const rows: ReadonlyArray<Row> = [
     { next: { state: "provisioning", driverRef: "new-ref" }, effects: [] },
   ],
   [
+    "created records the base image it booted",
+    {
+      type: "sandbox.created",
+      ...at(2),
+      driverRef: "new-ref",
+      baseImage: { ref: "t3-sandbox:dev", digest: "sha256:a", version: null },
+    },
+    record({ state: "provisioning", driverRef: null }),
+    {
+      next: {
+        driverRef: "new-ref",
+        baseImage: { ref: "t3-sandbox:dev", digest: "sha256:a", version: null },
+      },
+      effects: [],
+    },
+  ],
+  [
     "created for an older generation",
     { type: "sandbox.created", ...at(1), driverRef: "old" },
     record({ state: "provisioning" }),

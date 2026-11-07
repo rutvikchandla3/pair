@@ -7,15 +7,25 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+import packageJson from "../../../package.json" with { type: "json" };
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  type BaseImageMissingError,
+  baseImageCandidates,
+  baseImageMissingHint,
+  ensureBaseImage,
+  type ResolvedBaseImage,
+} from "../image/SandboxBaseImage.ts";
 import {
   RunnerBundle,
   type RunnerBundleInfo,
@@ -29,7 +39,6 @@ import {
 import {
   type BackendSandbox,
   type BackendSandboxStatus,
-  type BaseImageInfo,
   type ComputeCapabilities,
   ComputeDriver,
   type ComputeDriverCreateInput,
@@ -43,7 +52,6 @@ import {
   DockerEngineError,
   type DockerHost,
   type EngineContainer,
-  type EngineImage,
   type EngineInfo,
   makeDockerEngine,
   mapEngineError,
@@ -52,8 +60,6 @@ import {
   ustar,
 } from "./DockerEngineApi.ts";
 
-/** Until 1.23 resolves and pulls the published image, it must already exist on the daemon. */
-const DEFAULT_BASE_IMAGE = "t3-sandbox:dev";
 /** The runner's drain grace. */
 const STOP_GRACE_SECONDS = 10;
 const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
@@ -269,11 +275,19 @@ const statusOf = (state: string): BackendSandboxStatus => {
   return "failed";
 };
 
-const baseImageInfo = (ref: string, image: EngineImage): BaseImageInfo => ({
-  ref,
-  digest: image.RepoDigests?.[0]?.split("@")[1] ?? image.Id,
-  version: image.Config?.Labels?.["org.opencontainers.image.version"] ?? null,
-});
+/** One resolution of the base image; readers wait for its first decision, never for a whole pull. */
+type BaseImageState =
+  | { readonly _tag: "Pulling"; readonly ref: string }
+  | { readonly _tag: "Ready"; readonly image: ResolvedBaseImage }
+  | { readonly _tag: "Missing"; readonly error: BaseImageMissingError };
+
+interface BaseImageAttempt {
+  readonly override: string | undefined;
+  readonly state: Ref.Ref<BaseImageState>;
+  readonly decided: Deferred.Deferred<void>;
+}
+
+const baseImageInfo = ({ ref, digest, version }: ResolvedBaseImage) => ({ ref, digest, version });
 
 /** The driver over an Engine client; `make` builds the client from the instance's config. */
 export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(function* (
@@ -285,6 +299,11 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     readonly route: Effect.Effect<RunnerDialPlan, RunnerRouteError>;
     /** The server's own bundle, which a local daemon mounts instead of downloading. */
     readonly bundle: Effect.Effect<RunnerBundleInfo, RunnerBundleUnavailableError>;
+  },
+  server: {
+    readonly version: string;
+    /** Run from a checkout, where a developer's own `t3-sandbox:dev` build is tried first. */
+    readonly fromSource: boolean;
   },
 ) {
   const settings = yield* ServerSettingsService;
@@ -323,15 +342,100 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
         }),
         Effect.retry({
           ...TRANSIENT_RETRY,
-          while: (error) => error.retryable && error.reason === "unavailable",
+          // An image still downloading is retried by the caller's outbox, not here.
+          while: (error) =>
+            error.retryable && error.reason === "unavailable" && error.image === undefined,
         }),
       );
 
-  const baseImageRef = (operation: ComputeDriverError["operation"]) =>
-    settings.getSettings.pipe(
-      Effect.map((current) => current.sandbox?.baseImage ?? DEFAULT_BASE_IMAGE),
-      Effect.mapError((cause) => failure(operation, "unavailable", cause)),
+  const scope = yield* Effect.scope;
+  const imageLock = yield* Semaphore.make(1);
+  // Only touched while holding `imageLock`.
+  let attempt: BaseImageAttempt | undefined;
+
+  const startAttempt = Effect.fn("DockerComputeDriver.startBaseImageAttempt")(function* (
+    engine: DockerEngine,
+    override: string | undefined,
+  ) {
+    const candidates = baseImageCandidates({ override, ...server });
+    const state = yield* Ref.make<BaseImageState>({
+      _tag: "Pulling",
+      ref: candidates[0]?.ref ?? "",
+    });
+    const decided = yield* Deferred.make<void>();
+    const settle = (next: BaseImageState) =>
+      Ref.set(state, next).pipe(Effect.andThen(Deferred.succeed(decided, undefined)));
+    // A pull takes minutes, far past a sandbox effect's bound, so it never runs inside one.
+    yield* ensureBaseImage(engine, candidates, {
+      onPulling: (ref) => settle({ _tag: "Pulling", ref }),
+    }).pipe(
+      Effect.matchEffect({
+        onSuccess: (image) => settle({ _tag: "Ready", image }),
+        onFailure: (error) => settle({ _tag: "Missing", error }),
+      }),
+      Effect.ensuring(Deferred.succeed(decided, undefined)),
+      Effect.forkIn(scope),
     );
+    return { override, state, decided } satisfies BaseImageAttempt;
+  });
+
+  /** Starts a resolution if none is current for this setting; a missing one is retried on request. */
+  const currentAttempt = Effect.fn("DockerComputeDriver.currentBaseImageAttempt")(function* (
+    operation: ComputeDriverError["operation"],
+    retryMissing: boolean,
+  ) {
+    const { engine } = yield* engineFor(operation);
+    const override = (yield* settings.getSettings.pipe(
+      Effect.mapError((cause) => failure(operation, "unavailable", cause)),
+    )).sandbox?.baseImage;
+    return yield* imageLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (attempt !== undefined && attempt.override === override) {
+          const state = yield* Ref.get(attempt.state);
+          if (!(retryMissing && state._tag === "Missing")) return attempt;
+        }
+        attempt = yield* startAttempt(engine, override);
+        return attempt;
+      }),
+    );
+  });
+
+  const baseImageState = Effect.fn("DockerComputeDriver.baseImageState")(function* (
+    operation: ComputeDriverError["operation"],
+    retryMissing: boolean,
+  ) {
+    const current = yield* currentAttempt(operation, retryMissing);
+    yield* Deferred.await(current.decided);
+    return yield* Ref.get(current.state);
+  });
+
+  const readyBaseImage = Effect.fn("DockerComputeDriver.readyBaseImage")(function* () {
+    const state = yield* baseImageState("create", false);
+    switch (state._tag) {
+      case "Ready":
+        return state.image;
+      case "Pulling":
+        return yield* new ComputeDriverError({
+          driverId,
+          operation: "create",
+          reason: "unavailable",
+          retryable: true,
+          image: { ref: state.ref, state: "pulling" },
+        });
+      case "Missing":
+        return yield* new ComputeDriverError({
+          driverId,
+          operation: "create",
+          reason: "not-found",
+          retryable: false,
+          image: {
+            ref: state.error.refs.join(", "),
+            state: "missing",
+            hint: baseImageMissingHint(state.error),
+          },
+        });
+    }
+  });
 
   const ensureNetwork = Effect.fn("DockerComputeDriver.ensureNetwork")(function* (
     engine: DockerEngine,
@@ -500,20 +604,32 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     yield* engine.startContainer(driverRef);
   });
 
+  const bootImage = Effect.fn("DockerComputeDriver.bootImage")(function* (
+    engine: DockerEngine,
+    requested: ComputeDriverCreateInput["image"],
+  ) {
+    if (requested.type === "base") {
+      const resolved = yield* readyBaseImage();
+      return { image: resolved.id, baseImage: baseImageInfo(resolved) };
+    }
+    if ((yield* engine.inspectImage(requested.imageRef)) === null) {
+      return yield* failure("create", "not-found");
+    }
+    return { image: requested.imageRef, baseImage: null };
+  });
+
   const create = Effect.fn("DockerComputeDriver.create")(function* (
     input: ComputeDriverCreateInput,
   ) {
     const { engine, local } = yield* engineFor("create");
-    const image =
-      input.image.type === "build" ? input.image.imageRef : yield* baseImageRef("create");
-    const imageInfo = yield* engine.inspectImage(image);
-    if (imageInfo === null) return yield* failure("create", "not-found");
+    // A sandbox boots from the image id it resolved, never from a tag that could move.
+    const { image, baseImage } = yield* bootImage(engine, input.image);
     const info = yield* engine.info;
     const network = yield* setupLock.withPermits(1)(
       Effect.gen(function* () {
         if (!blockEnsuredOnCreate) {
           blockEnsuredOnCreate = true;
-          const block = yield* blockOrReason(engine, yield* baseImageRef("create"));
+          const block = yield* blockOrReason(engine, image);
           // Sandboxes still start; health and the reconciler try again.
           if (!block.applied) {
             yield* Effect.logWarning("Private network block not applied", {
@@ -575,7 +691,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     yield* boot("create", engine, container, input.bootstrap);
     return {
       driverRef: input.name,
-      baseImage: input.image.type === "base" ? baseImageInfo(image, imageInfo) : null,
+      baseImage,
     };
   }, run("create"));
 
@@ -684,15 +800,27 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
   const health = Effect.gen(function* () {
     const { engine } = yield* engineFor("health");
     const info = yield* engine.info;
-    const image = yield* baseImageRef("health");
-    const privateNetworkBlock = yield* setupLock.withPermits(1)(blockOrReason(engine, image));
-    const imageInfo = yield* engine.inspectImage(image);
+    const state = yield* baseImageState("health", true);
     return {
       isolation: isolationFromInfo(info).isolation,
-      privateNetworkBlock,
-      baseImage: imageInfo === null ? { missing: image } : baseImageInfo(image, imageInfo),
+      privateNetworkBlock:
+        state._tag === "Ready"
+          ? yield* setupLock.withPermits(1)(blockOrReason(engine, state.image.id))
+          : ({ applied: false, reason: "The base image is not on the Docker host yet." } as const),
+      baseImage:
+        state._tag === "Ready"
+          ? baseImageInfo(state.image)
+          : state._tag === "Pulling"
+            ? { pulling: state.ref }
+            : {
+                missing: state.error.refs.join(", "),
+                hint: baseImageMissingHint(state.error),
+              },
     } satisfies ComputeDriverHealth;
   }).pipe(run("health"), Effect.withSpan("DockerComputeDriver.health"));
+
+  // Pulls start when the driver is built, so enabling Docker in Settings begins the download.
+  if (setup._tag === "Ready") yield* currentAttempt("health", false).pipe(Effect.ignore);
 
   return ComputeDriver.of({
     driverId,
@@ -784,8 +912,14 @@ export const make = Effect.fn("DockerComputeDriver.make")(function* (config: Doc
   const host = parseDockerHost(config.dockerHost, env, yield* HostProcess.HomeDirectory);
   const endpoint = yield* RunnerEndpoint;
   const bundle = yield* RunnerBundle;
-  return yield* makeWithEngine(config, installId, yield* resolveEngine(host), {
-    route: endpoint.planFor(config),
-    bundle: bundle.current,
-  });
+  return yield* makeWithEngine(
+    config,
+    installId,
+    yield* resolveEngine(host),
+    {
+      route: endpoint.planFor(config),
+      bundle: bundle.current,
+    },
+    { version: packageJson.version, fromSource: import.meta.url.endsWith(".ts") },
+  );
 });

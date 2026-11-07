@@ -47,10 +47,23 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
     retryAfterMs: Schema.optionalKey(NonNegativeInt),
     // The backend's own status, e.g. the Engine API's HTTP status.
     backendStatus: Schema.optionalKey(Schema.Number),
+    /** The base image a create could not boot from; `hint` says how to fix a missing one. */
+    image: Schema.optionalKey(
+      Schema.Struct({
+        ref: Schema.String,
+        state: Schema.Literals(["pulling", "missing"]),
+        hint: Schema.optionalKey(Schema.String),
+      }),
+    ),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
+  // Sandbox failures show this text to the user.
   override get message(): string {
+    if (this.image?.state === "pulling") {
+      return "The machine image is still downloading. Retry in a few minutes.";
+    }
+    if (this.image?.hint !== undefined) return `Machine image not found. ${this.image.hint}`;
     return `Compute driver ${this.driverId} failed to ${this.operation}: ${this.reason}.`;
   }
 }
@@ -108,7 +121,11 @@ export interface ComputeDriverHealth {
   readonly privateNetworkBlock:
     | { readonly applied: true }
     | { readonly applied: false; readonly reason: string };
-  readonly baseImage: BaseImageInfo | { readonly missing: string } | null;
+  readonly baseImage:
+    | BaseImageInfo
+    | { readonly pulling: string }
+    | { readonly missing: string; readonly hint: string }
+    | null;
 }
 
 export interface ComputeDriverCreateInput {

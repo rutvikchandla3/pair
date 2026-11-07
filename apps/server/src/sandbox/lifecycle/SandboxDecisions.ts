@@ -253,7 +253,10 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
       // The runner's hello can beat the create's answer, so any live state takes the ref.
       return record.state === "destroyed"
         ? refuse("wrong-state")
-        : update({ driverRef: command.driverRef });
+        : update({
+            driverRef: command.driverRef,
+            ...(command.baseImage === undefined ? {} : { baseImage: command.baseImage }),
+          });
     case "sandbox.runner.attached":
       if (record.state === "ready") {
         return record.runnerLostAt === null ? noOp : update({ runnerLostAt: null });

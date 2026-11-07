@@ -227,6 +227,7 @@ const make = Effect.gen(function* () {
             commandId: CommandId.make(`sandbox-created:${record.id}:${record.generation}`),
             ...generationFields(record),
             driverRef: created.driverRef,
+            ...(created.baseImage === null ? {} : { baseImage: created.baseImage }),
           });
         }
         case "sandbox.start": {

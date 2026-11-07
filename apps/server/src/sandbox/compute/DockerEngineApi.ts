@@ -269,6 +269,29 @@ const labelFilters = (labels: Readonly<Record<string, string>>, present: Readonl
     label: [...Object.entries(labels).map(([key, value]) => `${key}=${value}`), ...present],
   });
 
+/** A digest reference is passed whole; otherwise the tag is whatever follows the last colon of the last path segment. */
+const splitImageRef = (ref: string): { fromImage: string; tag: string | null } => {
+  if (ref.includes("@")) return { fromImage: ref, tag: null };
+  const colon = ref.lastIndexOf(":");
+  return colon > ref.lastIndexOf("/")
+    ? { fromImage: ref.slice(0, colon), tag: ref.slice(colon + 1) }
+    : { fromImage: ref, tag: null };
+};
+
+/** The first `error` line of a pull's newline-delimited progress stream, if any. */
+const pullErrorIn = (progress: string): string | null => {
+  for (const line of progress.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const error = (JSON.parse(line) as { readonly error?: unknown } | null)?.error;
+      if (typeof error === "string") return error;
+    } catch {
+      // A line that is not JSON is not an error report.
+    }
+  }
+  return null;
+};
+
 /**
  * A thin client for the endpoints the Docker driver uses. Each method's 304/404/409 handling is
  * its own: a missing image is `null` for an inspect but success for a delete.
@@ -348,6 +371,43 @@ export const makeDockerEngine = (client: HttpClient.HttpClient, origin: string) 
             : decode(EngineImage, "GET /images/{ref}/json")(response),
         ),
       ),
+    /**
+     * `onAccepted` runs once the daemon has started the pull, before its progress stream is read;
+     * a refusal (unknown image, denied) fails earlier. Resolves when the stream ends, and an
+     * `error` line in it fails the pull.
+     */
+    pullImage: (ref: string, onAccepted: Effect.Effect<void> = Effect.void) => {
+      const endpoint = "POST /images/create";
+      const { fromImage, tag } = splitImageRef(ref);
+      return send({
+        method: "POST",
+        endpoint: "/images/create",
+        path: "/images/create",
+        query: tag === null ? { fromImage } : { fromImage, tag },
+        ok: [200],
+      }).pipe(
+        Effect.tap(() => onAccepted),
+        Effect.flatMap((response) =>
+          response.text.pipe(
+            Effect.mapError(
+              (cause) => new DockerEngineError({ endpoint, failure: "response", cause }),
+            ),
+          ),
+        ),
+        Effect.flatMap((progress) => {
+          const message = pullErrorIn(progress);
+          return message === null
+            ? Effect.void
+            : Effect.fail(
+                new DockerEngineError({
+                  endpoint,
+                  failure: "response",
+                  cause: new Error(message),
+                }),
+              );
+        }),
+      );
+    },
     removeImage: (ref: string) =>
       send({
         method: "DELETE",

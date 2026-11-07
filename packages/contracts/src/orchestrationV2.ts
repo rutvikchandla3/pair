@@ -90,6 +90,7 @@ import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 import {
   ComputeDriverId,
   SandboxAdmissionReason,
+  SandboxBaseImageInfo,
   SandboxFailure,
   SandboxId,
   SandboxSize,
@@ -474,6 +475,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   runnerLostAt: Schema.NullOr(Schema.DateTimeUtc),
   sleepReason: Schema.NullOr(SandboxSleepReason),
   failure: Schema.NullOr(SandboxFailure),
+  /** Set once the driver created from a base image; absent on records from before. */
+  baseImage: Schema.optionalKey(SandboxBaseImageInfo),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -3856,6 +3859,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     type: Schema.Literal("sandbox.created"),
     ...SandboxGenerationCommandFields,
     driverRef: Schema.NullOr(Schema.String),
+    baseImage: Schema.optionalKey(SandboxBaseImageInfo),
   }),
   Schema.Struct({
     type: Schema.Literal("sandbox.runner.attached"),
