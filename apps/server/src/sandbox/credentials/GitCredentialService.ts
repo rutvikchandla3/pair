@@ -19,7 +19,10 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreV2,
+  type ProjectionStoreV2Error,
+} from "../../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityResolver.ts";
 import { MemberGitHub } from "../../team/MemberGitHub.ts";
@@ -106,8 +109,34 @@ export class GitCredentialService extends Context.Service<
       readonly host: string;
       readonly path: string | undefined;
     }) => Effect.Effect<RunnerGitCredentialAnswer>;
+    /** Which credential `answer` would pick for the thread's pushes, without minting one. */
+    readonly sourceFor: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<SandboxGitCredentialSource>, ProjectionStoreV2Error>;
   }
 >()("t3/sandbox/credentials/GitCredentialService") {}
+
+/**
+ * `answer`'s order without minting: the App when its key is set, else the thread owner's GitHub.
+ * Apart from the service so the push pre-check needs no orchestrator (which runs git itself).
+ */
+export const makeSourceFor = Effect.gen(function* () {
+  const projections = yield* ProjectionStoreV2;
+  const app = yield* GitHubAppInstallationTokens;
+  const members = yield* MemberGitHub;
+  // An App key that does not cover the repository falls through in `answer`; the push finds out.
+  return Effect.fn("GitCredentialService.sourceFor")(function* (threadId: ThreadId) {
+    if (yield* app.configured) return Option.some<SandboxGitCredentialSource>("app-installation");
+    const ownerId = (yield* projections.getThread(threadId)).ownerId ?? null;
+    if (ownerId === null) return Option.none<SandboxGitCredentialSource>();
+    const own = yield* members.credentialFor(ownerId);
+    return Option.isSome(own) && own.value.host === HOST
+      ? Option.some<SandboxGitCredentialSource>(
+          own.value.source === "token" ? "member-token" : "member-account",
+        )
+      : Option.none<SandboxGitCredentialSource>();
+  });
+});
 
 const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
@@ -300,7 +329,9 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  return GitCredentialService.of({ answer });
+  const sourceFor = yield* makeSourceFor;
+
+  return GitCredentialService.of({ answer, sourceFor });
 });
 
 export const layer = Layer.effect(GitCredentialService, make);

@@ -88,6 +88,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { SandboxGitHooks } from "../sandbox/credentials/SandboxGitHooks.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -714,6 +715,7 @@ export const make = Effect.gen(function* () {
   // CLI and test runtimes have no team, so their commits and PRs keep the server identity.
   const teamState = yield* Effect.serviceOption(TeamState.TeamState);
   const memberGitHub = yield* Effect.serviceOption(MemberGitHub.MemberGitHub);
+  const sandboxGitHooks = yield* SandboxGitHooks;
 
   const resolveActor = Effect.fnUntraced(function* (actorId: MemberId | undefined) {
     if (Option.isNone(teamState) || actorId === undefined) {
@@ -827,8 +829,10 @@ export const make = Effect.gen(function* () {
   const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
     cwd: string,
     branch: string | null,
+    threadId: ThreadId | undefined,
   ) {
-    const result = yield* gitCore.pushCurrentBranch(cwd, branch);
+    const env = yield* sandboxGitHooks.preparePush({ cwd, threadId });
+    const result = yield* gitCore.pushCurrentBranch(cwd, branch, { env });
     if (result.status === "pushed" && result.branch) {
       yield* shareBranchBase(cwd, result.branch);
     }
@@ -3420,7 +3424,7 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch, input.threadId)),
               )
           : { status: "skipped_not_requested" as const };
 

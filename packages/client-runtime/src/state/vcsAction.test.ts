@@ -2,6 +2,7 @@ import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   AuthOrchestrationReadScope,
+  GitManagerError,
   AuthSourceControlWriteScope,
   ThreadId,
   ProjectId,
@@ -38,6 +39,7 @@ import {
   createVcsActionManager,
   createVcsActionTransportId,
   EMPTY_VCS_ACTION_STATE,
+  vcsActionErrorMessage,
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
   VcsActionMissingTerminalEventError,
@@ -130,6 +132,21 @@ describe("vcsActionState", () => {
     expect(error).toMatchObject({ keyLength: key.length, cause: expect.any(SyntaxError) });
     expect(error).not.toHaveProperty("key");
     expect((error as Error).message).not.toContain(key);
+  });
+
+  it("renders a known GitManagerError code from its copy, never from detail", () => {
+    const failure = (code?: string) =>
+      new GitManagerError({
+        operation: "SandboxGitHooks.preparePush",
+        cwd: "/t3-sandbox/sbx/repo",
+        detail: "server wording",
+        ...(code === undefined ? {} : { code }),
+      });
+    expect(vcsActionErrorMessage(failure("github-credential-missing"))).toBe(
+      "Connect GitHub to push: Settings → Team, your row.",
+    );
+    // A code from a newer server still shows something.
+    expect(vcsActionErrorMessage(failure("some-later-code"))).toBe(failure().message);
   });
 
   it("projects phase and hook progress without owning the async operation", () => {

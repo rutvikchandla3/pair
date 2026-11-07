@@ -35,6 +35,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   GitCommandError,
+  GitManagerError,
   MemberId,
   MessageId,
   ProjectId,
@@ -75,6 +76,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as MemberGitHub from "../team/MemberGitHub.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as GitManager from "./GitManager.ts";
+import {
+  SandboxGitHooks,
+  type SandboxGitHooksShape,
+} from "../sandbox/credentials/SandboxGitHooks.ts";
+import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
+import type * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 /** A change request the fake host reports. Omitted fields read as an open, undated request. */
 type FakeChangeRequest = Omit<ChangeRequest, "provider" | "state" | "updatedAt"> & {
@@ -637,6 +644,13 @@ function makeManager(input?: {
   memberGitHub?: Pick<MemberGitHub.MemberGitHub["Service"], "credentialFor" | "check">;
   /** The remote the provider registry resolves for the checkout. */
   providerContext?: SourceControlProviderContext;
+  sandboxGitHooks?: SandboxGitHooksShape;
+  /** Replaces the local-only hosts, as `WorkspaceHostLoopback.layerLoopback` does. */
+  hosts?: Layer.Layer<
+    WorkspaceHosts.WorkspaceHosts | FileSystem.FileSystem,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  >;
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
@@ -715,10 +729,12 @@ function makeManager(input?: {
         ),
       )
     : GitVcsDriver.layer;
-  const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
+  const layerVcsDriver = (
+    watchesGitSpawns || input?.hosts !== undefined ? Layer.fresh(gitVcsDriver) : gitVcsDriver
+  ).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
-    Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+    Layer.provideMerge(input?.hosts ?? WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerServerConfig),
   );
@@ -763,6 +779,9 @@ function makeManager(input?: {
     input?.memberGitHub === undefined
       ? Layer.empty
       : Layer.mock(MemberGitHub.MemberGitHub)({ enabled: true, ...input.memberGitHub }),
+    input?.sandboxGitHooks === undefined
+      ? Layer.empty
+      : Layer.succeed(SandboxGitHooks, input.sandboxGitHooks),
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
     Layer.provideMerge(layerVcsDriver),
@@ -777,8 +796,11 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
+    // A runner host lives in the test's scope, not only while the manager is being made.
     const manager = yield* GitManager.make.pipe(
-      Effect.provide(layerManager),
+      input?.hosts === undefined
+        ? Effect.provide(layerManager)
+        : Effect.provideContext(yield* Layer.build(layerManager)),
       Effect.provideContext(stores),
     );
     return { manager, providerCalls };
@@ -3316,6 +3338,66 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect.each([
+    { name: "refused, fails with the hook's code before git pushes", refuse: true },
+    { name: "allowed, pushes with the hook's env", refuse: false },
+  ])("a push the sandbox hook $name", ({ refuse }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/cloud-push"]);
+      const seen = NodePath.join(remoteDir, "push-env");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-push"),
+        `#!/bin/sh\nprintf '%s' "$T3CODE_THREAD_ID" > "${seen}"\n`,
+        { mode: 0o755 },
+      );
+      const threadId = asThreadId("thread-cloud-push");
+      const asked: Array<ThreadId | undefined> = [];
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        sandboxGitHooks: {
+          preparePush: ({ cwd, threadId }) =>
+            Effect.sync(() => asked.push(threadId)).pipe(
+              Effect.andThen(
+                refuse
+                  ? Effect.fail(
+                      new GitManagerError({
+                        operation: "SandboxGitHooks.preparePush",
+                        cwd,
+                        code: "github-credential-missing",
+                        detail: "Connect GitHub to push: Settings → Team, your row.",
+                      }),
+                    )
+                  : Effect.succeed({ T3CODE_THREAD_ID: threadId }),
+              ),
+            ),
+        },
+      });
+
+      const pushed = yield* manager
+        .runStackedAction({ actionId: "cloud-push", cwd: repoDir, action: "push", threadId })
+        .pipe(Effect.result);
+
+      expect(asked).toEqual([threadId]);
+      const pushes = gitCommands.filter((command) => /(^| )push( |$)/u.test(command));
+      if (refuse) {
+        expect(Result.isFailure(pushed) && pushed.failure).toMatchObject({
+          _tag: "GitManagerError",
+          code: "github-credential-missing",
+        });
+        expect(pushes).toEqual([]);
+      } else {
+        expect(Result.isSuccess(pushed) && pushed.success.push.status).toBe("pushed");
+        expect(pushes).toHaveLength(1);
+        expect(NodeFS.readFileSync(seen, "utf8")).toBe(threadId);
+      }
+    }),
+  );
+
+  it.effect.each([
     { branch: "fix/name", existingBranches: ["fix"], expected: "fix-2/name" },
     { branch: "fix/name", existingBranches: ["fix/name/child"], expected: "fix/name-2" },
   ])("commits on $expected when $branch has ref namespace collisions", (scenario) =>
@@ -3635,6 +3717,83 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         if (toast !== undefined) expect(result.toast.description).toBe(toast);
         if (prs.length > 1) expect(yield* Deferred.await(checked)).toBe(actor.id);
       }),
+  );
+
+  // 07 §10 #9: a cloud thread's git runs in the sandbox, its PR body and forge call on the server.
+  it.effect.each([
+    { name: "as the member who connected GitHub", connected: true, acting: "member-token" },
+    { name: "as the server for a member who did not", connected: false, acting: "server" },
+  ])("opens a cloud thread's PR $name, with git in the sandbox", ({ connected, acting }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sandboxRoot = yield* fileSystem.realPath(yield* makeTempDir("t3code-git-sandbox-"));
+      const repoDir = NodePath.join(sandboxRoot, "repo");
+      yield* makeDirectory(repoDir);
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/cloud-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "cloud.txt"), "cloud\n");
+
+      const recording = WorkspaceHostTesting.makeRecording();
+      const pushedFrom: Array<string> = [];
+      const commitSummaries: Array<string> = [];
+      const { manager, providerCalls } = yield* makeManager({
+        team: [owner, bob],
+        providerContext: remoteOn("github.com"),
+        memberGitHub: {
+          credentialFor: () =>
+            Effect.succeed(
+              connected
+                ? Option.some({
+                    host: "github.com",
+                    token: Redacted.make("member-token"),
+                    source: "app" as const,
+                  })
+                : Option.none(),
+            ),
+          check: () => Effect.void,
+        },
+        hosts: WorkspaceHostLoopback.layerLoopback(sandboxRoot).pipe(
+          Layer.provideMerge(recording.layer),
+        ),
+        sandboxGitHooks: {
+          preparePush: ({ cwd }) =>
+            Effect.sync(() => pushedFrom.push(cwd)).pipe(
+              Effect.as({ T3CODE_THREAD_ID: "thread-cloud" }),
+            ),
+        },
+        textGeneration: {
+          generatePrContent: (input) =>
+            Effect.sync(() => commitSummaries.push(input.commitSummary)).pipe(
+              Effect.as({ title: "Cloud change", body: generatedPrBody }),
+            ),
+        },
+      });
+
+      const result = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "commit_push_pr" },
+        { actorId: bob.id },
+      );
+
+      expect(result.pr.status).toBe("created");
+      expect(pushedFrom).toEqual([repoDir]);
+      // Every git process ran on the runner; the server's own host started none.
+      expect(recording.ops.spawns.filter((spawn) => spawn.startsWith("git"))).toEqual([]);
+      expect(
+        (yield* runGit(repoDir, ["ls-remote", "origin", "refs/heads/feature/cloud-pr"])).stdout,
+      ).toContain("refs/heads/feature/cloud-pr");
+      expect(commitSummaries.join("\n")).toContain("Implement stacked git actions");
+      // The PR body is the server's own temp file, written and removed on the server.
+      expect(recording.ops.files).toEqual(["writeFileString", "remove"]);
+      expect(
+        providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.acting ?? "server"] : [],
+        ),
+      ).toEqual([acting]);
+    }),
   );
 
   it.effect("pushes existing commits without committing dirty worktree changes", () =>

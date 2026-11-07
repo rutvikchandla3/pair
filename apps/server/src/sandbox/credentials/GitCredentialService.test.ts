@@ -234,7 +234,11 @@ const harness = (input: Case) => {
       ),
     ),
   );
-  return { answer, tokenRequests, forkChecks, logs, records };
+  const sourceFor = GitCredentialService.GitCredentialService.pipe(
+    Effect.flatMap((service) => service.sourceFor(input.threadId ?? ownerThread)),
+    Effect.provide(layer),
+  );
+  return { answer, sourceFor, tokenRequests, forkChecks, logs, records };
 };
 
 const aliceOnly = new Map([[alice, "ghu_alice"]]);
@@ -316,6 +320,27 @@ describe("GitCredentialService", () => {
       const { answer, logs } = harness(input);
       expect(yield* answer).toEqual(expected);
       expect(logs.join("\n")).not.toMatch(/gh[su]_/u);
+    }),
+  );
+
+  it.effect.each<[string, Case, Option.Option<string>]>([
+    ["the App when its key is set", { app: "token" }, Option.some("app-installation")],
+    [
+      "the owner's account with no App",
+      { app: "unset", accounts: aliceOnly },
+      Option.some("member-account"),
+    ],
+    [
+      "nothing when only the sandbox's owner has an account",
+      { app: "unset", accounts: aliceOnly, threadId: forkedThread },
+      Option.none(),
+    ],
+    ["nothing when nobody has a credential", { app: "unset" }, Option.none()],
+  ])("reports %s as the source, without minting", ([_name, input, expected]) =>
+    Effect.gen(function* () {
+      const { sourceFor, tokenRequests } = harness(input);
+      expect(yield* sourceFor).toEqual(expected);
+      expect(tokenRequests).toEqual([]);
     }),
   );
 

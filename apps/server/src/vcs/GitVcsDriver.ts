@@ -333,7 +333,11 @@ export class GitVcsDriver extends Context.Service<
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
-      options?: { readonly remoteName?: string | null },
+      options?: {
+        readonly remoteName?: string | null;
+        /** Added to `git push` only, not to the reads around it. */
+        readonly env?: NodeJS.ProcessEnv;
+      },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,

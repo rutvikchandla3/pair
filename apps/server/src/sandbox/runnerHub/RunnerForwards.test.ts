@@ -67,6 +67,7 @@ const recordingCredentials = (calls: Queue.Queue<GitAnswerInput>) =>
           expiresAt,
         }),
       ),
+    sourceFor: () => Effect.die("forwards never ask for a source"),
   });
 
 describe("forward checks", () => {

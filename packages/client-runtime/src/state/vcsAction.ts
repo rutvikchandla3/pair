@@ -3,6 +3,7 @@ import {
   type EnvironmentId as EnvironmentIdType,
   GitActionProgressPhase,
   type GitActionProgressEvent,
+  GitManagerError,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
@@ -222,6 +223,23 @@ export function beginVcsActionState(
   };
 }
 
+const GIT_MANAGER_ERROR_COPY: Record<string, string> = {
+  "github-credential-missing": "Connect GitHub to push: Settings → Team, your row.",
+  "cloud-push-unsupported-host": "Pushing from cloud supports GitHub until a later release.",
+};
+
+const isGitManagerError = Schema.is(GitManagerError);
+
+/** A failed action's message; a known `GitManagerError.code` gets its copy, never `detail`. */
+export function vcsActionErrorMessage(error: unknown): string {
+  const copy =
+    isGitManagerError(error) && error.code !== undefined
+      ? GIT_MANAGER_ERROR_COPY[error.code]
+      : undefined;
+  if (copy !== undefined) return copy;
+  return error instanceof Error ? error.message : "Source control action failed.";
+}
+
 function failVcsActionState(
   operation: VcsActionOperation,
   actionId: string,
@@ -231,7 +249,7 @@ function failVcsActionState(
     ...EMPTY_VCS_ACTION_STATE,
     operation,
     actionId,
-    error: error instanceof Error ? error.message : "Source control action failed.",
+    error: vcsActionErrorMessage(error),
   };
 }
 

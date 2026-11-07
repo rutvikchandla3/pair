@@ -10,6 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { vcsActionErrorMessage } from "@t3tools/client-runtime/state/vcs";
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
@@ -1227,7 +1228,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: vcsActionErrorMessage(error),
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),

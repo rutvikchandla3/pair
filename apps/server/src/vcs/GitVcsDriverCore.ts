@@ -2691,6 +2691,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    const pushOptions: ExecuteGitOptions = {
+      timeoutMs: null,
+      ...(options?.env !== undefined ? { env: options.env } : {}),
+    };
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
@@ -2698,7 +2702,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", "--", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        pushOptions,
       );
       return {
         status: "pushed" as const,
@@ -2774,7 +2778,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", "--", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        pushOptions,
       );
       return {
         status: "pushed" as const,
@@ -2818,7 +2822,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
           ["push", "--", remoteName, `HEAD:refs/heads/${publishBranch}`],
-          { timeoutMs: null },
+          pushOptions,
         );
         return {
           status: "pushed" as const,
@@ -2832,7 +2836,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", "--", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
-        { timeoutMs: null },
+        pushOptions,
       );
       return {
         status: "pushed" as const,
@@ -2842,7 +2846,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], pushOptions);
     return {
       status: "pushed" as const,
       branch,

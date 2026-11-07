@@ -6229,7 +6229,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("pushes with upstream setup and skips when already up to date", () =>
+    it.effect("pushes with upstream setup, with the caller's env, and skips when up to date", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-remote-");
@@ -6247,13 +6247,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
         yield* git(cwd, ["add", "-A"]);
         yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
+        const path = yield* Path.Path;
+        const seen = path.join(remote, "push-env");
+        NodeFS.writeFileSync(
+          path.join(cwd, ".git", "hooks", "pre-push"),
+          `#!/bin/sh\nprintf '%s' "$T3CODE_THREAD_ID" > "${seen}"\n`,
+          { mode: 0o755 },
+        );
 
-        const pushed = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
+        const pushed = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null, {
+          env: { T3CODE_THREAD_ID: "thread-push" },
+        });
         assert.deepInclude(pushed, {
           status: "pushed",
           branch: "feature/push",
           setUpstream: true,
         });
+        assert.equal(NodeFS.readFileSync(seen, "utf8"), "thread-push");
         assert.equal(
           yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
           "origin/feature/push",

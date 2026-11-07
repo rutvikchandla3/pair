@@ -128,6 +128,7 @@ import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
+import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
 import * as GitHubAppInstallationTokens from "./sandbox/credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxCredentialRevocation from "./sandbox/credentials/SandboxCredentialRevocation.ts";
 import * as SandboxProcessEnvironment from "./sandbox/credentials/SandboxProcessEnvironment.ts";
@@ -445,6 +446,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 );
 
 const layerGitManager = GitManager.layer.pipe(
+  Layer.provide(
+    // The shared installation tokens and MemberGitHub come from below the runtime.
+    SandboxGitHooks.layer.pipe(Layer.provide(layerRepositoryIdentityResolver)),
+  ),
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
   Layer.provideMerge(WorktreeSetupTracker.layer),
