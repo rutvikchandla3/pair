@@ -5,14 +5,17 @@ import {
   CommandId,
   ComputeDriverId,
   EnvironmentId,
+  MemberId,
   MessageId,
   type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type RunId,
   SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -299,6 +302,66 @@ const attachAndRelease = (
     assert.equal(yield* Queue.size(runtime.calls), 0);
   });
 
+const prompt = (threadId: ThreadId, key: string) =>
+  dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(`prompt:${key}`),
+    threadId,
+    messageId: MessageId.make(`message:${key}`),
+    text: "Carry on",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+  }).pipe(
+    Effect.map((sent) => {
+      const created = sent.storedEvents.find((stored) => stored.event.type === "run.created");
+      if (created?.event.type !== "run.created") throw new Error("Expected a run");
+      return { run: created.event.payload, storedEvents: sent.storedEvents };
+    }),
+  );
+
+/** A side chat forks from the latest point; a fork needs a finished run, here one that failed. */
+const forked = (sourceThreadId: ThreadId, key: string, sideChat = false) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make(`thread:${key}`);
+    let runId: RunId | undefined;
+    if (!sideChat) {
+      // Parked while the machine boots, then failed, so no provider is reached.
+      ({
+        run: { id: runId },
+      } = yield* prompt(sourceThreadId, `${key}-source`));
+      yield* dispatch({
+        type: "prepared-run.fail",
+        commandId: CommandId.make(`fail:${key}`),
+        threadId: sourceThreadId,
+        runId,
+        failure: makeProviderFailure({
+          message: "Stopped for the test.",
+          class: "validation_error",
+          retryable: false,
+        }),
+      });
+    }
+    yield* dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make(`fork:${key}`),
+      sourceThreadId,
+      targetThreadId: threadId,
+      sourcePoint: runId === undefined ? { type: "latest_stable" } : { type: "run", runId },
+      sideChat,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return threadId;
+  });
+
+const answerStop = (call: FakeComputeDriver.FakeComputeCall) =>
+  call._tag === "stop" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag);
+
+const effectsOf = (commandId: string) =>
+  EffectOutbox.EffectOutboxV2.use((outbox) => outbox.listByCommandId(CommandId.make(commandId)));
+
 it.layer(layerTest)("sandbox lifecycle", (it) => {
   it.effect("provisions a thread's sandbox and stores the backend ref the create answers", () =>
     Effect.gen(function* () {
@@ -517,7 +580,23 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const { threadId, sandboxId } = yield* provisioned("delete");
       yield* runAnswering(runtime, answerCreate);
       yield* attachAndRelease(runtime, threadId, sandboxId, 1);
-      yield* dispatch({ type: "thread.delete", commandId: CommandId.make("delete"), threadId });
+      const deleted = yield* dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete"),
+        threadId,
+      });
+      // Nobody else uses it: `destroyed` and its destroy commit with the deletion.
+      const destroyed = deleted.storedEvents.find(
+        (stored) => stored.event.type === "sandbox.updated",
+      );
+      assert.equal(
+        destroyed?.event.type === "sandbox.updated" && destroyed.event.payload.state,
+        "destroyed",
+      );
+      assert.deepInclude(
+        (yield* effectsOf("delete")).map((effect) => effect.request.type),
+        "sandbox.destroy",
+      );
       // Deletion cleanup effects run first; the destroy is the only one that calls the driver.
       const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
       const call = yield* Effect.raceFirst(
@@ -767,6 +846,198 @@ it.layer(layerTest)("cloud prompts", (it) => {
         projections.getThreadRecords(threadId, ["runs"]),
       );
       assert.equal(runs.find((candidate) => candidate.id === run?.id)?.status, "starting");
+    }),
+  );
+});
+
+it.layer(layerTest)("shared sandboxes", (it) => {
+  it.effect.each([
+    { name: "hands over to a fork after the owner's queued effects", forkDeleted: false },
+    { name: "destroys when the fork is deleted before the hand-over runs", forkDeleted: true },
+  ])("$name", ({ forkDeleted }) =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const key = forkDeleted ? "handgone" : "handover";
+      const { threadId: owner, sandboxId } = yield* provisioned(key);
+      const fork = yield* forked(owner, `${key}-fork`);
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, owner, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.sleep",
+        commandId: CommandId.make(`sleep:${key}`),
+        threadId: owner,
+        sandboxId,
+      });
+      const deleteId = `delete:${key}`;
+      yield* dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(deleteId),
+        threadId: owner,
+      });
+      if (forkDeleted) {
+        yield* dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`delete:${key}-fork`),
+          threadId: fork,
+        });
+      }
+      const handOver = () =>
+        effectsOf(deleteId).pipe(
+          Effect.map((effects) =>
+            effects.find((effect) => effect.request.type === "sandbox.hand-over"),
+          ),
+        );
+      assert.deepInclude(yield* handOver(), { threadId: owner, status: "pending" });
+
+      // The stop queued before the delete runs first; the hand-over waits behind it.
+      const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
+      const nextCall = Effect.raceFirst(
+        Queue.take(runtime.calls),
+        Fiber.join(run).pipe(Effect.andThen(Effect.die("The drain made no more driver calls."))),
+      );
+      const stop = yield* nextCall;
+      assert.equal((yield* handOver())?.status, "pending");
+      yield* answerStop(stop);
+      if (forkDeleted) {
+        const destroy = yield* nextCall;
+        if (destroy._tag !== "destroy") return yield* Effect.die(destroy._tag);
+        yield* Deferred.succeed(destroy.reply, undefined);
+        yield* Fiber.join(run);
+        assert.deepInclude(yield* getSandbox(sandboxId), {
+          state: "destroyed",
+          ownerThreadId: owner,
+        });
+        const [last] = (yield* sandboxEvents(owner)).slice(-1);
+        assert.equal(last?.type === "sandbox.updated" && last.payload.state, "destroyed");
+        return;
+      }
+      yield* Fiber.join(run);
+      assert.equal((yield* handOver())?.status, "succeeded");
+      assert.deepInclude(yield* getSandbox(sandboxId), {
+        state: "sleeping",
+        ownerThreadId: fork,
+      });
+      const adopted = yield* sandboxEvents(fork);
+      assert.equal(adopted.length, 1);
+
+      // The sandbox's effects queue on the new owner from now on.
+      yield* dispatch({
+        type: "sandbox.wake",
+        commandId: CommandId.make(`wake:${key}`),
+        threadId: fork,
+        sandboxId,
+      });
+      const [start] = yield* effectsOf(`wake:${key}`);
+      assert.deepInclude(start, { threadId: fork });
+      assert.equal(start?.request.type, "sandbox.start");
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "start" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+    }),
+  );
+
+  it.effect("a replayed hand-over adopts the same thread once", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId: owner, sandboxId } = yield* provisioned("replay");
+      const first = yield* forked(owner, "replay-first");
+      yield* forked(owner, "replay-second");
+      yield* dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete:replay"),
+        threadId: owner,
+      });
+      yield* runtime.effects.handOver({ sandboxId, fromThreadId: owner });
+      yield* runtime.effects.handOver({ sandboxId, fromThreadId: owner });
+
+      const adoptId = CommandId.make(`sandbox-adopt:${sandboxId}:${owner}`);
+      const receipt = yield* CommandReceiptStore.CommandReceiptStoreV2.use((receipts) =>
+        receipts.getByCommandId(adoptId),
+      );
+      assert.deepInclude(Option.getOrThrow(receipt), { threadId: first, status: "accepted" });
+      const adopted = yield* EventSink.EventSinkV2.use((sink) =>
+        sink.readByCommandId({ commandId: adoptId }).pipe(Stream.runCollect),
+      );
+      assert.equal(adopted.length, 1);
+      assert.equal((yield* getSandbox(sandboxId))?.ownerThreadId, first);
+    }),
+  );
+
+  it.effect("reassigning the owning thread moves the machine's member, a fork's does not", () =>
+    Effect.gen(function* () {
+      const { threadId: owner, sandboxId } = yield* provisioned("reassign");
+      const fork = yield* forked(owner, "reassign-fork");
+      const reassign = (threadId: ThreadId, member: string) =>
+        dispatch({
+          type: "thread.owner.set",
+          commandId: CommandId.make(`owner:${threadId}`),
+          threadId,
+          ownerId: MemberId.make(member),
+        });
+      yield* reassign(fork, "member-fork");
+      assert.isNull((yield* getSandbox(sandboxId))?.ownerMemberId);
+      yield* reassign(owner, "member-owner");
+      assert.equal((yield* getSandbox(sandboxId))?.ownerMemberId, "member-owner");
+    }),
+  );
+});
+
+// A released run leaves a provider turn queued, which no other test's worker may claim.
+it.layer(layerTest)("side chat prompts", (it) => {
+  it.effect("two side-chat prompts make one wake", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId: owner, sandboxId } = yield* provisioned("side-wake");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, owner, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.sleep",
+        commandId: CommandId.make("sleep:side-wake"),
+        threadId: owner,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, answerStop);
+      const sideChats = [
+        yield* forked(owner, "side-wake-b", true),
+        yield* forked(owner, "side-wake-c", true),
+      ];
+      const runIds = yield* Effect.forEach(sideChats, (threadId) =>
+        prompt(threadId, threadId).pipe(
+          Effect.map(({ run, storedEvents }) => {
+            // Another thread can't write the owner's stream; it asks with an effect instead.
+            assert.isFalse(storedEvents.some((stored) => stored.event.type === "sandbox.updated"));
+            assert.equal(run.status, "preparing");
+            return run.id;
+          }),
+        ),
+      );
+
+      // Both requests run; the one wake they make is the only driver call.
+      const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
+      const start = yield* Effect.raceFirst(
+        Queue.take(runtime.calls),
+        Fiber.join(run).pipe(Effect.andThen(Effect.die("The prompts never woke the machine."))),
+      );
+      if (start._tag !== "start") return yield* Effect.die(`Expected start, got ${start._tag}`);
+      yield* Deferred.succeed(start.reply, undefined);
+      assert.equal(yield* Fiber.join(run), 3);
+      const wakeId = `sandbox-wake:${sandboxId}:${owner}:1`;
+      const waking = (yield* sandboxEvents(owner)).filter(
+        (event) => event.type === "sandbox.updated" && event.payload.state === "waking",
+      );
+      assert.equal(waking.length, 1);
+      assert.deepEqual(
+        (yield* effectsOf(wakeId)).map((effect) => [effect.request.type, effect.threadId]),
+        [["sandbox.start", owner]],
+      );
+
+      yield* attachAndRelease(runtime, owner, sandboxId, 2);
+      for (const [index, threadId] of sideChats.entries()) {
+        const { runs } = yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+          projections.getThreadRecords(threadId, ["runs"]),
+        );
+        assert.equal(runs.find((run) => run.id === runIds[index])?.status, "starting");
+      }
     }),
   );
 });

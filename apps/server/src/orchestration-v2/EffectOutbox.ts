@@ -146,6 +146,17 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     sandboxId: SandboxId,
     generation: NonNegativeInt,
   }),
+  /** On an attached thread's queue: asks the owner's stream to wake the generation it saw. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.request-wake"),
+    sandboxId: SandboxId,
+    generation: NonNegativeInt,
+  }),
+  /** On a deleted owner's queue, behind its sandbox effects: moves the record to a live thread. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.hand-over"),
+    sandboxId: SandboxId,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -167,6 +178,8 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "sandbox.destroy",
   "sandbox.status",
   "sandbox.release-waiters",
+  "sandbox.request-wake",
+  "sandbox.hand-over",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
