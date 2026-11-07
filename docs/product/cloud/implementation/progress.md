@@ -10,19 +10,18 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (43 of 57):**
+**Landed on `feat/pair` (44 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29, 1.26.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.16 cloud launch (critical path)
 - 1.35 push and PR (done on `wt/1.35`, rebasing onto 1.29)
-- 1.26 provider credentials
 - 1.34 attachments
 
 **Not started (9), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
@@ -574,6 +573,13 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - GitCredentialService `sourceFor(threadId)` (`app-installation` | `member-account` | none; never mints). GitManager `pushCurrentBranch(threadId)` uses the hook env; GitVcsDriver `pushCurrentBranch(options.env)`. server.ts `layerGitCredentialService` shared by RunnerForwards and the hook.
 - client-runtime `state/vcsAction.ts` `vcsActionErrorMessage` (codes → copy); used by web GitActionsControl toast. 1.41 reuses it.
 - Gaps: App key set but not installed → hook allows, helper fallback decides (missing owner credential shows as git stderr). SourceControlRepositoryService publish push doesn't use the hook.
+
+## 1.26 provider credentials (landed)
+
+- `@t3tools/shared/sandboxCredentials`: `sandboxCredentialSupport` → `Ready{mechanism}` | `LocalOnly{reason}` | `Unsupported` (reads only driver, `config.setupMode`, env entry names — same answer on redacted client settings); `sandboxCredentialEnvNames`, `CODEX_MANAGED_STRIPPED_ENV_NAMES`. Hard-codes `"devReplay"` (= server DEV_REPLAY_INSTANCE_ID; no test ties them).
+- SandboxProcessEnvironment `forProviderSession({host, instanceId, threadId})` = forProcess + instance's unreserved entries + exactly its one credential (one secret batch; refuses LocalOnly/Unsupported/empty token; managed Codex strips shared names; nothing cached). `sandboxInstanceConfig`.
+- `ProviderCloudLocalOnlyError` (provider/Errors.ts). ProviderSessionManager.open uses the shared function before any forward/adapter. Claude/Codex sandbox branches use `sandboxProviderSessionEnvironmentFor` (SandboxProviderHome.ts); ACP/Replay keep forProcess. Terminal with providerInstanceId on a sandbox path → forProviderSession (`TerminalProviderEnvironmentError`).
+- 1.16 should call `sandboxCredentialSupport({instanceId, instance: sandboxInstanceConfig(settings, id)})` before provisioning; 1.38/1.41 use it directly. Unverified: pinned Codex CLI uses OPENAI_API_KEY without `codex login`.
 
 ## Open follow-ups and risks
 
