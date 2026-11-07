@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
 import {
   decideGitCredentialRecord,
   decideCloudPrompt,
@@ -71,7 +72,17 @@ type Row = readonly [
     | "NoOp"
     | string,
   attachedThreads?: ReadonlyArray<SandboxAttachedThread>,
+  admission?: AdmissionSnapshot,
 ];
+
+const free: AdmissionSnapshot = { running: 0, waiting: 0, cap: 2, startAvailable: true };
+const waiting = (reason: "team-cap" | "rate-limit", generation = 2) =>
+  record({
+    state: "provisioning",
+    generation,
+    driverRef: null,
+    admission: { reason, since: earlier },
+  });
 
 const provision: SandboxCommand = {
   type: "sandbox.provision",
@@ -106,6 +117,90 @@ const rows: ReadonlyArray<Row> = [
     },
   ],
   ["provision over a live record", provision, record(), "wrong-state"],
+  [
+    "provision at a full cap waits without a create",
+    provision,
+    null,
+    {
+      next: { state: "provisioning", generation: 1, admission: { reason: "team-cap", since: now } },
+      effects: [],
+    },
+    [],
+    { ...free, running: 2 },
+  ],
+  [
+    "a wake with no start token left waits",
+    { type: "sandbox.wake", ...base },
+    record({ state: "sleeping" }),
+    {
+      next: { state: "waking", generation: 3, admission: { reason: "rate-limit", since: now } },
+      effects: [],
+    },
+    [],
+    { ...free, startAvailable: false },
+  ],
+  [
+    "a start queues behind a machine already waiting",
+    { type: "sandbox.retry", ...base },
+    record({ state: "failed", failure: lost }),
+    { next: { state: "waking", admission: { reason: "team-cap", since: now } }, effects: [] },
+    [],
+    { ...free, running: 1, waiting: 1 },
+  ],
+  [
+    "admit clears the wait and creates",
+    { type: "sandbox.admit", ...at(2) },
+    waiting("team-cap"),
+    { next: { state: "provisioning", admission: null }, effects: ["sandbox.create"] },
+    [],
+    { ...free, running: 1, waiting: 1 },
+  ],
+  [
+    "admit a waking machine starts its kept disk",
+    { type: "sandbox.admit", ...at(2) },
+    record({ state: "waking", admission: { reason: "rate-limit", since: earlier } }),
+    { next: { state: "waking", admission: null }, effects: ["sandbox.start"] },
+    [],
+    free,
+  ],
+  [
+    "admit with no free slot",
+    { type: "sandbox.admit", ...at(2) },
+    waiting("team-cap"),
+    "no-capacity",
+    [],
+    { ...free, running: 2 },
+  ],
+  [
+    "admit with no start token",
+    { type: "sandbox.admit", ...at(2) },
+    waiting("rate-limit"),
+    "no-capacity",
+    [],
+    { ...free, startAvailable: false },
+  ],
+  [
+    "admit for an older generation",
+    { type: "sandbox.admit", ...at(1) },
+    waiting("team-cap"),
+    "stale-generation",
+    [],
+    free,
+  ],
+  [
+    "admit a machine that is not waiting",
+    { type: "sandbox.admit", ...at(2) },
+    record({ state: "provisioning", driverRef: null }),
+    "wrong-state",
+    [],
+    free,
+  ],
+  [
+    "a waiting machine that fails stops waiting",
+    { type: "sandbox.failed", ...at(2), failure: lost },
+    waiting("team-cap"),
+    { next: { state: "failed", admission: null }, effects: ["sandbox.release-waiters"] },
+  ],
   [
     "created sets the ref",
     { type: "sandbox.created", ...at(2), driverRef: "new-ref" },
@@ -362,19 +457,23 @@ const rows: ReadonlyArray<Row> = [
 ];
 
 describe("decideSandboxCommand", () => {
-  const cases = rows.map(([name, command, current, expected, attachedThreads = []]) => ({
-    name,
-    command,
-    current,
-    expected,
-    attachedThreads,
-  }));
-  it.each(cases)("$name", ({ command, current, expected, attachedThreads }) => {
+  const cases = rows.map(
+    ([name, command, current, expected, attachedThreads = [], admission = free]) => ({
+      name,
+      command,
+      current,
+      expected,
+      attachedThreads,
+      admission,
+    }),
+  );
+  it.each(cases)("$name", ({ command, current, expected, attachedThreads, admission }) => {
     const decision = decideSandboxCommand({
       command,
       record: current,
       ownerMemberId: MemberId.make("member"),
       attachedThreads,
+      admission,
       now,
     });
     if (expected === "NoOp") return expect(decision).toEqual({ _tag: "NoOp" });
@@ -537,6 +636,7 @@ describe("decideCloudPrompt", () => {
       threadId,
       dispatchMode: "start_immediately",
       checkout,
+      admission: free,
       now,
     });
     if (!("state" in expected)) return expect(decision).toEqual(expected);

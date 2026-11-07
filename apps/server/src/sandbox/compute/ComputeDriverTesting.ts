@@ -72,6 +72,7 @@ export type FakeComputeCall =
 /** Every call waits on a `Deferred` the test completes or fails, so the test is the backend. */
 export const make = Effect.fn("FakeComputeDriver.make")(function* (
   driverId: ComputeDriverId = ComputeDriverId.make("fake"),
+  options: { readonly defaultRunningCap?: number } = {},
 ) {
   const calls = yield* Queue.unbounded<FakeComputeCall>();
   const ask = <A>(
@@ -101,6 +102,7 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
         { size: "default", vcpus: 4, memoryGb: 8 },
         { size: "large", vcpus: 8, memoryGb: 16 },
       ],
+      defaultRunningCap: options.defaultRunningCap ?? 20,
     },
     create: Effect.fn("FakeComputeDriver.create")((input: ComputeDriverCreateInput) =>
       ask<ComputeDriverCreateResult>((reply) => ({ _tag: "create", input, reply })),

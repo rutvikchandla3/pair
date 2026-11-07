@@ -73,7 +73,7 @@ const SIZES: ComputeCapabilities["sizes"] = [
   { size: "large", vcpus: 8, memoryGb: 16 },
 ];
 
-const capabilities: ComputeCapabilities = {
+const capabilities: Omit<ComputeCapabilities, "defaultRunningCap"> = {
   persistentDisk: true,
   memoryOnStop: false,
   snapshot: false,
@@ -822,11 +822,20 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
 
   // Pulls start when the driver is built, so enabling Docker in Settings begins the download.
   if (setup._tag === "Ready") yield* currentAttempt("health", false).pipe(Effect.ignore);
+  // A quarter of the host's CPUs. Read once: a daemon that is down now gets 1 until its settings change.
+  const defaultRunningCap =
+    setup._tag === "Ready"
+      ? yield* setup.engine.info.pipe(
+          Effect.timeout("5 seconds"),
+          Effect.map((info) => Math.max(1, Math.floor(info.NCPU / 4))),
+          Effect.orElseSucceed(() => 1),
+        )
+      : 1;
 
   return ComputeDriver.of({
     driverId,
     kind: "docker",
-    capabilities,
+    capabilities: { ...capabilities, defaultRunningCap },
     create,
     start,
     stop,

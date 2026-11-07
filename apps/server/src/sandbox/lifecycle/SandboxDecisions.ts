@@ -4,6 +4,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2RunWorkspacePreparation,
   OrchestrationV2Sandbox,
+  OrchestrationV2SandboxAdmission,
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
   SandboxSleepReason,
@@ -12,6 +13,7 @@ import type {
 import type * as DateTime from "effect/DateTime";
 
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
+import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
 import type { SandboxThreadRow } from "./SandboxProjection.ts";
 
 export type SandboxCommand = Extract<
@@ -23,6 +25,7 @@ export type SandboxCommand = Extract<
       | "sandbox.retry"
       | "sandbox.discard"
       | "sandbox.provision"
+      | "sandbox.admit"
       | "sandbox.created"
       | "sandbox.runner.attached"
       | "sandbox.runner.lost"
@@ -74,6 +77,8 @@ export interface SandboxDecisionInput {
   readonly ownerMemberId: MemberId | null;
   /** Read only for sleep, discard and auto-sleep. */
   readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
+  /** Read under the admission lock for commands that can start a machine; null for the rest. */
+  readonly admission: AdmissionSnapshot | null;
   readonly now: DateTime.Utc;
 }
 
@@ -84,7 +89,25 @@ type SandboxRefusalReason =
   | "wrong-state"
   | "active-run"
   | "in-use"
-  | "stale-generation";
+  | "stale-generation"
+  /** `sandbox.admit` with no free slot or start token; the sweep tries again later. */
+  | "no-capacity";
+
+/**
+ * Why a machine about to start must wait, or null to start it now. A new start also queues
+ * behind anyone already waiting on the driver, so waiters are admitted in order.
+ */
+const admissionWait = (
+  snapshot: AdmissionSnapshot | null,
+  now: DateTime.Utc,
+): OrchestrationV2SandboxAdmission | null => {
+  if (snapshot === null) return null;
+  if (snapshot.running + snapshot.waiting >= snapshot.cap)
+    return { reason: "team-cap", since: now };
+  return snapshot.startAvailable && snapshot.waiting === 0
+    ? null
+    : { reason: "rate-limit", since: now };
+};
 
 /**
  * M1's settle-and-archive rule: once every attached thread is archived or settled and none has
@@ -174,6 +197,7 @@ export const decideCloudPrompt = (input: {
   readonly dispatchMode: "start_immediately" | "queue_after_active";
   /** The base the thread's checkout was first made from, and its branch now. */
   readonly checkout: { readonly baseRef: string; readonly branch: string | null } | null;
+  readonly admission: AdmissionSnapshot | null;
   readonly now: DateTime.Utc;
 }): CloudPromptDecision => {
   const { record } = input;
@@ -189,6 +213,7 @@ export const decideCloudPrompt = (input: {
     record,
     ownerMemberId: record.ownerMemberId,
     attachedThreads: [],
+    admission: input.admission,
     now: input.now,
   });
   // Provisioning and waking release their waiters on hello; nothing more to start.
@@ -248,6 +273,16 @@ const accept = (
   effects: effectTypes.map((type) => ({ type, sandboxId: next.id, generation: next.generation })),
 });
 
+/** A machine past the cap or the start rate still bumps its generation, but waits to boot. */
+const acceptStart = (
+  next: OrchestrationV2Sandbox,
+  start: "sandbox.create" | "sandbox.start",
+  snapshot: AdmissionSnapshot | null,
+): SandboxDecision => {
+  const admission = admissionWait(snapshot, next.updatedAt);
+  return admission === null ? accept(next, [start]) : accept({ ...next, admission }, []);
+};
+
 const decideProvision = (
   input: SandboxDecisionInput & {
     readonly command: Extract<SandboxCommand, { readonly type: "sandbox.provision" }>;
@@ -258,7 +293,7 @@ const decideProvision = (
     return refuse("not-owner-thread");
   }
   if (record !== null && record.state !== "destroyed") return refuse("wrong-state");
-  return accept(
+  return acceptStart(
     {
       id: command.sandboxId,
       projectId: command.projectId,
@@ -276,7 +311,8 @@ const decideProvision = (
       createdAt: now,
       updatedAt: now,
     },
-    ["sandbox.create"],
+    "sandbox.create",
+    input.admission,
   );
 };
 
@@ -301,33 +337,42 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
   }
   if (record.ownerThreadId !== command.threadId) return refuse("not-owner-thread");
 
+  // Only a booting record waits for admission.
+  const patched = (patch: Partial<OrchestrationV2Sandbox>): OrchestrationV2Sandbox => {
+    const next = { ...record, ...patch, updatedAt: now };
+    return next.state === "provisioning" || next.state === "waking"
+      ? next
+      : { ...next, admission: null };
+  };
   const update = (
     patch: Partial<OrchestrationV2Sandbox>,
     effectTypes: ReadonlyArray<SandboxEffectRequest["type"]> = [],
-  ) => accept({ ...record, ...patch, updatedAt: now }, effectTypes);
+  ) => accept(patched(patch), effectTypes);
   // A new generation boots either from the kept disk or, without one, from scratch.
   const nextGeneration = (fromScratch: boolean) =>
     fromScratch || record.driverRef === null
-      ? update(
-          {
+      ? acceptStart(
+          patched({
             state: "provisioning",
             generation: record.generation + 1,
             driverRef: null,
             runnerLostAt: null,
             sleepReason: null,
             failure: null,
-          },
-          ["sandbox.create"],
+          }),
+          "sandbox.create",
+          input.admission,
         )
-      : update(
-          {
+      : acceptStart(
+          patched({
             state: "waking",
             generation: record.generation + 1,
             runnerLostAt: null,
             sleepReason: null,
             failure: null,
-          },
-          ["sandbox.start"],
+          }),
+          "sandbox.start",
+          input.admission,
         );
   const busy = input.attachedThreads.some((thread) => thread.activeRun);
 
@@ -365,6 +410,21 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
 
   if (command.generation !== record.generation) return refuse("stale-generation");
   switch (command.type) {
+    case "sandbox.admit": {
+      if (
+        record.admission === null ||
+        (record.state !== "provisioning" && record.state !== "waking")
+      ) {
+        return refuse("wrong-state");
+      }
+      const snapshot = input.admission;
+      if (snapshot !== null && (snapshot.running >= snapshot.cap || !snapshot.startAvailable)) {
+        return refuse("no-capacity");
+      }
+      return update({ admission: null }, [
+        record.driverRef === null ? "sandbox.create" : "sandbox.start",
+      ]);
+    }
     case "sandbox.created":
       // The runner's hello can beat the create's answer, so any live state takes the ref.
       return record.state === "destroyed"

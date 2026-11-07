@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ComputeDriverId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Sandbox,
   type OrchestrationV2ServerCommand,
@@ -17,6 +18,7 @@ import * as DueHint from "../../scheduling/DueHint.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as SandboxAdmission from "./SandboxAdmission.ts";
 import { decideAutoSleep, sandboxAttachedThread } from "./SandboxDecisions.ts";
 import { listLiveSandboxes } from "./SandboxProjection.ts";
 
@@ -25,11 +27,10 @@ const WAKE_DEADLINE_MS = 5 * 60_000;
 
 /** When a booting sandbox that never says hello fails; null for one with no deadline. */
 const bootDeadlineMs = (sandbox: OrchestrationV2Sandbox): number | null => {
+  // Waiting for admission is not booting; admitting it restarts `updatedAt`.
+  if (sandbox.admission !== null) return null;
   const since = DateTime.toEpochMillis(sandbox.updatedAt);
-  // Waiting for admission is not booting.
-  if (sandbox.state === "provisioning" && sandbox.admission === null) {
-    return since + PROVISION_DEADLINE_MS;
-  }
+  if (sandbox.state === "provisioning") return since + PROVISION_DEADLINE_MS;
   return sandbox.state === "waking" ? since + WAKE_DEADLINE_MS : null;
 };
 
@@ -47,12 +48,34 @@ const freshCommandId = (kind: string, sandbox: OrchestrationV2Sandbox) =>
     CommandId.make(`server:sandbox-${kind}:${sandbox.id}:${SecureRandom.uuidV4Unsafe()}`),
   );
 
+/** Each driver's waiters, oldest first. */
+const admissionQueues = (sandboxes: ReadonlyArray<OrchestrationV2Sandbox>) => {
+  const queues = new Map<ComputeDriverId, Array<OrchestrationV2Sandbox>>();
+  const waiters = sandboxes
+    .flatMap((sandbox) =>
+      sandbox.admission === null
+        ? []
+        : [{ sandbox, sinceMs: DateTime.toEpochMillis(sandbox.admission.since) }],
+    )
+    .toSorted(
+      (left, right) =>
+        left.sinceMs - right.sinceMs || left.sandbox.id.localeCompare(right.sandbox.id),
+    );
+  for (const { sandbox } of waiters) {
+    const queue = queues.get(sandbox.driverId);
+    if (queue === undefined) queues.set(sandbox.driverId, [sandbox]);
+    else queue.push(sandbox);
+  }
+  return queues;
+};
+
 /** One sweep per call; the layer registers it with the scheduler. */
 export const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
+  const admission = yield* SandboxAdmission.SandboxAdmission;
   const due = DueHint.make();
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
@@ -84,6 +107,47 @@ export const makeSweep = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Admits one driver's waiters in order while a slot and a start token are free, and says when
+   * the queue can move next: at the next token, or never until a machine stops (an event).
+   */
+  const admitWaiters = Effect.fn("SandboxLifecycleWorker.admitWaiters")(function* (
+    driverId: ComputeDriverId,
+    queue: ReadonlyArray<OrchestrationV2Sandbox>,
+  ) {
+    let admitted = 0;
+    for (const sandbox of queue) {
+      const snapshot = yield* admission.withLock(admission.snapshot(driverId));
+      if (snapshot.running >= snapshot.cap) return { admitted, nextDueMs: Infinity };
+      if (!snapshot.startAvailable) {
+        const next = yield* admission.nextStartAt;
+        return { admitted, nextDueMs: next === null ? Infinity : DateTime.toEpochMillis(next) };
+      }
+      // A refusal means another start took the slot or the token first; the next tick retries.
+      const accepted = yield* threads
+        .dispatch({
+          type: "sandbox.admit",
+          commandId: CommandId.make(
+            `server:sandbox-admit:${sandbox.id}:${sandbox.generation}:${SecureRandom.uuidV4Unsafe()}`,
+          ),
+          threadId: sandbox.ownerThreadId,
+          sandboxId: sandbox.id,
+          generation: sandbox.generation,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logDebug("Sandbox admission was refused", { sandboxId: sandbox.id, cause }).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+      if (!accepted) return { admitted, nextDueMs: Infinity };
+      admitted++;
+    }
+    return { admitted, nextDueMs: Infinity };
+  });
+
   return Effect.fn("SandboxLifecycleWorker.sweep")(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
@@ -100,6 +164,11 @@ export const makeSweep = Effect.gen(function* () {
       : new Set();
     let acted = false;
     let nextDueMs = Infinity;
+    for (const [driverId, queue] of admissionQueues(sandboxes)) {
+      const result = yield* admitWaiters(driverId, queue);
+      if (result.admitted > 0) acted = true;
+      nextDueMs = Math.min(nextDueMs, result.nextDueMs);
+    }
     for (const sandbox of sandboxes) {
       if (sandbox.state === "ready" && dockerDriverIds.has(sandbox.driverId)) {
         if (!(yield* shouldSleep(sandbox))) continue;

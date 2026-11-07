@@ -387,6 +387,9 @@ describe("DockerComputeDriver", () => {
     const containers = new Map([[name, { labels: { ...tags }, status: "running", generation: 1 }]]);
     return withDriver(containers, (driver, fake) =>
       Effect.gen(function* () {
+        // Built once from the daemon's 4 CPUs.
+        assert.strictEqual(driver.capabilities.defaultRunningCap, 1);
+        fake.calls.length = 0;
         yield* driver.start(name, bootstrap(1));
         assert.deepStrictEqual(fake.calls, [
           `GET /containers/${name}/json`,

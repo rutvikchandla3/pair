@@ -86,6 +86,8 @@ export interface ComputeCapabilities {
     readonly vcpus: number;
     readonly memoryGb: number;
   }>;
+  /** How many of this instance's sandboxes may run at once before new ones queue. */
+  readonly defaultRunningCap: number;
 }
 
 export interface SandboxBootstrap {

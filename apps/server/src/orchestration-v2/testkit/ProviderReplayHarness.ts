@@ -36,6 +36,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as SandboxAttachments from "../../sandbox/attachments/SandboxAttachments.ts";
+import * as SandboxAdmission from "../../sandbox/lifecycle/SandboxAdmission.ts";
 import * as SandboxEffects from "../../sandbox/lifecycle/SandboxEffects.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -267,6 +268,17 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   return layerWithRegistry(scenario, layerRegistry, options);
 }
 
+/** Never queues a machine: replay scenarios don't exercise the team cap or the start rate. */
+const layerSandboxAdmissionOpen = Layer.succeed(
+  SandboxAdmission.SandboxAdmission,
+  SandboxAdmission.SandboxAdmission.of({
+    withLock: (effect) => effect,
+    snapshot: () => Effect.succeed({ running: 0, waiting: 0, cap: Infinity, startAvailable: true }),
+    takeStart: Effect.void,
+    nextStartAt: Effect.succeed(null),
+  }),
+);
+
 export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<
@@ -284,13 +296,20 @@ export function layerWithRegistry<Error>(
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
+    /** `SandboxAdmission.layer` over a driver registry, for tests of the cap and start rate. */
+    readonly sandboxAdmission?: Layer.Layer<
+      SandboxAdmission.SandboxAdmission,
+      never,
+      ProjectionStore.ProjectionStoreV2
+    >;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
-  | CommandOutputRecorder.CommandOutputRecorder,
+  | CommandOutputRecorder.CommandOutputRecorder
+  | SandboxAdmission.SandboxAdmission,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -333,6 +352,9 @@ export function layerWithRegistry<Error>(
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+  );
+  const layerSandboxAdmission = (options.sandboxAdmission ?? layerSandboxAdmissionOpen).pipe(
+    Layer.provide(layerStores),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -488,6 +510,7 @@ export function layerWithRegistry<Error>(
         CommandPolicy.layer,
         layerContextHandoffServiceProvided,
         layerPersistence,
+        layerSandboxAdmission,
         layerProvidedRegistry,
         layerContinuationRequests,
         layerRuntime,
@@ -550,6 +573,7 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    layerSandboxAdmission,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(WorkspaceHostTesting.layerFromContext),

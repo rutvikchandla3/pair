@@ -241,6 +241,21 @@ export const listLiveSandboxes = Effect.fn("SandboxProjection.listLiveSandboxes"
   return yield* Effect.forEach(rows, (row) => decodeSandbox(row.payload_json));
 });
 
+/** 04 §4's "running" on one driver (as `isBilled` says), and how many there wait for admission. */
+export const countAdmission = Effect.fn("SandboxProjection.countAdmission")(function* (
+  driverId: ComputeDriverId,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly running: number | null; readonly waiting: number | null }>`
+    SELECT
+      SUM(CASE WHEN admission_since IS NULL THEN 1 ELSE 0 END) AS running,
+      SUM(CASE WHEN admission_since IS NULL THEN 0 ELSE 1 END) AS waiting
+    FROM orchestration_v2_projection_sandboxes
+    WHERE driver_id = ${driverId} AND state IN ('provisioning', 'waking', 'ready')
+  `;
+  return { running: rows[0]?.running ?? 0, waiting: rows[0]?.waiting ?? 0 };
+});
+
 /** Live (not deleted) threads using the sandbox, oldest first: attached_at, then thread_id. */
 export const listSandboxThreads = Effect.fn("SandboxProjection.listSandboxThreads")(function* (
   id: SandboxId,

@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
 import type {
+  ComputeDriverId,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
@@ -605,6 +606,12 @@ export interface ProjectionStoreV2Shape {
   readonly listSandboxThreads: (
     sandboxId: SandboxId,
   ) => Effect.Effect<ReadonlyArray<SandboxProjection.SandboxThreadRow>, ProjectionStoreV2Error>;
+  readonly countSandboxAdmission: (
+    driverId: ComputeDriverId,
+  ) => Effect.Effect<
+    { readonly running: number; readonly waiting: number },
+    ProjectionStoreV2Error
+  >;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -7924,6 +7931,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
       );
+    const countSandboxAdmission: ProjectionStoreV2Shape["countSandboxAdmission"] = (driverId) =>
+      withSql(SandboxProjection.countAdmission(driverId)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionStoreReadError({ threadId: ThreadId.make(`driver:${driverId}`), cause }),
+        ),
+      );
 
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
@@ -7951,6 +7965,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
       getSandbox: readOnReader(getSandbox),
       listSandboxThreads: readOnReader(listSandboxThreads),
+      countSandboxAdmission: readOnReader(countSandboxAdmission),
       memberUsageSince: readOnReader(memberUsageSince),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

@@ -58,6 +58,7 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
+import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "../sandbox/lifecycle/SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "../sandbox/lifecycle/SandboxReconciler.ts";
@@ -222,10 +223,16 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+// One per process: the orchestrator and the lifecycle worker share its lock and start bucket.
+const layerSandboxAdmissionProvided = SandboxAdmission.layer.pipe(
+  Layer.provide(ProjectionStore.layer),
+);
+
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerCheckpointServiceProvided,
+      layerSandboxAdmissionProvided,
       CommandPolicy.layer,
       layerStores,
       layerEventSink,
@@ -413,6 +420,7 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerOrchestratorProvided,
+        layerSandboxAdmissionProvided,
       ),
     ),
   ),

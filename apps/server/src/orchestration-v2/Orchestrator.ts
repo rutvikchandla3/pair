@@ -212,6 +212,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import {
   decideGitCredentialRecord,
   decideCloudPrompt,
@@ -223,6 +224,13 @@ import {
   type SandboxCommand,
   type SandboxDecision,
 } from "../sandbox/lifecycle/SandboxDecisions.ts";
+
+/** Commands that can start a machine; they, and prompts on cloud threads, take the admission lock. */
+const startsSandbox = (type: OrchestrationV2ServerCommand["type"]) =>
+  type === "sandbox.provision" ||
+  type === "sandbox.wake" ||
+  type === "sandbox.retry" ||
+  type === "sandbox.admit";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -1184,6 +1192,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const sandboxAdmission = yield* SandboxAdmission.SandboxAdmission;
   // CLI and test runtimes have no team: every actor is the holder and events carry no member.
   const team = yield* Effect.serviceOption(TeamState.TeamState);
   const serverOwnerId = Option.map(team, (state) => state.ownerId);
@@ -10892,12 +10901,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "sandbox.auto-sleep")
         ? yield* listSandboxAttachedThreads(record.id).pipe(mapProjection)
         : [];
+    const driverId = command.type === "sandbox.provision" ? command.driverId : record?.driverId;
+    const admission =
+      startsSandbox(command.type) && driverId !== undefined
+        ? yield* sandboxAdmission.snapshot(driverId).pipe(mapProjection)
+        : null;
     const now = yield* DateTime.now;
     const decision = decideSandboxCommand({
       command,
       record,
       ownerMemberId: thread?.ownerId ?? null,
       attachedThreads,
+      admission,
       now,
     });
     if (decision._tag === "NoOp") return;
@@ -11044,6 +11059,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .toSorted((left, right) => left.ordinal - right.ordinal)
             .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation
         : undefined;
+    const admission = yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection);
     const now = yield* DateTime.now;
     const decision = decideCloudPrompt({
       record,
@@ -11054,6 +11070,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         firstCheckout?.type === "worktree"
           ? { baseRef: firstCheckout.baseRef, branch: thread.branch }
           : null,
+      admission,
       now,
     });
     if (decision._tag === "Send") return command;
@@ -14568,6 +14585,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.retry":
       case "sandbox.discard":
       case "sandbox.provision":
+      case "sandbox.admit":
       case "sandbox.created":
       case "sandbox.runner.attached":
       case "sandbox.runner.lost":
@@ -14824,6 +14842,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    // Still under the admission lock that every command able to start a machine takes.
+    if (
+      committed.committed &&
+      plan.effects.some(
+        (effect) =>
+          effect.request.type === "sandbox.create" || effect.request.type === "sandbox.start",
+      )
+    ) {
+      yield* sandboxAdmission.takeStart;
+    }
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
@@ -14854,7 +14882,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   }, withCommandMetrics);
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+  const dispatchWithThreadLocks = Effect.fnUntraced(function* (
+    command: OrchestrationV2ServerCommand,
+  ) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
@@ -14900,6 +14930,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return yield* parentThreadId === undefined
       ? dispatch
       : threadDispatch.withLock(parentThreadId, dispatch);
+  });
+
+  // Thread locks don't serialize the team cap across threads, so the admission lock comes first.
+  const takesSandboxSlot = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    if (startsSandbox(command.type)) return true;
+    // A delegated task provisions its own machine, or its first prompt waits on its parent's.
+    if (command.type === "delegated_task.request" && command.sandbox !== undefined) return true;
+    const promptThreadId =
+      command.type === "delegated_task.request"
+        ? command.parentThreadId
+        : command.type === "message.dispatch" &&
+            (command.dispatchMode.type === "start_immediately" ||
+              command.dispatchMode.type === "queue_after_active")
+          ? command.threadId
+          : null;
+    if (promptThreadId === null) return false;
+    const shell = yield* projectionStore
+      .getThreadShell(promptThreadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: promptThreadId, cause }),
+        ),
+      );
+    return shell?.sandboxId !== undefined;
+  });
+
+  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    return yield* (yield* takesSandboxSlot(command))
+      ? sandboxAdmission.withLock(dispatchWithThreadLocks(command))
+      : dispatchWithThreadLocks(command);
   });
 
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
@@ -15412,6 +15472,7 @@ export const layer: Layer.Layer<
   | ProviderSwitchServiceV2
   | ProjectionStoreV2
   | RuntimePolicyV2
+  | SandboxAdmission.SandboxAdmission
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(

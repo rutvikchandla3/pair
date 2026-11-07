@@ -19,10 +19,12 @@ import {
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -58,6 +60,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
+import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { GitHubAppInstallationTokens } from "../credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
@@ -66,6 +69,7 @@ import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
 import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
+import * as SandboxAdmission from "./SandboxAdmission.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
@@ -81,23 +85,72 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = ThreadManagement.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-      EventStore.layer.pipe(Layer.provide(layerDatabase)),
-      EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-      ProviderReplayHarness.layerWithRegistry(
-        { name: "sandbox-lifecycle" },
-        ProviderAdapterRegistry.layerFromAdapters([adapter]),
-        { databaseLayer: layerDatabase, runEffectWorker: false },
+const makeLayerTest = (
+  sandboxAdmission?: Layer.Layer<
+    SandboxAdmission.SandboxAdmission,
+    never,
+    ProjectionStore.ProjectionStoreV2
+  >,
+) =>
+  ThreadManagement.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EventStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "sandbox-lifecycle" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          {
+            databaseLayer: layerDatabase,
+            runEffectWorker: false,
+            ...(sandboxAdmission === undefined ? {} : { sandboxAdmission }),
+          },
+        ),
       ),
     ),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-);
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+const layerTest = makeLayerTest();
+
+/** The fake driver the orchestrator's admission reads its cap from, built with the test layer. */
+class AdmissionDriver extends Context.Service<
+  AdmissionDriver,
+  {
+    readonly fake: Effect.Success<ReturnType<typeof FakeComputeDriver.make>>;
+    /** Every admission snapshot reads the cap after the counts and waits here; open by default. */
+    readonly capRead: Latch.Latch;
+  }
+>()("t3/sandbox/lifecycle/SandboxLifecycle.test/AdmissionDriver") {}
+
+const layerAdmissionTest = (defaultRunningCap: number) => {
+  const layerDriver = Layer.effect(
+    AdmissionDriver,
+    Effect.all({
+      fake: FakeComputeDriver.make(ComputeDriverId.make("docker"), { defaultRunningCap }),
+      capRead: Latch.make(true),
+    }),
+  );
+  const layerAdmission = SandboxAdmission.layer.pipe(
+    Layer.provide(
+      Layer.effect(
+        ComputeDriverRegistry.ComputeDriverRegistry,
+        AdmissionDriver.use(({ fake, capRead }) =>
+          Effect.succeed(
+            ComputeDriverRegistry.ComputeDriverRegistry.of({
+              get: () => capRead.await.pipe(Effect.as(fake.driver)),
+              list: Effect.succeed([fake.driver]),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Layer.provide(layerDriver),
+  );
+  return makeLayerTest(layerAdmission).pipe(Layer.provideMerge(layerDriver));
+};
 
 const installId = EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
 
@@ -145,8 +198,10 @@ const makeCredentials = Effect.fn("SandboxLifecycleTest.makeCredentials")(functi
 });
 
 /** The real worker and executor over the real `SandboxEffects`, the fake driver and a recording bootstrap. */
-const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(function* () {
-  const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
+const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(function* (
+  driver?: Effect.Success<ReturnType<typeof FakeComputeDriver.make>>,
+) {
+  const fake = driver ?? (yield* FakeComputeDriver.make(ComputeDriverId.make("docker")));
   const bootstraps = yield* Ref.make<ReadonlyArray<number>>([]);
   const layerBootstrap = Layer.succeed(
     SandboxBootstrapSource.SandboxBootstrapSource,
@@ -223,7 +278,10 @@ const runAnswering = (
     assert.equal(yield* Fiber.join(run), 1);
   });
 
-const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (key: string) {
+const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
+  key: string,
+  beforeProvision: Effect.Effect<void> = Effect.void,
+) {
   const threadId = ThreadId.make(`thread:${key}`);
   const sandboxId = SandboxId.make(
     `sbx_${Array.from(key, (char) => char.charCodeAt(0).toString(16))
@@ -245,6 +303,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (key
     createdBy: "user",
     creationSource: "web",
   });
+  yield* beforeProvision;
   yield* dispatch({
     type: "sandbox.provision",
     commandId: CommandId.make(`provision:${key}`),
@@ -1258,6 +1317,127 @@ it.layer(layerTest)("delegated shared tasks", (it) => {
           effect.threadId,
         ]),
         [["sandbox.request-wake", child.id]],
+      );
+    }),
+  );
+});
+
+const answerCreateOf = (sandboxId: SandboxId) => (call: FakeComputeDriver.FakeComputeCall) =>
+  call._tag === "create" && call.input.sandboxId === sandboxId
+    ? answerCreate(call)
+    : Effect.die(`Expected ${sandboxId}'s create, got ${call._tag}`);
+
+it.layer(layerAdmissionTest(1))("sandbox admission at the team cap", (it) => {
+  it.effect("two threads at one free slot admit one", () =>
+    Effect.gen(function* () {
+      const { fake, capRead } = yield* AdmissionDriver;
+      const runtime = yield* makeSandboxRuntime(fake);
+      // The first decision waits after reading the counts until both provisions are dispatched,
+      // so without the admission lock both would count a free slot.
+      yield* capRead.close;
+      const started = yield* Ref.make(0);
+      const startProvision = Ref.updateAndGet(started, (count) => count + 1).pipe(
+        Effect.flatMap((count) => (count === 2 ? capRead.open : Effect.void)),
+        Effect.asVoid,
+      );
+      const launched = yield* Effect.all(
+        [provisioned("cap-a", startProvision), provisioned("cap-b", startProvision)],
+        { concurrency: 2 },
+      );
+      const records = yield* Effect.forEach(launched, ({ sandboxId }) => getSandbox(sandboxId));
+      const waitingIndex = records.findIndex((record) => record?.admission !== null);
+      assert.sameMembers(
+        records.map((record) => record?.admission?.reason ?? null),
+        [null, "team-cap"],
+      );
+      const first = launched[1 - waitingIndex]!;
+      const second = launched[waitingIndex]!;
+
+      // Only the admitted machine is created.
+      yield* runAnswering(runtime, answerCreateOf(first.sandboxId));
+      yield* attachAndRelease(runtime, first.threadId, first.sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.discard",
+        commandId: CommandId.make("discard:cap-a"),
+        threadId: first.threadId,
+        sandboxId: first.sandboxId,
+      });
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(second.sandboxId), {
+        state: "provisioning",
+        generation: 1,
+        admission: null,
+      });
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "destroy" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+      yield* runAnswering(runtime, answerCreateOf(second.sandboxId));
+    }).pipe(Effect.scoped),
+  );
+});
+
+it.layer(layerAdmissionTest(2))("sandbox admission of shared sandboxes", (it) => {
+  it.effect("a shared sandbox counts once", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime((yield* AdmissionDriver).fake);
+      const owner = yield* provisioned("shared-a");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, owner.threadId, owner.sandboxId, 1);
+      yield* forked(owner.threadId, "shared-a-side-1", true);
+      yield* forked(owner.threadId, "shared-a-side-2", true);
+
+      const second = yield* provisioned("shared-b");
+      assert.equal((yield* getSandbox(second.sandboxId))?.admission, null);
+      const third = yield* provisioned("shared-c");
+      assert.equal((yield* getSandbox(third.sandboxId))?.admission?.reason, "team-cap");
+    }),
+  );
+});
+
+it.layer(layerAdmissionTest(100))("sandbox admission at the start rate", (it) => {
+  it.effect("the eleventh start in a minute waits", () =>
+    Effect.gen(function* () {
+      const launched = yield* Effect.forEach(
+        Array.from({ length: 11 }, (_, index) => `rate-${index + 1}`),
+        (key) => provisioned(key),
+      );
+      const reasons = yield* Effect.forEach(launched, ({ sandboxId }) =>
+        getSandbox(sandboxId).pipe(Effect.map((record) => record?.admission?.reason ?? null)),
+      );
+      assert.deepEqual(reasons, [...Array.from({ length: 10 }, () => null), "rate-limit"]);
+
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(FakeComputeDriver.layerRegistry((yield* AdmissionDriver).fake.driver)),
+      );
+      const eleventh = launched[10]!;
+      yield* sweep();
+      assert.equal((yield* getSandbox(eleventh.sandboxId))?.admission?.reason, "rate-limit");
+      yield* TestClock.adjust("6 seconds");
+      yield* sweep();
+      assert.equal((yield* getSandbox(eleventh.sandboxId))?.admission, null);
+    }).pipe(Effect.scoped),
+  );
+});
+
+it.layer(layerAdmissionTest(1))("sandbox admission of delegated tasks", (it) => {
+  it.effect("a cloud task's own machine waits at a full cap", () =>
+    Effect.gen(function* () {
+      const { threadId: parent } = yield* provisioned("cap-delegate");
+      const { run: parentRun } = yield* prompt(parent, "cap-delegate");
+      const sandboxId = SandboxId.make("sbx_ca9de1e9a7ec10dde1e9");
+      const { child } = yield* delegate(parent, parentRun, "cap-cloud", {
+        workspaceStrategy: { type: "worktree", baseRef: "feature/cache" },
+        sandbox: { sandboxId, driverId: ComputeDriverId.make("docker"), size: "default" },
+      });
+      assert.equal(child.sandboxId, sandboxId);
+      assert.equal((yield* getSandbox(sandboxId))?.admission?.reason, "team-cap");
+      assert.isFalse(
+        (yield* effectsOf("delegate:cap-cloud")).some(
+          (effect) => effect.request.type === "sandbox.create",
+        ),
       );
     }),
   );
