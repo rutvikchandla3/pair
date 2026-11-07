@@ -14,7 +14,7 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (36): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
+- M1 (37): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
 **In flight (2026-11-07, second session):** 1.17, 1.38, 1.42, 1.43, each in `../pair-wt/<id>` on
