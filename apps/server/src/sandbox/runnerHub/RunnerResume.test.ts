@@ -23,6 +23,7 @@ import type { RunnerConnection } from "./RunnerConnection.ts";
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
 import * as RunnerHubTesting from "./RunnerHubTesting.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const KiB = 1024;
 const MiB = 1024 * KiB;
@@ -42,6 +43,7 @@ const limitsWith = (overrides: Partial<RunnerLimits> = {}): RunnerLimits => ({
 
 const layerFor = (limits: RunnerLimits) =>
   RunnerHub.layerWith({ limits }).pipe(
+    Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(RunnerGrants.layer),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provideMerge(NodeCrypto.layer),

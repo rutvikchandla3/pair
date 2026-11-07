@@ -36,6 +36,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../src/config.ts";
 import * as SqlitePersistence from "../src/persistence/Sqlite.ts";
 import * as NodePtyAdapter from "../src/terminal/NodePtyAdapter.ts";
+import * as WorkspaceHosts from "../src/workspaceHost/WorkspaceHosts.ts";
 import * as RunnerBundle from "../src/sandbox/runnerHub/RunnerBundle.ts";
 import type { RunnerConnection } from "../src/sandbox/runnerHub/RunnerConnection.ts";
 import * as RunnerGrants from "../src/sandbox/runnerHub/RunnerGrants.ts";
@@ -618,6 +619,8 @@ const program = Effect.fn("runnerBenchmark")(
         Layer.provideMerge(
           Layer.mergeAll(
             RunnerHub.layer.pipe(
+              // A benchmark registers nothing anywhere a server would route to.
+              Layer.provide(WorkspaceHosts.layer.pipe(Layer.provide(NodePtyAdapter.layer))),
               Layer.provideMerge(RunnerGrants.layer),
               Layer.provide(SqlitePersistence.layerMemory),
               Layer.provide(NodeCrypto.layer),

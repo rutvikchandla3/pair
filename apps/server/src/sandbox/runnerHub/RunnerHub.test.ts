@@ -17,8 +17,10 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
 import * as RunnerHubTesting from "./RunnerHubTesting.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const layer = RunnerHub.layer.pipe(
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(RunnerGrants.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(NodeCrypto.layer),

@@ -105,6 +105,12 @@ describe("RunnerSocketServer", () => {
         runnerBuildId: "runner-build-1",
         enrollment: Option.some(Redacted.make("enroll-secret")),
         stateDir,
+        facts: {
+          agent: { uid: null, homeDirectory: "/home/t3", shell: "/bin/sh" },
+          tmpDirectory: "/tmp",
+          bundleDirectory: "/opt/pair-runner/runner-build-1",
+          imageEnvironment: {},
+        },
       };
       const exited = yield* Deferred.make<number>();
       const sent: Array<Readonly<Record<string, string>> | undefined> = [];

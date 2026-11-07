@@ -476,6 +476,10 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
           arch: "x64",
           cpus: 2,
           memoryBytes: 1024,
+          agent: { uid: 1000, homeDirectory: "/home/t3", shell: "/bin/bash" },
+          tmpDirectory: "/tmp",
+          bundleDirectory: "/opt/pair-runner/build",
+          imageEnvironment: {},
           handles: [],
         },
       });

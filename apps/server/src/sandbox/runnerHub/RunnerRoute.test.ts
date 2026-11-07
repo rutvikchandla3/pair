@@ -17,9 +17,11 @@ import * as RunnerBundle from "./RunnerBundle.ts";
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
 import * as RunnerRoute from "./RunnerRoute.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const layerHub = Layer.mergeAll(
   RunnerHub.layer.pipe(
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(RunnerGrants.layer),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(NodeCrypto.layer),

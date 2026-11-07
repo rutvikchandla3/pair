@@ -61,7 +61,8 @@ export const layer = Layer.effect(
             })),
           ),
           Effect.mapError(
-            (error) => new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId }),
+            (error) =>
+              new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId ?? "" }),
           ),
         );
       }),

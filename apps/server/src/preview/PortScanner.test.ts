@@ -24,6 +24,7 @@ import { FetchHttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("@t3tools/provider-core/server/processGroup", { spy: true });
 
@@ -50,6 +51,7 @@ const layerProbeFailure = (
   fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
 ) =>
   PortScanner.layer.pipe(
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provide(
       Layer.mergeAll(
         fileSystem,
@@ -90,6 +92,7 @@ const layerLsofScanner = (input: {
   readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }) =>
   (input.scanner ?? PortScanner.layer).pipe(
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provide(
       Layer.mergeAll(
         input.fileSystem ?? layerNoProc,
@@ -555,6 +558,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
     return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
   const layer = PortScanner.layer.pipe(
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
@@ -664,6 +668,7 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
     const requests: string[] = [];
     const missing = FileSystem.makeNoop({});
     const layer = PortScanner.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
@@ -731,6 +736,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
     const layer = PortScanner.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
@@ -945,6 +951,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       Effect.scoped,
       Effect.provide(
         PortScanner.layer.pipe(
+          Layer.provide(WorkspaceHostTesting.layerFromContext),
           Layer.provide(ProcessRunner.layer),
           Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         ),

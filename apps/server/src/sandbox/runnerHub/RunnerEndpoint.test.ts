@@ -21,6 +21,7 @@ import * as RunnerBundle from "./RunnerBundle.ts";
 import * as RunnerEndpoint from "./RunnerEndpoint.ts";
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const local: DockerHost = { _tag: "Unix", socketPaths: ["/var/run/docker.sock"] };
 const tcp: DockerHost = { _tag: "Tcp", origin: "http://docker.example:2375", tls: null };
@@ -137,7 +138,12 @@ it.live("opens the runner socket once and serves only the runner routes on it", 
             ),
           }),
         ),
-        Layer.provide(RunnerHub.layer.pipe(Layer.provide(RunnerGrants.layer))),
+        Layer.provide(
+          RunnerHub.layer.pipe(
+            Layer.provide(RunnerGrants.layer),
+            Layer.provide(WorkspaceHostTesting.layerFromContext),
+          ),
+        ),
         Layer.provide(SqlitePersistence.layerMemory),
         Layer.provide(NodeCrypto.layer),
       ),

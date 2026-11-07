@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 
 import * as CheckpointCapture from "../checkpointing/CheckpointCapture.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
@@ -239,7 +240,10 @@ function makeCheckpoint(input: {
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
-  CheckpointStore.CheckpointStore | Digest.Digest | IdAllocator.IdAllocatorV2
+  | CheckpointStore.CheckpointStore
+  | Digest.Digest
+  | IdAllocator.IdAllocatorV2
+  | WorkspaceHosts.WorkspaceHosts
 > = Layer.effect(
   CheckpointServiceV2,
   Effect.gen(function* () {
@@ -248,7 +252,15 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Digest.Digest, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const workspaceLocks = yield* KeyedLock.make<string>();
+    // A sandbox host captures on its own disk in one call (02 §5); the lock stays here (07 §1).
+    // An unavailable one takes the local path, which fails as before.
+    const coarseFor = (cwd: string) =>
+      hosts.forPath(cwd).pipe(
+        Effect.map((host) => host.invoke),
+        Effect.orElseSucceed(() => undefined),
+      );
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
@@ -265,6 +277,15 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
+          const coarse = yield* coarseFor(input.scope.cwd);
+          if (coarse !== undefined) {
+            yield* coarse.checkpointCapture({
+              _tag: "baseline",
+              cwd: input.scope.cwd,
+              checkpointRef,
+            });
+            return;
+          }
           yield* CheckpointCapture.captureBaseline({ cwd: input.scope.cwd, checkpointRef });
         }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore)),
       ).pipe(
@@ -373,11 +394,35 @@ export const layer: Layer.Layer<
             });
           }
 
-          const captured = yield* CheckpointCapture.captureTurn({
-            cwd: input.scope.cwd,
-            checkpointRef,
-            previousCheckpointRef,
-          }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore));
+          const coarse = yield* coarseFor(input.scope.cwd);
+          const captured =
+            coarse === undefined
+              ? yield* CheckpointCapture.captureTurn({
+                  cwd: input.scope.cwd,
+                  checkpointRef,
+                  previousCheckpointRef,
+                }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore))
+              : yield* coarse
+                  .checkpointCapture({
+                    _tag: "turn",
+                    cwd: input.scope.cwd,
+                    checkpointRef,
+                    previousCheckpointRef,
+                  })
+                  .pipe(
+                    // Only the kinds cross the wire; the causes stay in the runner's log.
+                    Effect.map((result) => ({
+                      ...result,
+                      warnings: result.warnings.map((kind) => ({
+                        kind,
+                        checkpointRef:
+                          kind === "previous-ref-lookup-failed"
+                            ? previousCheckpointRef
+                            : checkpointRef,
+                        cause: "logged by the sandbox's runner",
+                      })),
+                    })),
+                  );
           yield* Effect.forEach(
             captured.warnings,
             (warning) =>

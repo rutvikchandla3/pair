@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
@@ -33,6 +34,13 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import * as Metrics from "../../observability/Metrics.ts";
+import * as SandboxWorkspaceHost from "../../workspaceHost/SandboxWorkspaceHost.ts";
+import {
+  SANDBOX_ROOT,
+  type WorkspaceHost,
+  WorkspaceHostUnavailableError,
+} from "../../workspaceHost/WorkspaceHost.ts";
+import { WorkspaceHosts } from "../../workspaceHost/WorkspaceHosts.ts";
 import * as RunnerOpsClient from "./RunnerOpsClient.ts";
 import {
   type AwaitClient,
@@ -148,6 +156,14 @@ export class RunnerHub extends Context.Service<
     readonly facts: Stream.Stream<RunnerHubFact>;
     /** Each new runner boot once, from its first hello; subscribers see boots after they start. */
     readonly boots: Stream.Stream<RunnerBoot>;
+    /**
+     * How sandbox hosts expose server endpoints, while the scope is open. `RunnerForwards` sits
+     * above the hub (it needs the MCP registry), so it hands this in; until then a host's
+     * `exposeServerEndpoint` fails as unavailable.
+     */
+    readonly serveEndpoints: (
+      expose: (sandboxId: SandboxId) => WorkspaceHost["exposeServerEndpoint"],
+    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/sandbox/runnerHub/RunnerHub") {}
 
@@ -166,6 +182,11 @@ interface Slot {
   /** The newest boot generation minted or served this server boot. */
   generation: number;
   boot: { readonly generation: number; readonly runnerBootId: string } | undefined;
+  /**
+   * The current boot's scope: its workspace host registration, PTYs and process table. Closed
+   * when the boot ends (lease expiry, a new boot, revoke), so its paths then fail closed.
+   */
+  bootScope: Scope.Closeable | undefined;
   live: { readonly id: number; readonly close: Deferred.Deferred<void> } | undefined;
   /** Bumped whenever a pending lease must not fire. */
   leaseEpoch: number;
@@ -187,6 +208,7 @@ const absent: SlotState = {
 
 const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
   const grants = yield* RunnerGrants;
+  const hosts = yield* WorkspaceHosts;
   const random = yield* SecureRandom.SecureRandom;
   const serialization = yield* RpcSerialization.RpcSerialization.pipe(
     Effect.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: MAX_FRAME_BYTES })),
@@ -195,6 +217,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
   const hubScope = yield* Effect.scope;
   const facts = yield* Queue.unbounded<RunnerHubFact>();
   const boots = yield* PubSub.unbounded<RunnerBoot>();
+  let endpoints: ((sandboxId: SandboxId) => WorkspaceHost["exposeServerEndpoint"]) | undefined;
   const leases = yield* FiberMap.make<SandboxId>();
   // Every slot change runs under this lock; nothing slow runs inside it.
   const lock = yield* Semaphore.make(1);
@@ -210,6 +233,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       state: yield* SubscriptionRef.make(absent),
       generation: 0,
       boot: undefined,
+      bootScope: undefined,
       live: undefined,
       leaseEpoch: 0,
       expiries: 0,
@@ -237,6 +261,13 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       return FiberMap.remove(leases, slot.sandboxId);
     });
 
+  const endBoot = (slot: Slot) =>
+    Effect.suspend(() => {
+      const scope = slot.bootScope;
+      slot.bootScope = undefined;
+      return scope === undefined ? Effect.void : Scope.close(scope, Exit.void);
+    });
+
   const closeLive = (slot: Slot) =>
     Effect.suspend(() => {
       const live = slot.live;
@@ -256,6 +287,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       client: undefined,
       lostReason: "lease-expired",
     });
+    yield* endBoot(slot);
     Queue.offerUnsafe(facts, {
       _tag: "lost",
       sandboxId: slot.sandboxId,
@@ -312,16 +344,29 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
         ),
       );
 
+  /** The boot's connection, and its workspace host under `/t3-sandbox/<id>` until it ends. */
   const newBoot = Effect.fnUntraced(function* (slot: Slot, info: RunnerInfo) {
+    yield* endBoot(slot);
+    const scope = yield* Scope.fork(hubScope);
+    slot.bootScope = scope;
     const liveClient = awaitClient(slot, info);
     // The ops' process table outlives sockets; once the boot is gone its reads fail fast.
-    const ops = yield* RunnerOpsClient.make(liveClient(undefined)).pipe(Scope.provide(hubScope));
+    const ops = yield* RunnerOpsClient.make(liveClient(undefined)).pipe(Scope.provide(scope));
     const ended = SubscriptionRef.changes(slot.state).pipe(
       Stream.filter((state) => state.boot?.info !== info || state.status._tag === "lost"),
       Stream.runHead,
       Effect.asVoid,
     );
-    return makeRunnerConnection(info, liveClient, ops, { scope: hubScope, ended });
+    const connection = makeRunnerConnection(info, liveClient, ops, { scope, ended });
+    const host = yield* SandboxWorkspaceHost.make(slot.sandboxId, connection, (endpoint) =>
+      Effect.suspend(() =>
+        endpoints === undefined
+          ? Effect.fail(new WorkspaceHostUnavailableError({ sandboxId: slot.sandboxId }))
+          : endpoints(slot.sandboxId)(endpoint),
+      ),
+    ).pipe(Scope.provide(scope));
+    yield* hosts.register(`${SANDBOX_ROOT}/${slot.sandboxId}`, host).pipe(Scope.provide(scope));
+    return connection;
   });
 
   const attach = Effect.fnUntraced(function* (
@@ -431,6 +476,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       slot.generation = bootGeneration;
       yield* closeLive(slot);
       yield* cancelLease(slot);
+      yield* endBoot(slot);
       yield* setState(slot, absent);
     }).pipe(locked);
     return secret;
@@ -443,6 +489,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
         const slot = yield* slotFor(sandboxId);
         yield* closeLive(slot);
         yield* cancelLease(slot);
+        yield* endBoot(slot);
         yield* setState(
           slot,
           slot.boot === undefined
@@ -607,6 +654,18 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
     serve,
     facts: Stream.fromQueue(facts),
     boots: Stream.fromPubSub(boots),
+    // Once, from the RunnerForwards layer.
+    // @effect-diagnostics-next-line effectFnOpportunity:off
+    serveEndpoints: (expose) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          endpoints = expose;
+        }),
+        () =>
+          Effect.sync(() => {
+            if (endpoints === expose) endpoints = undefined;
+          }),
+      ),
   });
 });
 

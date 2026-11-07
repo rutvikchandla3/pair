@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.10): port discovery on the thread's machine */
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
@@ -7,7 +6,6 @@ import {
   type DiscoveredLocalServer,
   type PreviewStopLocalServerInput,
 } from "@t3tools/contracts";
-import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isLoopbackHost, LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
@@ -15,7 +13,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -27,6 +24,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -455,9 +453,17 @@ const makeScanner = Effect.fn("PortDiscovery.make")(function* (options: {
   /** Lists unowned listeners too, leaving their terminal for the caller to fill. */
   readonly allListeners: boolean;
 }) {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcess.Platform;
+  // Every probe runs on one host: the server's own machine here, the sandbox's in the runner.
+  const host = (yield* WorkspaceHosts.WorkspaceHosts).local;
+  const localRunner = yield* ProcessRunner.ProcessRunner;
+  const processRunner = ProcessRunner.ProcessRunner.of({
+    // A pass-through: the runner's own `run` carries the span.
+    // @effect-diagnostics-next-line effectFnOpportunity:off
+    run: (input) => localRunner.run({ ...input, host }),
+  });
+  const fileSystem = host.fileSystem;
+  const hostPlatform = (yield* host.info).platform;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: a server knob, not the host's environment.
   const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
@@ -1056,16 +1062,16 @@ const makeScanner = Effect.fn("PortDiscovery.make")(function* (options: {
     if (group === null) return yield* new PreviewStopLocalServerError({ reason: "shared-group" });
     // False when the whole group already exited.
     const signalGroup = (signal: "SIGTERM" | "SIGKILL") =>
-      Effect.suspend(() => {
-        try {
-          signalProcessGroup(group, signal);
-          return Effect.succeed(true);
-        } catch (cause) {
-          return isNoSuchProcess(cause)
+      host.processes.signalGroup(group, signal).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          isNoSuchProcess(error.cause)
             ? Effect.succeed(false)
-            : Effect.fail(new PreviewStopLocalServerError({ reason: "signal-failed", cause }));
-        }
-      });
+            : Effect.fail(
+                new PreviewStopLocalServerError({ reason: "signal-failed", cause: error.cause }),
+              ),
+        ),
+      );
     if (!(yield* signalGroup("SIGTERM"))) return;
     // While one of the group's original members is still in it, the group has not been reused,
     // so SIGKILL goes only to the job that ignored SIGTERM.

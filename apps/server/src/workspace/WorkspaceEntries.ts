@@ -25,7 +25,12 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import type { WorkspaceHost, WorkspaceHostFileError } from "../workspaceHost/WorkspaceHost.ts";
+import type {
+  CoarseOperationError,
+  CoarseOperations,
+  WorkspaceHost,
+  WorkspaceHostFileError,
+} from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -208,6 +213,56 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePath(input.cwd, homeDirectory), input.partialPath);
 });
 
+/** A coarse operation's failure as the error the local path would give, so clients see one category. */
+const coarseEntriesError = (
+  cwd: string,
+  error: CoarseOperationError,
+  query?: { readonly length: number; readonly limit: number },
+): WorkspaceEntriesError => {
+  const root = { workspaceRoot: cwd, normalizedWorkspaceRoot: cwd };
+  switch (error._tag === "RunnerOpsError" ? error.failure : "failed") {
+    case "workspace_root_not_found":
+      return new WorkspacePaths.WorkspaceRootNotExistsError(root);
+    case "workspace_root_create_failed":
+      return new WorkspacePaths.WorkspaceRootCreateFailedError({ ...root, cause: error });
+    case "workspace_root_stat_failed":
+      return new WorkspacePaths.WorkspaceRootStatFailedError({
+        ...root,
+        phase: "validate-existing",
+        cause: error,
+      });
+    case "workspace_root_not_directory":
+      return new WorkspacePaths.WorkspaceRootNotDirectoryError(root);
+    case "search_index_create_failed":
+      return new WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "in the sandbox",
+        cause: error,
+      });
+    case "search_index_scan_timed_out":
+      return new WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut({
+        cwd,
+        timeout: "in the sandbox",
+      });
+    case "search_index_search_failed":
+      if (query !== undefined) {
+        return new WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed({
+          cwd,
+          queryLength: query.length,
+          pageSize: query.limit,
+          reason: "in the sandbox",
+          cause: error,
+        });
+      }
+  }
+  return new WorkspaceEntriesReadDirectoryError({
+    cwd,
+    partialPath: cwd,
+    parentPath: cwd,
+    cause: error,
+  });
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
@@ -236,8 +291,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // A sandbox host runs the whole call on its own disk (02 §5); an unavailable one takes the
+  // local path, which fails closed as before.
+  const coarseFor = (cwd: string) =>
+    hosts.forPath(path.resolve(cwd)).pipe(
+      Effect.map((host): CoarseOperations | undefined => host.invoke),
+      Effect.orElseSucceed(() => undefined),
+    );
+
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
+      const coarse = yield* coarseFor(cwd);
+      if (coarse !== undefined) return yield* coarse.refreshSearch(cwd);
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
       );
@@ -339,6 +404,17 @@ export const make = Effect.gen(function* () {
 
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
+      const coarse = yield* coarseFor(input.cwd);
+      if (coarse !== undefined) {
+        return yield* coarse.searchEntries(input).pipe(
+          Effect.mapError((error) =>
+            coarseEntriesError(input.cwd, error, {
+              length: input.query.length,
+              limit: input.limit,
+            }),
+          ),
+        );
+      }
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       yield* hostForRoot(input.cwd, normalizedCwd);
       const normalizedQuery = normalizeSearchQuery(input.query, {
@@ -360,6 +436,17 @@ export const make = Effect.gen(function* () {
   const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
     "WorkspaceEntries.searchContents",
   )(function* (input) {
+    const coarse = yield* coarseFor(input.cwd);
+    if (coarse !== undefined) {
+      return yield* coarse.searchContents(input).pipe(
+        Effect.mapError((error) =>
+          coarseEntriesError(input.cwd, error, {
+            length: input.query.length,
+            limit: input.limit,
+          }),
+        ),
+      );
+    }
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
     yield* hostForRoot(input.cwd, normalizedCwd);
     return yield* Effect.gen(function* () {
@@ -376,6 +463,12 @@ export const make = Effect.gen(function* () {
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
+      const coarse = yield* coarseFor(input.cwd);
+      if (coarse !== undefined) {
+        return yield* coarse
+          .listEntries(input)
+          .pipe(Effect.mapError((error) => coarseEntriesError(input.cwd, error)));
+      }
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       const host = yield* hostForRoot(input.cwd, normalizedCwd);
       if (input.directoryPath !== undefined) {

@@ -423,7 +423,9 @@ const make = Effect.gen(function* () {
     return name === "mcp" ? `http://${address}/mcp` : address;
   });
 
-  return RunnerForwards.of({ open });
+  const service = RunnerForwards.of({ open });
+  yield* hub.serveEndpoints((sandboxId) => exposeServerEndpoint(service, sandboxId));
+  return service;
 });
 
 export const layer = Layer.effect(RunnerForwards, make);

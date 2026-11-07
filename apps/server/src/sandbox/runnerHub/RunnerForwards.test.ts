@@ -42,6 +42,7 @@ import {
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
 import * as RunnerHubTesting from "./RunnerHubTesting.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const sandboxA = SandboxId.make("sbx_000000000000000a1130");
 const sandboxB = SandboxId.make("sbx_000000000000000b1130");
@@ -270,6 +271,7 @@ describe("RunnerForwards", () => {
 
       const layer = runnerForwardsLayer.pipe(
         Layer.provideMerge(RunnerHub.layer),
+        Layer.provide(WorkspaceHostTesting.layerFromContext),
         Layer.provideMerge(RunnerGrants.layer),
         Layer.provide(SqlitePersistence.layerMemory),
         Layer.provideMerge(NodeCrypto.layer),

@@ -40,9 +40,9 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import type { WorkspaceHost, WorkspaceHostFileError } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { resolveWorktreesDirectory } from "../worktreePaths.ts";
 import {
@@ -4770,9 +4770,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    */
   // Recursive filesystem traversal can visit many entries; removeWorktree owns the operation span.
   const removeLeftoverLinks = Effect.fnUntraced(function* (
-    fileSystem: FileSystem.FileSystem,
+    host: WorkspaceHost,
     target: string,
-  ): Effect.fn.Return<boolean, PlatformError.PlatformError | RemoveEmptyDirectoryError> {
+  ): Effect.fn.Return<boolean, PlatformError.PlatformError | WorkspaceHostFileError> {
+    const { fileSystem } = host;
     if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
       yield* fileSystem.remove(target);
       return true;
@@ -4780,10 +4781,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
     let empty = true;
     for (const name of yield* fileSystem.readDirectory(target)) {
-      if (!(yield* removeLeftoverLinks(fileSystem, path.join(target, name)))) empty = false;
+      if (!(yield* removeLeftoverLinks(host, path.join(target, name)))) empty = false;
     }
     // Only an empty directory goes, so files written since the listing stay.
-    return empty && (yield* removeEmptyDirectory(target));
+    return empty && (yield* host.files.removeEmptyDirectory(target));
   });
 
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
@@ -4812,7 +4813,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Git for Windows reports success without removing NTFS junctions or their parent directories.
       // Log leftover cleanup failures: Git already unregistered the worktree, so removal cannot be retried.
       if (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))) {
-        const removed = yield* removeLeftoverLinks(fileSystem, target).pipe(
+        const removed = yield* removeLeftoverLinks(host, target).pipe(
           Effect.catch((error) =>
             Effect.logWarning("GitVcsDriver.removeWorktree: failed to delete leftover links", {
               path: target,

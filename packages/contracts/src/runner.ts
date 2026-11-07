@@ -61,12 +61,19 @@ export const RUNNER_METHODS = {
   fsReadLink: "fs.readLink",
   fsSymlink: "fs.symlink",
   fsChmod: "fs.chmod",
+  fsUtimes: "fs.utimes",
   fsMakeTempDirectory: "fs.makeTempDirectory",
   fsReadStream: "fs.readStream",
   fsWriteStreamOpen: "fs.writeStream.open",
   fsWriteStreamChunk: "fs.writeStream.chunk",
   fsWriteStreamClose: "fs.writeStream.close",
   fsWatch: "fs.watch",
+  filesLstat: "files.lstat",
+  filesReadDirectory: "files.readDirectory",
+  filesReadFile: "files.readFile",
+  filesWriteNoFollow: "files.writeNoFollow",
+  filesRealPath: "files.realPath",
+  filesRemoveEmptyDirectory: "files.removeEmptyDirectory",
   forwardOpen: "forward.open",
   forwardClose: "forward.close",
   tcpRead: "tcp.read",
@@ -215,6 +222,17 @@ export const RunnerInfo = Schema.Struct({
   arch: Schema.Literals(["x64", "arm64"]),
   cpus: NonNegativeInt,
   memoryBytes: NonNegativeInt,
+  /** The user agents run as. A null uid runs them as the runner's own user (tests). */
+  agent: Schema.Struct({
+    uid: Schema.NullOr(RunnerUserId),
+    homeDirectory: RunnerPath,
+    shell: RunnerPath,
+  }),
+  tmpDirectory: RunnerPath,
+  /** `/opt/pair-runner/<runnerBuildId>`: the bundle's `t3`, history worker and Replay agent. */
+  bundleDirectory: RunnerPath,
+  /** The image's `ENV`, without `PAIR_*`, read by the runner at boot. */
+  imageEnvironment: RunnerEnv,
   /** Handles alive from this `serverBootId`; empty after a runner or server restart. */
   handles: Schema.Array(RunnerHandleState),
 });
@@ -508,7 +526,8 @@ export const RunnerWatchEvent = Schema.Struct({
 export type RunnerWatchEvent = typeof RunnerWatchEvent.Type;
 
 const RunnerFsStatRpc = Rpc.make(RUNNER_METHODS.fsStat, {
-  payload: RunnerPathInput,
+  /** `noFollow`: lstat. */
+  payload: Schema.Struct({ path: RunnerPath, noFollow: Schema.optionalKey(Schema.Boolean) }),
   success: RunnerFileInfo,
   error: RunnerCallError,
 });
@@ -599,6 +618,12 @@ const RunnerFsChmodRpc = Rpc.make(RUNNER_METHODS.fsChmod, {
   error: RunnerCallError,
 });
 
+/** Times in epoch milliseconds. */
+const RunnerFsUtimesRpc = Rpc.make(RUNNER_METHODS.fsUtimes, {
+  payload: Schema.Struct({ path: RunnerPath, atime: Schema.Number, mtime: Schema.Number }),
+  error: RunnerCallError,
+});
+
 const RunnerFsMakeTempDirectoryRpc = Rpc.make(RUNNER_METHODS.fsMakeTempDirectory, {
   payload: Schema.Struct({
     directory: Schema.optionalKey(RunnerPath),
@@ -642,6 +667,76 @@ const RunnerFsWatchRpc = Rpc.make(RUNNER_METHODS.fsWatch, {
   success: Schema.Array(RunnerWatchEvent),
   error: RunnerCallError,
   stream: true,
+});
+
+// The workspace host's `files`: the calls workspace file safety depends on, run by the runner's own
+// local host so flags (O_NOFOLLOW, O_NONBLOCK) apply on its disk and errno codes come back.
+
+export class RunnerFileError extends Schema.TaggedError<RunnerFileError>()("RunnerFileError", {
+  operation: Schema.Literals([
+    "realpath",
+    "lstat",
+    "open",
+    "stat",
+    "read",
+    "close",
+    "write",
+    "readdir",
+    "rmdir",
+  ]),
+  /** The errno code, such as "ENOENT". */
+  code: Schema.optionalKey(Schema.String),
+}) {}
+
+const RunnerFilesCallError = Schema.Union([RunnerLostError, RunnerFileError]);
+
+export const RunnerFileKind = Schema.Literals(["File", "Directory", "SymbolicLink", "Other"]);
+export type RunnerFileKind = typeof RunnerFileKind.Type;
+
+const RunnerFilesLstatRpc = Rpc.make(RUNNER_METHODS.filesLstat, {
+  payload: RunnerPathInput,
+  success: Schema.Struct({ kind: RunnerFileKind }),
+  error: RunnerFilesCallError,
+});
+
+const RunnerFilesReadDirectoryRpc = Rpc.make(RUNNER_METHODS.filesReadDirectory, {
+  payload: RunnerPathInput,
+  success: Schema.Array(Schema.Struct({ name: Schema.String, kind: RunnerFileKind })),
+  error: RunnerFilesCallError,
+});
+
+/** `file` (its size) first, then its bytes in chunks; or `not-file` alone. */
+export const RunnerFileReadEvent = Schema.Union([
+  Schema.TaggedStruct("file", { size: NonNegativeInt }),
+  Schema.TaggedStruct("not-file", {}),
+  Schema.TaggedStruct("chunk", { data: Schema.Uint8Array }),
+]);
+export type RunnerFileReadEvent = typeof RunnerFileReadEvent.Type;
+
+const RunnerFilesReadFileRpc = Rpc.make(RUNNER_METHODS.filesReadFile, {
+  payload: Schema.Struct({ path: RunnerPath, maxBytes: NonNegativeInt }),
+  success: RunnerFileReadEvent,
+  error: RunnerFilesCallError,
+  stream: true,
+});
+
+/** Large contents go as one truncating write, then appends: each frame stays under the cap. */
+const RunnerFilesWriteNoFollowRpc = Rpc.make(RUNNER_METHODS.filesWriteNoFollow, {
+  payload: Schema.Struct({ path: RunnerPath, data: Schema.Uint8Array, append: Schema.Boolean }),
+  error: RunnerFilesCallError,
+});
+
+const RunnerFilesRealPathRpc = Rpc.make(RUNNER_METHODS.filesRealPath, {
+  payload: RunnerPathInput,
+  success: Schema.String,
+  error: RunnerFilesCallError,
+});
+
+/** False when the directory is not empty. */
+const RunnerFilesRemoveEmptyDirectoryRpc = Rpc.make(RUNNER_METHODS.filesRemoveEmptyDirectory, {
+  payload: RunnerPathInput,
+  success: Schema.Boolean,
+  error: RunnerFilesCallError,
 });
 
 // A forward is a listener in the sandbox whose target the server fixes by name. Accepts arrive on
@@ -847,12 +942,19 @@ export const RunnerCoreRpcGroup = RpcGroup.make(
   RunnerFsReadLinkRpc,
   RunnerFsSymlinkRpc,
   RunnerFsChmodRpc,
+  RunnerFsUtimesRpc,
   RunnerFsMakeTempDirectoryRpc,
   RunnerFsReadStreamRpc,
   RunnerFsWriteStreamOpenRpc,
   RunnerFsWriteStreamChunkRpc,
   RunnerFsWriteStreamCloseRpc,
   RunnerFsWatchRpc,
+  RunnerFilesLstatRpc,
+  RunnerFilesReadDirectoryRpc,
+  RunnerFilesReadFileRpc,
+  RunnerFilesWriteNoFollowRpc,
+  RunnerFilesRealPathRpc,
+  RunnerFilesRemoveEmptyDirectoryRpc,
   RunnerForwardOpenRpc,
   RunnerForwardCloseRpc,
   RunnerTcpReadRpc,

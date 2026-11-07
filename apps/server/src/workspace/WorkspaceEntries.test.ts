@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
@@ -15,6 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -818,3 +820,49 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 });
+
+// The same calls through a sandbox host run whole in its runner (02 §5).
+const layerLoopbackTest = Layer.empty.pipe(
+  Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(WorkspacePaths.layer),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provide(
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-workspace-entries-test-",
+    }),
+  ),
+  Layer.provideMerge(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir())),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+it.layer(layerLoopbackTest, { excludeTestServices: true })(
+  "WorkspaceEntries on a sandbox",
+  (it) => {
+    it.effect("lists, searches and fails as the local path does, in one runner call each", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
+        yield* writeTextFile(cwd, "ignored.txt");
+        const entries = yield* WorkspaceEntries.WorkspaceEntries;
+
+        const root = yield* entries.list({ cwd, directoryPath: "" });
+        expect(root.entries).toEqual(
+          expect.arrayContaining([
+            { path: "src", kind: "directory" },
+            { path: "ignored.txt", kind: "file", ignored: true },
+          ]),
+        );
+        const found = yield* entries.search({ cwd, query: "index", limit: 5 });
+        expect(found.entries.map((entry) => entry.path)).toContain("src/index.ts");
+
+        const missing = yield* entries
+          .list({ cwd: `${cwd}/missing`, directoryPath: "" })
+          .pipe(Effect.flip);
+        expect(WorkspaceEntries.entriesFailureContext(missing).failure).toBe(
+          "workspace_root_not_found",
+        );
+      }),
+    );
+  },
+);

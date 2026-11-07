@@ -123,6 +123,13 @@ export const make = Effect.gen(function* () {
         if (managedDirectories.some((directory) => isWithinRoot(path, lexical, directory))) {
           return true;
         }
+        // A sandbox checkout is never in the server's `git worktree list`; its registered host
+        // resolved the path, so the thread's worktree under that root is enough.
+        const onSandbox = yield* hosts.forPath(lexical).pipe(
+          Effect.map((host) => host.kind === "sandbox"),
+          Effect.orElseSucceed(() => false),
+        );
+        if (onSandbox) return true;
         if (yield* isProjectWorktree(projectId, worktreePath)) return true;
       }
       return false;

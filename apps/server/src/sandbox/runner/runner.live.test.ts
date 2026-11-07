@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { expect, it } from "@effect/vitest";
@@ -60,6 +62,7 @@ it.live("enrolls, serves a spawn, and takes its process group down when it dies"
             PAIR_SANDBOX_ID: "sbx_00000000000000000000",
             PAIR_RUNNER_BUILD: "live-build",
             PAIR_RUNNER_DIR: stateDir,
+            PAIR_AGENT_USER: NodeOS.userInfo().username,
           },
           stdout: "ignore",
           stderr: "inherit",

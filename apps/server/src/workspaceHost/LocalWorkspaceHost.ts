@@ -18,6 +18,7 @@ import {
   type ProcessGroupProcess,
   type ProcessGroupSpawnInput,
   type WorkspaceHost,
+  WorkspaceHostError,
   WorkspaceHostFileError,
   type WorkspaceHostFiles,
   type WorkspaceHostInfo,
@@ -38,7 +39,8 @@ const fileKind = (entry: NodeFS.Dirent | NodeFS.Stats): WorkspaceFileKind => {
   return entry.isSymbolicLink() ? "SymbolicLink" : "Other";
 };
 
-const files: WorkspaceHostFiles = {
+/** Also what the runner serves the sandbox host's `files` with, on its own disk. */
+export const files: WorkspaceHostFiles = {
   realPath: (path) =>
     Effect.tryPromise({ try: () => NodeFSP.realpath(path), catch: fileError("realpath") }),
   lstat: (path) =>
@@ -98,6 +100,14 @@ const files: WorkspaceHostFiles = {
         }),
       catch: fileError("write"),
     }),
+  removeEmptyDirectory: (path) =>
+    Effect.tryPromise({ try: () => NodeFSP.rmdir(path), catch: fileError("rmdir") }).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error) => error.code === "ENOTEMPTY",
+        () => Effect.succeed(false),
+      ),
+    ),
 };
 
 const CLAUDE_GROUP_WATCH_SCRIPT = [
@@ -188,5 +198,17 @@ export const make = Effect.gen(function* () {
         ? spawnWindowsProcess(input, hooks)
         : spawnProcessGroup(input, hooks.onExit, hooks.onStderr, hooks.onStderrClose),
     exposeServerEndpoint: (endpoint) => Effect.succeed(endpoint.address),
+    processes: {
+      signalGroup: (pid, signal) =>
+        Effect.try({
+          try: () => signalProcessGroup(pid, signal),
+          catch: (cause) =>
+            new WorkspaceHostError({
+              hostId: LOCAL_WORKSPACE_HOST_ID,
+              operation: "processes.signalGroup",
+              cause,
+            }),
+        }),
+    },
   } satisfies WorkspaceHost;
 });

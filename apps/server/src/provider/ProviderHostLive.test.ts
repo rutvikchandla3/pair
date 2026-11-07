@@ -31,9 +31,11 @@ it.layer(layerTest)("ProviderHostLive", (it) => {
       const { sessionProcesses } = yield* ProviderHost.ProviderHost;
       expect(sessionProcesses).toBeDefined();
       if (sessionProcesses === undefined) return;
-      const error = yield* Effect.flip(sessionProcesses("/t3-sandbox/sbx_0123/worktrees/a"));
+      const error = yield* Effect.flip(
+        sessionProcesses("/t3-sandbox/sbx_00000000000000000123/worktrees/a"),
+      );
       expect(error).toBeInstanceOf(ProviderSessionHostUnavailableError);
-      expect(error.sandboxId).toBe("sbx_0123");
+      expect(error.sandboxId).toBe("sbx_00000000000000000123");
     }),
   );
 });

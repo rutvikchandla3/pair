@@ -75,6 +75,7 @@ import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import {
   type WorkspaceHost,
+  LOCAL_WORKSPACE_HOST_ID,
   type WorkspaceHostId,
   type WorkspaceHostInfo,
 } from "../workspaceHost/WorkspaceHost.ts";
@@ -1500,25 +1501,43 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     readonly snapshotSucceeded: boolean;
     readonly queryElapsedMs: number;
   }> =>
-    options.processTable
-      ? options.processTable.pipe(
+    // A sandbox's table comes from its runner; the native table is the server's own.
+    host.invoke !== undefined
+      ? host.invoke.processTable.pipe(
           Effect.map((entries) => ({
             snapshot: Result.succeed(processTableSnapshotFromProcesses(entries)),
             snapshotSucceeded: true,
             queryElapsedMs: 0,
           })),
-          Effect.catch(() =>
-            fallbackProcessTableSnapshot(host, fallbackTimeout).pipe(
-              Effect.map((fallback) => ({ ...fallback, snapshotSucceeded: false })),
-            ),
+          Effect.catch((cause) =>
+            Effect.succeed({
+              snapshot: Result.fail(
+                new TerminalSubprocessCheckError({ cause, command: "workspace-host" }),
+              ),
+              snapshotSucceeded: false,
+              queryElapsedMs: 0,
+            }),
           ),
         )
-      : fallbackProcessTableSnapshot(host, fallbackTimeout).pipe(
-          Effect.map((fallback) => ({
-            ...fallback,
-            snapshotSucceeded: Result.isSuccess(fallback.snapshot),
-          })),
-        );
+      : options.processTable
+        ? options.processTable.pipe(
+            Effect.map((entries) => ({
+              snapshot: Result.succeed(processTableSnapshotFromProcesses(entries)),
+              snapshotSucceeded: true,
+              queryElapsedMs: 0,
+            })),
+            Effect.catch(() =>
+              fallbackProcessTableSnapshot(host, fallbackTimeout).pipe(
+                Effect.map((fallback) => ({ ...fallback, snapshotSucceeded: false })),
+              ),
+            ),
+          )
+        : fallbackProcessTableSnapshot(host, fallbackTimeout).pipe(
+            Effect.map((fallback) => ({
+              ...fallback,
+              snapshotSucceeded: Result.isSuccess(fallback.snapshot),
+            })),
+          );
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector = (
     host: WorkspaceHost,
@@ -2680,11 +2699,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       const next = inspectResult.value;
-      yield* registerTerminalProcesses({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        processIds: next.processIds,
-      });
+      // Port discovery scans the server's machine; a sandbox's pids name other processes there.
+      if (session.hostId === LOCAL_WORKSPACE_HOST_ID) {
+        yield* registerTerminalProcesses({
+          threadId: session.threadId,
+          terminalId: session.terminalId,
+          processIds: next.processIds,
+        });
+      }
       const nextChildLabel = next.hasRunningSubprocess ? next.childCommand : null;
       const event = yield* modifyManagerState((state) => {
         const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(

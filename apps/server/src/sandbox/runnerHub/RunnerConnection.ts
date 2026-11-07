@@ -66,6 +66,10 @@ export interface RunnerConnection {
   readonly ops: CoarseOperations;
   /** The live socket's client; waits out a reconnect. Use it for one call, never keep it. */
   readonly client: Effect.Effect<RunnerClient, RunnerLostError>;
+  /** An idempotent call on the live client, sent again on the next socket after a drop. */
+  readonly idempotent: <A, E>(
+    call: (client: RunnerClient) => Effect.Effect<A, E | RpcClientError>,
+  ) => Effect.Effect<A, Exclude<E, RpcClientError> | RunnerLostError>;
   readonly output: {
     (
       handle: RunnerHandleId,
@@ -196,17 +200,19 @@ export const makeRunnerConnection = (
   },
 ): RunnerConnection => {
   /** Runs `call` on the live client, again on the next socket after a transport failure. */
-  const onLiveClient = <A>(
-    call: (client: RunnerClient) => Effect.Effect<A, RunnerCallError | RpcClientError>,
-  ): Effect.Effect<A, RunnerCallError> => {
-    const attempt = (failed: RunnerClient | undefined): Effect.Effect<A, RunnerCallError> =>
+  const onLiveClient = <A, E>(
+    call: (client: RunnerClient) => Effect.Effect<A, E | RpcClientError>,
+  ): Effect.Effect<A, Exclude<E, RpcClientError> | RunnerLostError> => {
+    const attempt = (
+      failed: RunnerClient | undefined,
+    ): Effect.Effect<A, Exclude<E, RpcClientError> | RunnerLostError> =>
       awaitClient(failed).pipe(
         Effect.flatMap((client) =>
           call(client).pipe(
             Effect.catchCause((cause) =>
               isTransportFailure(cause)
                 ? attempt(client)
-                : Effect.failCause(cause as Cause.Cause<RunnerCallError>),
+                : Effect.failCause(cause as Cause.Cause<Exclude<E, RpcClientError>>),
             ),
           ),
         ),
@@ -480,6 +486,7 @@ export const makeRunnerConnection = (
     info,
     ops,
     client: awaitClient(undefined),
+    idempotent: onLiveClient,
     output,
     pipeWriter,
     ptyWriter,

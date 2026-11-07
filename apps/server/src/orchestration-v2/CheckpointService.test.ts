@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the loopback root is the test's temp folder.
+import * as NodeOS from "node:os";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -12,9 +16,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -60,6 +69,7 @@ it.effect(
             ),
           ),
           Layer.provideMerge(NodeCrypto.layer),
+          Layer.provide(WorkspaceHostTesting.layerFromContext),
         );
         yield* Effect.gen(function* () {
           const checkpoints = yield* CheckpointService.CheckpointServiceV2;
@@ -93,4 +103,71 @@ it.effect(
         }).pipe(Effect.provide(layerTest));
       }
     }),
+);
+
+it.effect("captures a sandbox's baseline and turn in its runner, not with the server's git", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-loopback-" });
+    const git = (...args: ReadonlyArray<string>) =>
+      spawner.string(
+        ChildProcess.make("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...args], { cwd }),
+      );
+    yield* git("init");
+    yield* fs.writeFileString(`${cwd}/a.txt`, "one\n");
+    yield* git("add", ".");
+    yield* git("commit", "-m", "initial");
+
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:loopback"),
+      threadId: ThreadId.make("thread:loopback"),
+      runId: RunId.make("run:loopback:1"),
+      nodeId: NodeId.make("node:loopback:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:loopback"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd,
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const serverGit = () => Effect.die("a sandbox capture must not run the server's git");
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+      yield* fs.writeFileString(`${cwd}/a.txt`, "one\ntwo\n");
+      const checkpoint = yield* checkpoints.capture({
+        scope,
+        ordinalWithinScope: 1,
+        runId: scope.runId!,
+        nodeId: scope.nodeId!,
+        appRunOrdinal: 1,
+        capturedAt: scope.createdAt,
+      });
+      assert.equal(checkpoint.status, "ready");
+      assert.deepEqual(checkpoint.files, [
+        { path: "a.txt", kind: "modified", additions: 1, deletions: 0 },
+      ]);
+    }).pipe(
+      Effect.provide(
+        CheckpointService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeCrypto.layer,
+              Layer.mock(CheckpointStore.CheckpointStore)({
+                isGitRepository: serverGit,
+                captureCheckpoint: serverGit,
+                hasCheckpointRef: serverGit,
+                listAuthoredPaths: serverGit,
+              }),
+            ),
+          ),
+          Layer.provide(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir())),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

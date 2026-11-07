@@ -13,6 +13,7 @@ import {
   RUNNER_OPS_PAGE_BYTES,
   RUNNER_PROTOCOL_VERSION,
   RunnerCoreRpcGroup,
+  RunnerFileError,
   RunnerHandleId,
   RunnerHelloInput,
   RunnerLostError,
@@ -55,6 +56,10 @@ const fixtures: Record<string, Fixture> = {
       arch: "arm64",
       cpus: 4,
       memoryBytes: 8 * 1024 * 1024 * 1024,
+      agent: { uid: 1000, homeDirectory: "/home/t3", shell: "/bin/bash" },
+      tmpDirectory: "/tmp",
+      bundleDirectory: "/opt/pair-runner/build",
+      imageEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
       handles: [{ handle, next: { "fd:1": 12, "in:0": 3 } }],
     },
     error: lost,
@@ -186,7 +191,7 @@ const fixtures: Record<string, Fixture> = {
     error: lost,
   },
   [RUNNER_METHODS.fsStat]: {
-    payload: { path: "/w/a.txt" },
+    payload: { path: "/w/a.txt", noFollow: true },
     success: {
       type: "File",
       mtime: 1_762_400_000_123,
@@ -210,6 +215,44 @@ const fixtures: Record<string, Fixture> = {
       description: "EACCES",
       pathOrDescriptor: "/w/a.txt",
     }),
+  },
+  [RUNNER_METHODS.fsUtimes]: {
+    payload: { path: "/w/.git/index.t3", atime: 1_762_400_000_123, mtime: 1_762_400_000_123 },
+    success: undefined,
+    error: lost,
+  },
+  [RUNNER_METHODS.filesLstat]: {
+    payload: { path: "/w/link" },
+    success: { kind: "SymbolicLink" },
+    error: new RunnerFileError({ operation: "lstat", code: "ENOENT" }),
+  },
+  [RUNNER_METHODS.filesReadDirectory]: {
+    payload: { path: "/w" },
+    success: [
+      { name: "src", kind: "Directory" },
+      { name: "fifo", kind: "Other" },
+    ],
+    error: new RunnerFileError({ operation: "readdir", code: "EACCES" }),
+  },
+  [RUNNER_METHODS.filesReadFile]: {
+    payload: { path: "/w/a.bin", maxBytes: 1024 * 1024 },
+    success: { _tag: "chunk", data: allBytes },
+    error: new RunnerFileError({ operation: "open" }),
+  },
+  [RUNNER_METHODS.filesWriteNoFollow]: {
+    payload: { path: "/w/a.bin", data: allBytes, append: false },
+    success: undefined,
+    error: new RunnerFileError({ operation: "write", code: "ELOOP" }),
+  },
+  [RUNNER_METHODS.filesRealPath]: {
+    payload: { path: "/w/link" },
+    success: "/w/target",
+    error: lost,
+  },
+  [RUNNER_METHODS.filesRemoveEmptyDirectory]: {
+    payload: { path: "/w/empty" },
+    success: false,
+    error: new RunnerFileError({ operation: "rmdir", code: "EACCES" }),
   },
   [RUNNER_METHODS.fsReadDirectory]: {
     payload: { path: "/w", recursive: true },

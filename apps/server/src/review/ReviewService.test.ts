@@ -13,6 +13,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
+import type * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ReviewService from "./ReviewService.ts";
 
@@ -25,6 +27,7 @@ function layer(input: {
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
   readonly gitWorktrees?: ReadonlyArray<string>;
+  readonly hosts?: Layer.Layer<WorkspaceHosts.WorkspaceHosts, never, NodeServices.NodeServices>;
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
@@ -92,7 +95,7 @@ function layer(input: {
       }),
     ),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
-    Layer.provide(WorkspaceHostTesting.layerFromContext),
+    Layer.provide(input.hosts ?? WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -259,6 +262,46 @@ describe("ReviewService", () => {
         ),
       );
       assert.strictEqual(result.cwd, checkout);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows a thread's checkout on a registered sandbox, which git never lists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const project = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const sandboxRoot = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-sandbox-" }),
+      );
+      const checkout = `${sandboxRoot}/worktrees/a`;
+      const other = `${sandboxRoot}/worktrees/b`;
+      yield* fs.makeDirectory(checkout, { recursive: true });
+      yield* fs.makeDirectory(other, { recursive: true });
+
+      const review = (cwd: string) =>
+        Effect.gen(function* () {
+          const service = yield* ReviewService.ReviewService;
+          return yield* service.getDiffPreview({ cwd });
+        }).pipe(
+          Effect.provide(
+            layer({
+              workspaceRoot,
+              baseDir,
+              projectRoots: [project],
+              gitWorktrees: [project],
+              threadWorktrees: [{ worktreePath: checkout }],
+              hosts: WorkspaceHostLoopback.layerLoopback(sandboxRoot),
+            }),
+          ),
+        );
+
+      assert.strictEqual((yield* review(checkout)).cwd, checkout);
+      // Another checkout on the same sandbox, and another sandbox's path, are not the thread's.
+      for (const cwd of [other, "/t3-sandbox/sbx_000000000000000000ff/worktrees/a"]) {
+        const error = yield* review(cwd).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

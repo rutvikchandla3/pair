@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -51,6 +53,13 @@ export const layer = Layer.mergeAll(Handlers.layer, OpsHandlers.layer).pipe(
           runnerBuildId: TEST_RUNNER_BUILD_ID,
           enrollment: Option.none(),
           stateDir,
+          // Agents run as the test's own user: no uid, so no setpriv.
+          facts: {
+            agent: { uid: null, homeDirectory: NodeOS.homedir(), shell: "/bin/sh" },
+            tmpDirectory: NodeOS.tmpdir(),
+            bundleDirectory: `/opt/pair-runner/${TEST_RUNNER_BUILD_ID}`,
+            imageEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
+          },
         })),
       ),
     ).pipe(Layer.provide(NodeServices.layer)),

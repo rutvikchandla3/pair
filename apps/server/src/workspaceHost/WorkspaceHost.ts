@@ -1,18 +1,19 @@
-import type {
-  DiscoveredLocalServer,
-  ProjectListEntriesInput,
-  ProjectListEntriesResult,
-  ProjectSearchContentsInput,
-  ProjectSearchContentsResult,
-  ProjectSearchEntriesInput,
-  ProjectSearchEntriesResult,
-  ResourceMonitorProcessTableEntry,
+import {
+  type DiscoveredLocalServer,
+  type ProjectListEntriesInput,
+  type ProjectListEntriesResult,
+  type ProjectSearchContentsInput,
+  type ProjectSearchContentsResult,
+  type ProjectSearchEntriesInput,
+  type ProjectSearchEntriesResult,
+  type ResourceMonitorProcessTableEntry,
+  SandboxId,
 } from "@t3tools/contracts";
-import type {
+import {
   RunnerLostError,
-  RunnerOpsCheckpointCaptureInput,
-  RunnerOpsCheckpointCaptureResult,
-  RunnerOpsError,
+  type RunnerOpsCheckpointCaptureInput,
+  type RunnerOpsCheckpointCaptureResult,
+  type RunnerOpsError,
 } from "@t3tools/contracts/runner";
 import type { AgentScopeShape } from "@t3tools/shared/AgentScope";
 import type * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -20,8 +21,11 @@ import type * as Brand from "effect/Brand";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Scope from "effect/Scope";
+import type * as PlatformError from "effect/PlatformError";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Stream from "effect/Stream";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- sandbox paths are POSIX on every server.
+import * as NodePath from "node:path";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the Claude Agent SDK's process type uses Node streams.
 import type * as NodeStream from "node:stream";
 import * as Schema from "effect/Schema";
@@ -33,6 +37,14 @@ export const LOCAL_WORKSPACE_HOST_ID = "local" as WorkspaceHostId;
 
 /** Sandbox files live here at the same absolute path on the server's side and in the sandbox. */
 export const SANDBOX_ROOT = "/t3-sandbox";
+
+const isSandboxId = Schema.is(SandboxId);
+
+/** The sandbox a path under the reserved root names, after `..` collapses; else undefined. */
+export const sandboxIdFromPath = (path: string): SandboxId | undefined => {
+  const segment = NodePath.posix.resolve(path).split("/")[2];
+  return segment !== undefined && isSandboxId(segment) ? segment : undefined;
+};
 
 export interface WorkspaceHostInfo {
   readonly platform: NodeJS.Platform;
@@ -114,6 +126,18 @@ export interface WorkspaceHost {
   readonly exposeServerEndpoint: (
     endpoint: ServerEndpoint,
   ) => Effect.Effect<string, WorkspaceHostUnavailableError, Scope.Scope>;
+  readonly processes: {
+    /** kill(-pid, signal): the whole group, on the machine that owns the pid. */
+    readonly signalGroup: (
+      pid: number,
+      signal: NodeJS.Signals,
+    ) => Effect.Effect<void, WorkspaceHostError>;
+  };
+  /**
+   * Absent on the local host: inside the runner the same consumers take their local path against
+   * the runner's own local host, so an operation never calls itself.
+   */
+  readonly invoke?: CoarseOperations;
 }
 
 export type CoarseOperationError = RunnerOpsError | RunnerLostError;
@@ -176,6 +200,8 @@ export interface WorkspaceHostFiles {
     path: string,
     contents: Uint8Array | string,
   ) => Effect.Effect<void, WorkspaceHostFileError>;
+  /** rmdir: false when the directory is not empty, including files written after a listing. */
+  readonly removeEmptyDirectory: (path: string) => Effect.Effect<boolean, WorkspaceHostFileError>;
 }
 
 export class WorkspaceHostFileError extends Schema.TaggedError<WorkspaceHostFileError>()(
@@ -190,6 +216,7 @@ export class WorkspaceHostFileError extends Schema.TaggedError<WorkspaceHostFile
       "close",
       "write",
       "readdir",
+      "rmdir",
     ]),
     /** The errno code, such as "ENOENT"; callers branch on it. */
     code: Schema.optional(Schema.String),
@@ -201,9 +228,25 @@ export class WorkspaceHostFileError extends Schema.TaggedError<WorkspaceHostFile
   }
 }
 
+export class WorkspaceHostError extends Schema.TaggedError<WorkspaceHostError>()(
+  "WorkspaceHostError",
+  { hostId: Schema.String, operation: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Workspace host operation ${this.operation} failed.`;
+  }
+}
+
+const isRunnerLostError = Schema.is(RunnerLostError);
+
+/** A sandbox host's call failed because its runner boot is gone, not for the call's own reason. */
+export const isRunnerLost = (error: PlatformError.PlatformError): boolean =>
+  isRunnerLostError(error.reason.cause);
+
 export class WorkspaceHostUnavailableError extends Schema.TaggedError<WorkspaceHostUnavailableError>()(
   "WorkspaceHostUnavailableError",
-  { sandboxId: Schema.String },
+  /** Absent when the path under the reserved root names no valid sandbox. */
+  { sandboxId: Schema.optionalKey(SandboxId) },
 ) {
   override get message(): string {
     return "This thread's machine is not connected.";

@@ -9,13 +9,15 @@ import type { RunnerProcessExit } from "@t3tools/contracts/runner";
 
 /**
  * Reads a group id, then kills that group (TERM, KILL after a grace) on EOF from the runner. It
- * runs outside the group: one inside, like `CLAUDE_GROUP_WATCH_SCRIPT`, outlives the command it
- * exec'd and dies an orphan zombie, which Effect's release waits on until init reaps it.
+ * runs outside the group, so it never dies an orphan zombie that Effect's release would wait on.
+ * A scope close disarms it first: a watcher caught in `sleep` would leave such an orphan.
  */
 const WATCHER_SCRIPT = [
   "read -r group || exit 0",
+  'case "$group" in ""|*[!0-9]*) exit 0 ;; esac',
   "echo armed",
-  "read -r _",
+  'read -r line || line=""',
+  '[ "$line" = disarm ] && exit 0',
   'kill -TERM -"$group" 2>/dev/null',
   "sleep 10",
   'kill -KILL -"$group" 2>/dev/null',
@@ -38,6 +40,13 @@ export const watchGroup = Effect.fnUntraced(function* () {
       stdout: "pipe",
       stderr: "ignore",
     }),
+  );
+  // Runs after the guarded child's own release, before the watcher's, and lets it exit by itself.
+  yield* Effect.addFinalizer(() =>
+    Queue.offer(input, encoder.encode("disarm\n")).pipe(
+      Effect.andThen(watcher.exitCode),
+      Effect.ignore,
+    ),
   );
   return (group: number) =>
     Queue.offer(input, encoder.encode(`${group}\n`)).pipe(
@@ -116,7 +125,10 @@ export const exitOf = (child: ChildProcessSpawner.ChildProcessHandle) =>
       PlatformError: (error) =>
         Effect.succeed<RunnerProcessExit>({
           exitCode: null,
-          signal: SIGNAL_EXIT.exec(error.reason.description ?? "")?.[1] ?? null,
+          signal:
+            SIGNAL_EXIT.exec(
+              `${error.reason.description ?? ""} ${(error.reason.cause as Error | undefined)?.message ?? ""}`,
+            )?.[1] ?? null,
         }),
     }),
   );

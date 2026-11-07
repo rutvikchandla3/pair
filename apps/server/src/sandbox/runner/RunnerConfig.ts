@@ -5,7 +5,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import type { RunnerInfo } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+
+/** What the runner tells the server about the machine in `runner.hello`. */
+export type RunnerHostFacts = Pick<
+  RunnerInfo,
+  "agent" | "tmpDirectory" | "bundleDirectory" | "imageEnvironment"
+>;
 
 export interface RunnerConfigShape {
   /** `PAIR_RUNNER_URL`: `http(s)://host` or `unix:/path`. */
@@ -15,6 +22,7 @@ export interface RunnerConfigShape {
   readonly enrollment: Option.Option<Redacted.Redacted<string>>;
   /** Tmpfs for the sandbox token and the bootstrap's `server-build` hand-off. */
   readonly stateDir: string;
+  readonly facts: RunnerHostFacts;
 }
 
 export class RunnerConfig extends Context.Service<RunnerConfig, RunnerConfigShape>()(
@@ -31,6 +39,22 @@ export class RunnerConfigError extends Schema.TaggedError<RunnerConfigError>()(
 }
 
 export const DEFAULT_STATE_DIR = "/run/pair-runner";
+/** Where the bootstrap unpacks each bundle, by build id. */
+const BUNDLES_DIR = "/opt/pair-runner";
+/** The image's agent user (infra/sandbox-image/provision.sh). */
+const DEFAULT_AGENT_USER = "t3";
+
+/** `name:x:uid:gid:gecos:home:shell` from `/etc/passwd`. */
+const passwdEntry = (passwd: string, user: string) => {
+  for (const line of passwd.split("\n")) {
+    const fields = line.split(":");
+    if (fields[0] !== user || fields.length < 7) continue;
+    const uid = Number(fields[2]);
+    if (!Number.isInteger(uid) || uid < 0) return undefined;
+    return { uid, homeDirectory: fields[5]!, shell: fields[6]! || "/bin/sh" };
+  }
+  return undefined;
+};
 
 /**
  * Reads the bootstrap's values. The enrollment secret comes from the bootstrap's
@@ -49,6 +73,19 @@ export const readRunnerConfig = Effect.fn("RunnerConfig.read")(function* () {
   const sandboxId = yield* required("PAIR_SANDBOX_ID");
   const runnerBuildId = yield* required("PAIR_RUNNER_BUILD");
   const stateDir = env.PAIR_RUNNER_DIR?.trim() || DEFAULT_STATE_DIR;
+  const agentUser = env.PAIR_AGENT_USER?.trim() || DEFAULT_AGENT_USER;
+  // Agents never fall back to running as the runner's root.
+  const agent = passwdEntry(
+    yield* fs.readFileString("/etc/passwd").pipe(Effect.orElseSucceed(() => "")),
+    agentUser,
+  );
+  if (agent === undefined) {
+    return yield* new RunnerConfigError({ missing: `the agent user ${agentUser}` });
+  }
+  const imageEnvironment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && !name.startsWith("PAIR_")) imageEnvironment[name] = value;
+  }
 
   const enrollFile = path.join(stateDir, "enroll");
   const secret = yield* fs.readFileString(enrollFile).pipe(
@@ -63,5 +100,11 @@ export const readRunnerConfig = Effect.fn("RunnerConfig.read")(function* () {
     runnerBuildId,
     enrollment: secret ? Option.some(Redacted.make(secret)) : Option.none(),
     stateDir,
+    facts: {
+      agent,
+      tmpDirectory: env.TMPDIR?.trim() || "/tmp",
+      bundleDirectory: path.join(BUNDLES_DIR, runnerBuildId),
+      imageEnvironment,
+    },
   } satisfies RunnerConfigShape;
 });

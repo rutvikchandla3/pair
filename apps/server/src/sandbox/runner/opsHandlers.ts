@@ -32,7 +32,10 @@ const entriesFailure =
       failure: WorkspaceEntries.entriesFailureContext(error).failure,
     });
 
-/** Pages of about `RUNNER_OPS_PAGE_BYTES`; JSON is never smaller than the binary encoding. */
+/**
+ * Pages of about `RUNNER_OPS_PAGE_BYTES`; JSON is never smaller than the binary encoding. Each
+ * goes out as its own stream chunk, since one chunk is one frame.
+ */
 const pages = <A>(items: ReadonlyArray<A>): Array<ReadonlyArray<A>> => {
   const result: Array<Array<A>> = [[]];
   let bytes = 0;
@@ -113,6 +116,7 @@ export const layer = RunnerOpsRpcGroup.toLayer(
             Effect.map((result) =>
               Stream.fromIterable(
                 pages(result.entries).map((page) => ({ ...result, entries: page })),
+                { chunkSize: 1 },
               ),
             ),
             Effect.mapError(entriesFailure("search.entries")),
@@ -124,6 +128,7 @@ export const layer = RunnerOpsRpcGroup.toLayer(
             Effect.map((result) =>
               Stream.fromIterable(
                 pages(result.matches).map((page) => ({ ...result, matches: page })),
+                { chunkSize: 1 },
               ),
             ),
             Effect.mapError(entriesFailure("search.contents")),
@@ -135,6 +140,7 @@ export const layer = RunnerOpsRpcGroup.toLayer(
             Effect.map((result) =>
               Stream.fromIterable(
                 pages(result.entries).map((page) => ({ ...result, entries: page })),
+                { chunkSize: 1 },
               ),
             ),
             Effect.mapError(entriesFailure("entries.browse")),

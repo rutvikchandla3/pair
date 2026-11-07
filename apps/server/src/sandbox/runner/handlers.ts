@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- appends need O_NOFOLLOW, which Effect's FileSystem lacks.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- appends need O_NOFOLLOW, which Effect's FileSystem lacks.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import * as Effect from "effect/Effect";
@@ -11,12 +15,16 @@ import {
   RUNNER_METHODS,
   RUNNER_PROTOCOL_VERSION,
   RunnerCoreRpcGroup,
+  RunnerFileError,
   type RunnerFileInfo,
+  type RunnerFileReadEvent,
   type RunnerForwardId,
   type RunnerWatchEvent,
 } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import * as LocalWorkspaceHost from "../../workspaceHost/LocalWorkspaceHost.ts";
+import type { WorkspaceHostFileError } from "../../workspaceHost/WorkspaceHost.ts";
 import { HandleTable, runnerBadArgument, toSystemError } from "./HandleTable.ts";
 import { listenTarget } from "./forwards.ts";
 import * as ProcessRun from "./ProcessRun.ts";
@@ -62,6 +70,33 @@ export const coalesceWatchEvents = <E, R>(events: Stream.Stream<FileSystem.Watch
 
 const systemErrors = Effect.mapError(toSystemError);
 
+const fileErrors = Effect.mapError(
+  (error: WorkspaceHostFileError) =>
+    new RunnerFileError({
+      operation: error.operation,
+      ...(error.code === undefined ? {} : { code: error.code }),
+    }),
+);
+
+/** File reads stream in chunks this size, so each frame stays under the cap. */
+const FILE_CHUNK_BYTES = 128 * 1024;
+
+// Appends keep the first write's O_NOFOLLOW: a symlink swapped in between is not followed.
+const appendNoFollow = (path: string, data: Uint8Array) =>
+  Effect.tryPromise({
+    try: () =>
+      NodeFSP.writeFile(path, data, {
+        flag: NodeFS.constants.O_WRONLY | NodeFS.constants.O_APPEND | NodeFS.constants.O_NOFOLLOW,
+      }),
+    catch: (cause) =>
+      new RunnerFileError({
+        operation: "write",
+        ...((cause as NodeJS.ErrnoException | undefined)?.code === undefined
+          ? {}
+          : { code: (cause as NodeJS.ErrnoException).code! }),
+      }),
+  });
+
 export const layer = RunnerCoreRpcGroup.toLayer(
   Effect.gen(function* () {
     const table = yield* HandleTable;
@@ -100,6 +135,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
           arch,
           cpus: NodeOS.cpus().length,
           memoryBytes: NodeOS.totalmem(),
+          ...config.facts,
           handles,
         };
       }),
@@ -157,8 +193,11 @@ export const layer = RunnerCoreRpcGroup.toLayer(
           ),
       [RUNNER_METHODS.ptyRelease]: ({ handle }) => table.release(handle),
 
-      [RUNNER_METHODS.fsStat]: ({ path }) =>
-        fs.stat(path).pipe(Effect.map(toFileInfo), systemErrors),
+      [RUNNER_METHODS.fsStat]: ({ path, noFollow }) =>
+        (noFollow === true ? fs.lstat(path) : fs.stat(path)).pipe(
+          Effect.map(toFileInfo),
+          systemErrors,
+        ),
       [RUNNER_METHODS.fsReadDirectory]: ({ path, recursive }) =>
         fs.readDirectory(path, { recursive }).pipe(systemErrors),
       [RUNNER_METHODS.fsReadFile]: ({ path, offset, maxBytes }) =>
@@ -173,7 +212,8 @@ export const layer = RunnerCoreRpcGroup.toLayer(
           : fs.writeFile(path, data, { flag, mode })
         ).pipe(systemErrors),
       [RUNNER_METHODS.fsMakeDirectory]: ({ path, recursive, mode }) =>
-        fs.makeDirectory(path, { recursive, mode }).pipe(systemErrors),
+        // Node answers a recursive mkdir with the first folder it made.
+        fs.makeDirectory(path, { recursive, mode }).pipe(Effect.asVoid, systemErrors),
       [RUNNER_METHODS.fsRemove]: ({ path, recursive, force }) =>
         fs.remove(path, { recursive, force }).pipe(systemErrors),
       [RUNNER_METHODS.fsRename]: ({ oldPath, newPath }) =>
@@ -185,6 +225,9 @@ export const layer = RunnerCoreRpcGroup.toLayer(
       [RUNNER_METHODS.fsSymlink]: ({ fromPath, toPath }) =>
         fs.symlink(fromPath, toPath).pipe(systemErrors),
       [RUNNER_METHODS.fsChmod]: ({ path, mode }) => fs.chmod(path, mode).pipe(systemErrors),
+      [RUNNER_METHODS.fsUtimes]: ({ path, atime, mtime }) =>
+        // Node reads a number as seconds.
+        fs.utimes(path, atime / 1000, mtime / 1000).pipe(systemErrors),
       [RUNNER_METHODS.fsMakeTempDirectory]: ({ directory, prefix }) =>
         fs.makeTempDirectory({ directory, prefix }).pipe(systemErrors),
       [RUNNER_METHODS.fsReadStream]: ({ path, offset, chunkBytes }) =>
@@ -215,6 +258,37 @@ export const layer = RunnerCoreRpcGroup.toLayer(
             fs.watch(path, { recursive, onReady: () => Queue.offerUnsafe(queue, []) }),
           ).pipe(Stream.runForEach((batch) => Queue.offer(queue, batch))),
         ).pipe(Stream.mapError(toSystemError)),
+
+      [RUNNER_METHODS.filesLstat]: ({ path }) =>
+        LocalWorkspaceHost.files.lstat(path).pipe(fileErrors),
+      [RUNNER_METHODS.filesReadDirectory]: ({ path }) =>
+        LocalWorkspaceHost.files.readDirectory(path).pipe(fileErrors),
+      [RUNNER_METHODS.filesReadFile]: ({ path, maxBytes }) =>
+        Stream.unwrap(
+          LocalWorkspaceHost.files.readFile(path, maxBytes).pipe(
+            fileErrors,
+            Effect.map((read): Stream.Stream<RunnerFileReadEvent> => {
+              if (read.kind === "not-file") return Stream.make({ _tag: "not-file" });
+              const chunks: Array<RunnerFileReadEvent> = [{ _tag: "file", size: read.size }];
+              for (let offset = 0; offset < read.bytes.length; offset += FILE_CHUNK_BYTES) {
+                chunks.push({
+                  _tag: "chunk",
+                  data: read.bytes.subarray(offset, offset + FILE_CHUNK_BYTES),
+                });
+              }
+              // One element per frame: a stream chunk is one frame, under the size cap.
+              return Stream.fromIterable(chunks, { chunkSize: 1 });
+            }),
+          ),
+        ),
+      [RUNNER_METHODS.filesWriteNoFollow]: ({ path, data, append }) =>
+        append
+          ? appendNoFollow(path, data)
+          : LocalWorkspaceHost.files.writeNoFollow(path, data).pipe(fileErrors),
+      [RUNNER_METHODS.filesRealPath]: ({ path }) =>
+        LocalWorkspaceHost.files.realPath(path).pipe(fileErrors),
+      [RUNNER_METHODS.filesRemoveEmptyDirectory]: ({ path }) =>
+        LocalWorkspaceHost.files.removeEmptyDirectory(path).pipe(fileErrors),
 
       // The owner key is the server's to check; the runner only listens.
       [RUNNER_METHODS.forwardOpen]: Effect.fn("runner.forward.open")(function* ({ name }) {
