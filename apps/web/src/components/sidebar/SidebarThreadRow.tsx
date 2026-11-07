@@ -39,6 +39,7 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
+  CloudIcon,
   EyeIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -93,6 +94,7 @@ import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
+  ThreadMachineStateWord,
   ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
@@ -294,6 +296,12 @@ function SidebarThreadTooltip({
               className="size-3 shrink-0 stroke-muted-foreground"
             />
             <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+          </div>
+        ) : null}
+        {thread.source.sandbox !== undefined ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <CloudIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">Cloud</div>
           </div>
         ) : null}
         {thread.branch ? (
@@ -1166,6 +1174,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <span className="flex min-w-0 flex-1">
             <MiddleTruncate value={thread.branch} showTitle={false} />
           </span>
+          <ThreadMachineStateWord thread={thread} />
         </>
       ) : showsScratchMachine ? (
         <>

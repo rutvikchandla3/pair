@@ -207,10 +207,10 @@ export function resolveNewThreadEnvMode(input: {
   return isNewProjectFolder ? "local" : configured;
 }
 
-export function resolveSendEnvMode(input: {
-  readonly requestedEnvMode: ThreadEnvMode;
+export function resolveSendEnvMode<Mode extends string>(input: {
+  readonly requestedEnvMode: Mode;
   readonly isGitRepo: boolean;
-}): ThreadEnvMode {
+}): Mode | "local" {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 

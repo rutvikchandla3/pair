@@ -16,7 +16,8 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { CloudIcon, FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { sandboxStatePresentation } from "@t3tools/client-runtime/state/sandbox";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -572,17 +573,22 @@ export function ThreadTerminalStatusButton({
 export function ThreadWorktreeIndicator({
   thread,
 }: {
-  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
+  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath" | "source">;
 }) {
   const worktreePath = thread.worktreePath?.trim();
-  if (!worktreePath) {
+  // A cloud thread's worktree path is inside its sandbox and means nothing locally.
+  const cloud = thread.source.sandbox !== undefined;
+  if (!worktreePath && !cloud) {
     return null;
   }
 
-  const displayPath = formatWorktreePathForDisplay(worktreePath);
-  const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
+  const tooltip = cloud
+    ? thread.branch
+      ? `Cloud: ${thread.branch}`
+      : "Cloud"
+    : thread.branch
+      ? `Worktree: ${formatWorktreePathForDisplay(worktreePath!)} (${thread.branch})`
+      : `Worktree: ${formatWorktreePathForDisplay(worktreePath!)}`;
 
   return (
     <Tooltip>
@@ -596,11 +602,29 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
+        {cloud ? (
+          <CloudIcon className="size-3.5 shrink-0 text-icon-muted" />
+        ) : (
+          <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
+        )}
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
+}
+
+/** "Starting", "Waiting", "Asleep" or "Failed" for a cloud thread; nothing otherwise. */
+export function ThreadMachineStateWord({
+  thread,
+}: {
+  thread: Pick<SidebarThreadSummary, "source" | "runtime">;
+}) {
+  const sandbox = thread.source.sandbox;
+  if (sandbox === undefined) return null;
+  const { rowWord } = sandboxStatePresentation(sandbox, {
+    hasActiveRun: thread.runtime?.activeRunId != null,
+  });
+  return rowWord === null ? null : <span className="shrink-0">{rowWord}</span>;
 }
 
 function ThreadStatusLabel({

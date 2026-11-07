@@ -44,6 +44,7 @@ interface ComposerSelectionInput {
   readonly interactionModeEnabled: boolean;
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
+  readonly envMode: DraftThreadEnvMode;
   readonly setPendingServerThreadEnvModeEntry: Dispatch<
     SetStateAction<{ readonly threadId: ThreadId; readonly mode: DraftThreadEnvMode } | null>
   >;
@@ -75,6 +76,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     interactionModeEnabled,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
+    envMode,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
@@ -137,6 +139,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           currentProviderInstanceId: runtimeProviderInstanceId,
         }
       : null,
+    envMode === "cloud" ? { settings, providers: providerStatuses } : null,
   );
 
   const onProviderModelSelect = (
@@ -228,7 +231,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           envMode: mode,
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
-        ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        ...(mode !== "local" && draftThread?.worktreePath ? { worktreePath: null } : {}),
       });
     }
     scheduleComposerFocus();

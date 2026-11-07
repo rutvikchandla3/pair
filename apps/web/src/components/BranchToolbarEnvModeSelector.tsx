@@ -1,12 +1,13 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import { CloudIcon, FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { memo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import {
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
+  type CloudEnvModeItem,
   type EnvMode,
 } from "./BranchToolbar.logic";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -31,6 +32,7 @@ interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
+  cloudItem: CloudEnvModeItem | null;
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
@@ -42,6 +44,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   envLocked,
   effectiveEnvMode,
   activeWorktreePath,
+  cloudItem,
   onEnvModeChange,
   previousWorktreeLabel,
   previousWorktreeBranch = null,
@@ -59,6 +62,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       label: resolveCurrentWorkspaceLabel(activeWorktreePath),
     },
     { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    ...(cloudItem ? [{ value: "cloud", label: resolveEnvModeLabel("cloud") }] : []),
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -76,7 +80,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         className="inline-flex h-7 min-w-0 items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
-        {activeWorktreePath ? (
+        {effectiveEnvMode === "cloud" ? (
+          <CloudIcon className="size-3" />
+        ) : activeWorktreePath ? (
           <FolderGitIcon className="size-3" />
         ) : effectiveEnvMode === "worktree" ? (
           <FolderGit2Icon className="size-3" />
@@ -129,7 +135,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             />
           }
         >
-          {effectiveEnvMode === "worktree" ? (
+          {effectiveEnvMode === "cloud" ? (
+            <CloudIcon className="size-3" />
+          ) : effectiveEnvMode === "worktree" ? (
             <FolderGit2Icon className="size-3" />
           ) : activeWorktreePath ? (
             <FolderGitIcon className="size-3" />
@@ -141,9 +149,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
-          {effectiveEnvMode === "worktree"
-            ? resolveEnvModeLabel("worktree")
-            : resolveCurrentWorkspaceLabel(activeWorktreePath)}
+          {effectiveEnvMode === "local"
+            ? resolveCurrentWorkspaceLabel(activeWorktreePath)
+            : resolveEnvModeLabel(effectiveEnvMode)}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
@@ -170,6 +178,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveEnvModeLabel("worktree")}
             </span>
           </SelectItem>
+          {cloudItem ? (
+            <CloudEnvModeTooltip reason={cloudItem.disabledReason}>
+              <SelectItem value="cloud" disabled={cloudItem.disabledReason !== null}>
+                <span className="inline-flex items-center gap-1.5">
+                  <CloudIcon className="size-3" />
+                  {resolveEnvModeLabel("cloud")}
+                </span>
+              </SelectItem>
+            </CloudEnvModeTooltip>
+          ) : null}
           {showPreviousWorktree && previousWorktreeLabel ? (
             <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
               <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
@@ -180,3 +198,20 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     </Select>
   );
 });
+
+/** A disabled item takes no pointer events, so the reason hangs on a wrapper. */
+export function CloudEnvModeTooltip({
+  reason,
+  children,
+}: {
+  reason: string | null;
+  children: ReactNode;
+}) {
+  if (reason === null) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<div />}>{children}</TooltipTrigger>
+      <TooltipPopup>{reason}</TooltipPopup>
+    </Tooltip>
+  );
+}

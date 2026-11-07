@@ -927,6 +927,30 @@ describe("composerDraftStore project draft thread mapping", () => {
     );
   });
 
+  it("keeps a cloud draft's mode across a reload", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "main",
+      worktreePath: null,
+      envMode: "cloud",
+    });
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+
+    const hydrated = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(hydrated.draftThreadsByThreadKey[draftId]).toMatchObject({
+      branch: "main",
+      worktreePath: null,
+      envMode: "cloud",
+    });
+  });
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

@@ -21,6 +21,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { newThreadPrefersCloud } from "@t3tools/shared/sandbox";
 import {
   readProject,
   readProjects,
@@ -199,6 +200,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       );
     };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+      if (newThreadPrefersCloud(targetServerSettings, project?.id ?? null)) return "cloud";
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =

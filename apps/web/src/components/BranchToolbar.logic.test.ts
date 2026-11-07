@@ -1,4 +1,4 @@
-import { type VcsRef } from "@t3tools/contracts";
+import { SandboxId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
@@ -7,6 +7,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveCloudEnvModeItem,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -31,6 +32,16 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "local",
       }),
     ).toBe("worktree");
+  });
+
+  it("keeps a cloud draft in cloud when its base ref changes", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: null,
+        effectiveEnvMode: "cloud",
+      }),
+    ).toBe("cloud");
   });
 });
 
@@ -73,22 +84,74 @@ describe("resolveLocalCheckoutBranchMismatch", () => {
 });
 
 describe("resolveEffectiveEnvMode", () => {
-  it("keeps a server thread in worktree mode while its worktree is still being created", () => {
-    expect(
-      resolveEffectiveEnvMode({
-        activeWorktreePath: null,
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const base = {
+    activeWorktreePath: null,
+    hasServerThread: false,
+    draftThreadEnvMode: undefined,
+    sandboxId: undefined,
+    cloudAvailable: true,
+  } as const;
+
+  it.each([
+    [
+      "a server thread preparing its worktree",
+      { hasServerThread: true, preparingWorktree: true },
+      "worktree",
+    ],
+    ["a server thread in the checkout", { hasServerThread: true }, "local"],
+    [
+      "a server thread with a sandbox",
+      {
         hasServerThread: true,
-        draftThreadEnvMode: undefined,
-        preparingWorktree: true,
-      }),
-    ).toBe("worktree");
-    expect(
-      resolveEffectiveEnvMode({
-        activeWorktreePath: null,
-        hasServerThread: true,
-        draftThreadEnvMode: undefined,
-      }),
-    ).toBe("local");
+        activeWorktreePath: "/t3-sandbox/x/worktrees/a",
+        sandboxId,
+        cloudAvailable: false,
+      },
+      "cloud",
+    ],
+    ["a cloud draft while Cloud is available", { draftThreadEnvMode: "cloud" }, "cloud"],
+    [
+      "a cloud draft after Cloud went away",
+      { draftThreadEnvMode: "cloud", cloudAvailable: false },
+      "worktree",
+    ],
+  ] as const)("%s", (_name, overrides, expected) => {
+    expect(resolveEffectiveEnvMode({ ...base, ...overrides })).toBe(expected);
+  });
+});
+
+describe("resolveCloudEnvModeItem", () => {
+  const available = { available: true } as const;
+  const disallowed = {
+    available: false,
+    reason: "project-disallowed",
+    message: "Cloud threads are turned off for this project.",
+  } as const;
+  const notConfigured = { ...disallowed, reason: "not-configured", message: "" } as const;
+  const draft = {
+    effectiveEnvMode: "worktree",
+    isServerThread: false,
+    forceNewWorktree: false,
+  } as const;
+
+  it.each([
+    ["hidden without a driver", { cloud: notConfigured }, null],
+    ["offered on a draft", { cloud: available }, { disabledReason: null }],
+    ["disabled by the project", { cloud: disallowed }, { disabledReason: disallowed.message }],
+    [
+      "disabled for a multi-model send",
+      { cloud: available, forceNewWorktree: true },
+      { disabledReason: "Each model starts in its own worktree." },
+    ],
+    ["hidden on a started local thread", { cloud: available, isServerThread: true }, null],
+    [
+      "shown on a cloud thread after its driver went away",
+      { cloud: notConfigured, isServerThread: true, effectiveEnvMode: "cloud" },
+      { disabledReason: null },
+    ],
+  ] as const)("%s", (_name, overrides, expected) => {
+    expect(resolveCloudEnvModeItem({ ...draft, ...overrides })).toEqual(expected);
   });
 });
 

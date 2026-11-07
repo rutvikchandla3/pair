@@ -38,6 +38,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerSettings,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadContextRecord,
@@ -55,6 +56,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
+import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -1337,20 +1339,44 @@ export function makeThreadErrorSetter(input: {
   };
 }
 
+interface CloudModelContext {
+  readonly settings: Pick<ServerSettings, "providerInstances">;
+  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "displayName">>;
+}
+
+/** Why an account cannot run in a sandbox, as the server decides when the session opens. */
+export function cloudModelDisabledReason(
+  cloud: CloudModelContext,
+  instanceId: ProviderInstanceId,
+): string | null {
+  const provider = cloud.providers.find((entry) => entry.instanceId === instanceId);
+  const stored = cloud.settings.providerInstances[instanceId];
+  const driver = provider?.driver ?? stored?.driver ?? ProviderDriverKind.make(instanceId);
+  const support = sandboxCredentialSupport({ instanceId, instance: { ...stored, driver } });
+  if (support._tag === "LocalOnly") return `Local only. ${support.reason}`;
+  if (support._tag === "Unsupported") {
+    return `${provider?.displayName ?? driver} is not supported in cloud yet. Pick Claude or Codex.`;
+  }
+  return null;
+}
+
 /** Why the model picker should disable a model, or null when it can be chosen. */
 export function makeModelDisabledReason(
   context: Omit<
     Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
     "nextModelSelection"
   > | null,
+  cloud: CloudModelContext | null = null,
 ) {
   return (instanceId: ProviderInstanceId, model: string): string | null => {
-    if (!context) return null;
-    const reason = getStartedThreadModelChangeBlockReason({
-      ...context,
-      nextModelSelection: { instanceId, model },
-    });
-    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+    const reason = context
+      ? getStartedThreadModelChangeBlockReason({
+          ...context,
+          nextModelSelection: { instanceId, model },
+        })
+      : null;
+    if (reason) return `${reason.description} Start a new thread to use this model.`;
+    return cloud ? cloudModelDisabledReason(cloud, instanceId) : null;
   };
 }
 
@@ -1414,8 +1440,10 @@ export function planComposerTurn(input: {
 }) {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
-  const shouldCreateWorktree =
-    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
+  const shouldCreateWorkspace =
+    isFirstMessage && input.sendEnvMode !== "local" && !input.worktreePath;
+  const shouldCreateWorktree = shouldCreateWorkspace && input.sendEnvMode === "worktree";
+  const shouldLaunchCloud = shouldCreateWorkspace && input.sendEnvMode === "cloud";
   // A stale Claude session compacts before this message so the turn does not re-read the
   // old history. The message queues behind the /compact run, since steering into it is
   // rejected.
@@ -1426,8 +1454,9 @@ export function planComposerTurn(input: {
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
+    missingWorktreeBaseBranch: shouldCreateWorkspace && !input.activeThreadBranch,
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    baseRefForCloud: shouldLaunchCloud ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,

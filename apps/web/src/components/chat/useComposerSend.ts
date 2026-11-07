@@ -874,6 +874,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const {
       missingWorktreeBaseBranch,
       baseBranchForWorktree,
+      baseRefForCloud,
       compactBeforeSend,
       turnDispatchMode,
       shouldQueueBehindActiveRun,
@@ -891,7 +892,12 @@ export function useComposerSend(input: ComposerSendInput) {
       dispatchMode,
     });
     if (missingWorktreeBaseBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      setThreadError(
+        threadIdForSend,
+        sendEnvMode === "cloud"
+          ? "Select a base branch before sending in Cloud mode."
+          : "Select a base branch before sending in New worktree mode.",
+      );
       return;
     }
     // Records bind attachments by the id each side knows: the local id for the optimistic
@@ -1319,7 +1325,7 @@ export function useComposerSend(input: ComposerSendInput) {
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        isLocalDraftThread || baseBranchForWorktree || baseRefForCloud
           ? {
               ...(isLocalDraftThread
                 ? {
@@ -1345,6 +1351,8 @@ export function useComposerSend(input: ComposerSendInput) {
                     runSetupScript: true,
                   }
                 : {}),
+              // The server runs setup inside the sandbox, so no runSetupScript here.
+              ...(baseRefForCloud ? { prepareCloud: { baseRef: baseRefForCloud } } : {}),
             }
           : undefined;
       const backgroundThreadRef =

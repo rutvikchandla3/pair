@@ -1,5 +1,6 @@
 import {
   boundAttachmentIds,
+  cloudModelDisabledReason,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
@@ -1064,6 +1065,49 @@ describe("snapshotComposerSend", () => {
   });
 });
 
+describe("cloudModelDisabledReason", () => {
+  const claude = ProviderInstanceId.make("claudeWork");
+  const providers = [
+    { instanceId: claude, driver: ProviderDriverKind.make("claudeAgent") },
+    {
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+      displayName: "Cursor",
+    },
+  ];
+  const settingsWith = (environment: ReadonlyArray<string>) => ({
+    providerInstances: {
+      [claude]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: environment.map((name) => ({
+          name,
+          value: "",
+          sensitive: true,
+          valueRedacted: true,
+        })),
+      },
+    },
+  });
+
+  it.each([
+    ["a server-only login", claude, [], /^Local only\. Claude signs in on this server only/],
+    ["a setup token", claude, ["CLAUDE_CODE_OAUTH_TOKEN"], null],
+    [
+      "a driver cloud cannot run",
+      ProviderInstanceId.make("cursor"),
+      [],
+      /^Cursor is not supported/,
+    ],
+  ] as const)("%s", (_name, instanceId, environment, expected) => {
+    const reason = cloudModelDisabledReason(
+      { settings: settingsWith(environment), providers },
+      instanceId,
+    );
+    if (expected === null) expect(reason).toBeNull();
+    else expect(reason).toMatch(expected);
+  });
+});
+
 describe("planComposerTurn", () => {
   const base = {
     messageText: "hello",
@@ -1079,19 +1123,28 @@ describe("planComposerTurn", () => {
     dispatchMode: "auto" as const,
   };
 
-  it("prepares a worktree from the selected branch on a new thread", () => {
+  it("prepares a worktree or a cloud launch from the selected branch on a new thread", () => {
     expect(planComposerTurn(base)).toMatchObject({
       missingWorktreeBaseBranch: false,
       baseBranchForWorktree: "main",
+      baseRefForCloud: null,
       shouldQueueBehindActiveRun: false,
+    });
+    expect(planComposerTurn({ ...base, sendEnvMode: "cloud" })).toMatchObject({
+      missingWorktreeBaseBranch: false,
+      baseBranchForWorktree: null,
+      baseRefForCloud: "main",
     });
   });
 
-  it("refuses a new worktree without a base branch", () => {
-    expect(planComposerTurn({ ...base, activeThreadBranch: null })).toMatchObject({
-      missingWorktreeBaseBranch: true,
-      baseBranchForWorktree: null,
-    });
+  it("refuses a new worktree or cloud thread without a base branch", () => {
+    for (const sendEnvMode of ["worktree", "cloud"] as const) {
+      expect(planComposerTurn({ ...base, sendEnvMode, activeThreadBranch: null })).toMatchObject({
+        missingWorktreeBaseBranch: true,
+        baseBranchForWorktree: null,
+        baseRefForCloud: null,
+      });
+    }
   });
 
   it("queues behind a compaction of a stale session, except for /compact itself", () => {

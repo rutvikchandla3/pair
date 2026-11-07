@@ -3,9 +3,11 @@ import type {
   EnvironmentMachineKind,
   VcsRef,
   ProjectId,
+  SandboxId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import type { CloudAvailability } from "@t3tools/shared/sandbox";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
@@ -23,7 +25,7 @@ export interface EnvironmentOption {
 export const ADD_TO_MACHINE_LABEL_CLASS =
   "flex min-w-0 items-center gap-1.5 opacity-55 in-data-highlighted:opacity-100 in-data-popup-open:opacity-100";
 
-export const EnvMode = Schema.Literals(["local", "worktree"]);
+export const EnvMode = Schema.Literals(["local", "worktree", "cloud"]);
 export type EnvMode = typeof EnvMode.Type;
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
@@ -90,7 +92,26 @@ export function resolveContextStripLabelsCompact(input: {
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
+  if (mode === "cloud") return "Cloud";
   return mode === "worktree" ? "New worktree" : "Current checkout";
+}
+
+export interface CloudEnvModeItem {
+  readonly disabledReason: string | null;
+}
+
+/** Cloud's row in both workspace pickers: null hides it, so servers without a driver look as before. */
+export function resolveCloudEnvModeItem(input: {
+  cloud: CloudAvailability;
+  effectiveEnvMode: EnvMode;
+  isServerThread: boolean;
+  forceNewWorktree: boolean;
+}): CloudEnvModeItem | null {
+  if (input.effectiveEnvMode === "cloud") return { disabledReason: null };
+  if (input.isServerThread) return null;
+  if (!input.cloud.available && input.cloud.reason === "not-configured") return null;
+  if (input.forceNewWorktree) return { disabledReason: "Each model starts in its own worktree." };
+  return { disabledReason: input.cloud.available ? null : input.cloud.message };
 }
 
 /** The built-in workspace default once the environment has a second member. */
@@ -110,6 +131,7 @@ export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
 ): string {
+  if (effectiveEnvMode === "cloud") return resolveEnvModeLabel("cloud");
   if (activeWorktreePath) return "Worktree";
   return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
@@ -161,8 +183,15 @@ export function resolveEffectiveEnvMode(input: {
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
   preparingWorktree?: boolean;
+  sandboxId: SandboxId | undefined;
+  cloudAvailable: boolean;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
+  if (hasServerThread && input.sandboxId !== undefined) return "cloud";
+  // A cloud draft falls back in render when Cloud goes away; the stored draft keeps its choice.
+  if (!hasServerThread && draftThreadEnvMode === "cloud") {
+    return input.cloudAvailable ? "cloud" : "worktree";
+  }
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";
@@ -178,6 +207,7 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   effectiveEnvMode: EnvMode;
 }): EnvMode {
   const { nextWorktreePath, currentWorktreePath, effectiveEnvMode } = input;
+  if (effectiveEnvMode === "cloud") return "cloud";
   if (nextWorktreePath) {
     return "worktree";
   }
@@ -194,7 +224,7 @@ export function resolveBranchToolbarValue(input: {
   currentGitBranch: string | null;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (envMode === "worktree" && !activeWorktreePath) {
+  if (envMode !== "local" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }
   return currentGitBranch ?? activeThreadBranch;
@@ -217,9 +247,11 @@ export function resolveBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (effectiveEnvMode !== "local" && !activeWorktreePath) {
     // Only the server can determine a local branch's configured remote.
-    return startFromOrigin && resolvedActiveBranchIsRemote === false
+    return effectiveEnvMode === "worktree" &&
+      startFromOrigin &&
+      resolvedActiveBranchIsRemote === false
       ? `From ${resolvedActiveBranch} (remote)`
       : `From ${resolvedActiveBranch}`;
   }

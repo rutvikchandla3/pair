@@ -108,6 +108,7 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { cloudAvailability } from "@t3tools/shared/sandbox";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
@@ -2195,12 +2196,15 @@ export default function ChatView(props: ChatViewProps) {
     hasServerThread: isServerThread,
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
     preparingWorktree: isPreparingWorktree,
+    sandboxId: serverThread?.source.sandboxId,
+    cloudAvailable: cloudAvailability(settings, activeProject?.id ?? null).available,
   });
   const canOverrideServerThreadEnvMode = Boolean(
     isServerThread &&
     activeThread &&
     activeMessageCount === 0 &&
     activeThread.worktreePath === null &&
+    serverThread?.source.sandboxId === undefined &&
     !envLocked,
   );
   if (
@@ -2871,6 +2875,7 @@ export default function ChatView(props: ChatViewProps) {
     interactionModeEnabled,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
+    envMode,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
