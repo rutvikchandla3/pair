@@ -1,5 +1,6 @@
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as RunnerHubFacts from "../sandbox/runnerHub/RunnerHubFacts.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -420,6 +421,9 @@ export const layerProduction = Layer.mergeAll(
         ThreadCommandExecutor.layer,
       ),
     ),
+  ),
+  RunnerHubFacts.layer.pipe(
+    Layer.provide(Layer.merge(ProjectionStore.layer, layerOrchestratorProvided)),
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,

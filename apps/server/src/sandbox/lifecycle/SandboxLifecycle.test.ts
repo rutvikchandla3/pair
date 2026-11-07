@@ -18,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -28,6 +29,7 @@ import * as CheckpointRollback from "../../orchestration-v2/CheckpointRollbackSe
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectOutbox from "../../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
+import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -44,6 +46,8 @@ import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
+import { RunnerHub, type RunnerHubFact } from "../runnerHub/RunnerHub.ts";
+import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
@@ -449,6 +453,44 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const [last] = (yield* sandboxEvents(threadId)).slice(-1);
       assert.equal(last?.type === "sandbox.updated" && last.payload.state, "destroyed");
     }),
+  );
+
+  it.effect("turns a runner's attached fact into a ready sandbox on the owner thread", () =>
+    Effect.gen(function* () {
+      const { threadId, sandboxId } = yield* provisioned("hub-facts");
+      const facts = yield* Queue.unbounded<RunnerHubFact>();
+      yield* Layer.build(
+        RunnerHubFacts.layer.pipe(
+          Layer.provide(Layer.mock(RunnerHub)({ facts: Stream.fromQueue(facts) })),
+        ),
+      );
+      yield* Queue.offer(facts, {
+        _tag: "attached",
+        sandboxId,
+        generation: 1,
+        runnerBootId: "boot-1",
+        info: {
+          runnerBootId: "boot-1",
+          runnerBuildId: "build",
+          protocolVersion: 1,
+          arch: "x64",
+          cpus: 2,
+          memoryBytes: 1024,
+          handles: [],
+        },
+      });
+
+      const stored = yield* EventSink.EventSinkV2.use((sink) =>
+        sink.stream({ threadId, eventType: "sandbox.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "sandbox.updated" && stored.event.payload.state === "ready",
+          ),
+          Stream.runHead,
+        ),
+      ).pipe(Effect.map(Option.getOrThrow));
+      assert.equal(stored.commandId, `sandbox-attached:${sandboxId}:1:boot-1`);
+    }).pipe(Effect.scoped),
   );
 });
 

@@ -203,6 +203,7 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "orchestration_v2_projection_sandboxes",
   "orchestration_v2_projection_sandbox_threads",
   "sandbox_usage_intervals",
+  "sandbox_runner_grants",
 ];
 
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";

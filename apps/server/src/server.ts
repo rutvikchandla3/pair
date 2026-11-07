@@ -127,6 +127,9 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
+import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
+import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -748,6 +751,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(MemberPushDevices.layer),
   Layer.provideMerge(GitHubSignIn.layer),
   Layer.provideMerge(MemberGitHub.layer),
+  // Above layerAuth, which provides their database.
+  Layer.provideMerge(RunnerHub.layer),
+  Layer.provideMerge(RunnerGrants.layer),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),
   Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
@@ -807,6 +813,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
+    RunnerRoute.layer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
