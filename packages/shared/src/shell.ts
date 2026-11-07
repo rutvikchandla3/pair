@@ -825,6 +825,11 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
+  /** The machine the command runs on. Absent: this server's HostProcess references. */
+  readonly facts?: {
+    readonly platform: NodeJS.Platform;
+    readonly environment: NodeJS.ProcessEnv;
+  };
 }
 
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
@@ -832,13 +837,13 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
   options: SpawnCommandOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
-  const platform = yield* HostProcess.Platform;
+  const platform = options.facts?.platform ?? (yield* HostProcess.Platform);
   const isMacosGit = platform === "darwin" && command === "git";
   if (platform !== "win32" && !isMacosGit) {
     return { command, args: [...args], shell: false };
   }
 
-  const hostEnvironment = yield* HostProcess.Environment;
+  const hostEnvironment = options.facts?.environment ?? (yield* HostProcess.Environment);
   const env =
     options.env === undefined
       ? hostEnvironment

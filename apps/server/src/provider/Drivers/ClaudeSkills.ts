@@ -241,10 +241,10 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   configDirPath: string,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcess.Platform;
   const overridesByName = new Map<string, SkillOverride>();
   const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
@@ -316,10 +316,10 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   cwd: string | undefined,
   enabledPlugins: ReadonlyMap<string, boolean>,
   environment: NodeJS.ProcessEnv,
+  home: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
   const pluginDirectory = environment.CLAUDE_CODE_PLUGIN_CACHE_DIR;
   const pluginsPath = pluginDirectory
     ? path.resolve(cwd ?? ".", expandHomePath(pluginDirectory, home))
@@ -417,10 +417,10 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
+  home: string,
   cwd?: string,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
   if (homePath.length > 0) {
     return path.resolve(expandHomePath(homePath, home));
@@ -453,7 +453,12 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
-  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const configDirPath = yield* resolveClaudeConfigDirPath(
+    config,
+    environment,
+    yield* HostProcess.HomeDirectory,
+    cwd,
+  );
   const settingsEnv: typeof SettingsEnv.Type = {};
   for (const settingsPath of claudeSettingsPaths(
     path,
@@ -497,14 +502,24 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
+  /** The machine `cwd` lives on. Absent: this server's HostProcess references. */
+  facts?: { readonly platform: NodeJS.Platform; readonly homeDirectory: string },
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
+  const platform = facts?.platform ?? (yield* HostProcess.Platform);
+  const home = facts?.homeDirectory ?? (yield* HostProcess.HomeDirectory);
+  const configDirPath = yield* resolveClaudeConfigDirPath(
+    config,
+    environment ?? process.env,
+    home,
+    cwd,
+  );
   const { skillOverrides, enabledPlugins } = yield* readSkillSettings(
     configDirPath,
     cwd,
     environment ?? process.env,
+    platform,
   );
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
@@ -521,6 +536,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       cwd,
       enabledPlugins,
       environment ?? process.env,
+      home,
     )),
   ];
 

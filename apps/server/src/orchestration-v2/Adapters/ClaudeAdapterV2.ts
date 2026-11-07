@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.9): host facts; routed in M1 (1.12): in-process history and transcripts; server-scoped: attachments, MCP app snapshots, extracted text, and the CLAUDE_CONFIG_DIR the in-process SDK reads */
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M1 (1.12): in-process history and transcripts; server-scoped: attachments, MCP app snapshots, extracted text, the CLAUDE_CONFIG_DIR the in-process SDK reads, the CLI install, and host facts where no session host is given */
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
   compactDynamicToolOutput,
@@ -170,7 +170,10 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
-import type { WorkspaceHostUnavailableError } from "../../workspaceHost/WorkspaceHost.ts";
+import type {
+  WorkspaceHostInfo,
+  WorkspaceHostUnavailableError,
+} from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -4791,10 +4794,10 @@ export interface ClaudeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
-  /** The file system of the machine a cwd lives on. Absent: `fileSystem`. */
-  readonly fileSystemForPath?: (
+  /** The machine a cwd lives on. Absent: `fileSystem` and this server's HostProcess facts. */
+  readonly hostForPath?: (
     cwd: string,
-  ) => Effect.Effect<FileSystem.FileSystem, WorkspaceHostUnavailableError>;
+  ) => Effect.Effect<ClaudeSessionHost, WorkspaceHostUnavailableError>;
   readonly path: Path.Path;
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -4806,6 +4809,11 @@ export interface ClaudeAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+}
+
+interface ClaudeSessionHost {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly info: Effect.Effect<Pick<WorkspaceHostInfo, "platform" | "homeDirectory" | "userId">>;
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -4832,20 +4840,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.settings,
     adapterOptions.environment,
   ).pipe(Effect.provideService(Path.Path, path));
+  // The in-process SDK's resolveSettings reads this server's user tier.
   const hostEnvironment = yield* HostProcess.Environment;
-  const hostPlatform = yield* HostProcess.Platform;
-  const hostUserId = yield* HostProcess.UserId;
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
   const announcedBypassDowngrades = new Set<ThreadId>();
-  // Settings and skills read for a cwd come from the machine that cwd lives on.
-  const fileSystemAt = (cwd: string | null) =>
-    cwd === null || adapterOptions.fileSystemForPath === undefined
-      ? Effect.succeed(fileSystem)
+  const serverHost: ClaudeSessionHost = {
+    fileSystem,
+    info: Effect.gen(function* () {
+      return {
+        platform: yield* HostProcess.Platform,
+        homeDirectory: yield* HostProcess.HomeDirectory,
+        userId: yield* HostProcess.UserId,
+      };
+    }),
+  };
+  // Settings, skills and host facts read for a cwd come from the machine that cwd lives on.
+  const hostAt = (cwd: string | null) =>
+    cwd === null || adapterOptions.hostForPath === undefined
+      ? Effect.succeed(serverHost)
       : adapterOptions
-          .fileSystemForPath(cwd)
+          .hostForPath(cwd)
           .pipe(Effect.mapError((cause) => queryRunnerError(cause, "forPath")));
+  const fileSystemAt = (cwd: string | null) => Effect.map(hostAt(cwd), (host) => host.fileSystem);
   const readBypassSettings = (cwdFileSystem: FileSystem.FileSystem, filePath: string) =>
     cwdFileSystem.readFileString(filePath).pipe(
       Effect.flatMap(decodeClaudeBypassSettings),
@@ -4948,17 +4966,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
   // leaves tool search on, Claude Code's default.
   const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
-    cwdFileSystem: FileSystem.FileSystem,
+    cwdHost: ClaudeSessionHost,
     cwd: string,
   ) {
-    if ((yield* HostProcess.Platform) === "win32") return cwd;
+    const { fileSystem: cwdFileSystem } = cwdHost;
+    const { platform, homeDirectory } = yield* cwdHost.info;
+    if (platform === "win32") return cwd;
     for (let directory = cwd; ; directory = path.dirname(directory)) {
       const isCheckout = yield* cwdFileSystem
         .exists(path.join(directory, ".git"))
         .pipe(Effect.orElseSucceed(() => false));
       if (isCheckout) {
         const root = yield* mainCheckoutRoot(cwdFileSystem, directory);
-        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
+        return root === homeDirectory ? cwd : root;
       }
       if (path.dirname(directory) === directory) return cwd;
     }
@@ -4970,9 +4990,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
       const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
       if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
-      const cwdFileSystem = yield* fileSystemAt(cwd);
-      const localDirectory =
-        cwd === null ? null : yield* localSettingsDirectory(cwdFileSystem, cwd);
+      const cwdHost = yield* hostAt(cwd);
+      const cwdFileSystem = cwdHost.fileSystem;
+      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwdHost, cwd);
       const settingsFiles = [
         ...(cwd === null || localDirectory === null
           ? []
@@ -4991,23 +5011,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const userInvocableSkills = (cwd: string | null) =>
-    discoverClaudeSkills(
+  const userInvocableSkills = Effect.fn("ClaudeAdapterV2.userInvocableSkills")(function* (
+    cwd: string | null,
+  ) {
+    const cwdHost = yield* hostAt(cwd);
+    const skills = yield* discoverClaudeSkills(
       adapterOptions.settings,
       cwd ?? undefined,
       adapterOptions.environment,
+      yield* cwdHost.info,
     ).pipe(
-      Effect.map(
-        (skills) =>
-          new Map(
-            skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
-              .map((skill) => [skill.name, skill]),
-          ),
-      ),
-      Effect.provideServiceEffect(FileSystem.FileSystem, fileSystemAt(cwd)),
+      Effect.provideService(FileSystem.FileSystem, cwdHost.fileSystem),
       Effect.provideService(Path.Path, path),
     );
+    return new Map(
+      skills
+        .filter((skill) => skill.enabled && skill.userInvocable !== false)
+        .map((skill) => [skill.name, skill]),
+    );
+  });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -10803,7 +10825,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           // Read before closing the live process so a bad path leaves it running.
-          const cwdFileSystem = yield* fileSystemAt(turnInput.runtimePolicy.cwd);
+          const turnHost = yield* hostAt(turnInput.runtimePolicy.cwd);
+          const cwdFileSystem = turnHost.fileSystem;
           const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
             settings: adapterOptions.settings,
             cwd: turnInput.runtimePolicy.cwd,
@@ -10880,6 +10903,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
+          const turnHostInfo = yield* turnHost.info;
           const resolvedTurnCwd = yield* cwdFileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
@@ -10939,8 +10963,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               adapterOptions.environment,
               path,
               resolvedTurnCwd,
-              hostPlatform,
-              hostUserId,
+              turnHostInfo.platform,
+              turnHostInfo.userId,
             ),
             taskOutputFileSystem: cwdFileSystem,
           };
@@ -11655,7 +11679,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const projectsDir = path.join(
             configuredDir.length > 0
               ? path.resolve(session.cwd, configuredDir)
-              : path.join(yield* HostProcess.HomeDirectory, ".claude"),
+              : path.join((yield* (yield* hostAt(session.cwd)).info).homeDirectory, ".claude"),
             "projects",
           );
           // Any message in any transcript copy means Claude may still resume it.
@@ -12299,7 +12323,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
-      fileSystemForPath: (cwd) => hosts.forPath(cwd).pipe(Effect.map((host) => host.fileSystem)),
+      hostForPath: hosts.forPath,
       path,
       random,
       idAllocator,

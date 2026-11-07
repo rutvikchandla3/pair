@@ -17,7 +17,7 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the instance's Claude home on this server's install
   const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
   if (homePath.length > 0) {
@@ -89,9 +89,9 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the provider probe reads this server's managed config
   const fileSystem = yield* FileSystem.FileSystem;
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the provider probe reads this server's managed config
   const platform = yield* HostProcess.Platform;
   const managedMcpConfigPath =
     platform === "darwin"

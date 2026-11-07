@@ -104,6 +104,7 @@ import { ChildProcess } from "effect/process";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
+import type { WorkspaceHostInfo } from "../../workspaceHost/WorkspaceHost.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -1477,6 +1478,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly extendEnv?: boolean | undefined;
   readonly threadId?: string | undefined;
+  readonly facts?: WorkspaceHostInfo | undefined;
 }) {
   const launch = yield* (yield* AgentScope).wrap({
     command: input.command,
@@ -1489,6 +1491,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
+    ...(input.facts === undefined ? {} : { facts: input.facts }),
   });
   return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
@@ -1616,6 +1619,7 @@ export const layerAppServerClientFactory: Layer.Layer<
           ),
           env: environment,
           threadId: input.threadId,
+          facts: yield* host.info,
         }).pipe(Effect.provideService(AgentScope, host.agentScope));
         const handle = yield* host.spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -1694,7 +1698,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const settings = {
     ...config,
     enabled,
-    // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
+    // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the server's CLI install
     binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
   } satisfies CodexSettings;

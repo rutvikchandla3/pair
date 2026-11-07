@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- spawns with the spawner, agent scope and base environment the adapter takes from the session host; not routed yet (0.9): host facts; routed in M3: the Grok cgroup lease */
+/* oxlint-disable t3code/workspace-host-boundary -- spawns with the spawner, agent scope and base environment the adapter takes from the session host; routed in M3: host facts of ACP flavors other than Replay, and the Grok cgroup lease */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
