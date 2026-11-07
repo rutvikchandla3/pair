@@ -13,7 +13,14 @@ const bob = MemberId.make("bob");
 const carol = MemberId.make("carol");
 const team = (memberId: MemberId) => ({ memberId, teamMode: true });
 
-const AGENT_KINDS = ["completion", "failed", "limited", "approval", "input"] as const;
+const AGENT_KINDS = [
+  "completion",
+  "failed",
+  "limited",
+  "machine-failed",
+  "approval",
+  "input",
+] as const;
 const ALL_KINDS: ReadonlyArray<ThreadNotificationKind> = [
   ...AGENT_KINDS,
   "request",
@@ -121,6 +128,7 @@ describe("threadNotificationTitle", () => {
       "Thread completed",
       "Thread failed",
       "Usage limit reached",
+      "Machine failed",
       "Approval needed",
       "Input needed",
       "Guest request",

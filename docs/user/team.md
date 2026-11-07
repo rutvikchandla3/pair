@@ -185,8 +185,8 @@ send it a message, or answer one of its requests.
 
 Notifications go only to the people a thread concerns:
 
-- A finished or failed turn, or a request for approval or input, notifies the member who started
-  that turn and the thread's owner.
+- A finished or failed turn, a machine that fails to start, or a request for approval or input,
+  notifies the member who started that turn and the thread's owner.
 - The owner hears when someone else messages, archives or sends a guest request to their thread,
   and you hear when a thread is assigned to you.
 - Following a thread marks it unread for you, without notifications.
