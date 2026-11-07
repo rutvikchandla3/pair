@@ -3,7 +3,7 @@ import type { SandboxAction } from "@t3tools/client-runtime/state/sandbox";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { SANDBOX_ACTION_MENU_LABELS } from "./sandbox/sandboxActionLabels";
+import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
 
 export type ThreadActionMenuId =
   | "find"

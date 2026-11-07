@@ -25,6 +25,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { NewTaskWorkspaceMode } from "../lib/newTaskWorkspaceMode";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -38,7 +39,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
   projectTitle: Schema.optional(Schema.String),
   projectCwd: Schema.optional(Schema.String),
-  workspaceMode: Schema.Literals(["local", "worktree"]),
+  workspaceMode: NewTaskWorkspaceMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
@@ -71,7 +72,7 @@ export interface QueuedThreadCreation {
   readonly projectId: ProjectIdType;
   readonly projectTitle?: string;
   readonly projectCwd?: string;
-  readonly workspaceMode: "local" | "worktree";
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
@@ -244,7 +245,7 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   if (!hasContent || message.modelSelection === undefined) {
     return false;
   }
-  return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
+  return message.creation.workspaceMode === "local" || Boolean(message.creation.branch);
 }
 
 function errorMessage(error: unknown): string | null {

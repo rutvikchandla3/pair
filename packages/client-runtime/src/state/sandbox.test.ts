@@ -23,6 +23,7 @@ import {
   type SandboxAction,
   type SandboxStatePresentation,
 } from "./sandbox.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import type { TeamMembers, createTeamEnvironmentAtoms } from "./team.ts";
 
 vi.mock("./session.ts", () => ({
@@ -267,8 +268,39 @@ describe("actionAllowedAtom", () => {
       Layer.provideMerge(SecureRandom.layerWebCrypto),
     ),
   );
-  const sandbox = createSandboxEnvironmentAtoms(runtime, { team });
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const forkThreadId = ThreadId.make("thread-fork");
+  // A teammate's fork of the owner's cloud thread: it shares the owner thread's machine.
+  const shells = new Map([
+    [ownerThreadId, { id: ownerThreadId, source: { sandboxId, ownerId }, runtime: null }],
+    [
+      forkThreadId,
+      {
+        id: forkThreadId,
+        source: { sandboxId, ownerId: otherId, sandbox: summary({}) },
+        runtime: null,
+      },
+    ],
+  ]);
+  const shellFamily = Atom.family((threadId: ThreadId) =>
+    Atom.make((shells.get(threadId) ?? null) as unknown as EnvironmentThreadShell | null),
+  );
+  const sandbox = createSandboxEnvironmentAtoms(runtime, {
+    team,
+    threadShells: { quietThreadShellAtom: (ref) => shellFamily(ref.threadId) },
+  });
   const actions: ReadonlyArray<SandboxAction> = ["wake", "sleep", "retry", "discard"];
+  const operator: AuthSessionState = {
+    authenticated: true,
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "test",
+    },
+    scopes: [AuthOrchestrationOperateScope],
+    permissions: [AuthOrchestrationOperateScope],
+  };
 
   it("grants wake and retry to any operator, sleep and discard to the owner or an admin", () => {
     const registry = AtomRegistry.make();
@@ -280,17 +312,6 @@ describe("actionAllowedAtom", () => {
         ),
       );
     try {
-      const operator: AuthSessionState = {
-        authenticated: true,
-        auth: {
-          policy: "remote-reachable",
-          bootstrapMethods: [],
-          sessionMethods: [],
-          sessionCookieName: "test",
-        },
-        scopes: [AuthOrchestrationOperateScope],
-        permissions: [AuthOrchestrationOperateScope],
-      };
       registry.set(
         sessions(env),
         AsyncResult.success({ ...operator, scopes: [], permissions: [] }),
@@ -305,6 +326,32 @@ describe("actionAllowedAtom", () => {
       expect(allowed()).toEqual(actions);
       registry.set(currentMemberId, ownerId);
       expect(allowed()).toEqual(actions);
+    } finally {
+      registry.dispose();
+    }
+  });
+
+  it("judges a fork's owner-only actions by the machine's owner thread", () => {
+    const registry = AtomRegistry.make();
+    registry.mount(sessions(env));
+    const machine = () =>
+      registry.get(sandbox.threadMachineAtom({ environmentId: env, threadId: forkThreadId }));
+    try {
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...operator, scopes: [], permissions: [] }),
+      );
+      registry.set(currentMemberId, otherId);
+      expect(machine()).toMatchObject({ sandboxId, actions: [], ownerOnlyDenied: [] });
+
+      registry.set(sessions(env), AsyncResult.success(operator));
+      // The fork is the viewer's own thread, but the machine is the owner thread's owner's.
+      expect(machine()).toMatchObject({
+        actions: ["sleep", "discard"],
+        ownerOnlyDenied: ["sleep", "discard"],
+      });
+      registry.set(currentMemberId, ownerId);
+      expect(machine()?.ownerOnlyDenied).toEqual([]);
     } finally {
       registry.dispose();
     }

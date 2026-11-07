@@ -11,6 +11,7 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { openSettings } from "../settings/settings-navigation";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
+import { newThreadOnBranchDraft } from "../threads/thread-route-state";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import { useSelectWorkspaceDetail } from "./useSelectWorkspaceDetail";
 
@@ -75,15 +76,7 @@ export function WorkspaceThreadSidebar() {
         })
       }
       onNewThreadOnBranch={(thread: EnvironmentThreadShell) =>
-        selectThreadRoute({
-          draft: {
-            requestId: uuidv4(),
-            environmentId: String(thread.environmentId),
-            projectId: String(thread.projectId),
-            branch: thread.branch,
-            worktreePath: thread.worktreePath,
-          },
-        })
+        selectThreadRoute({ draft: newThreadOnBranchDraft(thread, uuidv4()) })
       }
       onOpenPendingTask={openPendingTask}
       onSelectThread={(thread) =>

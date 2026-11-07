@@ -187,6 +187,20 @@ describe("new-task branch checkout", () => {
     );
   });
 
+  it("keeps a cloud draft's base branch without switching the project checkout", async () => {
+    const result = await checkoutNewTaskBranch({
+      branch,
+      project: { environmentId, workspaceRoot: cwd },
+      workspaceMode: "cloud",
+      readRefs,
+      switchRef: () => {
+        throw new Error("A cloud base branch must not switch the project checkout");
+      },
+    });
+    expect(result).toMatchObject({ _tag: "Success", value: branch });
+    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
+  });
+
   it("reuses an existing worktree without switching the project checkout", async () => {
     const worktreePath = NodePath.join(directory, "worktree");
     await git("worktree", "add", worktreePath, "feature/a");

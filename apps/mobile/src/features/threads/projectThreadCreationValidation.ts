@@ -1,5 +1,7 @@
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
+
 export function resolveProjectThreadCreationBranch(input: {
-  readonly workspaceMode: "local" | "worktree";
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly selectedBranch: string | null;
   readonly currentCheckoutBranch: string | null;
 }): string | null {

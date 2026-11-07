@@ -1,9 +1,5 @@
-import { cloudPushCredential } from "@t3tools/client-runtime/state/sandbox";
-import {
-  isSecretReference,
-  type EnvironmentId,
-  type OrchestrationV2ThreadShell,
-} from "@t3tools/contracts";
+import { cloudPushCredential, githubAppConfigured } from "@t3tools/client-runtime/state/sandbox";
+import type { EnvironmentId, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { KeyRoundIcon } from "lucide-react";
 
@@ -22,15 +18,7 @@ export function useCloudPushBanner(
 ): ComposerBannerStackItem | null {
   const members = useTeamMembers(environmentId);
   const currentMemberId = useCurrentMemberId(environmentId);
-  const appConfigured = useEnvironmentSettings(environmentId, (settings) => {
-    const github = settings.sourceControlHosts.github;
-    const key = github?.appPrivateKey;
-    return (
-      typeof github?.appId === "string" &&
-      github.appId !== "" &&
-      (isSecretReference(key) || (typeof key === "string" && key !== ""))
-    );
-  });
+  const appConfigured = useEnvironmentSettings(environmentId, githubAppConfigured);
   if (thread?.sandboxId === undefined) return null;
   const ownerId = thread.ownerId ?? null;
   const owner = ownerId === null ? undefined : members.get(ownerId);

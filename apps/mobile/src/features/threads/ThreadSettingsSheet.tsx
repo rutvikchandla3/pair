@@ -72,6 +72,7 @@ import {
   groupByProvider,
   type ModelOption,
   type ProviderGroup,
+  withCloudModelReasons,
 } from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
@@ -1546,18 +1547,21 @@ export function ExistingThreadSettingsRouteScreen({
   })
     ? undefined
     : modelSelection.instanceId;
-  const modelOptions = filterModelOptionsForViewer(
-    buildModelOptions(
-      serverConfig,
-      modelSelection,
-      lockedProviderInstanceId,
-      selectedThread.projectId,
+  const modelOptions = withCloudModelReasons(
+    filterModelOptionsForViewer(
+      buildModelOptions(
+        serverConfig,
+        modelSelection,
+        lockedProviderInstanceId,
+        selectedThread.projectId,
+      ),
+      {
+        settings: serverConfig?.settings,
+        viewer: teamViewer,
+        currentInstanceId: modelSelection.instanceId,
+      },
     ),
-    {
-      settings: serverConfig?.settings,
-      viewer: teamViewer,
-      currentInstanceId: modelSelection.instanceId,
-    },
+    selectedThread.source.sandboxId !== undefined ? serverConfig : null,
   );
   const currentModelOption =
     modelOptions.find(

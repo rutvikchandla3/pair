@@ -1,4 +1,10 @@
-import type { ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 
 export type SandboxCredentialMechanism =
   | "claude-setup-token"
@@ -75,3 +81,24 @@ export const sandboxCredentialSupport = (input: {
       return { _tag: "Unsupported" };
   }
 };
+
+/** Why an account cannot run in a sandbox, as the server decides when the session opens. */
+export function cloudModelDisabledReason(
+  cloud: {
+    readonly settings: Pick<ServerSettings, "providerInstances">;
+    readonly providers: ReadonlyArray<
+      Pick<ServerProvider, "instanceId" | "driver" | "displayName">
+    >;
+  },
+  instanceId: ProviderInstanceId,
+): string | null {
+  const provider = cloud.providers.find((entry) => entry.instanceId === instanceId);
+  const stored = cloud.settings.providerInstances[instanceId];
+  const driver = provider?.driver ?? stored?.driver ?? ProviderDriverKind.make(instanceId);
+  const support = sandboxCredentialSupport({ instanceId, instance: { ...stored, driver } });
+  if (support._tag === "LocalOnly") return `Local only. ${support.reason}`;
+  if (support._tag === "Unsupported") {
+    return `${provider?.displayName ?? driver} is not supported in cloud yet. Pick Claude or Codex.`;
+  }
+  return null;
+}

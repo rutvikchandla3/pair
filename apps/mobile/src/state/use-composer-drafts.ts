@@ -43,6 +43,7 @@ import {
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { NewTaskWorkspaceMode } from "../lib/newTaskWorkspaceMode";
 import {
   composerAttachmentFileReferenceKey,
   isComposerAttachmentFileRetained,
@@ -421,7 +422,7 @@ export interface ComposerDraftContent {
 }
 
 export interface ComposerDraftWorkspaceSelection {
-  readonly mode: "local" | "worktree";
+  readonly mode: NewTaskWorkspaceMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
@@ -440,7 +441,7 @@ export type ComposerDraftSettingsUpdate = Pick<
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
-  mode: Schema.Literals(["local", "worktree"]),
+  mode: NewTaskWorkspaceMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),

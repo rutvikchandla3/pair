@@ -64,6 +64,8 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useThreadOwner, useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
 import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
+import { buildThreadMachineHeaderMenu } from "./thread-machine-menu";
+import { useSandboxActionRunner, useSandboxThreadMachine } from "../../state/sandbox";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -519,7 +521,24 @@ function ThreadRouteContent(
           assign: (ownerId) => void threadTeamActions.assign(selectedThread, ownerId),
         })
       : null;
+  const threadMachine = useSandboxThreadMachine(
+    selectedThread === null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+  );
+  const runMachineAction = useSandboxActionRunner();
+  const machineHeaderMenu =
+    selectedThread !== null && threadMachine !== null
+      ? buildThreadMachineHeaderMenu(threadMachine, (action) =>
+          runMachineAction(
+            { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+            threadMachine.sandboxId,
+            action,
+          ),
+        )
+      : null;
   const headerSubtitle = [
+    threadMachine?.presentation.label ?? null,
     threadOwner === null ? null : `${threadOwner.name}'s thread`,
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
@@ -938,7 +957,12 @@ function ThreadRouteContent(
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
       return awaitingBootstrapTurn
-        ? { kind: "preparing", preparingWorktree: true, serverOwned: true }
+        ? {
+            kind: "preparing",
+            // A cloud thread's subtitle names the machine's own phase instead.
+            preparingWorktree: selectedThread?.source.sandboxId === undefined,
+            serverOwned: true,
+          }
         : null;
     }
     if (selectedThreadCreation.outcome?.kind === "failed") {
@@ -992,6 +1016,7 @@ function ThreadRouteContent(
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
                 teamMenu={teamHeaderMenu}
+                machineMenu={machineHeaderMenu}
                 viewers={threadViewers}
                 hasThreadCwd={selectedThreadCwd !== null}
                 hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}

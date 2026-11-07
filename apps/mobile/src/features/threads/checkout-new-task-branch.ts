@@ -14,12 +14,14 @@ import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
+
 const VCS_REF_QUERY_MAX_LENGTH = 256;
 
 export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
-  readonly workspaceMode: "local" | "worktree";
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly readRefs: (request: {
     readonly environmentId: EnvironmentProject["environmentId"];
     readonly input: VcsListRefsInput;
@@ -34,7 +36,8 @@ export async function checkoutNewTaskBranch<E>(input: {
       Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
     );
   }
-  if (input.workspaceMode === "worktree" || input.branch.current) {
+  // Worktree and Cloud base a new branch on it; only Current checkout switches to it.
+  if (input.workspaceMode !== "local" || input.branch.current) {
     return AsyncResult.success(
       input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
     );

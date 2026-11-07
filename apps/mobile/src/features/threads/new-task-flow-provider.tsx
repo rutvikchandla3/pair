@@ -5,6 +5,7 @@ import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
 
+import type { CloudAvailability } from "@t3tools/shared/sandbox";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -26,6 +27,7 @@ import { pipe } from "effect/Function";
 
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
@@ -35,6 +37,7 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
+  withCloudModelReasons,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useAtomValue } from "@effect/atom-react";
@@ -92,6 +95,7 @@ import {
 } from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
+  resolveNewTaskBaseBranchName,
   resolveNewTaskDraftWorkspace,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
@@ -112,8 +116,6 @@ import {
 } from "./new-task-flow-state";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
-
-type WorkspaceMode = "local" | "worktree";
 
 export function branchBadgeLabel(input: {
   readonly branch: VcsRef;
@@ -140,10 +142,12 @@ type NewTaskFlowContextValue = {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
-  readonly workspaceMode: WorkspaceMode;
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
+  /** The selected project's Cloud entry: hidden when not-configured, disabled when disallowed. */
+  readonly cloud: CloudAvailability;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly resolveWorkspaceSelection: (
@@ -191,7 +195,7 @@ type NewTaskFlowContextValue = {
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
   ) => void;
-  readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
+  readonly setWorkspaceMode: (mode: NewTaskWorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly buildPendingTaskMessage: (
@@ -389,7 +393,7 @@ export function NewTaskFlowProvider(
   const isGitRepo = knownIsGitRepo ?? true;
   const projectSettings = projectDefaults.projectSettings;
   const canChooseWorkspace = !isScratchDraft;
-  const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
+  const defaultWorkspaceMode: NewTaskWorkspaceMode = projectDefaults.defaultWorkspaceMode;
   const branchState = usePaginatedBranches({
     environmentId: selectedProject?.environmentId ?? null,
     cwd: selectedProject?.workspaceRoot || null,
@@ -408,6 +412,7 @@ export function NewTaskFlowProvider(
       defaultMode: defaultWorkspaceMode,
       defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
       isGitRepo,
+      cloudAvailable: projectDefaults.cloud.available,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });
@@ -459,18 +464,23 @@ export function NewTaskFlowProvider(
       : null;
   const projectDefaultModelSelection = teamModelSelection ?? configuredDefaultModelSelection;
   const stickyModelSelection = teamModelSelection === null ? storedDefaultModelSelection : null;
-  const modelOptions = filterModelOptionsForViewer(
-    buildModelOptions(
-      selectedEnvironmentServerConfig,
-      draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
-      undefined,
-      selectedProject?.id ?? null,
+  const modelOptions = withCloudModelReasons(
+    filterModelOptionsForViewer(
+      buildModelOptions(
+        selectedEnvironmentServerConfig,
+        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        undefined,
+        selectedProject?.id ?? null,
+      ),
+      {
+        settings: selectedEnvironmentServerConfig?.settings,
+        viewer: teamViewer,
+        currentInstanceId: undefined,
+      },
     ),
-    {
-      settings: selectedEnvironmentServerConfig?.settings,
-      viewer: teamViewer,
-      currentInstanceId: undefined,
-    },
+    workspaceMode === "cloud" && selectedEnvironmentServerConfig
+      ? selectedEnvironmentServerConfig
+      : null,
   );
 
   const selectedDefaultModel = resolveNewTaskModelSelection({
@@ -659,7 +669,7 @@ export function NewTaskFlowProvider(
     return false;
   };
 
-  const setWorkspaceMode = (mode: WorkspaceMode) => {
+  const setWorkspaceMode = (mode: NewTaskWorkspaceMode) => {
     if (!selectedProjectDraftKey) {
       return;
     }
@@ -674,7 +684,12 @@ export function NewTaskFlowProvider(
       workspaceSelection: {
         mode,
         branch: mode === "local" ? localSelection.branch : selectedBranchName,
-        worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
+        worktreePath:
+          mode === "local"
+            ? localSelection.worktreePath
+            : mode === "cloud"
+              ? null
+              : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         // Refs have not named the current branch yet; the selection follows it.
         ...(mode === "local" && localSelection.awaitsCurrentBranch
@@ -691,7 +706,7 @@ export function NewTaskFlowProvider(
     updateComposerDraftSettings(selectedProjectDraftKey, {
       workspaceSelection: {
         mode: workspaceMode,
-        branch: branch.name,
+        branch: resolveNewTaskBaseBranchName(workspaceMode, branch),
         worktreePath: resolveNewTaskBranchWorktreePath({
           workspaceMode,
           projectCwd: selectedProject.workspaceRoot,
@@ -806,7 +821,7 @@ export function NewTaskFlowProvider(
           selectedBranch: workspaceSelection?.branch ?? null,
           currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
         }),
-        worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+        worktreePath: mode === "local" ? (workspaceSelection?.worktreePath ?? null) : null,
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
@@ -886,6 +901,7 @@ export function NewTaskFlowProvider(
     isGitRepo,
     isGitRepoKnown: knownIsGitRepo !== null,
     canChooseWorkspace,
+    cloud: projectDefaults.cloud,
     selectedBranchName,
     selectedWorktreePath,
     resolveWorkspaceSelection,

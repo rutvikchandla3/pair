@@ -1,37 +1,53 @@
-import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
-
-type WorkspaceMode = "local" | "worktree";
 
 export function resolveNewTaskWorkspaceSelection(input: {
   readonly selection: ComposerDraftWorkspaceSelection | undefined;
   readonly fallback: ComposerDraftWorkspaceSelection;
   readonly isGitRepo: boolean;
+  /** cloudAvailability(...).available for the draft's project. */
+  readonly cloudAvailable: boolean;
 }): ComposerDraftWorkspaceSelection {
   const selection = input.selection ?? input.fallback;
   const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
-  return input.isGitRepo ? selection : { mode, branch: null, worktreePath: null };
+  if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
+  // A cloud draft starts a new worktree once Cloud goes away; the stored draft keeps its choice.
+  return selection.mode === "cloud" && !input.cloudAvailable
+    ? { ...selection, mode: "worktree" }
+    : selection;
 }
 
 export function resolveNewTaskWorkspaceLabel(input: {
-  readonly workspaceMode: WorkspaceMode;
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+}): "Current checkout" | "Current worktree" | "New worktree" | "Cloud" {
+  if (input.workspaceMode === "cloud") return "Cloud";
   if (input.workspaceMode === "worktree") {
     return "New worktree";
   }
   return input.worktreePath ? "Current worktree" : "Current checkout";
 }
 
+/** A machine clones origin and branches from `origin/<base>`, so its base names no remote. */
+export function resolveNewTaskBaseBranchName(
+  workspaceMode: NewTaskWorkspaceMode,
+  branch: { readonly name: string; readonly isRemote?: boolean },
+): string {
+  return workspaceMode === "cloud" && branch.isRemote
+    ? deriveLocalBranchNameFromRemoteRef(branch.name)
+    : branch.name;
+}
+
 export function resolveNewTaskBranchWorktreePath(input: {
-  readonly workspaceMode: WorkspaceMode;
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly projectCwd: string;
   readonly branchWorktreePath: string | null | undefined;
 }): string | null {
   if (
-    input.workspaceMode === "worktree" ||
+    input.workspaceMode !== "local" ||
     !input.branchWorktreePath ||
     input.branchWorktreePath === input.projectCwd
   ) {
@@ -75,7 +91,7 @@ export function resolveNewTaskLocalWorkspaceSelection(input: {
 export function resolveNewTaskBranchLabel(input: {
   readonly branchName: string | null;
   readonly startFromOrigin: boolean;
-  readonly workspaceMode: WorkspaceMode;
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly pullRequestReference?: string;
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
@@ -90,14 +106,16 @@ export function resolveNewTaskBranchLabel(input: {
     return input.branchName;
   }
 
-  // Only the server can determine a local branch's configured remote.
-  return input.startFromOrigin ? `From ${input.branchName} (remote)` : `From ${input.branchName}`;
+  // Only the server can determine a local branch's configured remote. A machine clones the remote.
+  return input.workspaceMode === "worktree" && input.startFromOrigin
+    ? `From ${input.branchName} (remote)`
+    : `From ${input.branchName}`;
 }
 
 export function shouldCheckoutNewTaskBranch(input: {
   readonly branchIsCurrent: boolean;
   readonly branchWorktreePath: string | null | undefined;
-  readonly workspaceMode: WorkspaceMode;
+  readonly workspaceMode: NewTaskWorkspaceMode;
 }): boolean {
   return input.workspaceMode === "local" && !input.branchIsCurrent && !input.branchWorktreePath;
 }
@@ -113,7 +131,7 @@ export function filterNewTaskBranches<T extends { readonly name: string }>(
 }
 
 /**
- * A worktree with no chosen base starts from the default branch, and a local
+ * A worktree or machine with no chosen base starts from the default branch, and a local
  * selection the user just switched to follows the current checkout until refs
  * load. Both are derived, never written back, so a late ref list or t3.json
  * default still wins.
@@ -132,14 +150,18 @@ export function fillNewTaskWorkspaceBranch(input: {
 }): ComposerDraftWorkspaceSelection {
   const { selection } = input;
   if (selection.branch !== null) return selection;
-  if (selection.mode === "worktree") {
+  if (selection.mode !== "local") {
     // The default may only exist as origin/<default>, so search remote refs too.
     const base =
       input.branches.find((branch) => branch.isDefault) ??
       input.branches.find((branch) => !branch.isRemote && branch.current) ??
       null;
     return input.worktreeDefaultSettled && base
-      ? { ...selection, branch: base.name, worktreePath: null }
+      ? {
+          ...selection,
+          branch: resolveNewTaskBaseBranchName(selection.mode, base),
+          worktreePath: null,
+        }
       : selection;
   }
   if (!selection.followsCurrentCheckout || input.projectCwd === null) return selection;
@@ -161,9 +183,10 @@ export function fillNewTaskWorkspaceBranch(input: {
 export function resolveNewTaskDraftWorkspace(input: {
   readonly selection: ComposerDraftWorkspaceSelection | undefined;
   readonly canChooseWorkspace: boolean;
-  readonly defaultMode: WorkspaceMode;
+  readonly defaultMode: NewTaskWorkspaceMode;
   readonly defaultModeSettled: boolean;
   readonly isGitRepo: boolean;
+  readonly cloudAvailable: boolean;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
@@ -173,6 +196,7 @@ export function resolveNewTaskDraftWorkspace(input: {
       selection,
       fallback: { mode: input.defaultMode, branch: null, worktreePath: null },
       isGitRepo: input.isGitRepo,
+      cloudAvailable: input.cloudAvailable,
     }),
     branches: input.branches,
     projectCwd: input.projectCwd,

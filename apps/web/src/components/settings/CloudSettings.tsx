@@ -6,13 +6,16 @@ import {
   isReservedSandboxEnvName,
   type SandboxDriverCheckResult,
   type SandboxDriverCheckStep,
-  type SandboxDriverHealth,
   type SandboxDriverInstance,
   type SandboxSize,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  SANDBOX_ISOLATION_LABELS,
+  sandboxMachineCountsLabel,
+} from "@t3tools/client-runtime/state/sandbox";
 import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -41,13 +44,6 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
   small: "Small",
   default: "Default",
   large: "Large",
-};
-
-const ISOLATION_LABELS: Readonly<Record<SandboxDriverHealth["isolation"], string>> = {
-  rootless: "Rootless Docker",
-  gvisor: "gVisor",
-  runc: "Plain Docker (runc)",
-  unknown: "Isolation unknown",
 };
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
@@ -215,7 +211,9 @@ function CloudEnvironmentSettings({
                         ? "Checking…"
                         : (overview.error ?? "Status unknown.")
                       : [
-                          health.reachable ? ISOLATION_LABELS[health.isolation] : "Unreachable",
+                          health.reachable
+                            ? SANDBOX_ISOLATION_LABELS[health.isolation]
+                            : "Unreachable",
                           health.message,
                         ]
                           .filter(Boolean)
@@ -227,9 +225,7 @@ function CloudEnvironmentSettings({
             <SettingsRow
               title="Machines"
               description={
-                overview.data
-                  ? `${overview.data.machines.ready} running · ${overview.data.machines.sleeping} asleep · ${overview.data.machines.waiting} waiting · ${overview.data.machines.failed} failed`
-                  : "Checking…"
+                overview.data ? sandboxMachineCountsLabel(overview.data.machines) : "Checking…"
               }
             />
             <SettingsRow

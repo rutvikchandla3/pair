@@ -9,6 +9,7 @@ const SECTIONS = [
     rows: [
       { id: "account", label: "T3 Account" },
       { id: "SettingsEnvironments", label: "Environments" },
+      { id: "SettingsMachines", label: "Machines" },
     ],
   },
   {
@@ -57,6 +58,8 @@ describe("filterSettingsSections", () => {
       expected: [["Server settings", ["Provider accounts"]]],
     },
     { query: "usage", expected: [[null, ["Usage"]]] },
+    { query: "machines", expected: [["Connections", ["Machines"]]] },
+    { query: "docker", expected: [["Connections", ["Machines"]]] },
     { query: "zzzz", expected: [] },
   ])("$query", ({ query, expected }) => {
     expect(visible(query)).toEqual(expected);

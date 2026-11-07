@@ -1,5 +1,6 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
+import type { NewTaskWorkspaceMode } from "../lib/newTaskWorkspaceMode";
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
 import { isNewTaskDraftKey } from "./new-task-draft-key";
@@ -50,8 +51,9 @@ function draftTitle(draft: ComposerDraft): string {
 /** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
 export interface PendingDraftProjectDefaults {
   readonly canChooseWorkspace: boolean;
-  readonly defaultMode: "local" | "worktree";
+  readonly defaultMode: NewTaskWorkspaceMode;
   readonly defaultModeSettled: boolean;
+  readonly cloudAvailable: boolean;
 }
 
 /**
@@ -63,7 +65,7 @@ export function pendingDraftBranchNeedsRefs(
   defaults: PendingDraftProjectDefaults,
 ): boolean {
   const selection = defaults.canChooseWorkspace ? draft.workspaceSelection : undefined;
-  return selection === undefined ? defaults.defaultMode === "worktree" : selection.branch === null;
+  return selection === undefined ? defaults.defaultMode !== "local" : selection.branch === null;
 }
 
 /** The branch a draft will start on, derived the same way the new-task flow and send path do. */
@@ -80,6 +82,7 @@ export function resolvePendingDraftBranch(input: {
     defaultMode: input.defaults.defaultMode,
     defaultModeSettled: input.defaults.defaultModeSettled,
     isGitRepo: input.isGitRepo,
+    cloudAvailable: input.defaults.cloudAvailable,
     branches: input.branches,
     projectCwd: input.projectCwd,
   }).branch;

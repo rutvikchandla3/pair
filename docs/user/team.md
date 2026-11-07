@@ -146,6 +146,8 @@ only the repositories and permissions they need.
 settings → Personal access tokens**, if you no longer use it. If GitHub stops accepting it, your
 row says so; remove it and paste a new one.
 
+The mobile app's **Settings → Team** has the same choices on your own row.
+
 ### Sign in with GitHub
 
 Once the GitHub App is set up and someone on the team has added GitHub, the sign-in page offers

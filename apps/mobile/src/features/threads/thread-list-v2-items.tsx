@@ -53,6 +53,8 @@ import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
 import { useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
+import { useSandboxActionRunner, useSandboxThreadMachine } from "../../state/sandbox";
+import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -426,6 +428,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     canChooseWorkspace: !projectDefaults.isScratch,
     defaultMode: projectDefaults.defaultWorkspaceMode,
     defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
+    cloudAvailable: projectDefaults.cloud.available,
   };
   const draftBranchRefs = useBranches({
     environmentId: pendingTask.environmentId,
@@ -792,6 +795,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
+  const machine = useSandboxThreadMachine(
+    thread.source.sandboxId === undefined
+      ? null
+      : { environmentId: thread.environmentId, threadId: thread.id },
+  );
+  const runMachineAction = useSandboxActionRunner();
   const teamMenu = useThreadTeamMenu(thread);
   const teamActions = useThreadTeamActions();
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
@@ -953,6 +962,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             },
           ]
         : []),
+      // Members may wake or retry any machine; sleep and discard live in the thread's header.
+      ...(machine?.actions ?? [])
+        .filter((action) => action === "wake" || action === "retry")
+        .map((action) => ({
+          id: `machine:${action}`,
+          title: SANDBOX_ACTION_MENU_LABELS[action],
+          image: action === "wake" ? "sun.max" : "arrow.clockwise",
+        })),
       { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
       { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
     ];
@@ -1017,6 +1034,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     autoSettleMenuItems,
     canUnsettle,
     deleteMenuItems,
+    machine?.actions,
     pinMenuItems,
     teamMenuItems,
     props.settlementSupported,
@@ -1030,6 +1048,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
+      if (
+        machine !== null &&
+        (nativeEvent.event === "machine:wake" || nativeEvent.event === "machine:retry")
+      ) {
+        runMachineAction(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          machine.sandboxId,
+          nativeEvent.event === "machine:wake" ? "wake" : "retry",
+        );
+      }
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
@@ -1083,6 +1111,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [
       onNewThreadOnBranch,
       thread,
+      machine,
+      runMachineAction,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
@@ -1337,6 +1367,44 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        {machine !== null ? (
+          <View
+            accessible
+            accessibilityLabel={
+              machine.presentation.rowWord === null
+                ? "Cloud"
+                : `Cloud, ${machine.presentation.rowWord}`
+            }
+            className="flex-row items-center gap-1"
+          >
+            <SymbolView
+              name="cloud"
+              size={12}
+              tintColorClassName={
+                selected
+                  ? selectedThreadRowColors.mutedIconTintClassName
+                  : machine.presentation.tone === "danger"
+                    ? "accent-danger-foreground"
+                    : rowAppearance.tertiaryIconTintClassName
+              }
+              type="monochrome"
+            />
+            {machine.presentation.rowWord !== null ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : machine.presentation.tone === "danger"
+                      ? "text-danger-foreground"
+                      : rowAppearance.tertiaryForegroundClassName,
+                )}
+              >
+                {machine.presentation.rowWord}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
         {props.owner ? <MemberAvatar member={props.owner} size="sm" /> : null}
         {pr ? (
           <Pressable

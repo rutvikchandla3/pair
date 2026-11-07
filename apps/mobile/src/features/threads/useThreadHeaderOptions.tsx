@@ -26,6 +26,7 @@ function nativeMenuItems(items: ReadonlyArray<AppBarMenuItem>): NativeHeaderItem
       ? { type: "submenu" as const, items: nativeMenuItems(item.items) }
       : {
           type: "action" as const,
+          ...(item.subtitle ? { subtitle: item.subtitle } : {}),
           state: item.selected ? ("on" as const) : undefined,
           disabled: item.disabled,
           onPress: item.onPress,
@@ -33,13 +34,13 @@ function nativeMenuItems(items: ReadonlyArray<AppBarMenuItem>): NativeHeaderItem
   }));
 }
 
-function nativeHeaderMenu(menu: AppBarMenu) {
+function nativeHeaderMenu(menu: AppBarMenu, identifier: string) {
   return {
-    accessibilityLabel: menu.title,
+    accessibilityLabel: menu.status === undefined ? menu.title : `${menu.title}: ${menu.status}`,
     icon: { name: typeof menu.icon === "string" ? menu.icon : menu.icon.ios, type: "sfSymbol" },
-    identifier: "thread-right-team",
+    identifier,
     label: menu.title,
-    menu: { title: menu.title, items: nativeMenuItems(menu.items) },
+    menu: { title: menu.status ?? menu.title, items: nativeMenuItems(menu.items) },
     sharesBackground: true,
     type: "menu",
     variant: "plain",
@@ -56,6 +57,8 @@ export function useThreadHeaderOptions(props: {
   readonly draft?: boolean;
   /** Follow and Assign; null outside team mode. */
   readonly teamMenu?: AppBarMenu | null;
+  /** Wake, sleep, retry and discard; null for a local thread. */
+  readonly machineMenu?: AppBarMenu | null;
   /** Teammates viewing this thread; empty outside team mode. */
   readonly viewers?: ReadonlyArray<PresentMember>;
 }) {
@@ -67,9 +70,10 @@ export function useThreadHeaderOptions(props: {
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const gitRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
   const gitCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
-  const teamHeaderItems: NativeHeaderItems = props.teamMenu
-    ? [nativeHeaderMenu(props.teamMenu)]
-    : [];
+  const teamHeaderItems: NativeHeaderItems = [
+    ...(props.machineMenu ? [nativeHeaderMenu(props.machineMenu, "thread-right-machine")] : []),
+    ...(props.teamMenu ? [nativeHeaderMenu(props.teamMenu, "thread-right-team")] : []),
+  ];
   const viewers = props.viewers ?? [];
   const viewerHeaderItems: NativeHeaderItems =
     viewers.length > 0
@@ -163,6 +167,7 @@ export function useThreadHeaderOptions(props: {
       threadCenterHeaderItems,
       compactRightHeaderItems,
       props.teamMenu,
+      props.machineMenu,
       viewers.map((viewer) => `${viewer.id}:${viewer.away}`).join(","),
       usesDuoHeader,
       environmentId,

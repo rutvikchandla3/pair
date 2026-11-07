@@ -11,6 +11,7 @@ import { useTeamViewers } from "../../state/team";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { OwnGitHubConnection } from "./TeamMemberGitHub";
 
 const STATUS_LABELS = { online: "Online", away: "Away" } as const;
 
@@ -32,7 +33,7 @@ function TeamMemberRow(props: {
   const status = usePresence(props.environmentId).members.get(props.member.id);
   const role = props.member.role === "admin" ? "Admin" : "Member";
   const detail = props.isSelf ? "You" : status === undefined ? null : STATUS_LABELS[status];
-  return (
+  const row = (
     <View
       accessible
       accessibilityLabel={[props.member.name, role, detail].filter(Boolean).join(", ")}
@@ -52,6 +53,13 @@ function TeamMemberRow(props: {
           {detail}
         </Text>
       ) : null}
+    </View>
+  );
+  if (!props.isSelf) return row;
+  return (
+    <View className="bg-grouped-card">
+      {row}
+      <OwnGitHubConnection environmentId={props.environmentId} member={props.member} />
     </View>
   );
 }
@@ -76,7 +84,7 @@ function TeamSection(props: {
   );
 }
 
-/** Read-only: members are invited, changed and removed on the web. */
+/** Members are invited, changed and removed on the web; your own row holds your GitHub token. */
 export function SettingsTeamRouteScreen() {
   const insets = useSafeAreaInsets();
   const viewers = [...useTeamViewers()];

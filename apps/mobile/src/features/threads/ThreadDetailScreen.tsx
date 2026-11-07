@@ -174,6 +174,7 @@ import type {
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
+import { ThreadMachineNotices } from "./ThreadMachineNotices";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -1639,6 +1640,14 @@ function ThreadDetailBody(
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
+                    {props.draftMode ? null : (
+                      <ThreadMachineNotices
+                        thread={props.selectedThread}
+                        threadRef={props.selectedThreadDetailRef}
+                        serverConfig={props.serverConfig}
+                        onStartNewMachine={() => composerEditorRef.current?.focus()}
+                      />
+                    )}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
                         threadKey={selectedThreadKey}

@@ -5,7 +5,11 @@ import {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { sandboxCredentialSupport, type SandboxCredentialSupport } from "./sandboxCredentials.ts";
+import {
+  cloudModelDisabledReason,
+  sandboxCredentialSupport,
+  type SandboxCredentialSupport,
+} from "./sandboxCredentials.ts";
 
 const claude = ProviderDriverKind.make("claudeAgent");
 const codex = ProviderDriverKind.make("codex");
@@ -111,5 +115,48 @@ describe("sandboxCredentialSupport", () => {
     expect(
       sandboxCredentialSupport({ instanceId: ProviderInstanceId.make(instanceId), instance }),
     ).toEqual(expected);
+  });
+});
+
+describe("cloudModelDisabledReason", () => {
+  const claude = ProviderInstanceId.make("claudeWork");
+  const providers = [
+    { instanceId: claude, driver: ProviderDriverKind.make("claudeAgent") },
+    {
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+      displayName: "Cursor",
+    },
+  ];
+  const settingsWith = (environment: ReadonlyArray<string>) => ({
+    providerInstances: {
+      [claude]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: environment.map((name) => ({
+          name,
+          value: "",
+          sensitive: true,
+          valueRedacted: true,
+        })),
+      },
+    },
+  });
+
+  it.each([
+    ["a server-only login", claude, [], /^Local only\. Claude signs in on this server only/],
+    ["a setup token", claude, ["CLAUDE_CODE_OAUTH_TOKEN"], null],
+    [
+      "a driver cloud cannot run",
+      ProviderInstanceId.make("cursor"),
+      [],
+      /^Cursor is not supported/,
+    ],
+  ] as const)("%s", (_name, instanceId, environment, expected) => {
+    const reason = cloudModelDisabledReason(
+      { settings: settingsWith(environment), providers },
+      instanceId,
+    );
+    if (expected === null) expect(reason).toBeNull();
+    else expect(reason).toMatch(expected);
   });
 });

@@ -1,8 +1,10 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ProjectId, SandboxId } from "@t3tools/contracts";
 import {
   draftRouteIdentity,
   isDraftThreadRoute,
+  newThreadOnBranchDraft,
   submittedThreadParams,
 } from "./thread-route-state";
 
@@ -113,4 +115,27 @@ it("starts a fresh controller for repeated new-task requests in the same project
   expect(draftRouteIdentity({ ...project, requestId: "first" })).not.toBe(
     draftRouteIdentity({ ...project, requestId: "second" }),
   );
+});
+
+describe("newThreadOnBranchDraft", () => {
+  const thread = {
+    environmentId: EnvironmentId.make("environment"),
+    projectId: ProjectId.make("project"),
+    branch: "t3code/1234abcd",
+    worktreePath: "/t3-sandbox/sbx/worktrees/1234abcd",
+  };
+
+  it("starts a cloud thread's branch on a new machine, not at its machine's path", () => {
+    const local = newThreadOnBranchDraft({ ...thread, source: {} }, "request");
+    const cloud = newThreadOnBranchDraft(
+      { ...thread, source: { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") } },
+      "request",
+    );
+    expect(local).toMatchObject({ worktreePath: thread.worktreePath });
+    expect(local.workspace).toBeUndefined();
+    expect(cloud).toMatchObject({ branch: thread.branch, worktreePath: null, workspace: "cloud" });
+    expect(draftRouteIdentity(cloud)).not.toBe(
+      draftRouteIdentity({ ...cloud, workspace: undefined }),
+    );
+  });
 });

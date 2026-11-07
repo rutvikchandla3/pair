@@ -70,3 +70,31 @@ describe("project thread title", () => {
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
 });
+
+describe("buildProjectThreadStartTurnInput", () => {
+  it("launches a cloud task on a machine, with no local worktree or setup script", () => {
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "cloud-thread",
+      commandId: "cloud-command",
+      messageId: "cloud-message",
+      createdAt: "2026-09-04T00:00:00Z",
+      text: "Fix the flaky test",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "cloud",
+      branch: "main",
+      worktreePath: "/workspace/.t3/worktrees/stale",
+      startFromOrigin: true,
+      worktreeBranchName: "t3code/1234abcd",
+    });
+
+    expect(input.bootstrap).toEqual({
+      createThread: expect.objectContaining({ branch: "main", worktreePath: null }),
+      prepareCloud: { baseRef: "main", branch: "t3code/1234abcd" },
+    });
+  });
+});

@@ -29,6 +29,7 @@ import {
   canSelectProviderInstance,
   providerInstanceOwner,
 } from "@t3tools/shared/providerInstanceOwnership";
+import { cloudModelDisabledReason } from "@t3tools/shared/sandboxCredentials";
 
 export type ModelOption = {
   readonly key: string;
@@ -493,6 +494,18 @@ export function filterModelOptionsForViewer(
     const name = option.providerBadge?.displayName ?? option.providerLabel;
     const owner = memberDisplayName(viewer.members, ownerMemberId);
     return [{ ...option, isUnavailable: true, subtitle: `${name} belongs to ${owner}.` }];
+  });
+}
+
+/** A cloud task lists the accounts a machine cannot sign in with disabled, with the reason. */
+export function withCloudModelReasons(
+  options: ReadonlyArray<ModelOption>,
+  cloud: Parameters<typeof cloudModelDisabledReason>[0] | null,
+): ReadonlyArray<ModelOption> {
+  if (cloud === null) return options;
+  return options.map((option) => {
+    const reason = cloudModelDisabledReason(cloud, option.selection.instanceId);
+    return reason === null ? option : { ...option, isUnavailable: true, subtitle: reason };
   });
 }
 

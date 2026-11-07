@@ -101,6 +101,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
     branch: params.branch,
     worktreePath: params.worktreePath,
+    cloud: params.workspace === "cloud",
     cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
   };
 
@@ -127,7 +128,10 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   }
   const checkoutProject = project ?? resolvedProject;
   const workspaceRoot = project?.workspaceRoot;
-  const needsPreparation = Boolean(initialProjectRef.branch && !draftId);
+  // A cloud draft branches in its machine, so nothing is checked out here.
+  const needsPreparation = Boolean(
+    initialProjectRef.branch && !draftId && !initialProjectRef.cloud,
+  );
   const waitingForProject =
     !project &&
     (catalogState.isLoadingConnections ||
@@ -184,12 +188,13 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // workspace) whenever this object's identity changes. initialProjectRef is new
   // every render, so read its fields first: the compiler then memoizes this
   // object on them, instead of on initialProjectRef.
-  const { environmentId, projectId, cloning } = initialProjectRef;
+  const { environmentId, projectId, cloning, cloud } = initialProjectRef;
   const preparedProjectRef = {
     environmentId,
     projectId,
     branch: preparedBranch,
     worktreePath: preparedWorktreePath,
+    cloud,
     cloning,
   };
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");

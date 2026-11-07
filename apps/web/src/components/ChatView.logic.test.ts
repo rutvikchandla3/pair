@@ -1,6 +1,5 @@
 import {
   boundAttachmentIds,
-  cloudModelDisabledReason,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
@@ -1062,49 +1061,6 @@ describe("snapshotComposerSend", () => {
     expect(snapshot.messageText).toBe(
       ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
-  });
-});
-
-describe("cloudModelDisabledReason", () => {
-  const claude = ProviderInstanceId.make("claudeWork");
-  const providers = [
-    { instanceId: claude, driver: ProviderDriverKind.make("claudeAgent") },
-    {
-      instanceId: ProviderInstanceId.make("cursor"),
-      driver: ProviderDriverKind.make("cursor"),
-      displayName: "Cursor",
-    },
-  ];
-  const settingsWith = (environment: ReadonlyArray<string>) => ({
-    providerInstances: {
-      [claude]: {
-        driver: ProviderDriverKind.make("claudeAgent"),
-        environment: environment.map((name) => ({
-          name,
-          value: "",
-          sensitive: true,
-          valueRedacted: true,
-        })),
-      },
-    },
-  });
-
-  it.each([
-    ["a server-only login", claude, [], /^Local only\. Claude signs in on this server only/],
-    ["a setup token", claude, ["CLAUDE_CODE_OAUTH_TOKEN"], null],
-    [
-      "a driver cloud cannot run",
-      ProviderInstanceId.make("cursor"),
-      [],
-      /^Cursor is not supported/,
-    ],
-  ] as const)("%s", (_name, instanceId, environment, expected) => {
-    const reason = cloudModelDisabledReason(
-      { settings: settingsWith(environment), providers },
-      instanceId,
-    );
-    if (expected === null) expect(reason).toBeNull();
-    else expect(reason).toMatch(expected);
   });
 });
 

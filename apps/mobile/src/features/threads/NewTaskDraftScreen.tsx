@@ -90,6 +90,10 @@ import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
+import type { CloudAvailability } from "@t3tools/shared/sandbox";
+import type { MenuAction } from "@react-native-menu/menu";
+import { Menu } from "../../components/ui/Menu";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
@@ -97,11 +101,43 @@ import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
+const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
+
+/** Cloud on the toggle's menu: hidden until the environment has a driver. */
+function workspaceModeMenuActions(
+  current: NewTaskWorkspaceMode,
+  cloud: CloudAvailability,
+): MenuAction[] {
+  const entry = (mode: NewTaskWorkspaceMode, image: string): MenuAction => ({
+    id: `${WORKSPACE_MODE_MENU_ID}${mode}`,
+    title: resolveNewTaskWorkspaceLabel({ workspaceMode: mode, worktreePath: null }),
+    image,
+    state: mode === current ? "on" : "off",
+  });
+  return [
+    entry("local", "folder"),
+    entry("worktree", "arrow.triangle.branch"),
+    cloud.available
+      ? entry("cloud", "cloud")
+      : { ...entry("cloud", "cloud"), subtitle: cloud.message, attributes: { disabled: true } },
+  ];
+}
+
 function NewTaskWorkspaceIcon(props: {
-  readonly workspaceMode: "local" | "worktree";
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly worktreePath: string | null;
   readonly size: number;
 }) {
+  if (props.workspaceMode === "cloud") {
+    return (
+      <SymbolView
+        name="cloud"
+        size={props.size}
+        tintColorClassName="accent-icon-muted"
+        type="monochrome"
+      />
+    );
+  }
   if (props.workspaceMode === "local" && props.worktreePath === null) {
     return (
       <SymbolView
@@ -148,6 +184,7 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
+    readonly cloud?: boolean;
     readonly cloning?: boolean;
   };
   readonly draftId?: string;
@@ -360,7 +397,7 @@ export function NewTaskDraftScreen(props: {
   const cycleEnvironmentCommands = environments.length > 1 ? (["cycleHost"] as const) : [];
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
   const composerWorkspaceCwd =
-    (flow.workspaceMode === "worktree"
+    (flow.workspaceMode !== "local"
       ? selectedProject?.workspaceRoot
       : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   const preventRemove =
@@ -431,14 +468,17 @@ export function NewTaskDraftScreen(props: {
             return;
           }
           if (!flow.draftKey) return;
-          // Checkout completed before mount; local mode reuses it while worktree mode would create another.
+          // Checkout completed before mount; local mode reuses it while worktree mode would create
+          // another. A cloud draft starts a new machine from the branch instead.
           updateComposerDraftSettings(flow.draftKey, {
-            workspaceSelection: {
-              mode: "local",
-              branch: props.initialProjectRef.branch,
-              worktreePath: props.initialProjectRef.worktreePath ?? null,
-              startFromOrigin: false,
-            },
+            workspaceSelection: props.initialProjectRef.cloud
+              ? { mode: "cloud", branch: props.initialProjectRef.branch, worktreePath: null }
+              : {
+                  mode: "local",
+                  branch: props.initialProjectRef.branch,
+                  worktreePath: props.initialProjectRef.worktreePath ?? null,
+                  startFromOrigin: false,
+                },
           });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
@@ -529,7 +569,7 @@ export function NewTaskDraftScreen(props: {
     workspaceMode: flow.workspaceMode,
     selectedBranch:
       flow.selectedBranchName ??
-      (flow.workspaceMode === "worktree" ? availableCurrentBranchName : null),
+      (flow.workspaceMode !== "local" ? availableCurrentBranchName : null),
     currentCheckoutBranch: flow.currentCheckoutBranchName,
   });
   const selectedBranchLabel = resolveNewTaskBranchLabel({
@@ -593,7 +633,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode !== "local" && !selectedBranchName)
     ) {
       return null;
     }
@@ -694,8 +734,10 @@ export function NewTaskDraftScreen(props: {
         ? "Wait for the project clone to finish."
         : flow.submitting
           ? "Starting the thread…"
-          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
-            ? "Choose a base branch before creating a worktree."
+          : flow.workspaceMode !== "local" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+            ? flow.workspaceMode === "cloud"
+              ? "Choose a base branch before starting a machine."
+              : "Choose a base branch before creating a worktree."
             : null
       : "Wait for shared content to finish importing.";
   const chooseProject = () => {
@@ -816,28 +858,60 @@ export function NewTaskDraftScreen(props: {
       </NativeScrollEdgeEffectsContext>
     );
 
+  const workspaceDisabled = isComposerInteractionLocked || !flow.isGitRepo;
+  // Without a sandbox driver the control stays the two-way toggle it always was.
+  const offersCloud = flow.cloud.available || flow.cloud.reason !== "not-configured";
+  const workspaceControl = (
+    <ComposerInlineControl
+      accessibilityHint={
+        offersCloud
+          ? "Chooses where the thread runs"
+          : `Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`
+      }
+      accessibilityLabel={workspaceLabel}
+      disabled={workspaceDisabled}
+      renderIcon={(size) => (
+        <NewTaskWorkspaceIcon
+          workspaceMode={flow.workspaceMode}
+          worktreePath={flow.selectedWorktreePath}
+          size={size}
+        />
+      )}
+      label={workspaceLabel}
+      maxWidth="100%"
+      onPress={
+        offersCloud
+          ? undefined
+          : () => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")
+      }
+      showChevron={offersCloud}
+    />
+  );
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
-      <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
-        accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
-        renderIcon={(size) => (
-          <NewTaskWorkspaceIcon
-            workspaceMode={flow.workspaceMode}
-            worktreePath={flow.selectedWorktreePath}
-            size={size}
-          />
-        )}
-        label={workspaceLabel}
-        maxWidth="100%"
-        onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
-        showChevron={false}
-      />
+      {offersCloud && !workspaceDisabled ? (
+        <Menu
+          accessibilityLabel={workspaceLabel}
+          actions={workspaceModeMenuActions(flow.workspaceMode, flow.cloud)}
+          onPressAction={({ nativeEvent }) => {
+            const mode = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
+            if (
+              mode === "local" ||
+              mode === "worktree" ||
+              (mode === "cloud" && flow.cloud.available)
+            )
+              flow.setWorkspaceMode(mode);
+          }}
+        >
+          {workspaceControl}
+        </Menu>
+      ) : (
+        workspaceControl
+      )}
 
       <View className="min-w-0 shrink">
         <ComposerInlineControl
-          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+          accessibilityLabel={`${flow.workspaceMode === "local" ? "Branch" : "Base branch"}: ${selectedBranchLabel}`}
           chevronDirection="right"
           disabled={isComposerInteractionLocked || !flow.isGitRepo}
           icon="arrow.triangle.branch"

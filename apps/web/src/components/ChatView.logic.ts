@@ -38,7 +38,6 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-  type ServerSettings,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadContextRecord,
@@ -56,7 +55,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
-import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
+import { cloudModelDisabledReason } from "@t3tools/shared/sandboxCredentials";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -1339,34 +1338,13 @@ export function makeThreadErrorSetter(input: {
   };
 }
 
-interface CloudModelContext {
-  readonly settings: Pick<ServerSettings, "providerInstances">;
-  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "displayName">>;
-}
-
-/** Why an account cannot run in a sandbox, as the server decides when the session opens. */
-export function cloudModelDisabledReason(
-  cloud: CloudModelContext,
-  instanceId: ProviderInstanceId,
-): string | null {
-  const provider = cloud.providers.find((entry) => entry.instanceId === instanceId);
-  const stored = cloud.settings.providerInstances[instanceId];
-  const driver = provider?.driver ?? stored?.driver ?? ProviderDriverKind.make(instanceId);
-  const support = sandboxCredentialSupport({ instanceId, instance: { ...stored, driver } });
-  if (support._tag === "LocalOnly") return `Local only. ${support.reason}`;
-  if (support._tag === "Unsupported") {
-    return `${provider?.displayName ?? driver} is not supported in cloud yet. Pick Claude or Codex.`;
-  }
-  return null;
-}
-
 /** Why the model picker should disable a model, or null when it can be chosen. */
 export function makeModelDisabledReason(
   context: Omit<
     Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
     "nextModelSelection"
   > | null,
-  cloud: CloudModelContext | null = null,
+  cloud: Parameters<typeof cloudModelDisabledReason>[0] | null = null,
 ) {
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const reason = context

@@ -97,6 +97,7 @@ import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/Settin
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import { SettingsTeamRouteScreen } from "./features/settings/SettingsTeamRouteScreen";
+import { SettingsMachinesRouteScreen } from "./features/settings/SettingsMachinesRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
@@ -355,6 +356,14 @@ const SETTINGS_SCREENS = {
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       title: "Team",
+    },
+  }),
+  SettingsMachines: createNativeStackScreen({
+    screen: SettingsMachinesRouteScreen,
+    linking: "settings/machines",
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      title: "Machines",
     },
   }),
   SettingsFollowUp: createNativeStackScreen({

@@ -6,9 +6,11 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "./server";
 import { teamEnvironment } from "./team";
+import { environmentThreadShells } from "./threads";
 
 export const sandboxEnvironment = createSandboxEnvironmentAtoms(connectionAtomRuntime, {
   team: teamEnvironment,
+  threadShells: environmentThreadShells,
 });
 
 /** Read at event time, for shortcuts. */

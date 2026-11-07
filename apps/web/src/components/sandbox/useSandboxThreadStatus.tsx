@@ -6,19 +6,15 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  sandboxStatePresentation,
+  SANDBOX_ACTION_FAILURE_TITLES,
+  SANDBOX_DISCARD_CONFIRMATION,
+  SANDBOX_OWNER_ONLY_REASON,
   type SandboxAction,
   type SandboxStatePresentation,
+  type SandboxThreadMachine,
 } from "@t3tools/client-runtime/state/sandbox";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
-import {
-  type EnvironmentId,
-  type OrchestrationV2Sandbox,
-  type OrchestrationV2ThreadShellSandbox,
-  type SandboxId,
-  type ScopedThreadRef,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationV2Sandbox, SandboxId, ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { CloudIcon, CloudOffIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -30,84 +26,23 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { sandboxEnvironment } from "~/state/sandbox";
-import { environmentThreadShells } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
-import {
-  SANDBOX_ACTION_FAILURE_TITLES,
-  SANDBOX_DISCARD_CONFIRMATION,
-  SANDBOX_OWNER_ONLY_REASON,
-} from "./sandboxActionLabels";
-
-/** A cloud thread's machine as every surface shows it: one rule for the line, banner, menu and palette. */
-export interface SandboxThreadMachine {
-  readonly sandboxId: SandboxId;
-  readonly state: OrchestrationV2ThreadShellSandbox["state"];
-  readonly presentation: SandboxStatePresentation;
-  /** What the viewer is offered; empty when this connection cannot operate threads. */
-  readonly actions: ReadonlyArray<SandboxAction>;
-  /** Offered but shown disabled with "Only the owner or an admin". */
-  readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
-}
-
-const machineFamily = Atom.family((key: string) => {
-  const [environmentId = "", threadId = ""] = key.split("\u0000");
-  const ref = { environmentId: environmentId as EnvironmentId, threadId: ThreadId.make(threadId) };
-  return Atom.make((get): SandboxThreadMachine | null => {
-    const shell = get(environmentThreadShells.quietThreadShellAtom(ref));
-    const sandboxId = shell?.source.sandboxId;
-    const summary = shell?.source.sandbox;
-    if (shell === null || sandboxId === undefined || summary === undefined) return null;
-    // A fork or side chat shares its owner thread's machine, which that thread's owner owns.
-    const ownerThread =
-      summary.ownerThreadId === shell.id
-        ? shell
-        : (get(
-            environmentThreadShells.quietThreadShellAtom({
-              environmentId: ref.environmentId,
-              threadId: summary.ownerThreadId,
-            }),
-          ) ?? shell);
-    const ownerMemberId = ownerThread.source.ownerId ?? null;
-    const presentation = sandboxStatePresentation(summary, {
-      hasActiveRun: shell.runtime?.activeRunId != null,
-    });
-    const allowed = (action: SandboxAction) =>
-      get(
-        sandboxEnvironment.actionAllowedAtom({
-          environmentId: ref.environmentId,
-          action,
-          ownerMemberId,
-        }),
-      );
-    // Wake needs only the command's scope, so it says whether this connection may act at all.
-    const actions = allowed("wake") ? presentation.actions : [];
-    return {
-      sandboxId,
-      state: summary.state,
-      presentation,
-      actions,
-      ownerOnlyDenied: actions.filter(
-        (action) => presentation.ownerOnly.includes(action) && !allowed(action),
-      ),
-    };
-  }).pipe(Atom.withLabel(`sandbox-thread-machine:${key}`));
-});
 
 const NO_MACHINE_ATOM = Atom.make<SandboxThreadMachine | null>(null).pipe(
   Atom.withLabel("sandbox-thread-machine:none"),
 );
 
-const machineKey = (ref: ScopedThreadRef) => `${ref.environmentId}\u0000${ref.threadId}`;
-
 export function useSandboxThreadMachine(
   threadRef: ScopedThreadRef | null,
 ): SandboxThreadMachine | null {
-  return useAtomValue(threadRef === null ? NO_MACHINE_ATOM : machineFamily(machineKey(threadRef)));
+  return useAtomValue(
+    threadRef === null ? NO_MACHINE_ATOM : sandboxEnvironment.threadMachineAtom(threadRef),
+  );
 }
 
 /** For menus built at click time. */
 export function readSandboxThreadMachine(threadRef: ScopedThreadRef): SandboxThreadMachine | null {
-  return appAtomRegistry.get(machineFamily(machineKey(threadRef)));
+  return appAtomRegistry.get(sandboxEnvironment.threadMachineAtom(threadRef));
 }
 
 /** Runs one machine action, confirming Discard first and toasting the server's refusal. */

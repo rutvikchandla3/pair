@@ -4,8 +4,10 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { cloudAvailability, newThreadPrefersCloud } from "@t3tools/shared/sandbox";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 
+import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useProjectHasThreads } from "../../state/project-has-threads";
@@ -61,15 +63,19 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
   );
   const projectHasThreads = useProjectHasThreads(project);
   const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
-  const defaultWorkspaceMode = isScratch
+  const settings = serverConfig?.settings ?? null;
+  const cloud = cloudAvailability(settings, project?.id ?? null);
+  const defaultWorkspaceMode: NewTaskWorkspaceMode = isScratch
     ? "local"
-    : resolveNewThreadEnvMode({
-        teamDefault: isTeamMode,
-        projectSettings,
-        workspaceRoot: project?.workspaceRoot ?? null,
-        newProjectsRoot: serverConfig?.newProjectsRoot,
-        projectHasThreads,
-      });
+    : newThreadPrefersCloud(settings, project?.id ?? null)
+      ? "cloud"
+      : resolveNewThreadEnvMode({
+          teamDefault: isTeamMode,
+          projectSettings,
+          workspaceRoot: project?.workspaceRoot ?? null,
+          newProjectsRoot: serverConfig?.newProjectsRoot,
+          projectHasThreads,
+        });
   // While t3.json loads, the environment default is provisional; t3.json may replace it.
   const defaultWorkspaceModeSettled =
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
@@ -80,5 +86,7 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     projectSettings,
     defaultWorkspaceMode,
     defaultWorkspaceModeSettled,
+    /** Hidden when not-configured; disabled with its message when project-disallowed. */
+    cloud,
   };
 }

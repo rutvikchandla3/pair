@@ -1,4 +1,5 @@
 import {
+  isSecretReference,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   type EnvironmentId,
@@ -6,6 +7,11 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Sandbox,
   type OrchestrationV2ThreadShellSandbox,
+  type SandboxDriverHealth,
+  type SandboxId,
+  type SandboxOverview,
+  type ScopedThreadRef,
+  type ServerSettings,
   type TeamMember,
 } from "@t3tools/contracts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
@@ -13,6 +19,8 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { discardSandbox, retrySandbox, sleepSandbox, wakeSandbox } from "../operations/commands.ts";
+import { parseThreadKey, threadKey } from "./entities.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import { canMemberDeleteThread, type createTeamEnvironmentAtoms } from "./team.ts";
 
@@ -33,6 +41,38 @@ export interface SandboxStatePresentation {
 
 const OWNER_ONLY: ReadonlyArray<SandboxAction> = ["sleep", "discard"];
 
+/** The thread menu's words on web and mobile; web's palette names the machine in each instead. */
+export const SANDBOX_ACTION_MENU_LABELS: Readonly<Record<SandboxAction, string>> = {
+  wake: "Wake machine",
+  sleep: "Sleep now",
+  retry: "Retry machine",
+  discard: "Discard machine",
+};
+
+export const SANDBOX_OWNER_ONLY_REASON = "Only the owner or an admin";
+
+export const SANDBOX_DISCARD_CONFIRMATION =
+  "Discard this machine? Its disk is deleted; transcript and diffs stay.";
+
+export const SANDBOX_ACTION_FAILURE_TITLES: Readonly<Record<SandboxAction, string>> = {
+  wake: "Could not wake the machine",
+  sleep: "Could not put the machine to sleep",
+  retry: "Could not retry the machine",
+  discard: "Could not discard the machine",
+};
+
+export const SANDBOX_ISOLATION_LABELS: Readonly<Record<SandboxDriverHealth["isolation"], string>> =
+  {
+    rootless: "Rootless Docker",
+    gvisor: "gVisor",
+    runc: "Plain Docker (runc)",
+    unknown: "Isolation unknown",
+  };
+
+export function sandboxMachineCountsLabel(machines: SandboxOverview["machines"]): string {
+  return `${machines.ready} running · ${machines.sleeping} asleep · ${machines.waiting} waiting · ${machines.failed} failed`;
+}
+
 const ADMISSION_COPY = {
   "team-cap": "Waiting for a machine: team limit reached",
   "member-cap": "Waiting for a machine: your limit reached",
@@ -50,6 +90,17 @@ function presentation(
     Partial<Pick<SandboxStatePresentation, "tone" | "rowWord" | "actions">>,
 ): SandboxStatePresentation {
   return { tone: "neutral", rowWord: null, actions: [], ownerOnly: OWNER_ONLY, ...fields };
+}
+
+/** A GitHub App with an id and a private key; redacted settings carry the key as a reference. */
+export function githubAppConfigured(settings: Pick<ServerSettings, "sourceControlHosts">): boolean {
+  const github = settings.sourceControlHosts.github;
+  const key = github?.appPrivateKey;
+  return (
+    typeof github?.appId === "string" &&
+    github.appId !== "" &&
+    (isSecretReference(key) || (typeof key === "string" && key !== ""))
+  );
 }
 
 /**
@@ -132,9 +183,27 @@ export function sandboxStatePresentation(
   }
 }
 
+/** A cloud thread's machine as every surface shows it: one rule for its line, notice and menus. */
+export interface SandboxThreadMachine {
+  readonly sandboxId: SandboxId;
+  readonly state: OrchestrationV2ThreadShellSandbox["state"];
+  readonly presentation: SandboxStatePresentation;
+  /** What the viewer is offered; empty when this connection cannot operate threads. */
+  readonly actions: ReadonlyArray<SandboxAction>;
+  /** Offered but shown disabled with SANDBOX_OWNER_ONLY_REASON. */
+  readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
+}
+
 export function createSandboxEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
-  deps: { readonly team: ReturnType<typeof createTeamEnvironmentAtoms> },
+  deps: {
+    readonly team: ReturnType<typeof createTeamEnvironmentAtoms>;
+    readonly threadShells: {
+      readonly quietThreadShellAtom: (
+        ref: ScopedThreadRef,
+      ) => Atom.Atom<EnvironmentThreadShell | null>;
+    };
+  },
 ) {
   const command = (action: SandboxAction, execute: typeof wakeSandbox) =>
     createEnvironmentRpcCommand(runtime, {
@@ -167,6 +236,50 @@ export function createSandboxEnvironmentAtoms<R, E>(
     ),
   );
 
+  const actionAllowedAtom = (key: {
+    readonly environmentId: EnvironmentId;
+    readonly action: SandboxAction;
+    readonly ownerMemberId: MemberId | null | undefined;
+  }) => allowedFamily(key.environmentId)(key.action)(key.ownerMemberId ?? null);
+
+  const machineFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get): SandboxThreadMachine | null => {
+      const shell = get(deps.threadShells.quietThreadShellAtom(ref));
+      const sandboxId = shell?.source.sandboxId;
+      const summary = shell?.source.sandbox;
+      if (shell == null || sandboxId === undefined || summary === undefined) return null;
+      // A fork or side chat shares its owner thread's machine, which that thread's owner owns;
+      // the shell summary has no owner member of its own.
+      const ownerThread =
+        summary.ownerThreadId === shell.id
+          ? shell
+          : (get(
+              deps.threadShells.quietThreadShellAtom({
+                environmentId: ref.environmentId,
+                threadId: summary.ownerThreadId,
+              }),
+            ) ?? shell);
+      const ownerMemberId = ownerThread.source.ownerId ?? null;
+      const presentation = sandboxStatePresentation(summary, {
+        hasActiveRun: shell.runtime?.activeRunId != null,
+      });
+      const allowed = (action: SandboxAction) =>
+        get(actionAllowedAtom({ environmentId: ref.environmentId, action, ownerMemberId }));
+      // Wake needs only the command's scope, so it says whether this connection may act at all.
+      const actions = allowed("wake") ? presentation.actions : [];
+      return {
+        sandboxId,
+        state: summary.state,
+        presentation,
+        actions,
+        ownerOnlyDenied: actions.filter(
+          (action) => presentation.ownerOnly.includes(action) && !allowed(action),
+        ),
+      };
+    }).pipe(Atom.withLabel(`sandbox-thread-machine:${key}`));
+  });
+
   return {
     ...commands,
     /** Settings → Cloud's Overview; health runs each driver's checks, so it is read on demand. */
@@ -185,10 +298,8 @@ export function createSandboxEnvironmentAtoms<R, E>(
       },
     }),
     /** The command's scope, then the delete rule (owner or admin in team mode) for sleep and discard. */
-    actionAllowedAtom: (key: {
-      readonly environmentId: EnvironmentId;
-      readonly action: SandboxAction;
-      readonly ownerMemberId: MemberId | null | undefined;
-    }) => allowedFamily(key.environmentId)(key.action)(key.ownerMemberId ?? null),
+    actionAllowedAtom,
+    /** Null for a local thread. Read from the shell, so it never subscribes to the transcript. */
+    threadMachineAtom: (ref: ScopedThreadRef) => machineFamily(threadKey(ref)),
   };
 }

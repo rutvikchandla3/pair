@@ -10,18 +10,21 @@ import {
 
 describe("resolveNewTaskWorkspaceSelection", () => {
   const fallback = { mode: "worktree", branch: null, worktreePath: null } as const;
+  const base = { fallback, isGitRepo: true, cloudAvailable: true };
+  const cloud = { mode: "cloud", branch: "main", worktreePath: null } as const;
 
   it("falls back to the current checkout when a non-git project defaults to worktree", () => {
     expect(
-      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: false }),
+      resolveNewTaskWorkspaceSelection({ ...base, selection: undefined, isGitRepo: false }),
     ).toEqual({ mode: "local", branch: null, worktreePath: null });
   });
 
-  it.each(["local", "worktree"] as const)(
+  it.each(["local", "worktree", "cloud"] as const)(
     "clears stale %s selections for non-git projects",
     (mode) => {
       expect(
         resolveNewTaskWorkspaceSelection({
+          ...base,
           selection: {
             mode,
             branch: "main",
@@ -29,7 +32,6 @@ describe("resolveNewTaskWorkspaceSelection", () => {
             startFromOrigin: true,
             pullRequestReference: "https://github.com/acme/repo/pull/123",
           },
-          fallback,
           isGitRepo: false,
         }),
       ).toEqual({ mode: "local", branch: null, worktreePath: null });
@@ -39,12 +41,15 @@ describe("resolveNewTaskWorkspaceSelection", () => {
   // regression: #21404 use current checkout for non-git projects
   it("preserves the selection and defaults for git projects", () => {
     const selection = { mode: "local", branch: "feature", worktreePath: "/worktree" } as const;
-    expect(resolveNewTaskWorkspaceSelection({ selection, fallback, isGitRepo: true })).toBe(
-      selection,
-    );
+    expect(resolveNewTaskWorkspaceSelection({ ...base, selection })).toBe(selection);
+    expect(resolveNewTaskWorkspaceSelection({ ...base, selection: undefined })).toBe(fallback);
+  });
+
+  it("keeps a cloud selection while Cloud is available, else starts a new worktree", () => {
+    expect(resolveNewTaskWorkspaceSelection({ ...base, selection: cloud })).toBe(cloud);
     expect(
-      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: true }),
-    ).toBe(fallback);
+      resolveNewTaskWorkspaceSelection({ ...base, selection: cloud, cloudAvailable: false }),
+    ).toEqual({ ...cloud, mode: "worktree" });
   });
 });
 
@@ -96,15 +101,18 @@ describe("resolveNewTaskLocalWorkspaceSelection", () => {
 });
 
 describe("resolveNewTaskBranchWorktreePath", () => {
-  it("does not reuse an existing worktree while creating a new one", () => {
-    expect(
-      resolveNewTaskBranchWorktreePath({
-        workspaceMode: "worktree",
-        projectCwd: "/repo",
-        branchWorktreePath: "/repo/.t3/worktrees/feature",
-      }),
-    ).toBeNull();
-  });
+  it.each(["worktree", "cloud"] as const)(
+    "does not reuse an existing local worktree for a %s task",
+    (workspaceMode) => {
+      expect(
+        resolveNewTaskBranchWorktreePath({
+          workspaceMode,
+          projectCwd: "/repo",
+          branchWorktreePath: "/repo/.t3/worktrees/feature",
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("fillNewTaskWorkspaceBranch", () => {
@@ -125,6 +133,15 @@ describe("fillNewTaskWorkspaceBranch", () => {
         selection: { mode: "worktree", branch: null, worktreePath: null },
       }),
     ).toEqual({ mode: "worktree", branch: "origin/main", worktreePath: null });
+  });
+
+  it("bases a machine on the default branch's name, since it clones the remote", () => {
+    expect(
+      fillNewTaskWorkspaceBranch({
+        ...base,
+        selection: { mode: "cloud", branch: null, worktreePath: null },
+      }),
+    ).toEqual({ mode: "cloud", branch: "main", worktreePath: null });
   });
 
   it("waits for the workspace default to settle before picking a base", () => {

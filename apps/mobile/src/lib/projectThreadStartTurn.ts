@@ -15,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/operations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
+import type { NewTaskWorkspaceMode } from "./newTaskWorkspaceMode";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -30,7 +31,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  readonly workspaceMode: "local" | "worktree";
+  readonly workspaceMode: NewTaskWorkspaceMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -43,6 +44,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     attachments: spec.uploadedAttachments,
   });
   const isWorktree = spec.workspaceMode === "worktree";
+  const isLocal = spec.workspaceMode === "local";
   return {
     commandId: CommandId.make(spec.commandId),
     creationSource: "mobile" as const,
@@ -66,7 +68,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
         branch: spec.branch,
-        worktreePath: isWorktree ? null : spec.worktreePath,
+        worktreePath: isLocal ? spec.worktreePath : null,
         createdAt: spec.createdAt,
       },
       ...(isWorktree
@@ -79,6 +81,10 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
             },
             runSetupScript: true,
           }
+        : {}),
+      // The server clones and sets up the workspace in the machine.
+      ...(spec.workspaceMode === "cloud"
+        ? { prepareCloud: { baseRef: spec.branch!, branch: spec.worktreeBranchName } }
         : {}),
     },
     createdAt: spec.createdAt,

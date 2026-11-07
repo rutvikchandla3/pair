@@ -146,10 +146,8 @@ import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { cloudAvailability } from "@t3tools/shared/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
-import {
-  SANDBOX_ACTION_PALETTE_LABELS,
-  SANDBOX_OWNER_ONLY_REASON,
-} from "./sandbox/sandboxActionLabels";
+import { SANDBOX_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
+import { SANDBOX_ACTION_PALETTE_LABELS } from "./sandbox/sandboxActionLabels";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,

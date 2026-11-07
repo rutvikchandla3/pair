@@ -15,6 +15,7 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsNotifications: ["push", "alerts", "live activity", "agent activity"],
   SettingsTeam: ["members", "teammates", "online", "away", "admin"],
+  SettingsMachines: ["cloud", "machines", "docker", "sandbox", "driver"],
   SettingsAppearance: [
     "theme",
     "dark mode",
