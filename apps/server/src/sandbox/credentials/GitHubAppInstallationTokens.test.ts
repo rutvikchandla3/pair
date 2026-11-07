@@ -39,7 +39,10 @@ interface Sent {
 }
 
 /** A fake GitHub: `org/repo` is installed (id 7), anything else is not; tokens live an hour. */
-const harness = (github: { readonly appId: string; readonly appPrivateKey: string }) => {
+const harness = (
+  github: { readonly appId: string; readonly appPrivateKey: string },
+  revokeStatus = 204,
+) => {
   const sent: Array<Sent> = [];
   const logs: Array<string> = [];
   let minted = 0;
@@ -57,18 +60,20 @@ const harness = (github: { readonly appId: string; readonly appPrivateKey: strin
       });
       const now = yield* DateTime.now;
       const reply =
-        url.pathname === "/repos/org/repo/installation"
-          ? { status: 200, body: { id: 7 } }
-          : url.pathname === "/app/installations/7/access_tokens"
-            ? {
-                status: 201,
-                body: {
-                  token: `ghs_minted_${++minted}`,
-                  expires_at: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
-                  permissions: { contents: "write" },
-                },
-              }
-            : { status: 404, body: { message: "Not Found" } };
+        url.pathname === "/installation/token" && request.method === "DELETE"
+          ? { status: revokeStatus, body: {} }
+          : url.pathname === "/repos/org/repo/installation"
+            ? { status: 200, body: { id: 7 } }
+            : url.pathname === "/app/installations/7/access_tokens"
+              ? {
+                  status: 201,
+                  body: {
+                    token: `ghs_minted_${++minted}`,
+                    expires_at: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+                    permissions: { contents: "write" },
+                  },
+                }
+              : { status: 404, body: { message: "Not Found" } };
       return HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify(reply.body), {
@@ -152,6 +157,39 @@ describe("GitHubAppInstallationTokens", () => {
       for (const secret of ["ghs_minted", jwt, "PRIVATE KEY", pastedKey.slice(40, 80)]) {
         expect(text).not.toContain(secret);
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each([
+    ["GitHub revokes it", 204],
+    ["GitHub fails to revoke it", 500],
+  ] as const)("forgets only that sandbox's tokens when %s", ([_name, revokeStatus]) => {
+    const { sent, logs, layer } = harness(
+      { appId: "12345", appPrivateKey: pastedKey },
+      revokeStatus,
+    );
+    return Effect.gen(function* () {
+      const tokens = yield* GitHubAppInstallationTokens.GitHubAppInstallationTokens;
+      const token = (sandboxId: SandboxId) =>
+        tokens
+          .tokenFor({ sandboxId, repository: "org/repo" })
+          .pipe(Effect.map((minted) => Redacted.value(minted.token)));
+      expect(yield* token(sandboxA)).toBe("ghs_minted_1");
+      expect(yield* token(sandboxB)).toBe("ghs_minted_2");
+      sent.length = 0;
+
+      yield* tokens.revoke(sandboxA);
+      expect(sent.map(({ method, path, bearer }) => `${method} ${path} ${bearer}`)).toEqual([
+        "DELETE /installation/token ghs_minted_1",
+      ]);
+      // A second revoke has nothing left to send.
+      yield* tokens.revoke(sandboxA);
+      expect(sent).toHaveLength(1);
+
+      expect(yield* token(sandboxB)).toBe("ghs_minted_2");
+      expect(sent).toHaveLength(1);
+      expect(yield* token(sandboxA)).toBe("ghs_minted_3");
+      expect(logs.join("\n")).not.toContain("ghs_minted");
     }).pipe(Effect.provide(layer));
   });
 

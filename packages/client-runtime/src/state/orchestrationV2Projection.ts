@@ -420,5 +420,7 @@ export function applyOrchestrationV2ProjectionEvent(
     // Machine state is not thread activity: skip the updatedAt bump.
     case "sandbox.updated":
       return { ...projection, sandbox: event.payload };
+    case "sandbox.git-credential.issued":
+      return projection;
   }
 }

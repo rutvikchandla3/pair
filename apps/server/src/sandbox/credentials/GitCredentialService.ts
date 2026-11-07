@@ -1,7 +1,14 @@
-import type { MemberId, ProjectId, SandboxId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type MemberId,
+  type ProjectId,
+  type SandboxGitCredentialSource,
+  type SandboxId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { RunnerGitCredentialAnswer } from "@t3tools/contracts/runner";
 import * as Context from "effect/Context";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,6 +18,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityResolver.ts";
@@ -24,12 +32,11 @@ const REQUEST_TIMEOUT = Duration.seconds(15);
 const ANSWER_TIMEOUT = Duration.seconds(45);
 const REPOSITORY_PATH = /^[\w.-]+\/[\w.-]+$/u;
 
-type GitCredentialSource = "app-installation" | "member-account";
-
 interface PickedCredential {
-  readonly source: GitCredentialSource;
+  readonly source: SandboxGitCredentialSource;
   readonly password: Redacted.Redacted<string>;
   readonly expiresAt: DateTime.Utc | null;
+  readonly permissions?: Readonly<Record<string, string>>;
 }
 
 class ForkCheckError extends Schema.TaggedError<ForkCheckError>()("ForkCheckError", {
@@ -61,6 +68,13 @@ const UNAVAILABLE = refused(
   "unavailable",
   "Could not get a GitHub credential right now. Try again.",
 );
+
+interface AnswerContext {
+  readonly sandboxId: SandboxId;
+  readonly generation: number;
+  readonly threadId: ThreadId;
+  readonly repository: string;
+}
 
 /** `owner/name` from git's `path` (`owner/name.git`), lower case; null for anything else. */
 const repositoryFromPath = (path: string | undefined): string | null => {
@@ -101,6 +115,7 @@ const make = Effect.gen(function* () {
   const identities = yield* RepositoryIdentityResolver;
   const app = yield* GitHubAppInstallationTokens;
   const members = yield* MemberGitHub;
+  const orchestrator = yield* OrchestratorV2;
   const httpClient = yield* HttpClient.HttpClient;
   const verifiedForks = yield* Ref.make<ReadonlySet<string>>(new Set());
 
@@ -127,6 +142,7 @@ const make = Effect.gen(function* () {
           source: "app-installation",
           password: minted.success.token,
           expiresAt: minted.success.expiresAt,
+          permissions: minted.success.permissions,
         });
       }
       // A bad key or a missing installation never blocks a member who has their own GitHub.
@@ -141,7 +157,7 @@ const make = Effect.gen(function* () {
     const own = yield* members.credentialFor(ownerId);
     return Option.isSome(own) && own.value.host === HOST
       ? Option.some<PickedCredential>({
-          source: "member-account",
+          source: own.value.source === "token" ? "member-token" : "member-account",
           password: own.value.token,
           expiresAt: null,
         })
@@ -180,19 +196,49 @@ const make = Effect.gen(function* () {
     return isFork;
   });
 
+  /**
+   * The asking thread's audit event, never the value. The id makes one event per token (or per
+   * generation for the owner's own GitHub), so cached answers add nothing.
+   */
+  const record = Effect.fn("GitCredentialService.record")(
+    function* (picked: PickedCredential, context: AnswerContext) {
+      const expiresAt = picked.expiresAt === null ? null : DateTime.formatIso(picked.expiresAt);
+      const fields = {
+        threadId: context.threadId,
+        sandboxId: context.sandboxId,
+        source: picked.source,
+        repository: context.repository,
+        expiresAt,
+      };
+      yield* Effect.logInfo("Issued a git credential", fields);
+      yield* orchestrator.dispatch({
+        type: "sandbox.git-credential.record",
+        commandId: CommandId.make(
+          `sandbox-git-credential:${context.sandboxId}:${context.generation}:${context.threadId}:${context.repository}:${expiresAt ?? picked.source}`,
+        ),
+        ...fields,
+        host: HOST,
+        ...(picked.permissions === undefined ? {} : { permissions: picked.permissions }),
+      });
+    },
+    (effect, _picked, context) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record a git credential's audit event", {
+            threadId: context.threadId,
+            sandboxId: context.sandboxId,
+            cause,
+          }),
+        ),
+      ),
+  );
+
   const toAnswer = Effect.fn("GitCredentialService.toAnswer")(function* (
     picked: Option.Option<PickedCredential>,
-    context: {
-      readonly sandboxId: SandboxId;
-      readonly threadId: ThreadId;
-      readonly repository: string;
-    },
+    context: AnswerContext,
   ) {
     if (Option.isNone(picked)) return MISSING;
-    yield* Effect.logDebug("answered a sandbox git credential request", {
-      ...context,
-      source: picked.value.source,
-    });
+    yield* record(picked.value, context);
     return {
       _tag: "Credential",
       username: "x-access-token",
@@ -227,7 +273,12 @@ const make = Effect.gen(function* () {
         `Cloud threads push only to ${project} and its forks.`,
       );
       if (requested === null) return notThisRepository;
-      const context = { sandboxId: input.sandboxId, threadId, repository: requested };
+      const context: AnswerContext = {
+        sandboxId: input.sandboxId,
+        generation: sandbox.generation,
+        threadId,
+        repository: requested,
+      };
       const ownerId = thread.ownerId ?? null;
       const forProject = yield* pick(input.sandboxId, ownerId, project);
       if (requested === project) return yield* toAnswer(forProject, context);

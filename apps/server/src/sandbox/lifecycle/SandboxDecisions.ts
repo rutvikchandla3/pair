@@ -1,6 +1,7 @@
 import type {
   CommandId,
   MemberId,
+  OrchestrationV2DomainEvent,
   OrchestrationV2Sandbox,
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
@@ -286,4 +287,27 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         ? refuse("wrong-state")
         : update({ state: "failed", failure: command.failure });
   }
+};
+
+type GitCredentialRecord = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "sandbox.git-credential.record" }
+>;
+type GitCredentialIssued = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly type: "sandbox.git-credential.issued" }
+>["payload"];
+
+/** Only a live thread that runs on the sandbox may carry its credential's audit. */
+export const decideGitCredentialRecord = (
+  command: GitCredentialRecord,
+  thread: Pick<OrchestrationV2ThreadShell, "sandboxId" | "deletedAt"> | null,
+):
+  | { readonly _tag: "Accept"; readonly payload: GitCredentialIssued }
+  | { readonly _tag: "Refuse"; readonly reason: "not-this-sandbox" } => {
+  if (thread === null || thread.deletedAt !== null || thread.sandboxId !== command.sandboxId) {
+    return { _tag: "Refuse", reason: "not-this-sandbox" };
+  }
+  const { type: _type, commandId: _commandId, threadId: _threadId, ...payload } = command;
+  return { _tag: "Accept", payload };
 };

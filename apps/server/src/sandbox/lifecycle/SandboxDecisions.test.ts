@@ -11,6 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import {
+  decideGitCredentialRecord,
   decideSandboxCommand,
   planSandboxOnThreadDelete,
   type SandboxAttachedThread,
@@ -429,5 +430,35 @@ describe("planSandboxOnThreadDelete", () => {
         commandId,
       }),
     ).toEqual(expected);
+  });
+});
+
+describe("decideGitCredentialRecord", () => {
+  const issued = {
+    sandboxId,
+    source: "app-installation",
+    host: "github.com",
+    repository: "org/repo",
+    expiresAt: "2026-11-07T01:00:00.000Z",
+  } as const;
+  const command = {
+    type: "sandbox.git-credential.record",
+    commandId: CommandId.make("record"),
+    threadId: fork,
+    ...issued,
+  } as const;
+  const other = SandboxId.make("sbx_ffffffffffffffffffff");
+  it.each([
+    { name: "a thread on the sandbox", thread: { sandboxId, deletedAt: null }, accepted: true },
+    { name: "a thread of another sandbox", thread: { sandboxId: other, deletedAt: null } },
+    { name: "a local thread", thread: { deletedAt: null } },
+    { name: "a deleted thread", thread: { sandboxId, deletedAt: now } },
+    { name: "a missing thread", thread: null },
+  ])("$name", ({ thread, accepted }) => {
+    expect(decideGitCredentialRecord(command, thread)).toEqual(
+      accepted === true
+        ? { _tag: "Accept", payload: issued }
+        : { _tag: "Refuse", reason: "not-this-sandbox" },
+    );
   });
 });

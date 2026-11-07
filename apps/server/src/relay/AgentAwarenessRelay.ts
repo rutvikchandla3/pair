@@ -136,6 +136,7 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "context-transfer.created":
     case "context-transfer.updated":
     case "sandbox.updated":
+    case "sandbox.git-credential.issued":
       return false;
   }
 }

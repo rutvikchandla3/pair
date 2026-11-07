@@ -2,6 +2,8 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type MemberId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2Sandbox,
   type OrchestrationV2ThreadShellSandbox,
   type TeamMember,
 } from "@t3tools/contracts";
@@ -59,6 +61,23 @@ export function cloudPushCredential(input: {
 }): "app" | "owner" | "missing" {
   if (input.appConfigured) return "app";
   return input.owner?.github?.connected === true ? "owner" : "missing";
+}
+
+/**
+ * A thread on a machine another member owns, as a fork of a teammate's cloud thread is: its
+ * agent can read every credential that machine holds. False on solo servers and local threads.
+ */
+export function sharesOtherOwnersMachine(
+  thread: Pick<OrchestrationV2AppThread, "sandboxId" | "ownerId">,
+  sandbox: Pick<OrchestrationV2Sandbox, "ownerMemberId"> | undefined,
+): boolean {
+  const ownerId = thread.ownerId ?? null;
+  return (
+    thread.sandboxId !== undefined &&
+    ownerId !== null &&
+    sandbox?.ownerMemberId != null &&
+    sandbox.ownerMemberId !== ownerId
+  );
 }
 
 export function sandboxStatePresentation(

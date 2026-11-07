@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
   MemberId,
+  SandboxId,
   ThreadId,
   type AuthSessionState,
   type OrchestrationV2ThreadShellSandbox,
@@ -18,6 +19,7 @@ import {
   cloudPushCredential,
   createSandboxEnvironmentAtoms,
   sandboxStatePresentation,
+  sharesOtherOwnersMachine,
   type SandboxAction,
   type SandboxStatePresentation,
 } from "./sandbox.ts";
@@ -216,6 +218,21 @@ describe("cloudPushCredential", () => {
     ["an unknown owner pushes nothing", false, undefined, "missing"],
   ] as const)("%s", (_name, appConfigured, member, expected) => {
     expect(cloudPushCredential({ appConfigured, owner: member })).toBe(expected);
+  });
+});
+
+describe("sharesOtherOwnersMachine", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  it.each([
+    ["a fork on a teammate's machine", { sandboxId, ownerId: bob }, { ownerMemberId: alice }, true],
+    ["the owner's own thread", { sandboxId, ownerId: alice }, { ownerMemberId: alice }, false],
+    ["a local thread", { ownerId: bob }, undefined, false],
+    ["a thread whose machine has not loaded", { sandboxId, ownerId: bob }, undefined, false],
+    ["a solo server", { sandboxId, ownerId: null }, { ownerMemberId: null }, false],
+  ] as const)("%s", (_name, thread, sandbox, expected) => {
+    expect(sharesOtherOwnersMachine(thread, sandbox)).toBe(expected);
   });
 });
 

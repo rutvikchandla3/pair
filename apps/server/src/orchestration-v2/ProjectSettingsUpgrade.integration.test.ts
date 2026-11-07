@@ -32,6 +32,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
 import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
+import * as SandboxCredentialRevocation from "../sandbox/credentials/SandboxCredentialRevocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
@@ -149,6 +150,7 @@ const layerRuntime = (dbPath: string) => {
       Layer.mergeAll(
         Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
         Layer.mock(SandboxBootstrapSource.SandboxBootstrapSource)({}),
+        Layer.mock(SandboxCredentialRevocation.SandboxCredentialRevocation)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       ),
     ),

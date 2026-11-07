@@ -3,6 +3,7 @@ import {
   ComputeDriverId,
   MemberId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Sandbox,
   ProjectId,
   SandboxId,
@@ -17,6 +18,7 @@ import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { type ProjectRow, ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityResolver.ts";
@@ -72,6 +74,8 @@ interface Case {
   readonly app: AppOutcome | "unset";
   /** Members with their own GitHub connected, by password. */
   readonly accounts?: ReadonlyMap<MemberId, string>;
+  /** The accounts are pasted tokens rather than linked sign-ins. */
+  readonly pasted?: boolean;
   readonly threadId?: ThreadId;
   readonly host?: string;
   readonly protocol?: string;
@@ -82,8 +86,10 @@ const harness = (input: Case) => {
   const tokenRequests: Array<string> = [];
   const logs: Array<string> = [];
   const forkChecks: Array<{ readonly path: string; readonly bearer: string }> = [];
+  const records: Array<OrchestrationV2ServerCommand> = [];
   const app = GitHubAppInstallationTokens.of({
     configured: Effect.succeed(input.app !== "unset"),
+    revoke: () => Effect.void,
     tokenFor: ({ sandboxId, repository }) => {
       tokenRequests.push(`${sandboxId} ${repository}`);
       return input.app === "token"
@@ -91,6 +97,7 @@ const harness = (input: Case) => {
             token: Redacted.make(`ghs_${repository}`),
             expiresAt,
             repository,
+            permissions: { contents: "write" },
           })
         : Effect.fail(
             new GitHubAppInstallationError({
@@ -124,12 +131,23 @@ const harness = (input: Case) => {
       Layer.mergeAll(
         Layer.succeed(GitHubAppInstallationTokens, app),
         Layer.succeed(HttpClient.HttpClient, http),
+        Layer.mock(OrchestratorV2)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              records.push(command);
+              return { sequence: records.length, storedEvents: [] };
+            }),
+        }),
         Layer.mock(MemberGitHub)({
           enabled: true,
           credentialFor: (memberId) =>
             Effect.succeed(
               Option.fromNullishOr(input.accounts?.get(memberId)).pipe(
-                Option.map((token) => ({ host: "github.com", token: Redacted.make(token) })),
+                Option.map((token) => ({
+                  host: "github.com",
+                  token: Redacted.make(token),
+                  source: input.pasted === true ? ("token" as const) : ("app" as const),
+                })),
               ),
             ),
         }),
@@ -216,7 +234,7 @@ const harness = (input: Case) => {
       ),
     ),
   );
-  return { answer, tokenRequests, forkChecks, logs };
+  return { answer, tokenRequests, forkChecks, logs, records };
 };
 
 const aliceOnly = new Map([[alice, "ghu_alice"]]);
@@ -316,15 +334,66 @@ describe("GitCredentialService", () => {
     }),
   );
 
+  it.effect("records each answer once per token on the asking thread, without the token", () =>
+    Effect.gen(function* () {
+      const { answer, records } = harness({ app: "token" });
+      yield* answer;
+      yield* answer;
+      expect(records.map((command) => command.commandId)).toEqual([
+        `sandbox-git-credential:${sandboxA}:1:${ownerThread}:org/repo:2026-11-07T13:00:00.000Z`,
+        `sandbox-git-credential:${sandboxA}:1:${ownerThread}:org/repo:2026-11-07T13:00:00.000Z`,
+      ]);
+      expect(records[0]).toMatchObject({
+        type: "sandbox.git-credential.record",
+        threadId: ownerThread,
+        sandboxId: sandboxA,
+        source: "app-installation",
+        host: "github.com",
+        repository: "org/repo",
+        permissions: { contents: "write" },
+        expiresAt: "2026-11-07T13:00:00.000Z",
+      });
+      expect(JSON.stringify(records)).not.toContain("ghs_");
+    }),
+  );
+
+  it.effect.each([
+    ["linked account", false, "member-account"],
+    ["pasted token", true, "member-token"],
+  ] as const)("records the fork owner's %s on the fork's stream", ([_name, pasted, source]) =>
+    Effect.gen(function* () {
+      const { answer, records } = harness({
+        app: "unset",
+        accounts: both,
+        pasted,
+        threadId: forkedThread,
+      });
+      expect(yield* answer).toEqual({ password: "ghu_bob", expires: false });
+      expect(records).toEqual([
+        {
+          type: "sandbox.git-credential.record",
+          commandId: `sandbox-git-credential:${sandboxA}:1:${forkedThread}:org/repo:${source}`,
+          threadId: forkedThread,
+          sandboxId: sandboxA,
+          source,
+          host: "github.com",
+          repository: "org/repo",
+          expiresAt: null,
+        },
+      ]);
+    }),
+  );
+
   it.effect("never asks for a credential for another sandbox's thread", () =>
     Effect.gen(function* () {
-      const { answer, tokenRequests, forkChecks } = harness({
+      const { answer, tokenRequests, forkChecks, records } = harness({
         app: "token",
         threadId: otherSandboxThread,
       });
       expect(yield* answer).toEqual({ refused: "not-this-repository" });
       expect(tokenRequests).toEqual([]);
       expect(forkChecks).toEqual([]);
+      expect(records).toEqual([]);
     }),
   );
 });

@@ -1050,6 +1050,9 @@ export function applyToProjection(
     // Skips `base`: machine state must not reorder threads.
     case "sandbox.updated":
       return { ...projection, sandbox: event.payload };
+    // Audit only: the event log and server log are its record.
+    case "sandbox.git-credential.issued":
+      return projection;
   }
 }
 

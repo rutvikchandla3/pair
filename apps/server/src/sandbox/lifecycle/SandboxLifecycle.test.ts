@@ -1,3 +1,5 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -22,8 +24,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CheckpointRollback from "../../orchestration-v2/CheckpointRollbackService.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
@@ -46,7 +51,12 @@ import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
+import { GitHubAppInstallationTokens } from "../credentials/GitHubAppInstallationTokens.ts";
+import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
+import * as RunnerGrants from "../runnerHub/RunnerGrants.ts";
+import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
 import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
@@ -83,6 +93,49 @@ const layerTest = ThreadManagement.layer.pipe(
 
 const installId = EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
 
+/** The real hub and MCP registry over the test database; installation tokens only record revokes. */
+const makeCredentials = Effect.fn("SandboxLifecycleTest.makeCredentials")(function* () {
+  const revokedInstallationTokens = yield* Ref.make<ReadonlyArray<SandboxId>>([]);
+  const mcp = yield* McpSessionRegistry.__testing.make().pipe(
+    Effect.provideService(
+      HttpServer.HttpServer,
+      HttpServer.HttpServer.of({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+        serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+      }),
+    ),
+    Effect.provideService(
+      ServerEnvironment.ServerEnvironment,
+      ServerEnvironment.ServerEnvironment.of({
+        getEnvironmentId: Effect.succeed(installId),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+  const context = yield* Layer.build(
+    SandboxCredentialRevocation.layer.pipe(
+      Layer.provideMerge(
+        RunnerHubLive.layer.pipe(
+          Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+          Layer.provideMerge(RunnerGrants.layer),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(McpSessionRegistry.McpSessionRegistry, mcp),
+          Layer.mock(GitHubAppInstallationTokens)({
+            revoke: (sandboxId) =>
+              Ref.update(revokedInstallationTokens, (revoked) => [...revoked, sandboxId]),
+          }),
+        ),
+      ),
+      Layer.provide(NodeCrypto.layer),
+    ),
+  );
+  return { context, mcp, revokedInstallationTokens };
+});
+
 /** The real worker and executor over the real `SandboxEffects`, the fake driver and a recording bootstrap. */
 const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(function* () {
   const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
@@ -107,8 +160,11 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
       getEnvironmentId: Effect.succeed(installId),
     }),
   );
+  const credentials = yield* makeCredentials();
   const layerSandboxEffects = SandboxEffects.layer.pipe(
-    Layer.provide(Layer.merge(layerDriver, layerBootstrap)),
+    Layer.provide(
+      Layer.mergeAll(layerDriver, layerBootstrap, Layer.succeedContext(credentials.context)),
+    ),
   );
   const layerWorker = EffectWorker.layerWithOptions({ workerId: "sandbox-lifecycle" }).pipe(
     Layer.provide(
@@ -129,7 +185,8 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
     ),
   );
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(Effect.provide(layerWorker));
-  return { ...fake, bootstraps, worker, layerDriver };
+  const effects = yield* SandboxEffects.SandboxEffects.pipe(Effect.provide(layerSandboxEffects));
+  return { ...fake, bootstraps, worker, effects, layerDriver, ...credentials };
 });
 
 type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
@@ -389,6 +446,8 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       assert.equal(sandbox?.state, "failed");
       assert.deepInclude(sandbox?.failure ?? {}, { code: "lost", retryable: true });
       assert.equal(yield* Queue.size(runtime.calls), 0);
+      // A machine that stopped by itself keeps no credentials either.
+      assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
     }),
   );
   it.effect("adopts a backend found by name once, after its create's answer was lost", () =>
@@ -452,6 +511,116 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
       const [last] = (yield* sandboxEvents(threadId)).slice(-1);
       assert.equal(last?.type === "sandbox.updated" && last.payload.state, "destroyed");
+    }),
+  );
+
+  it.effect(
+    "stop revokes the runner grant, the attached threads' MCP tokens and the installation tokens",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* makeSandboxRuntime();
+        const { threadId, sandboxId } = yield* provisioned("revoke");
+        yield* runAnswering(runtime, answerCreate);
+        yield* attach(threadId, sandboxId, 1);
+        const grants = yield* RunnerGrants.RunnerGrants.pipe(
+          Effect.provide(Layer.succeedContext(runtime.context)),
+        );
+        const { token } = yield* grants.enroll(yield* grants.mint(sandboxId, 1));
+        const mcpToken = (id: ThreadId) =>
+          runtime.mcp
+            .issue({ threadId: id, providerInstanceId: instanceId })
+            .pipe(
+              Effect.map((issued) => issued.config.authorizationHeader.replace(/^Bearer\s+/u, "")),
+            );
+        const ownerMcp = yield* mcpToken(threadId);
+        const elsewhereMcp = yield* mcpToken(ThreadId.make("thread:elsewhere"));
+
+        yield* dispatch({
+          type: "sandbox.sleep",
+          commandId: CommandId.make("sleep:revoke"),
+          threadId,
+          sandboxId,
+        });
+        // Nothing is revoked until the driver accepted the stop.
+        yield* runAnswering(runtime, (call) =>
+          call._tag === "stop"
+            ? Effect.gen(function* () {
+                assert.deepEqual(yield* grants.authenticate(token), { sandboxId, generation: 1 });
+                yield* Deferred.succeed(call.reply, undefined);
+              }).pipe(Effect.orDie)
+            : Effect.die(call._tag),
+        );
+
+        const refused = yield* grants.authenticate(token).pipe(Effect.flip);
+        assert.equal(refused._tag === "RunnerAuthError" && refused.reason, "revoked");
+        assert.isUndefined(yield* runtime.mcp.resolve(ownerMcp));
+        assert.isDefined(yield* runtime.mcp.resolve(elsewhereMcp));
+        assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
+      }),
+  );
+
+  it.effect("a replayed destroy revokes again without error", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("replayed-destroy");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attach(threadId, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.discard",
+        commandId: CommandId.make("discard:replayed-destroy"),
+        threadId,
+        sandboxId,
+      });
+      const answerDestroy = (call: FakeComputeDriver.FakeComputeCall) =>
+        call._tag === "destroy" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag);
+      yield* runAnswering(runtime, answerDestroy);
+      assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
+
+      const replay = yield* runtime.effects
+        .execute({ type: "sandbox.destroy", sandboxId, generation: 1 })
+        .pipe(Effect.forkChild);
+      yield* Queue.take(runtime.calls).pipe(Effect.flatMap(answerDestroy));
+      yield* Fiber.join(replay);
+      assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId, sandboxId]);
+    }),
+  );
+
+  it.effect("records a git credential once, only for a thread on the sandbox", () =>
+    Effect.gen(function* () {
+      const { threadId, sandboxId } = yield* provisioned("git-credential");
+      const { threadId: elsewhere } = yield* provisioned("elsewhere-git");
+      const record = (id: ThreadId) =>
+        dispatch({
+          type: "sandbox.git-credential.record",
+          commandId: CommandId.make(`git-credential:${id}`),
+          threadId: id,
+          sandboxId,
+          source: "member-account",
+          host: "github.com",
+          repository: "org/repo",
+          expiresAt: null,
+        });
+      yield* record(threadId);
+      yield* record(threadId);
+      const issued = yield* EventStore.EventStoreV2.use((events) =>
+        events
+          .read({ threadId, eventType: "sandbox.git-credential.issued" })
+          .pipe(Stream.runCollect),
+      );
+      assert.deepEqual(
+        Array.from(issued, (stored) => stored.event.payload),
+        [
+          {
+            sandboxId,
+            source: "member-account",
+            host: "github.com",
+            repository: "org/repo",
+            expiresAt: null,
+          },
+        ],
+      );
+      const refused = yield* record(elsewhere).pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorDispatchError");
     }),
   );
 

@@ -3603,7 +3603,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                   credentialFor: (memberId) =>
                     Effect.succeed(
                       connected && memberId === actor.id
-                        ? Option.some({ host: "github.com", token: Redacted.make("member-token") })
+                        ? Option.some({
+                            host: "github.com",
+                            token: Redacted.make("member-token"),
+                            source: "app" as const,
+                          })
                         : Option.none(),
                     ),
                   check: (memberId) => Deferred.succeed(checked, memberId).pipe(Effect.asVoid),

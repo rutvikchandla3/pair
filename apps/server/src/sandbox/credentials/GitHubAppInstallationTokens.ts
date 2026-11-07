@@ -22,6 +22,8 @@ import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/h
 
 const API = "https://api.github.com";
 const REQUEST_TIMEOUT = Duration.seconds(15);
+/** Revocation runs inside a stop's bound; GitHub being slow must not hold it. */
+const REVOKE_TIMEOUT = Duration.seconds(5);
 /** A cached token is handed out only while it has at least this long left. */
 const REFRESH_MARGIN = Duration.minutes(5);
 /** Never `workflows`: an agent must not rewrite CI (06 §5). */
@@ -50,6 +52,7 @@ export interface InstallationToken {
   readonly expiresAt: DateTime.Utc;
   /** `owner/name`, lower case. */
   readonly repository: string;
+  readonly permissions: Readonly<Record<string, string>>;
 }
 
 export class GitHubAppInstallationTokens extends Context.Service<
@@ -62,6 +65,11 @@ export class GitHubAppInstallationTokens extends Context.Service<
       readonly sandboxId: SandboxId;
       readonly repository: string;
     }) => Effect.Effect<InstallationToken, GitHubAppInstallationError>;
+    /**
+     * Forgets the sandbox's cached tokens, then asks GitHub to revoke each one. Idempotent;
+     * GitHub failures are logged and ignored (stateless tokens may not honor it, 06 §5).
+     */
+    readonly revoke: (sandboxId: SandboxId) => Effect.Effect<void>;
   }
 >()("t3/sandbox/credentials/GitHubAppInstallationTokens") {}
 
@@ -89,6 +97,8 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const signature = yield* Signature.Signature;
   const cache = yield* Ref.make<ReadonlyMap<string, InstallationToken>>(new Map());
+  /** Bumped by `revoke`, so a mint already in flight does not cache for a stopped sandbox. */
+  const revocations = yield* Ref.make<ReadonlyMap<SandboxId, number>>(new Map());
   const mintLocks = yield* KeyedLock.make<string>();
 
   const configured = sourceControlHost.settings.get.pipe(
@@ -233,7 +243,12 @@ const make = Effect.gen(function* () {
       repository,
       expiresAt: DateTime.formatIso(expiresAt),
     });
-    return { token: Redacted.make(body.token), expiresAt, repository } satisfies InstallationToken;
+    return {
+      token: Redacted.make(body.token),
+      expiresAt,
+      repository,
+      permissions: INSTALLATION_TOKEN_PERMISSIONS,
+    } satisfies InstallationToken;
   });
 
   const tokenFor: GitHubAppInstallationTokens["Service"]["tokenFor"] = Effect.fn(
@@ -251,6 +266,7 @@ const make = Effect.gen(function* () {
     });
     const hit = yield* fresh;
     if (hit !== undefined) return hit;
+    const epoch = (yield* Ref.get(revocations)).get(input.sandboxId);
     // Two git calls for one repository mint once.
     return yield* mintLocks.withLock(
       key,
@@ -258,6 +274,7 @@ const make = Effect.gen(function* () {
         const raced = yield* fresh;
         if (raced !== undefined) return raced;
         const token = yield* mint(input.sandboxId, repository);
+        if ((yield* Ref.get(revocations)).get(input.sandboxId) !== epoch) return token;
         const now = yield* DateTime.now;
         yield* Ref.update(cache, (current) => {
           const next = new Map<string, InstallationToken>();
@@ -272,7 +289,61 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return GitHubAppInstallationTokens.of({ configured, tokenFor });
+  const revokeOne = Effect.fn("GitHubAppInstallationTokens.revokeOne")(
+    function* (sandboxId: SandboxId, entry: InstallationToken) {
+      const response = yield* httpClient
+        .execute(
+          HttpClientRequest.delete(`${API}/installation/token`).pipe(
+            HttpClientRequest.setHeaders({
+              accept: "application/vnd.github+json",
+              authorization: `Bearer ${Redacted.value(entry.token)}`,
+              "user-agent": "t3code",
+              "x-github-api-version": "2022-11-28",
+            }),
+          ),
+        )
+        .pipe(Effect.timeout(REVOKE_TIMEOUT));
+      if (response.status !== 204) {
+        yield* Effect.logWarning("GitHub did not revoke an installation token", {
+          sandboxId,
+          repository: entry.repository,
+          status: response.status,
+        });
+      }
+    },
+    (effect, sandboxId, entry) =>
+      // Never the cause: a request error can quote the authorization header.
+      Effect.catchCause(effect, () =>
+        Effect.logWarning("Could not reach GitHub to revoke an installation token", {
+          sandboxId,
+          repository: entry.repository,
+        }),
+      ),
+  );
+
+  const revoke: GitHubAppInstallationTokens["Service"]["revoke"] = Effect.fn(
+    "GitHubAppInstallationTokens.revoke",
+  )(function* (sandboxId) {
+    const prefix = `${sandboxId}\u0000`;
+    yield* Ref.update(revocations, (current) =>
+      new Map(current).set(sandboxId, (current.get(sandboxId) ?? 0) + 1),
+    );
+    const dropped = yield* Ref.modify(cache, (current) => {
+      const kept = new Map<string, InstallationToken>();
+      const forgotten: Array<InstallationToken> = [];
+      for (const [key, entry] of current) {
+        if (key.startsWith(prefix)) forgotten.push(entry);
+        else kept.set(key, entry);
+      }
+      return [forgotten, kept] as const;
+    });
+    yield* Effect.forEach(dropped, (entry) => revokeOne(sandboxId, entry), {
+      concurrency: "unbounded",
+      discard: true,
+    });
+  });
+
+  return GitHubAppInstallationTokens.of({ configured, tokenFor, revoke });
 });
 
 export const layer = Layer.effect(GitHubAppInstallationTokens, make);

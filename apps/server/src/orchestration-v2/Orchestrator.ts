@@ -213,6 +213,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
+  decideGitCredentialRecord,
   decideSandboxCommand,
   planSandboxOnThreadDelete,
   type SandboxAttachedThread,
@@ -699,6 +700,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "sandbox.failed":
     case "sandbox.auto-sleep":
     case "sandbox.adopt":
+    case "sandbox.git-credential.record":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -10851,6 +10853,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
+  const dispatchGitCredentialRecord = Effect.fn("Orchestrator.dispatchGitCredentialRecord")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "sandbox.git-credential.record" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const shell = yield* projectionStore
+        .getThreadShell(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const decision = decideGitCredentialRecord(command, shell);
+      if (decision._tag === "Refuse") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} does not run on machine ${command.sandboxId}.`,
+        });
+      }
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "sandbox.git-credential.issued",
+        threadId: command.threadId,
+        occurredAt: yield* DateTime.now,
+        payload: decision.payload,
+      });
+    },
+  );
+
   const dispatchPreparedRunRelease = Effect.fn("Orchestrator.dispatchPreparedRunRelease")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "prepared-run.release" }>,
@@ -14306,6 +14343,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.failed":
       case "sandbox.auto-sleep":
         yield* dispatchSandboxCommand(command, events, effects);
+        break;
+      case "sandbox.git-credential.record":
+        yield* dispatchGitCredentialRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

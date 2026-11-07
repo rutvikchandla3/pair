@@ -129,6 +129,7 @@ import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as GitHubAppInstallationTokens from "./sandbox/credentials/GitHubAppInstallationTokens.ts";
+import * as SandboxCredentialRevocation from "./sandbox/credentials/SandboxCredentialRevocation.ts";
 import * as SandboxProcessEnvironment from "./sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
@@ -722,12 +723,23 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   MemberProviderAccounts.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  // Above the orchestration layers: a git credential's audit event is dispatched through them.
+  // Forwards also reach the broker, the hub below and the MCP registry provided at the root.
+  RunnerForwards.layer.pipe(
+    Layer.provide(
+      GitCredentialService.layer.pipe(
+        Layer.provide(layerRepositoryIdentityResolver),
+        Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+      ),
+    ),
+  ),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   // ProjectService reads it optionally, so it must sit above the orchestration layers.
   Layer.provideMerge(CheckpointMirror.layer),
   Layer.provideMerge(ComputeDriverRegistry.layer({ docker: DockerComputeDriver.make })),
   Layer.provideMerge(SandboxBootstrapSource.layer),
+  Layer.provideMerge(SandboxCredentialRevocation.layer),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(SecretResolver.layer),
@@ -783,18 +795,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
-  // Forwards reach the broker, the hub below and the MCP registry provided at the root.
+  // Installation tokens are shared: the credential service caches them, revocation drops them.
   Layer.provideMerge(
-    RunnerForwards.layer.pipe(
-      Layer.provide(
-        GitCredentialService.layer.pipe(
-          Layer.provide(GitHubAppInstallationTokens.layer),
-          Layer.provide(layerRepositoryIdentityResolver),
-          Layer.provide(layerSourceControlProviderRegistry),
-          Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
-        ),
-      ),
-      Layer.provideMerge(CodexManagedTokenBroker.layer),
+    Layer.merge(
+      CodexManagedTokenBroker.layer,
+      GitHubAppInstallationTokens.layer.pipe(Layer.provide(layerSourceControlProviderRegistry)),
     ),
   ),
   Layer.provideMerge(layerServerEnvironment),

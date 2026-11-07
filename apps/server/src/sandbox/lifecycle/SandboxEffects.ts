@@ -24,6 +24,7 @@ import {
   sandboxTags,
 } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
 import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
@@ -130,6 +131,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const credentials = yield* SandboxCredentialRevocation.SandboxCredentialRevocation;
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
 
@@ -168,6 +170,22 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+
+  /** Only after the driver accepted, so a stop that fails leaves the sandbox usable. */
+  const revokeCredentials = Effect.fn("SandboxEffects.revokeCredentials")(
+    function* (record: OrchestrationV2Sandbox, _operation: "stop" | "destroy" | "status") {
+      const attached = yield* projections.listSandboxThreads(record.id);
+      const threadIds = new Set([record.ownerThreadId, ...attached.map((row) => row.threadId)]);
+      yield* credentials.revoke({ sandboxId: record.id, threadIds: [...threadIds] });
+    },
+    (effect, record, operation) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new SandboxEffectError({ sandboxId: record.id, operation, retryable: true, cause }),
+        ),
+      ),
+  );
 
   const generationFields = (record: OrchestrationV2Sandbox) => ({
     threadId: record.ownerThreadId,
@@ -244,6 +262,7 @@ const make = Effect.gen(function* () {
           // A settled thread's last diff must be in the mirror before its disk goes away.
           if (Option.isSome(mirrorSync)) yield* mirrorSync.value.flush(record.id);
           if (record.driverRef !== null) yield* callIgnoringMissing(driver.stop(record.driverRef));
+          yield* revokeCredentials(record, "stop");
           return yield* report(record, {
             type: "sandbox.stopped",
             commandId: CommandId.make(`sandbox-stopped:${record.id}:${record.generation}`),
@@ -253,6 +272,7 @@ const make = Effect.gen(function* () {
           if (record.driverRef !== null) {
             yield* callIgnoringMissing(driver.destroy(record.driverRef));
           }
+          yield* revokeCredentials(record, "destroy");
           return yield* report(record, {
             type: "sandbox.destroyed",
             commandId: CommandId.make(`sandbox-destroyed:${record.id}:${record.generation}`),
@@ -282,6 +302,7 @@ const make = Effect.gen(function* () {
     const backend = yield* call(driver.status(record.driverRef));
     switch (backend.status) {
       case "stopped":
+        yield* revokeCredentials(record, "status");
         return yield* report(record, {
           type: "sandbox.stopped",
           commandId: CommandId.make(`sandbox-stopped:${record.id}:${record.generation}`),
@@ -289,6 +310,7 @@ const make = Effect.gen(function* () {
         });
       case "missing":
       case "failed":
+        yield* revokeCredentials(record, "status");
         return yield* report(record, {
           type: "sandbox.failed",
           commandId: CommandId.make(`sandbox-failed:${record.id}:${record.generation}:lost`),
@@ -336,4 +358,5 @@ export const layer: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ThreadManagement.ThreadManagementService
   | ServerEnvironment.ServerEnvironment
+  | SandboxCredentialRevocation.SandboxCredentialRevocation
 > = Layer.effect(SandboxEffects, make);

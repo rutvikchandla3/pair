@@ -31,6 +31,7 @@ import * as TeamState from "./TeamState.ts";
 export interface MemberGitHubCredential {
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
+  readonly source: "app" | "token";
 }
 
 /**
@@ -388,7 +389,11 @@ const make = Effect.gen(function* () {
       // A pasted token needs no client ID and has no refresh: GitHub refusing it is the expiry.
       const pasted = yield* readToken(memberId);
       if (Option.isNone(pasted)) yield* markDisconnected(memberId);
-      return Option.map(pasted, (value) => ({ host: HOST, token: Redacted.make(value) }));
+      return Option.map(pasted, (value) => ({
+        host: HOST,
+        token: Redacted.make(value),
+        source: "token" as const,
+      }));
     }
     if (!enabled) return Option.none();
     const token = yield* refreshLock(memberId).withPermits(1)(
@@ -425,7 +430,11 @@ const make = Effect.gen(function* () {
         return Option.some(next.accessToken);
       }),
     );
-    return Option.map(token, (value) => ({ host: HOST, token: Redacted.make(value) }));
+    return Option.map(token, (value) => ({
+      host: HOST,
+      token: Redacted.make(value),
+      source: "app" as const,
+    }));
   });
 
   const check: MemberGitHub["Service"]["check"] = Effect.fn("MemberGitHub.check")(

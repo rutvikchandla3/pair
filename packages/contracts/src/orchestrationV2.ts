@@ -1970,6 +1970,24 @@ export const OrchestrationV2ThreadMemberEventField = Schema.Struct({
 export type OrchestrationV2ThreadMemberEventField =
   typeof OrchestrationV2ThreadMemberEventField.Type;
 
+/** Which credential answered a sandbox's git: the App's token, or the owner's linked or pasted GitHub. */
+export const SandboxGitCredentialSource = Schema.Literals([
+  "app-installation",
+  "member-account",
+  "member-token",
+]);
+export type SandboxGitCredentialSource = typeof SandboxGitCredentialSource.Type;
+
+/** Audit of one git credential handed to a sandbox thread; never the value. */
+const OrchestrationV2GitCredentialIssued = Schema.Struct({
+  sandboxId: SandboxId,
+  source: SandboxGitCredentialSource,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+  permissions: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  expiresAt: Schema.NullOr(IsoDateTime),
+});
+
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
   threadId: ThreadId,
@@ -2131,6 +2149,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("sandbox.updated"),
     payload: OrchestrationV2Sandbox,
+  }) /** On the asking thread's stream, which may not be the sandbox's owner. */,
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sandbox.git-credential.issued"),
+    payload: OrchestrationV2GitCredentialIssued,
   }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
@@ -3090,6 +3113,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("sandbox.updated"),
     payload: OrchestrationV2SandboxJson,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sandbox.git-credential.issued"),
+    payload: OrchestrationV2GitCredentialIssued,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -3891,6 +3919,12 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     sandboxId: SandboxId,
     previousOwnerThreadId: ThreadId,
+  }) /** On the asking thread's stream; its id dedupes answers from one cached token. */,
+  Schema.Struct({
+    type: Schema.Literal("sandbox.git-credential.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...OrchestrationV2GitCredentialIssued.fields,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
