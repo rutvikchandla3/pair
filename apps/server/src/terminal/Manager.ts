@@ -1352,6 +1352,8 @@ interface TerminalManagerOptions {
   >;
   /** A sandbox host's layered env; absent, sandbox terminals get the host's allowlisted base. */
   sandboxEnvironment?: SandboxProcessEnvironment.SandboxProcessEnvironment["Service"]["forProcess"];
+  /** A provider account's env in a sandbox; absent, sandbox terminals refuse a provider instance. */
+  sandboxProviderEnvironment?: SandboxProcessEnvironment.SandboxProcessEnvironment["Service"]["forProviderSession"];
 }
 
 export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
@@ -1426,6 +1428,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
     sandboxEnvironment: sandboxEnvironment.forProcess,
+    sandboxProviderEnvironment: sandboxEnvironment.forProviderSession,
   });
 });
 
@@ -1457,11 +1460,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
     > {
       if (input.providerInstanceId === undefined) return input;
+      const providerInstanceId = ProviderInstanceId.make(input.providerInstanceId);
+      const host =
+        input.cwd === undefined
+          ? hosts.local
+          : yield* hosts
+              .forPath(input.cwd)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause }),
+                ),
+              );
+      // A sandbox never gets the server-side account env: its homes and login files stay here.
+      if (host.kind === "sandbox") {
+        if (options.sandboxProviderEnvironment === undefined) {
+          return yield* new TerminalProviderEnvironmentError({
+            providerInstanceId,
+            cause: new Error("No provider environment for sandbox terminals."),
+          });
+        }
+        const env = yield* options
+          .sandboxProviderEnvironment({
+            host,
+            instanceId: providerInstanceId,
+            threadId: input.threadId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause }),
+            ),
+          );
+        return { ...input, env: { ...input.env, ...env } };
+      }
       const resolver = options.resolveProviderInstanceEnvironment;
       if (resolver === undefined) {
-        return yield* new TerminalProviderInstanceNotFoundError({
-          providerInstanceId: ProviderInstanceId.make(input.providerInstanceId),
-        });
+        return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
       }
       const env = yield* resolver(input.providerInstanceId, input.env);
       return { ...input, env };

@@ -239,6 +239,8 @@ it.live.each(
           assert.strictEqual(leases, leased);
           assert.deepEqual(forwards, [`codex-token:${instanceId}`]);
           assert.equal(inSandbox.config.binaryPath, "codex");
+          // The sandbox env comes from SandboxProcessEnvironment.forProviderSession, never this server's.
+          assert.deepEqual(inSandbox.environment, {});
           assert.equal(
             inSandbox.config.homePath,
             `/t3-sandbox/sbx_00000000000000000123/homes/${instanceId}`,

@@ -41,6 +41,11 @@ sent each prompt.
 Your sign-in is saved on this server. Anyone who can run commands here, including agents, can read
 it. Only you can pick this account for a thread, but anyone who prompts that thread uses it.
 
+A cloud thread runs on your account only when it can sign in without a login saved on this
+server: Claude needs a setup token (valid for a year) or an API key, and a ChatGPT account works
+as is. The agent in a cloud thread can read a Claude token. A Claude account signed in through
+the terminal works on this server only, and a cloud thread started on it stops with that reason.
+
 **Remove** signs the account out and deletes its saved login; threads that used it need another
 provider. When an admin removes you from the team, your accounts are signed out and turned off the
 same way. An admin can also give an instance to a member with the **Owner** setting in

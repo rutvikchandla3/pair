@@ -107,7 +107,7 @@ import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import type { WorkspaceHost, WorkspaceHostInfo } from "../../workspaceHost/WorkspaceHost.ts";
 import {
   ensureSandboxProviderHome,
-  sandboxEnvironmentFor,
+  sandboxProviderSessionEnvironmentFor,
 } from "../../sandbox/providers/SandboxProviderHome.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
@@ -1600,7 +1600,7 @@ export const layerAppServerClientFactory: Layer.Layer<
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const portDiscovery = yield* PortScanner.PortDiscovery;
-    const sandboxEnvironment = yield* sandboxEnvironmentFor;
+    const sandboxEnvironment = yield* sandboxProviderSessionEnvironmentFor;
 
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
@@ -1638,7 +1638,11 @@ export const layerAppServerClientFactory: Layer.Layer<
             ? {
                 ...codexAppServerEnvironment(
                   // One app-server serves many threads: each shell gets its own id (thread config).
-                  yield* sandboxEnvironment(host, undefined).pipe(Effect.mapError(openError)),
+                  yield* sandboxEnvironment({
+                    host,
+                    instanceId: input.instanceId,
+                    threadId: undefined,
+                  }).pipe(Effect.mapError(openError)),
                 ),
                 CODEX_HOME: yield* ensureSandboxProviderHome(host, input.instanceId).pipe(
                   Effect.mapError(openError),

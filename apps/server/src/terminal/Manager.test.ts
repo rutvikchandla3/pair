@@ -36,6 +36,7 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { SandboxEnvironmentError } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import { ProviderCloudLocalOnlyError } from "../provider/Errors.ts";
 import { SettingsSecretUnresolvedError } from "../secrets/settingsSecretValue.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -255,6 +256,9 @@ interface CreateManagerOptions {
     readonly forProcess?: Parameters<
       typeof TerminalManager.makeWithOptions
     >[0]["sandboxEnvironment"];
+    readonly forProviderSession?: Parameters<
+      typeof TerminalManager.makeWithOptions
+    >[0]["sandboxProviderEnvironment"];
   };
 }
 
@@ -329,6 +333,9 @@ const createManager = (
         ...(options.sandbox?.forProcess === undefined
           ? {}
           : { sandboxEnvironment: options.sandbox.forProcess }),
+        ...(options.sandbox?.forProviderSession === undefined
+          ? {}
+          : { sandboxProviderEnvironment: options.sandbox.forProviderSession }),
       }).pipe(Effect.provideService(WorkspaceHosts.WorkspaceHosts, hosts));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -2021,6 +2028,43 @@ it.layer(
       expect(errors.map((event) => event.message)).toEqual([
         new SettingsSecretUnresolvedError({ provider: "vault" }).message,
       ]);
+    }),
+  );
+
+  it.effect("gives a sandbox provider terminal its account's sandbox env, never the server's", () =>
+    Effect.gen(function* () {
+      const ada = ProviderInstanceId.make("claude_member-ada");
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: () =>
+          Effect.die("the server-side account env must not reach a sandbox"),
+        sandbox: {
+          environment: { HOME: "/home/t3" },
+          forProviderSession: ({ instanceId, threadId }) =>
+            instanceId === ada
+              ? Effect.succeed({ HOME: "/home/t3", CLAUDE_CODE_OAUTH_TOKEN: `token ${threadId}` })
+              : Effect.fail(
+                  new ProviderCloudLocalOnlyError({
+                    instanceId,
+                    reason: "Claude signs in on this server only.",
+                  }),
+                ),
+        },
+      });
+
+      yield* manager.open(openInput({ cwd: baseDir, providerInstanceId: ada }));
+      expect(ptyAdapter.spawnInputs[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("token thread-1");
+
+      const refused = yield* manager
+        .open(
+          openInput({
+            cwd: baseDir,
+            terminalId: "login",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(refused._tag).toBe("TerminalProviderEnvironmentError");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );
 

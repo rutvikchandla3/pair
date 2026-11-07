@@ -75,6 +75,7 @@ import * as PortScanner from "../../preview/PortScanner.ts";
 import type { WorkspaceHostId } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
+import * as SandboxProcessEnvironment from "../../sandbox/credentials/SandboxProcessEnvironment.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
@@ -1018,7 +1019,21 @@ describe("CodexAdapterV2 app-server in a sandbox", () => {
           });
         }),
       ).pipe(Layer.provideMerge(WorkspaceHostTesting.layerFromContext));
+      // Each account's env as SandboxProcessEnvironment resolves it; the session takes its own.
+      const accountEnvironments: Record<string, Record<string, string>> = {
+        codex: { PATH: "/opt/pair-runner/b:/usr/bin", HOME: "/home/t3", TEAM_ONLY: "team" },
+        claude_member_bob: { PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-bob" },
+      };
       const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
+        Layer.provide(
+          Layer.mock(SandboxProcessEnvironment.SandboxProcessEnvironment)({
+            forProviderSession: ({ instanceId, threadId }) =>
+              Effect.succeed({
+                ...accountEnvironments[instanceId],
+                ...(threadId === undefined ? {} : { T3CODE_THREAD_ID: threadId }),
+              }),
+          }),
+        ),
         Layer.provide(Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined })),
         Layer.provide(
           Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
@@ -1062,10 +1077,14 @@ describe("CodexAdapterV2 app-server in a sandbox", () => {
             ["codex", "app-server", "-c", "auth.command=/opt/pair-runner/b/t3"],
           ],
         );
-        const env = spawned[1]?.env as Record<string, string>;
-        assert.equal(env.CODEX_HOME, home);
-        assert.equal(env.PATH, "/opt/pair-runner/b:/usr/bin");
-        assert.isUndefined(env.SERVER_ONLY);
+        // Only its own account's env, shared by the session's threads; nothing written to disk.
+        assert.deepEqual(spawned[1]?.env, {
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "T3 Code",
+          PATH: "/opt/pair-runner/b:/usr/bin",
+          HOME: "/home/t3",
+          TEAM_ONLY: "team",
+          CODEX_HOME: home,
+        });
         assert.deepEqual(files, []);
       }).pipe(Effect.provide(factoryLayer.pipe(Layer.provide(NodeServices.layer))));
     },

@@ -4,6 +4,8 @@ import {
   ComputeDriverId,
   type OrchestrationV2Sandbox,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SandboxId,
   type SecretReference,
   SecretProviderId,
@@ -29,6 +31,11 @@ const projectId = ProjectId.make("project-a");
 const vault = SecretProviderId.make("vault");
 const readable: SecretReference = { provider: vault, reference: "op://team/db/password" };
 const locked: SecretReference = { provider: vault, reference: "op://team/locked/password" };
+const adaToken: SecretReference = { provider: vault, reference: "op://ada/claude" };
+const secretValues: Record<string, string> = {
+  [readable.reference]: "s3cret",
+  [adaToken.reference]: "sk-ant-oat-ada",
+};
 
 const runnerInfo: RunnerInfo = {
   runnerBootId: "runner-boot",
@@ -98,9 +105,7 @@ const layerWith = (settings: Parameters<typeof ServerSettings.layerTest>[0]) => 
           read: (references) =>
             Effect.sync(() => {
               reads.push(references);
-              return references.map((reference) =>
-                reference.reference === readable.reference ? "s3cret" : undefined,
-              );
+              return references.map((reference) => secretValues[reference.reference]);
             }),
           invalidate: () => Effect.void,
         }),
@@ -206,5 +211,139 @@ describe("SandboxProcessEnvironment", () => {
       );
       expect(error.message).not.toContain("s3cret");
     }).pipe(Effect.provide(layer));
+  });
+  describe("forProviderSession", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const codex = ProviderDriverKind.make("codex");
+    const ada = ProviderInstanceId.make("claude_member-ada");
+    const sensitive = (name: string, value: string | SecretReference) => ({
+      name,
+      value,
+      sensitive: true,
+    });
+    const { reads, layer } = layerWith({
+      sandbox: {
+        drivers: [],
+        env: [
+          { name: "TEAM_ONLY", value: "team", sensitive: false },
+          // Hand-edited past the write refusal: a team entry never acts as an account's credential.
+          sensitive("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-team"),
+          sensitive("ACCESS_TOKEN", "team-access"),
+          { name: "DB_PASSWORD", value: readable, sensitive: true },
+        ],
+      },
+      providerInstances: {
+        [ada]: {
+          driver: claude,
+          environment: [
+            sensitive("CLAUDE_CODE_OAUTH_TOKEN", adaToken),
+            { name: "HTTPS_PROXY", value: "http://proxy:3128", sensitive: false },
+            {
+              name: "CLAUDE_CONFIG_DIR",
+              value: "/server/state/providers/claude/ada",
+              sensitive: false,
+            },
+            sensitive("ANTHROPIC_API_KEY", "sk-ant-api-ada"),
+            sensitive("ANTHROPIC_BASE_URL", "https://gateway.example"),
+          ],
+        },
+        [ProviderInstanceId.make("claude_member-bob")]: {
+          driver: claude,
+          environment: [sensitive("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-bob")],
+        },
+        [ProviderInstanceId.make("claude_empty")]: {
+          driver: claude,
+          environment: [sensitive("CLAUDE_CODE_OAUTH_TOKEN", "")],
+        },
+        [ProviderInstanceId.make("codex_member-ada")]: {
+          driver: codex,
+          config: { setupMode: "managed" },
+          environment: [
+            sensitive("OPENAI_API_KEY", "sk-proj-ada"),
+            sensitive("ACCESS_TOKEN", "instance-access"),
+            { name: "CODEX_HOME", value: "/server/codex", sensitive: false },
+          ],
+        },
+        [ProviderInstanceId.make("codex_api")]: {
+          driver: codex,
+          environment: [
+            sensitive("OPENAI_API_KEY", "sk-proj-api"),
+            { name: "OPENAI_BASE_URL", value: "https://openai.example/v1", sensitive: false },
+          ],
+        },
+      },
+    });
+    const sessionEnvironment = (instanceId: string, threadId?: string) =>
+      Effect.gen(function* () {
+        const service = yield* SandboxProcessEnvironment.SandboxProcessEnvironment;
+        return yield* service.forProviderSession({
+          host: yield* sandboxHost,
+          instanceId: ProviderInstanceId.make(instanceId),
+          threadId,
+        });
+      });
+    const base = {
+      PATH: "/opt/pair-runner/build:/usr/local/bin:/usr/bin:/bin",
+      HOME: "/home/t3",
+      SHELL: "/bin/bash",
+      USER: "t3",
+      LANG: "C.UTF-8",
+      TERM: "xterm-256color",
+      IMAGE_TOOL: "1",
+      TEAM_ONLY: "team",
+      DB_PASSWORD: "s3cret",
+      GIT_COMMITTER_NAME: "Ada Lovelace",
+      GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+    };
+
+    it.effect("gives a process its own account's one headless credential and nothing else", () =>
+      Effect.gen(function* () {
+        reads.length = 0;
+        expect(yield* sessionEnvironment(ada, "thread-a")).toEqual({
+          ...base,
+          ACCESS_TOKEN: "team-access",
+          HTTPS_PROXY: "http://proxy:3128",
+          CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-ada",
+          T3CODE_THREAD_ID: "thread-a",
+        });
+        // The account's token is read with the team's references, in one batch.
+        expect(reads).toEqual([[readable, adaToken]]);
+
+        // Managed Codex: no key, and nothing that would redirect the broker's token.
+        expect(yield* sessionEnvironment("codex_member-ada")).toEqual(base);
+
+        expect(yield* sessionEnvironment("codex_api")).toEqual({
+          ...base,
+          ACCESS_TOKEN: "team-access",
+          OPENAI_API_KEY: "sk-proj-api",
+          OPENAI_BASE_URL: "https://openai.example/v1",
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("refuses an account that signs in on this server only", () =>
+      Effect.gen(function* () {
+        reads.length = 0;
+        const refusal = (instanceId: string) =>
+          sessionEnvironment(instanceId, "thread-a").pipe(Effect.flip);
+
+        const login = yield* refusal("claudeAgent");
+        expect(login._tag).toBe("ProviderCloudLocalOnlyError");
+        expect(login.message).toBe(
+          "Claude signs in on this server only. Add a setup token or API key to use it in cloud.",
+        );
+        expect((yield* refusal("codex")).message).toBe(
+          "This Codex account signs in on this server only. Use a managed ChatGPT account or an API key in cloud.",
+        );
+        // Refused before any secret is read.
+        expect(reads).toEqual([]);
+        expect((yield* refusal("claude_empty")).message).toBe(
+          "CLAUDE_CODE_OAUTH_TOKEN is empty on this account. Set it to use it in cloud.",
+        );
+        expect((yield* refusal("cursor")).message).toBe(
+          "cursor is not supported in cloud yet. Pick Claude or Codex.",
+        );
+      }).pipe(Effect.provide(layer)),
+    );
   });
 });

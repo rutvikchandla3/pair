@@ -27,6 +27,20 @@ export class ProviderCloudUnsupportedError extends Schema.TaggedError<ProviderCl
   }
 }
 
+/** Raised before any sandbox process starts for an account with no headless credential (06 §3). */
+export class ProviderCloudLocalOnlyError extends Schema.TaggedError<ProviderCloudLocalOnlyError>()(
+  "ProviderCloudLocalOnlyError",
+  {
+    threadId: Schema.optional(Schema.String),
+    instanceId: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWorkspaceMissingError>()(
   "ProviderWorkspaceMissingError",
   {

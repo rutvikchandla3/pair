@@ -167,6 +167,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./sandboxCredentials": {
+      "types": "./src/sandboxCredentials.ts",
+      "import": "./src/sandboxCredentials.ts"
+    },
     "./projectSettings": {
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"

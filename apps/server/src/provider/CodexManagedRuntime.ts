@@ -8,6 +8,7 @@ import * as ServerConfig from "../config.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { CODEX_MANAGED_STRIPPED_ENV_NAMES } from "@t3tools/shared/sandboxCredentials";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
@@ -76,10 +77,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
   const withoutTokenOverrides = (base: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
     const environment = { ...base };
-    delete environment.ACCESS_TOKEN;
-    delete environment.T3CODE_CODEX_LAUNCH_ARGS;
-    delete environment.OPENAI_API_KEY;
-    delete environment.OPENAI_BASE_URL;
+    for (const name of CODEX_MANAGED_STRIPPED_ENV_NAMES) delete environment[name];
     return environment;
   };
   const resolve = Effect.gen(function* () {
@@ -183,7 +181,8 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
                 profileKey,
               ]),
             }),
-            // The client factory builds a sandbox's environment itself.
+            // The client factory builds a sandbox's environment itself, stripped the same way
+            // (SandboxProcessEnvironment.forProviderSession).
             environment: {},
             revision: profileKey,
           } satisfies CodexEffectiveRuntime;

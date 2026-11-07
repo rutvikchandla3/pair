@@ -3,11 +3,21 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 
+import type { ProviderCloudLocalOnlyError } from "../../provider/Errors.ts";
 import { SANDBOX_ROOT, type WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 import {
   SandboxProcessEnvironment,
   type SandboxEnvironmentError,
 } from "../credentials/SandboxProcessEnvironment.ts";
+
+const hostEnvironment = (host: WorkspaceHost) =>
+  Effect.map(host.info, (info) => {
+    const environment: Record<string, string> = {};
+    for (const [name, value] of Object.entries(info.environment)) {
+      if (value !== undefined) environment[name] = value;
+    }
+    return environment;
+  });
 
 export type SandboxEnvironmentFor = (
   host: WorkspaceHost,
@@ -23,16 +33,19 @@ export type SandboxEnvironmentFor = (
 export const sandboxEnvironmentFor = Effect.gen(function* () {
   const service = yield* Effect.serviceOption(SandboxProcessEnvironment);
   return (host: WorkspaceHost, threadId: string | undefined) =>
-    Option.isSome(service)
-      ? service.value.forProcess(host, threadId)
-      : Effect.map(host.info, (info) => {
-          const environment: Record<string, string> = {};
-          for (const [name, value] of Object.entries(info.environment)) {
-            if (value !== undefined) environment[name] = value;
-          }
-          return environment;
-        });
+    Option.isSome(service) ? service.value.forProcess(host, threadId) : hostEnvironment(host);
 }) satisfies Effect.Effect<SandboxEnvironmentFor>;
+
+export type SandboxProviderSessionEnvironmentFor = (
+  input: Parameters<SandboxProcessEnvironment["Service"]["forProviderSession"]>[0],
+) => Effect.Effect<Record<string, string>, SandboxEnvironmentError | ProviderCloudLocalOnlyError>;
+
+/** Like `sandboxEnvironmentFor`, plus the provider instance's env and its one headless credential. */
+export const sandboxProviderSessionEnvironmentFor = Effect.gen(function* () {
+  const service = yield* Effect.serviceOption(SandboxProcessEnvironment);
+  return (input: Parameters<SandboxProviderSessionEnvironmentFor>[0]) =>
+    Option.isSome(service) ? service.value.forProviderSession(input) : hostEnvironment(input.host);
+}) satisfies Effect.Effect<SandboxProviderSessionEnvironmentFor>;
 
 export class SandboxProviderHomeError extends Schema.TaggedError<SandboxProviderHomeError>()(
   "SandboxProviderHomeError",

@@ -70,7 +70,9 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
@@ -1025,6 +1027,158 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 in a sandbox", () => {
+  it.effect("starts the CLI with its account's credential in env and writes nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-sandbox-" });
+        const sandboxId = "sbx_00000000000000000123";
+        const spawned: Array<ReadonlyArray<string>> = [];
+        const writes: Array<string> = [];
+        const environmentFor: Array<string> = [];
+        const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
+        const sandboxHost = {
+          id: sandboxId,
+          kind: "sandbox" as const,
+          // Records every file call that could put a credential on the sandbox's disk.
+          fileSystem: new Proxy(fileSystem, {
+            get: (target, key) => {
+              if (/write|make|copy|rename|link|chmod|chown|truncate|sink/i.test(String(key))) {
+                writes.push(String(key));
+              }
+              return Reflect.get(target, key);
+            },
+          }),
+          spawner: ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              if (command._tag === "StandardCommand") {
+                spawned.push([command.command, ...command.args.map(String)]);
+              }
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(999_999_997),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              });
+            }),
+          ),
+          info: Effect.succeed({
+            platform: "linux" as const,
+            homeDirectory: "/home/t3",
+            userId: 1000,
+            environment: { PATH: "/opt/pair-runner/b:/usr/bin", HOME: "/home/t3" },
+            executablePath: "/opt/pair-runner/b/t3",
+          }),
+        };
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ProviderInstanceId.make("claude_member-ada"),
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: { CLAUDE_CONFIG_DIR: "/server/claude", SERVER_ONLY: "server-secret" },
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-att-" }),
+          fileSystem,
+          hostForPath: () => Effect.succeed(sandboxHost),
+          sandboxEnvironmentAt: (_cwd, threadId) =>
+            Effect.sync(() => {
+              environmentFor.push(threadId);
+              return {
+                PATH: "/opt/pair-runner/b:/usr/bin",
+                HOME: "/home/t3",
+                CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-ada",
+              };
+            }),
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-sandbox"),
+            open: (input) =>
+              Effect.sync(() => {
+                opened.push(input.options);
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        const threadId = ThreadId.make("thread-claude-sandbox");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-sandbox"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const exit = yield* runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-sandbox"),
+              text: "Hello",
+              attachments: [],
+              runtimePolicy,
+            }),
+          )
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.deepEqual(environmentFor, [threadId]);
+        const home = `/t3-sandbox/${sandboxId}/homes/claude_member-ada`;
+        assert.deepEqual(spawned[0], ["mkdir", "-p", home]);
+        // Env only, never argv, which every process in the sandbox can read.
+        assert.notInclude(JSON.stringify(spawned), "sk-ant-oat-ada");
+        const env = opened[0]?.env ?? {};
+        assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-ada");
+        assert.equal(env.CLAUDE_CONFIG_DIR, home);
+        assert.isUndefined(env.SERVER_ONLY);
+        assert.deepEqual(writes, []);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

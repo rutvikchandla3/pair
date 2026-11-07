@@ -1,6 +1,7 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import {
   isOrchestrationV2WorkActive,
   ModelSelection,
@@ -40,10 +41,11 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import {
+  ProviderCloudLocalOnlyError,
   ProviderCloudUnsupportedError,
   ProviderWorkspaceMissingError,
 } from "../provider/Errors.ts";
-import { DEV_REPLAY_INSTANCE_ID } from "../provider/ProviderInstanceRegistryHydration.ts";
+import { sandboxInstanceConfig } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
@@ -150,6 +152,7 @@ export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
   ProviderWorkspaceMissingError,
   ProviderCloudUnsupportedError,
+  ProviderCloudLocalOnlyError,
   ProviderSessionLookupError,
   ProviderSessionCloseError,
   ProviderSessionReleaseError,
@@ -222,11 +225,6 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 /** Claude, Codex and the dev Replay agent; every other provider runs on the server's machine only. */
-const runsInSandbox = (driver: string, instanceId: ProviderInstanceId) =>
-  driver === "claudeAgent" ||
-  driver === "codex" ||
-  (driver === "acpRegistry" && instanceId === DEV_REPLAY_INSTANCE_ID);
-
 interface LiveSessionEntry {
   /** Where the session's processes run; undefined for a session without a cwd (local). */
   readonly host: WorkspaceHost | undefined;
@@ -2223,14 +2221,40 @@ export const layerWithOptions = (
                     }),
                 ),
               );
-              if (
-                host?.kind === "sandbox" &&
-                !runsInSandbox(adapter.driver, input.modelSelection.instanceId)
-              ) {
-                return yield* new ProviderCloudUnsupportedError({
-                  threadId: input.threadId,
-                  driver: adapter.driver,
+              if (host?.kind === "sandbox") {
+                const instanceId = input.modelSelection.instanceId;
+                const stored = Option.isSome(serverSettings)
+                  ? sandboxInstanceConfig(
+                      yield* serverSettings.value.getSettings.pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderSessionOpenError({
+                              instanceId,
+                              providerSessionId: input.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      ),
+                      instanceId,
+                    )
+                  : undefined;
+                const support = sandboxCredentialSupport({
+                  instanceId,
+                  instance: { ...stored, driver: adapter.driver },
                 });
+                if (support._tag === "Unsupported") {
+                  return yield* new ProviderCloudUnsupportedError({
+                    threadId: input.threadId,
+                    driver: adapter.driver,
+                  });
+                }
+                if (support._tag === "LocalOnly") {
+                  return yield* new ProviderCloudLocalOnlyError({
+                    threadId: input.threadId,
+                    instanceId,
+                    reason: support.reason,
+                  });
+                }
               }
               const prepared = yield* prepareMcpSession(
                 input.threadId,

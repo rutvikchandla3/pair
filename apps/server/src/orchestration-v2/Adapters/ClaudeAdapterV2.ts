@@ -180,10 +180,11 @@ import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import { makeSandboxClaudeProcess } from "../../sandbox/providers/ClaudeSandboxProcess.ts";
 import {
   ensureSandboxProviderHome,
-  sandboxEnvironmentFor,
   sandboxProviderHome,
+  sandboxProviderSessionEnvironmentFor,
 } from "../../sandbox/providers/SandboxProviderHome.ts";
 import type { SandboxEnvironmentError } from "../../sandbox/credentials/SandboxProcessEnvironment.ts";
+import type { ProviderCloudLocalOnlyError } from "../../provider/Errors.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -4863,13 +4864,13 @@ export interface ClaudeAdapterV2Options {
   readonly hostForPath?: (
     cwd: string,
   ) => Effect.Effect<ClaudeSessionHost, WorkspaceHostUnavailableError>;
-  /** The cloud env of a sandbox cwd's processes. Absent: the sandbox host's own base. */
+  /** A sandbox cwd's cloud env with this account's credential. Absent: the host's own base. */
   readonly sandboxEnvironmentAt?: (
     cwd: string,
     threadId: string,
   ) => Effect.Effect<
     Record<string, string>,
-    WorkspaceHostUnavailableError | SandboxEnvironmentError
+    WorkspaceHostUnavailableError | SandboxEnvironmentError | ProviderCloudLocalOnlyError
   >;
   readonly path: Path.Path;
   readonly random: SecureRandom.SecureRandom["Service"];
@@ -12462,7 +12463,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     // Instance env is the local host's; a sandbox session builds its own (openSession).
     const hostEnvironment = (yield* hosts.local.info).environment;
-    const sandboxEnvironment = yield* sandboxEnvironmentFor;
+    const sandboxEnvironment = yield* sandboxProviderSessionEnvironmentFor;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -12487,7 +12488,9 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       fileSystem,
       hostForPath: hosts.forPath,
       sandboxEnvironmentAt: (cwd, threadId) =>
-        Effect.flatMap(hosts.forPath(cwd), (host) => sandboxEnvironment(host, threadId)),
+        Effect.flatMap(hosts.forPath(cwd), (host) =>
+          sandboxEnvironment({ host, instanceId, threadId }),
+        ),
       path,
       random,
       idAllocator,

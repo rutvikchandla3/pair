@@ -34,6 +34,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
 import {
+  ProviderCloudLocalOnlyError,
   ProviderCloudUnsupportedError,
   ProviderWorkspaceMissingError,
 } from "../provider/Errors.ts";
@@ -3952,11 +3953,14 @@ const layerSandboxAt = (root: string, forwarded: Array<string>) =>
     }),
   ).pipe(Layer.provideMerge(WorkspaceHostTesting.layerFromContext));
 
-it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-ready driver", () =>
+it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-ready account", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const root = yield* fileSystem.makeTempDirectoryScoped();
-    const open = (driver: ProviderDriverKind) =>
+    const open = (
+      driver: ProviderDriverKind,
+      serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>,
+    ) =>
       Effect.gen(function* () {
         const state = yield* Ref.make(emptyState);
         const mcpConfigs = yield* Ref.make<
@@ -3999,6 +4003,7 @@ it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-rea
               mcpConfigs,
               spawnBeforeOpen: true,
               workspaceHostsLayer: layerSandboxAt(root, forwarded),
+              ...(serverSettingsLayer === undefined ? {} : { serverSettingsLayer }),
             }),
           ),
         );
@@ -4013,8 +4018,29 @@ it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-rea
     }
     assert.equal(cursor.openCount, 0);
 
+    // A login stored on this server never follows the account into a sandbox.
+    const claude = yield* open(ProviderDriverKind.make("claudeAgent"));
+    assert.isTrue(Exit.isFailure(claude.exit));
+    if (Exit.isFailure(claude.exit)) {
+      const error = Cause.squash(claude.exit.cause);
+      assert.instanceOf(error, ProviderCloudLocalOnlyError);
+      assert.equal(
+        error.message,
+        "Claude signs in on this server only. Add a setup token or API key to use it in cloud.",
+      );
+    }
+    assert.equal(claude.openCount, 0);
+    assert.deepEqual(claude.forwarded, []);
+
     // The agent reaches /mcp through the forward its session opened, with its own credential.
-    const codex = yield* open(CODEX_DRIVER);
+    const codex = yield* open(
+      CODEX_DRIVER,
+      ServerSettings.layerTest({
+        providerInstances: {
+          [modelSelection.instanceId]: { driver: CODEX_DRIVER, config: { setupMode: "managed" } },
+        },
+      }),
+    );
     assert.isTrue(Exit.isSuccess(codex.exit));
     const config = codex.mcpConfigs[0];
     assert.equal(config?.endpoint, "http://127.0.0.1:9/mcp");
