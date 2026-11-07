@@ -56,6 +56,8 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
+import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -314,9 +316,20 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
     Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
   ),
 );
+// The compute driver registry and the install id come from the server.
+const layerSandboxEffectsProvided = SandboxEffects.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      SandboxBootstrapSource.layerUnconfigured,
+      ProjectionStore.layer,
+      layerThreadManagementProvided,
+    ),
+  ),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerSandboxEffectsProvided,
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,
       layerProviderSessionManagerProvided,

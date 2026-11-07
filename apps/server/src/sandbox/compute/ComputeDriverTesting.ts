@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -19,6 +20,7 @@ import {
   parseSandboxTags,
   type SandboxBootstrap,
 } from "./ComputeDriver.ts";
+import { ComputeDriverRegistry } from "./ComputeDriverRegistry.ts";
 
 /**
  * What a contract stand-in runner posts to `<serverUrl>/hello` once booted. It reads
@@ -127,6 +129,18 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
   });
   return { driver, calls: calls as Queue.Dequeue<FakeComputeCall> };
 });
+
+/** Every driver id resolves to `fake`, whatever settings say. */
+export const layerRegistry = (fake: ComputeDriver["Service"]) =>
+  Layer.succeed(
+    ComputeDriverRegistry,
+    ComputeDriverRegistry.of({
+      get: Effect.fn("FakeComputeDriverRegistry.get")(function* () {
+        return yield* Effect.succeed(fake);
+      }),
+      list: Effect.succeed([fake]),
+    }),
+  );
 
 const socketPathOf = (serverUrl: string) =>
   serverUrl.startsWith("unix:") ? serverUrl.slice("unix:".length) : null;

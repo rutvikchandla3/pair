@@ -12,6 +12,7 @@ import {
   MemberId,
   MessageId,
   RuntimeRequestId,
+  SandboxId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command,
@@ -453,50 +454,73 @@ it.effect("sends a guest message with the guest's files, never ones the client n
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
-it.effect("lets only the owner or an admin delete, and assigns only active members", () =>
-  Effect.gen(function* () {
-    const threadId = ThreadId.make("thread-owned");
-    const captured: OrchestrationV2ServerCommand[] = [];
-    const attempt = (command: OrchestrationV2Command) =>
-      dispatchCommand(command).pipe(
-        Effect.provide(
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            dispatch: layerFailingDispatchHandler(captured),
-            getThreadShell: () => Effect.succeed({ ownerId: MemberId.make("member-bob") } as never),
-          }),
-        ),
-        Effect.flip,
-        Effect.map((error) =>
-          error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
-        ),
-      );
-    const deleteBy = (actorId: string | undefined) =>
-      attempt({
-        type: "thread.delete",
-        commandId: CommandId.make(`delete-${actorId}`),
-        threadId,
-        ...(actorId === undefined ? {} : { actorId: MemberId.make(actorId) }),
-      });
-    const assign = (ownerId: string) =>
-      attempt({
-        type: "thread.owner.set",
-        commandId: CommandId.make(`assign-${ownerId}`),
-        threadId,
-        ownerId: MemberId.make(ownerId),
-      });
+it.effect(
+  "lets only the owner or an admin delete or sleep a machine, and assigns only active members",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-owned");
+      const sideChatId = ThreadId.make("thread-side-chat");
+      const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const attempt = (command: OrchestrationV2Command) =>
+        dispatchCommand(command).pipe(
+          Effect.provide(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              dispatch: layerFailingDispatchHandler(captured),
+              // Carol's side chat shares the machine of Bob's thread.
+              getThreadShell: (id) =>
+                Effect.succeed({
+                  ownerId: MemberId.make(id === sideChatId ? "member-carol" : "member-bob"),
+                  sandboxId,
+                  sandbox: { state: "ready", ownerThreadId: threadId },
+                } as never),
+            }),
+          ),
+          Effect.flip,
+          Effect.map((error) =>
+            error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
+          ),
+        );
+      const deleteBy = (actorId: string | undefined) =>
+        attempt({
+          type: "thread.delete",
+          commandId: CommandId.make(`delete-${actorId}`),
+          threadId,
+          ...(actorId === undefined ? {} : { actorId: MemberId.make(actorId) }),
+        });
+      const assign = (ownerId: string) =>
+        attempt({
+          type: "thread.owner.set",
+          commandId: CommandId.make(`assign-${ownerId}`),
+          threadId,
+          ownerId: MemberId.make(ownerId),
+        });
 
-    expect(yield* deleteBy("member-carol")).toBe("not_owner_or_admin");
-    expect(yield* deleteBy("member-bob")).toBe("dispatched");
-    expect(yield* deleteBy("member-owner")).toBe("dispatched");
-    expect(yield* deleteBy(undefined)).toBe("dispatched");
-    expect(yield* assign("member-gone")).toBe("inactive_owner");
-    expect(yield* assign("member-unknown")).toBe("inactive_owner");
-    expect(yield* assign("member-carol")).toBe("dispatched");
-    expect(captured.map((command) => command.commandId)).toEqual([
-      "delete-member-bob",
-      "delete-member-owner",
-      "delete-undefined",
-      "assign-member-carol",
-    ]);
-  }).pipe(Effect.provide(layerIntakeTest)),
+      expect(yield* deleteBy("member-carol")).toBe("not_owner_or_admin");
+      expect(yield* deleteBy("member-bob")).toBe("dispatched");
+      expect(yield* deleteBy("member-owner")).toBe("dispatched");
+      expect(yield* deleteBy(undefined)).toBe("dispatched");
+      const sleepBy = (actorId: string) =>
+        attempt({
+          type: "sandbox.sleep",
+          commandId: CommandId.make(`sleep-${actorId}`),
+          threadId: sideChatId,
+          sandboxId,
+          actorId: MemberId.make(actorId),
+        });
+      expect(yield* sleepBy("member-carol")).toBe("machine_not_owner_or_admin");
+      expect(yield* sleepBy("member-owner")).toBe("dispatched");
+      expect(yield* assign("member-gone")).toBe("inactive_owner");
+      expect(yield* assign("member-unknown")).toBe("inactive_owner");
+      expect(yield* assign("member-carol")).toBe("dispatched");
+      expect(captured.map((command) => command.commandId)).toEqual([
+        "delete-member-bob",
+        "delete-member-owner",
+        "delete-undefined",
+        "sleep-member-owner",
+        "assign-member-carol",
+      ]);
+      // Routed to the owner's stream, not the side chat the admin clicked from.
+      expect(captured.find((command) => command.type === "sandbox.sleep")?.threadId).toBe(threadId);
+    }).pipe(Effect.provide(layerIntakeTest)),
 );

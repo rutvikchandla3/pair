@@ -27,6 +27,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -61,6 +62,11 @@ export interface OrchestrationEffectExecutorV2Shape {
     effect: EffectOutbox.OrchestrationEffectV2,
     options?: { readonly willRetry: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
+  /** Runs once after the last attempt fails, outside the execution bound. */
+  readonly reportExhausted?: (
+    effect: EffectOutbox.OrchestrationEffectV2,
+    cause: Cause.Cause<OrchestrationEffectExecutionError>,
+  ) => Effect.Effect<void>;
 }
 
 export class OrchestrationEffectExecutorV2 extends Context.Service<
@@ -80,6 +86,7 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
+  | SandboxEffects.SandboxEffects
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -94,7 +101,14 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const sandboxEffects = yield* SandboxEffects.SandboxEffects;
     return OrchestrationEffectExecutorV2.of({
+      reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
+        function* (effect, cause) {
+          if (!SandboxEffects.isSandboxEffectRequest(effect.request)) return;
+          yield* sandboxEffects.reportExhausted(effect.request, cause);
+        },
+      ),
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
@@ -572,6 +586,21 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "sandbox.create":
+          case "sandbox.start":
+          case "sandbox.stop":
+          case "sandbox.destroy":
+          case "sandbox.status":
+            return sandboxEffects.execute(effect.request).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
         }
       }),
     });
@@ -579,27 +608,38 @@ export const layerExecutor: Layer.Layer<
 );
 
 // A running effect blocks later work on its thread and its lease is never reclaimed in-process,
-// so a stop that hangs must give up and fall through to the normal retry/fail path.
-const DELEGATED_TASKS_STOP_TIMEOUT = Duration.seconds(30);
+// so an effect that can hang must give up and fall through to the normal retry/fail path.
+const EFFECT_TIMEOUTS: Partial<
+  Record<EffectOutbox.OrchestrationEffectRequestV2["type"], Duration.Duration>
+> = {
+  "delegated-tasks.stop": Duration.seconds(30),
+  "sandbox.create": Duration.seconds(60),
+  "sandbox.start": Duration.seconds(60),
+  "sandbox.stop": Duration.seconds(60),
+  "sandbox.destroy": Duration.seconds(60),
+  "sandbox.status": Duration.seconds(60),
+};
 
 const boundExecution =
   (effect: EffectOutbox.OrchestrationEffectV2) =>
-  (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) =>
-    effect.request.type === "delegated-tasks.stop"
-      ? execution.pipe(
+  (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) => {
+    const timeout = EFFECT_TIMEOUTS[effect.request.type];
+    return timeout === undefined
+      ? execution
+      : execution.pipe(
           Effect.timeoutOrElse({
-            duration: DELEGATED_TASKS_STOP_TIMEOUT,
+            duration: timeout,
             orElse: () =>
               Effect.fail(
                 new OrchestrationEffectExecutionError({
                   effectId: effect.id,
                   effectType: effect.request.type,
-                  cause: `Timed out after ${Duration.format(DELEGATED_TASKS_STOP_TIMEOUT)}.`,
+                  cause: `Timed out after ${Duration.format(timeout)}.`,
                 }),
               ),
           }),
-        )
-      : execution;
+        );
+  };
 
 export class OrchestrationEffectWorkerError extends Schema.TaggedError<OrchestrationEffectWorkerError>()(
   "OrchestrationEffectWorkerError",
@@ -820,9 +860,10 @@ export const layerWithOptions = (
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : effect.attemptCount >= maxAttempts
-              ? yield* outbox
-                  .fail({ effectId: effect.id, workerId, error })
-                  .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+              ? yield* (executor.reportExhausted?.(effect, exit.cause) ?? Effect.void).pipe(
+                  Effect.andThen(outbox.fail({ effectId: effect.id, workerId, error })),
+                  Effect.onError((cause) => terminalizeClaim(effect, cause)),
+                )
               : yield* outbox
                   .retry({
                     effectId: effect.id,

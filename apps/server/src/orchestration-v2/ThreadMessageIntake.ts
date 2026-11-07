@@ -32,6 +32,7 @@ function dispatchWasNotAccepted(
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
     case "OrchestratorRuntimeModeAboveCeilingError":
+    case "OrchestratorSandboxCommandMovedError":
     case "ThreadManagementProviderInstanceDisabledError":
       return true;
     default:
@@ -43,15 +44,45 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
   {
     threadId: ThreadId,
     memberId: MemberId,
-    reason: Schema.Literals(["not_owner_or_admin", "inactive_owner"]),
+    reason: Schema.Literals(["not_owner_or_admin", "inactive_owner", "machine_not_owner_or_admin"]),
   },
 ) {
   override get message(): string {
-    return this.reason === "not_owner_or_admin"
-      ? "Only the thread's owner or an admin can delete it."
-      : "Threads can only be assigned to active team members.";
+    switch (this.reason) {
+      case "not_owner_or_admin":
+        return "Only the thread's owner or an admin can delete it.";
+      case "inactive_owner":
+        return "Threads can only be assigned to active team members.";
+      case "machine_not_owner_or_admin":
+        return "Only the owner or an admin can sleep or discard this machine.";
+    }
   }
 }
+
+type SandboxClientCommand = Extract<
+  OrchestrationV2Command,
+  { readonly type: "sandbox.wake" | "sandbox.sleep" | "sandbox.retry" | "sandbox.discard" }
+>;
+
+const isSandboxClientCommand = (command: OrchestrationV2Command): command is SandboxClientCommand =>
+  command.type === "sandbox.wake" ||
+  command.type === "sandbox.sleep" ||
+  command.type === "sandbox.retry" ||
+  command.type === "sandbox.discard";
+
+/** The actor is an admin, the server owner, or `threadId`'s owner. A missing thread passes. */
+const actorOwnsThreadOrAdmin = Effect.fn("ThreadMessageIntake.actorOwnsThreadOrAdmin")(function* (
+  actorId: MemberId,
+  threadId: ThreadId,
+) {
+  const team = yield* TeamState.TeamState;
+  const actor = (yield* Ref.get(team.members)).get(actorId);
+  if (actor?.role === "admin" || actor?.isOwner === true) return true;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads.getThreadShell(threadId);
+  // A missing thread is the orchestrator's to reject.
+  return shell === null || shell.ownerId === actorId;
+});
 
 /** Team permissions the orchestrator cannot see; it only records who acted. */
 const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission")(function* (
@@ -66,17 +97,48 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
     });
   }
   if (command.type !== "thread.delete" || command.actorId === undefined) return;
-  const actor = (yield* Ref.get(team.members)).get(command.actorId);
-  if (actor?.role === "admin" || actor?.isOwner === true) return;
-  const threads = yield* ThreadManagement.ThreadManagementService;
-  const shell = yield* threads.getThreadShell(command.threadId);
-  // A missing thread is the orchestrator's to reject.
-  if (shell === null || shell.ownerId === command.actorId) return;
+  if (yield* actorOwnsThreadOrAdmin(command.actorId, command.threadId)) return;
   return yield* new ThreadMessageIntakeForbiddenError({
     threadId: command.threadId,
     memberId: command.actorId,
     reason: "not_owner_or_admin",
   });
+});
+
+/**
+ * Sends a machine command from the thread the user acts in to the sandbox owner's stream, so its
+ * receipt and events land there (04 §1). Sleep and discard need the owner thread's owner.
+ */
+const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSandboxCommand")(function* (
+  command: SandboxClientCommand,
+) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const route = Effect.gen(function* () {
+    const acting = yield* threads.getThreadShell(command.threadId);
+    if (acting === null || acting.sandboxId !== command.sandboxId) {
+      return yield* new Orchestrator.OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} does not use machine ${command.sandboxId}.`,
+      });
+    }
+    // Without a record the orchestrator refuses on the acting thread.
+    const ownerThreadId = acting.sandbox?.ownerThreadId ?? command.threadId;
+    if (
+      (command.type === "sandbox.sleep" || command.type === "sandbox.discard") &&
+      command.actorId !== undefined &&
+      !(yield* actorOwnsThreadOrAdmin(command.actorId, ownerThreadId))
+    ) {
+      return yield* new ThreadMessageIntakeForbiddenError({
+        threadId: ownerThreadId,
+        memberId: command.actorId,
+        reason: "machine_not_owner_or_admin",
+      });
+    }
+    return yield* threads.dispatch({ ...command, threadId: ownerThreadId });
+  });
+  // Ownership moves only by adoption, so one re-read finds the new owner.
+  return yield* route.pipe(Effect.catchTags({ OrchestratorSandboxCommandMovedError: () => route }));
 });
 
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
@@ -133,6 +195,7 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
+  if (isSandboxClientCommand(incoming)) return yield* dispatchSandboxCommand(incoming);
   yield* assertTeamPermission(incoming);
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;

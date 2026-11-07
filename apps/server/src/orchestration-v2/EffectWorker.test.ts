@@ -34,6 +34,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -161,6 +162,7 @@ function layerExecutorFor(input: {
       Layer.mergeAll(
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        Layer.mock(SandboxEffects.SandboxEffects)({}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),

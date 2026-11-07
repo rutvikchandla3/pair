@@ -21,6 +21,7 @@ import * as RunFinalization from "./RunFinalizationService.ts";
 import * as RuntimeRequests from "./RuntimeRequestService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
+import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 
 it.effect.each([
   ["starts the next turn after a post-capture Git status failure", false],
@@ -90,6 +91,7 @@ it.effect.each([
         Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitles.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({}),
+        Layer.mock(SandboxEffects.SandboxEffects)({}),
         ServerSettings.layerTest(),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),

@@ -23,6 +23,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  SandboxId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -2502,22 +2503,31 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect.each([{ replayed: false }, { replayed: true }] as const)(
-    "starts later thread work behind a delegated-task stop that never returns (replayed: $replayed)",
-    ({ replayed }) =>
+  it.effect.each([
+    { type: "delegated-tasks.stop", replayed: false },
+    { type: "delegated-tasks.stop", replayed: true },
+    { type: "sandbox.start", replayed: false },
+    { type: "sandbox.start", replayed: true },
+  ] as const)(
+    "starts later thread work behind a $type that never returns (replayed: $replayed)",
+    ({ type, replayed }) =>
       Effect.gen(function* () {
         const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const key = `foundation-hung-delegated-stop:${replayed}`;
+        const key = `foundation-hung-${type}:${replayed}`;
         const threadId = ThreadId.make(`thread:${key}`);
         const stopEffectId = `effect:${key}:stop`;
         const stopStarted = yield* Deferred.make<void>();
         const turnStarted = yield* Deferred.make<void>();
+        const exhausted = yield* Ref.make<ReadonlyArray<string>>([]);
         yield* outbox.enqueue([
           {
             id: stopEffectId,
             commandId: CommandId.make(`command:${key}:stop`),
             threadId,
-            request: { type: "delegated-tasks.stop" },
+            request:
+              type === "sandbox.start"
+                ? { type, sandboxId: SandboxId.make("sbx_00000000000000000001"), generation: 1 }
+                : { type },
           },
         ]);
         if (replayed) {
@@ -2529,13 +2539,14 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           EffectWorker.OrchestrationEffectExecutorV2,
           EffectWorker.OrchestrationEffectExecutorV2.of({
             execute: (effect) =>
-              effect.request.type === "delegated-tasks.stop"
+              effect.request.type === type
                 ? Deferred.succeed(stopStarted, undefined).pipe(Effect.andThen(Effect.never))
                 : Deferred.succeed(turnStarted, undefined),
+            reportExhausted: (effect) => Ref.update(exhausted, (ids) => [...ids, effect.id]),
           }),
         );
         const layerWorker = EffectWorker.layerWithOptions({
-          workerId: "hung-delegated-stop-worker",
+          workerId: `hung-${type}-worker`,
         }).pipe(
           Layer.provide(
             Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
@@ -2562,7 +2573,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           yield* TestClock.adjust("1 hour");
           assert.isTrue(
             Option.isSome(yield* Fiber.join(turn)),
-            "provider-turn.start never ran behind the hung delegated-tasks.stop",
+            `provider-turn.start never ran behind the hung ${type}`,
           );
           const stop = yield* outbox.get(stopEffectId);
           assert.isTrue(Option.isSome(stop));
@@ -2570,6 +2581,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             assert.equal(stop.value.status, "failed");
             assert.include(stop.value.lastError ?? "", "Timed out");
           }
+          // Once, after the last bounded attempt.
+          assert.deepEqual(yield* Ref.get(exhausted), [stopEffectId]);
         }).pipe(
           Effect.provide(layerWorker),
           Effect.scoped,
@@ -2577,7 +2590,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             outbox
               .cancelUnsettled({
                 threadId,
-                effectTypes: ["delegated-tasks.stop", "provider-turn.start"],
+                effectTypes: [type, "provider-turn.start"],
                 reason: "fixture complete",
               })
               .pipe(Effect.orDie),
@@ -2714,6 +2727,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
   it.effect.each([
     { type: "terminal.cleanup" },
     { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },
+    ...(["create", "start", "stop", "destroy", "status"] as const).map((operation) => ({
+      type: `sandbox.${operation}` as const,
+      sandboxId: SandboxId.make("sbx_00000000000000000002"),
+      generation: 1,
+    })),
   ] as const)(
     "retires live provider effects and requeues $type after process loss",
     (replayRequest) =>

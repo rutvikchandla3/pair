@@ -75,6 +75,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  SandboxId,
   ThreadLinkedPullRequest,
   ThreadId,
   TurnItemId,
@@ -212,6 +213,10 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
+import {
+  decideSandboxCommand,
+  type SandboxCommand,
+} from "../sandbox/lifecycle/SandboxDecisions.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -310,6 +315,16 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+/** Refused without a receipt: the intake re-reads the owner and dispatches there. */
+export class OrchestratorSandboxCommandMovedError extends Schema.TaggedError<OrchestratorSandboxCommandMovedError>()(
+  "OrchestratorSandboxCommandMovedError",
+  { commandId: CommandId, threadId: ThreadId, sandboxId: SandboxId },
+) {
+  override get message(): string {
+    return `Machine ${this.sandboxId} is no longer owned by thread ${this.threadId}.`;
+  }
+}
+
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 
 /** The ceiling refusal under however many dispatch errors wrapped it on the way out. */
@@ -375,6 +390,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorRuntimeModeAboveCeilingError,
+  OrchestratorSandboxCommandMovedError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -10732,6 +10748,92 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchSandboxCommand = Effect.fn("Orchestrator.dispatchSandboxCommand")(function* (
+    command: SandboxCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const record = yield* projectionStore.getSandbox(command.sandboxId).pipe(mapProjection);
+    const thread =
+      command.type === "sandbox.provision"
+        ? yield* projectionStore.getThread(command.threadId).pipe(mapProjection)
+        : null;
+    if (
+      thread !== null &&
+      (thread.deletedAt !== null ||
+        (thread.sandboxId !== undefined && thread.sandboxId !== command.sandboxId))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} cannot take machine ${command.sandboxId}.`,
+      });
+    }
+    // Other threads are read without their locks, as every cross-thread decision is (04 §1).
+    const activeRunThreadIds =
+      record !== null && (command.type === "sandbox.sleep" || command.type === "sandbox.discard")
+        ? yield* Effect.forEach(
+            yield* projectionStore.listSandboxThreads(record.id).pipe(mapProjection),
+            (row) => projectionStore.getThreadShell(row.threadId).pipe(mapProjection),
+          ).pipe(
+            Effect.map((shells) =>
+              shells.flatMap((shell) => (shell?.activeRunId == null ? [] : [shell.id])),
+            ),
+          )
+        : [];
+    const now = yield* DateTime.now;
+    const decision = decideSandboxCommand({
+      command,
+      record,
+      ownerMemberId: thread?.ownerId ?? null,
+      activeRunThreadIds,
+      now,
+    });
+    if (decision._tag === "NoOp") return;
+    if (decision._tag === "Refuse") {
+      return yield* decision.reason === "not-owner-thread"
+        ? new OrchestratorSandboxCommandMovedError({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            sandboxId: command.sandboxId,
+          })
+        : new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Machine ${command.sandboxId} refused ${command.type}: ${decision.reason}.`,
+          });
+    }
+    const { next } = decision;
+    const emitEvent = emit(events, command);
+    if (thread !== null && thread.sandboxId !== next.id) {
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, sandboxId: next.id, updatedAt: now },
+      });
+    }
+    yield* emitEvent({
+      type: "sandbox.updated",
+      threadId: next.ownerThreadId,
+      occurredAt: now,
+      payload: next,
+    });
+    yield* Ref.update(effects, (existing) => [
+      ...existing,
+      ...decision.effects.map((request): PendingOrchestrationEffectV2 => ({
+        id: `effect:${command.commandId}:${request.type}`,
+        commandId: command.commandId,
+        threadId: next.ownerThreadId,
+        request,
+      })),
+    ]);
+  });
+
   const dispatchPreparedRunRelease = Effect.fn("Orchestrator.dispatchPreparedRunRelease")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "prepared-run.release" }>,
@@ -14159,6 +14261,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
         break;
+      case "sandbox.wake":
+      case "sandbox.sleep":
+      case "sandbox.retry":
+      case "sandbox.discard":
+      case "sandbox.provision":
+      case "sandbox.created":
+      case "sandbox.runner.attached":
+      case "sandbox.runner.lost":
+      case "sandbox.stopped":
+      case "sandbox.destroyed":
+      case "sandbox.failed":
+        yield* dispatchSandboxCommand(command, events, effects);
+        break;
       default:
         return yield* dispatchUnsupported(command);
     }
@@ -14266,7 +14381,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.owner.set" ||
           // The holder follows implicitly, so their follow changes nothing.
           command.type === "thread.follow" ||
-          command.type === "thread.unfollow",
+          command.type === "thread.unfollow" ||
+          // The sandbox is already there (04 §2).
+          command.type === "sandbox.wake" ||
+          command.type === "sandbox.stopped" ||
+          command.type === "sandbox.destroyed" ||
+          command.type === "sandbox.runner.attached",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -14279,7 +14399,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Refusals depend on modes the user can change; a recorded rejection would block the retry.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
+            cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+            cause._tag === "OrchestratorSandboxCommandMovedError"
           ) {
             return yield* cause;
           }

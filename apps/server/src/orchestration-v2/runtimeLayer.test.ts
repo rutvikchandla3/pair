@@ -94,12 +94,17 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
-const layerPlatformTest = Layer.merge(
+const layerPlatformTest = Layer.mergeAll(
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
+  // These runtimes never provision a sandbox.
+  Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
 );
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {

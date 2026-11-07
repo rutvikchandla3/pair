@@ -54,6 +54,8 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
+import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 const layerPlatformTest = Layer.merge(
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
@@ -121,6 +123,12 @@ const layerTest = Layer.mergeAll(
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+    ),
+  ),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
       normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),

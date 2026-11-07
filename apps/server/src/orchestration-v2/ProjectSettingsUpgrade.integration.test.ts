@@ -30,6 +30,8 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -139,6 +141,12 @@ const layerRuntime = (dbPath: string) => {
     RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
     RuntimeLayer.layerProjectService,
   ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      ),
+    ),
     Layer.provide(
       Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
         peek: () => Effect.succeed(unusedEnrichment),
