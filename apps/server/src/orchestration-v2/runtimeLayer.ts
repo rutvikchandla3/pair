@@ -58,6 +58,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
+import * as SandboxLifecycleWorker from "../sandbox/lifecycle/SandboxLifecycleWorker.ts";
+import * as SandboxReconciler from "../sandbox/lifecycle/SandboxReconciler.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -397,6 +399,25 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerOrchestratorProvided,
+      ),
+    ),
+  ),
+  // The compute driver registry and the install id come from the server.
+  SandboxLifecycleWorker.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerOrchestratorProvided,
+      ),
+    ),
+  ),
+  SandboxReconciler.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        ThreadCommandExecutor.layer,
       ),
     ),
   ),

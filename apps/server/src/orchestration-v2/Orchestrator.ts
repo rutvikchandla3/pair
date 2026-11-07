@@ -215,6 +215,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import {
   decideSandboxCommand,
+  planSandboxOnThreadDelete,
+  type SandboxAttachedThread,
+  sandboxAttachedThread,
   type SandboxCommand,
 } from "../sandbox/lifecycle/SandboxDecisions.ts";
 
@@ -10748,6 +10751,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const listSandboxAttachedThreads = Effect.fn("Orchestrator.listSandboxAttachedThreads")(
+    function* (sandboxId: SandboxId) {
+      const rows = yield* projectionStore.listSandboxThreads(sandboxId);
+      const shells = yield* Effect.forEach(rows, (row) =>
+        projectionStore.getThreadShell(row.threadId),
+      );
+      return shells.flatMap((shell): ReadonlyArray<SandboxAttachedThread> =>
+        shell === null ? [] : [sandboxAttachedThread(shell)],
+      );
+    },
+  );
+
   const dispatchSandboxCommand = Effect.fn("Orchestrator.dispatchSandboxCommand")(function* (
     command: SandboxCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -10773,23 +10788,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     // Other threads are read without their locks, as every cross-thread decision is (04 §1).
-    const activeRunThreadIds =
-      record !== null && (command.type === "sandbox.sleep" || command.type === "sandbox.discard")
-        ? yield* Effect.forEach(
-            yield* projectionStore.listSandboxThreads(record.id).pipe(mapProjection),
-            (row) => projectionStore.getThreadShell(row.threadId).pipe(mapProjection),
-          ).pipe(
-            Effect.map((shells) =>
-              shells.flatMap((shell) => (shell?.activeRunId == null ? [] : [shell.id])),
-            ),
-          )
+    const attachedThreads =
+      record !== null &&
+      (command.type === "sandbox.sleep" ||
+        command.type === "sandbox.discard" ||
+        command.type === "sandbox.auto-sleep")
+        ? yield* listSandboxAttachedThreads(record.id).pipe(mapProjection)
         : [];
     const now = yield* DateTime.now;
     const decision = decideSandboxCommand({
       command,
       record,
       ownerMemberId: thread?.ownerId ?? null,
-      activeRunThreadIds,
+      attachedThreads,
       now,
     });
     if (decision._tag === "NoOp") return;
@@ -13975,9 +13986,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
           )),
         ];
+        const thread = yield* findThread(command.threadId);
+        const sandboxEffects =
+          thread?.sandboxId === undefined
+            ? []
+            : planSandboxOnThreadDelete({
+                deletedThreadIds: [command.threadId, ...sideChatIds],
+                sandbox: yield* projectionStore
+                  .getSandbox(thread.sandboxId)
+                  .pipe(mapDispatchError(command)),
+                liveAttachedThreadIds: (yield* projectionStore
+                  .listSandboxThreads(thread.sandboxId)
+                  .pipe(mapDispatchError(command))).map((row) => row.threadId),
+                commandId: command.commandId,
+              });
         return {
           events: plans.flatMap((plan) => plan.events),
-          effects: plans.flatMap((plan) => plan.effects),
+          effects: [...plans.flatMap((plan) => plan.effects), ...sandboxEffects],
         };
       }
       case "thread.archive":
@@ -14272,6 +14297,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.stopped":
       case "sandbox.destroyed":
       case "sandbox.failed":
+      case "sandbox.auto-sleep":
         yield* dispatchSandboxCommand(command, events, effects);
         break;
       default:

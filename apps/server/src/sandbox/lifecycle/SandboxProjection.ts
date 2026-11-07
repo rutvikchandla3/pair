@@ -230,6 +230,17 @@ export const getSandbox = Effect.fn("SandboxProjection.getSandbox")(function* (i
   return (yield* getSandboxes([id])).get(id) ?? null;
 });
 
+/** Every sandbox not yet destroyed; the lifecycle worker and the reconciler sweep these. */
+export const listLiveSandboxes = Effect.fn("SandboxProjection.listLiveSandboxes")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_sandboxes
+    WHERE state <> 'destroyed'
+    ORDER BY sandbox_id ASC
+  `;
+  return yield* Effect.forEach(rows, (row) => decodeSandbox(row.payload_json));
+});
+
 /** Live (not deleted) threads using the sandbox, oldest first: attached_at, then thread_id. */
 export const listSandboxThreads = Effect.fn("SandboxProjection.listSandboxThreads")(function* (
   id: SandboxId,

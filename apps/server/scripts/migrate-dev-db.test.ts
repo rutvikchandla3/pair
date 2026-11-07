@@ -93,6 +93,19 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       yield* sql`INSERT INTO scheduled_task_webhook_pending
         (delivery_id, task_id, coalesce_key, due_at, task_json, request_json, delivery_ids_json)
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_sandboxes
+        (sandbox_id, project_id, owner_thread_id, driver_id, state, generation, updated_at, payload_json)
+        VALUES ('sbx_00000000000000000001', 'project-kept', 'stopped-thread', 'docker', 'ready', 1,
+          '2026-08-01', '{}')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_sandbox_threads
+        (sandbox_id, thread_id, attached_at, archived)
+        VALUES ('sbx_00000000000000000001', 'stopped-thread', '2026-08-01', 0)`;
+      yield* sql`INSERT INTO sandbox_usage_intervals
+        (sandbox_id, thread_id, driver_id, size, started_at)
+        VALUES ('sbx_00000000000000000001', 'stopped-thread', 'docker', 'default', '2026-08-01')`;
+      yield* sql`INSERT INTO orchestration_events
+        (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
+        VALUES ('event-sandbox', 'thread', 'stopped-thread', 1, 'sandbox.updated', '2026-08-01', 'server', '{}', '{}')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
       yield* sql`INSERT INTO peer_environment_links
@@ -135,6 +148,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             webhooks: number;
             transfers: number;
             links: number;
+            sandboxes: number;
           }>`
             SELECT
               (SELECT COUNT(*) FROM auth_sessions) AS auth,
@@ -142,7 +156,12 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
-              (SELECT COUNT(*) FROM peer_environment_links) AS links`;
+              (SELECT COUNT(*) FROM peer_environment_links) AS links,
+              (SELECT COUNT(*) FROM orchestration_v2_projection_sandboxes) +
+                (SELECT COUNT(*) FROM orchestration_v2_projection_sandbox_threads) +
+                (SELECT COUNT(*) FROM sandbox_usage_intervals) +
+                (SELECT COUNT(*) FROM orchestration_events WHERE event_type = 'sandbox.updated')
+                AS sandboxes`;
           return { threads, events, sessions, leftovers };
         }),
       );
@@ -164,6 +183,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         webhooks: 0,
         transfers: 0,
         links: 0,
+        sandboxes: 0,
       });
     }),
   );

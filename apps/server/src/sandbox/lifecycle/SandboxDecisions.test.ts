@@ -10,7 +10,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { decideSandboxCommand, type SandboxCommand } from "./SandboxDecisions.ts";
+import {
+  decideSandboxCommand,
+  planSandboxOnThreadDelete,
+  type SandboxAttachedThread,
+  type SandboxCommand,
+} from "./SandboxDecisions.ts";
 
 const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
 const owner = ThreadId.make("thread-owner");
@@ -40,6 +45,20 @@ const record = (patch: Partial<OrchestrationV2Sandbox> = {}): OrchestrationV2San
 const base = { commandId: CommandId.make("command"), threadId: owner, sandboxId };
 const at = (generation: number) => ({ ...base, generation });
 const lost = { code: "lost", message: "Gone.", retryable: true };
+const bootTimeout = { code: "boot-timeout", message: "No hello.", retryable: true };
+const fork = ThreadId.make("thread-fork");
+
+const attached = (
+  threadId: ThreadId,
+  patch: Partial<SandboxAttachedThread> = {},
+): SandboxAttachedThread => ({
+  threadId,
+  archived: false,
+  settled: false,
+  activeRun: false,
+  ...patch,
+});
+const autoSleep: SandboxCommand = { type: "sandbox.auto-sleep", ...base, snapshotAt: now };
 
 type Row = readonly [
   name: string,
@@ -49,7 +68,7 @@ type Row = readonly [
     | { readonly next: Partial<OrchestrationV2Sandbox>; readonly effects: ReadonlyArray<string> }
     | "NoOp"
     | string,
-  activeRunThreadIds?: ReadonlyArray<ThreadId>,
+  attachedThreads?: ReadonlyArray<SandboxAttachedThread>,
 ];
 
 const provision: SandboxCommand = {
@@ -180,14 +199,49 @@ const rows: ReadonlyArray<Row> = [
     { type: "sandbox.sleep", ...base },
     record(),
     "active-run",
-    [sideChat],
+    [attached(owner), attached(sideChat, { activeRun: true })],
   ],
   [
     "discard with a run on a side chat",
     { type: "sandbox.discard", ...base },
     record(),
     "active-run",
-    [sideChat],
+    [attached(owner), attached(sideChat, { activeRun: true })],
+  ],
+  [
+    "auto-sleep once the owner is settled and its fork archived",
+    autoSleep,
+    record(),
+    { next: { state: "sleeping", sleepReason: "settled" }, effects: ["sandbox.stop"] },
+    [attached(owner, { settled: true }), attached(fork, { archived: true })],
+  ],
+  [
+    "auto-sleep once every thread is archived",
+    autoSleep,
+    record(),
+    { next: { state: "sleeping", sleepReason: "archived" }, effects: ["sandbox.stop"] },
+    [attached(owner, { archived: true, settled: true }), attached(fork, { archived: true })],
+  ],
+  [
+    "auto-sleep while a fork is still open",
+    autoSleep,
+    record(),
+    "in-use",
+    [attached(owner, { settled: true }), attached(fork)],
+  ],
+  [
+    "auto-sleep with a run on a settled thread",
+    autoSleep,
+    record(),
+    "active-run",
+    [attached(owner, { settled: true, activeRun: true })],
+  ],
+  [
+    "auto-sleep when not ready",
+    autoSleep,
+    record({ state: "waking" }),
+    "wrong-state",
+    [attached(owner, { settled: true })],
   ],
   [
     "discard a sleeping sandbox",
@@ -214,6 +268,12 @@ const rows: ReadonlyArray<Row> = [
     "NoOp",
   ],
   [
+    "stopped while failed keeps the failure",
+    { type: "sandbox.stopped", ...at(2) },
+    record({ state: "failed", failure: lost }),
+    "NoOp",
+  ],
+  [
     "destroyed",
     { type: "sandbox.destroyed", ...at(2) },
     record({ state: "sleeping" }),
@@ -230,6 +290,18 @@ const rows: ReadonlyArray<Row> = [
     { type: "sandbox.failed", ...at(2), failure: lost },
     record({ state: "provisioning" }),
     { next: { state: "failed", failure: lost }, effects: [] },
+  ],
+  [
+    "a boot deadline stops the machine",
+    { type: "sandbox.failed", ...at(2), failure: bootTimeout },
+    record({ state: "waking" }),
+    { next: { state: "failed", failure: bootTimeout }, effects: ["sandbox.stop"] },
+  ],
+  [
+    "a boot deadline after the runner attached",
+    { type: "sandbox.failed", ...at(2), failure: bootTimeout },
+    record(),
+    "wrong-state",
   ],
   [
     "failed after destroy",
@@ -253,19 +325,19 @@ const rows: ReadonlyArray<Row> = [
 ];
 
 describe("decideSandboxCommand", () => {
-  const cases = rows.map(([name, command, current, expected, activeRunThreadIds = []]) => ({
+  const cases = rows.map(([name, command, current, expected, attachedThreads = []]) => ({
     name,
     command,
     current,
     expected,
-    activeRunThreadIds,
+    attachedThreads,
   }));
-  it.each(cases)("$name", ({ command, current, expected, activeRunThreadIds }) => {
+  it.each(cases)("$name", ({ command, current, expected, attachedThreads }) => {
     const decision = decideSandboxCommand({
       command,
       record: current,
       ownerMemberId: MemberId.make("member"),
-      activeRunThreadIds,
+      attachedThreads,
       now,
     });
     if (expected === "NoOp") return expect(decision).toEqual({ _tag: "NoOp" });
@@ -281,5 +353,64 @@ describe("decideSandboxCommand", () => {
         generation: decision.next.generation,
       })),
     );
+  });
+});
+
+describe("planSandboxOnThreadDelete", () => {
+  const commandId = CommandId.make("delete");
+  const destroy = [
+    {
+      id: "effect:delete:sandbox.destroy",
+      commandId,
+      threadId: owner,
+      request: { type: "sandbox.destroy", sandboxId, generation: 2 },
+    },
+  ];
+  it.each([
+    {
+      name: "the owner alone",
+      deleted: [owner],
+      live: [owner],
+      sandbox: record(),
+      expected: destroy,
+    },
+    {
+      name: "the owner with a side chat deleted in the same command",
+      deleted: [owner, sideChat],
+      live: [owner, sideChat],
+      sandbox: record(),
+      expected: destroy,
+    },
+    {
+      name: "the owner while a fork remains",
+      deleted: [owner],
+      live: [owner, fork],
+      sandbox: record(),
+      expected: [],
+    },
+    {
+      name: "a thread that is not the owner",
+      deleted: [fork],
+      live: [owner, fork],
+      sandbox: record(),
+      expected: [],
+    },
+    {
+      name: "a sandbox already destroyed",
+      deleted: [owner],
+      live: [owner],
+      sandbox: record({ state: "destroyed" }),
+      expected: [],
+    },
+    { name: "no sandbox", deleted: [owner], live: [], sandbox: null, expected: [] },
+  ])("$name", ({ deleted, live, sandbox, expected }) => {
+    expect(
+      planSandboxOnThreadDelete({
+        deletedThreadIds: deleted,
+        sandbox,
+        liveAttachedThreadIds: live,
+        commandId,
+      }),
+    ).toEqual(expected);
   });
 });

@@ -1,12 +1,18 @@
 import type {
+  CommandId,
   MemberId,
   OrchestrationV2Sandbox,
   OrchestrationV2ServerCommand,
+  OrchestrationV2ThreadShell,
+  SandboxSleepReason,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
+import type {
+  OrchestrationEffectRequestV2,
+  PendingOrchestrationEffectV2,
+} from "../../orchestration-v2/EffectOutbox.ts";
 
 export type SandboxCommand = Extract<
   OrchestrationV2ServerCommand,
@@ -22,7 +28,8 @@ export type SandboxCommand = Extract<
       | "sandbox.runner.lost"
       | "sandbox.stopped"
       | "sandbox.destroyed"
-      | "sandbox.failed";
+      | "sandbox.failed"
+      | "sandbox.auto-sleep";
   }
 >;
 
@@ -31,14 +38,36 @@ export type SandboxEffectRequest = Extract<
   { readonly type: `sandbox.${string}` }
 >;
 
+/** A live thread using the sandbox, as the shared thread row says (never one member's view). */
+export interface SandboxAttachedThread {
+  readonly threadId: ThreadId;
+  readonly archived: boolean;
+  readonly settled: boolean;
+  /** A run that is preparing, queued, starting, running or waiting. */
+  readonly activeRun: boolean;
+}
+
+export const sandboxAttachedThread = (
+  shell: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "archivedAt" | "settledOverride" | "activeRunId" | "activityRunStatus" | "status"
+  >,
+): SandboxAttachedThread => ({
+  threadId: shell.id,
+  archived: shell.archivedAt !== null,
+  settled: shell.settledOverride === "settled",
+  activeRun:
+    shell.activeRunId !== null || shell.activityRunStatus != null || shell.status === "queued",
+});
+
 /** The orchestrator gathers these under the owner thread's lock; deciding does no I/O. */
 export interface SandboxDecisionInput {
   readonly command: SandboxCommand;
   readonly record: OrchestrationV2Sandbox | null;
   /** The owning thread's owner, for a record `sandbox.provision` creates. */
   readonly ownerMemberId: MemberId | null;
-  /** Attached live threads with an active run; read only for sleep and discard. */
-  readonly activeRunThreadIds: ReadonlyArray<ThreadId>;
+  /** Read only for sleep, discard and auto-sleep. */
+  readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
   readonly now: DateTime.Utc;
 }
 
@@ -48,7 +77,52 @@ type SandboxRefusalReason =
   | "not-owner-thread"
   | "wrong-state"
   | "active-run"
+  | "in-use"
   | "stale-generation";
+
+/**
+ * M1's settle-and-archive rule: once every attached thread is archived or settled and none has
+ * an active run, the sandbox may sleep. Null while it is still in use, or with no thread left.
+ */
+export const decideAutoSleep = (
+  threads: ReadonlyArray<SandboxAttachedThread>,
+): Extract<SandboxSleepReason, "archived" | "settled"> | null => {
+  if (threads.length === 0) return null;
+  if (threads.some((thread) => thread.activeRun || (!thread.archived && !thread.settled))) {
+    return null;
+  }
+  return threads.every((thread) => thread.archived) ? "archived" : "settled";
+};
+
+/**
+ * Deleting the owner together with every live attached thread (its side chats deleted in the
+ * same command) destroys the sandbox; while any other thread remains, deletion enqueues nothing.
+ */
+export const planSandboxOnThreadDelete = (input: {
+  readonly deletedThreadIds: ReadonlyArray<ThreadId>;
+  readonly sandbox: OrchestrationV2Sandbox | null;
+  readonly liveAttachedThreadIds: ReadonlyArray<ThreadId>;
+  readonly commandId: CommandId;
+}): ReadonlyArray<PendingOrchestrationEffectV2> => {
+  const { sandbox, commandId } = input;
+  const deleted = new Set(input.deletedThreadIds);
+  if (
+    sandbox === null ||
+    sandbox.state === "destroyed" ||
+    !deleted.has(sandbox.ownerThreadId) ||
+    input.liveAttachedThreadIds.some((threadId) => !deleted.has(threadId))
+  ) {
+    return [];
+  }
+  return [
+    {
+      id: `effect:${commandId}:sandbox.destroy`,
+      commandId,
+      threadId: sandbox.ownerThreadId,
+      request: { type: "sandbox.destroy", sandboxId: sandbox.id, generation: sandbox.generation },
+    },
+  ];
+};
 
 export type SandboxDecision =
   | {
@@ -139,7 +213,7 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
           },
           ["sandbox.start"],
         );
-  const busy = input.activeRunThreadIds.length > 0;
+  const busy = input.attachedThreads.some((thread) => thread.activeRun);
 
   switch (command.type) {
     case "sandbox.wake":
@@ -162,6 +236,15 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
       return record.state === "ready" || record.state === "sleeping" || record.state === "failed"
         ? update({ state: "destroyed" }, ["sandbox.destroy"])
         : refuse("wrong-state");
+    case "sandbox.auto-sleep": {
+      if (record.state !== "ready") return refuse("wrong-state");
+      if (busy) return refuse("active-run");
+      const sleepReason = decideAutoSleep(input.attachedThreads);
+      // Sleeping from the decision on, so a prompt before the stop runs wakes after it.
+      return sleepReason === null
+        ? refuse("in-use")
+        : update({ state: "sleeping", sleepReason }, ["sandbox.stop"]);
+    }
   }
 
   if (command.generation !== record.generation) return refuse("stale-generation");
@@ -183,13 +266,19 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         ? update({ runnerLostAt: record.runnerLostAt ?? now }, ["sandbox.status"])
         : refuse("wrong-state");
     case "sandbox.stopped":
-      if (record.state === "sleeping") return noOp;
+      // A failed sandbox keeps its failure; its backend stopping changes nothing.
+      if (record.state === "sleeping" || record.state === "failed") return noOp;
       return record.state === "ready" || record.state === "waking"
         ? update({ state: "sleeping", runnerLostAt: null })
         : refuse("wrong-state");
     case "sandbox.destroyed":
       return record.state === "destroyed" ? noOp : update({ state: "destroyed" });
     case "sandbox.failed":
+      if (command.failure.code === "boot-timeout") {
+        return record.state === "provisioning" || record.state === "waking"
+          ? update({ state: "failed", failure: command.failure }, ["sandbox.stop"])
+          : refuse("wrong-state");
+      }
       return record.state === "destroyed"
         ? refuse("wrong-state")
         : update({ state: "failed", failure: command.failure });

@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -34,15 +35,19 @@ import * as ProviderTurnControl from "../../orchestration-v2/ProviderTurnControl
 import * as ProviderTurnStart from "../../orchestration-v2/ProviderTurnStartService.ts";
 import * as RunFinalization from "../../orchestration-v2/RunFinalizationService.ts";
 import * as RuntimeRequests from "../../orchestration-v2/RuntimeRequestService.ts";
+import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadTitles from "../../orchestration-v2/ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { ComputeDriverError } from "../compute/ComputeDriver.ts";
+import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
+import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
+import * as SandboxReconciler from "./SandboxReconciler.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -76,7 +81,7 @@ const installId = EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
 
 /** The real worker and executor over the real `SandboxEffects`, the fake driver and a recording bootstrap. */
 const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(function* () {
-  const fake = yield* FakeComputeDriver.make();
+  const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
   const bootstraps = yield* Ref.make<ReadonlyArray<number>>([]);
   const layerBootstrap = Layer.succeed(
     SandboxBootstrapSource.SandboxBootstrapSource,
@@ -92,16 +97,14 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
       }),
     }),
   );
+  const layerDriver = Layer.mergeAll(
+    FakeComputeDriver.layerRegistry(fake.driver),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getEnvironmentId: Effect.succeed(installId),
+    }),
+  );
   const layerSandboxEffects = SandboxEffects.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        FakeComputeDriver.layerRegistry(fake.driver),
-        layerBootstrap,
-        Layer.mock(ServerEnvironment.ServerEnvironment)({
-          getEnvironmentId: Effect.succeed(installId),
-        }),
-      ),
-    ),
+    Layer.provide(Layer.merge(layerDriver, layerBootstrap)),
   );
   const layerWorker = EffectWorker.layerWithOptions({ workerId: "sandbox-lifecycle" }).pipe(
     Layer.provide(
@@ -122,7 +125,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
     ),
   );
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(Effect.provide(layerWorker));
-  return { ...fake, bootstraps, worker };
+  return { ...fake, bootstraps, worker, layerDriver };
 });
 
 type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
@@ -189,6 +192,27 @@ const answerCreate = (call: FakeComputeDriver.FakeComputeCall) =>
   call._tag === "create"
     ? Deferred.succeed(call.reply, { driverRef: call.input.name, baseImage: null })
     : Effect.die(`Expected create, got ${call._tag}`);
+
+const sandboxEvents = (threadId: ThreadId) =>
+  EventStore.EventStoreV2.use((events) =>
+    events.read({ threadId, eventType: "sandbox.updated" }).pipe(Stream.runCollect),
+  ).pipe(Effect.map((events) => Array.from(events, (stored) => stored.event)));
+
+/** Answers the reconciler's `list` with `backends`, then its health check. */
+const answerReconcilePass = (runtime: Runtime, backends: ReadonlyArray<BackendSandbox>) =>
+  Effect.gen(function* () {
+    const list = yield* Queue.take(runtime.calls);
+    if (list._tag !== "list") return yield* Effect.die(`Expected list, got ${list._tag}`);
+    assert.deepEqual(list.tags, { "pair.install": installId });
+    yield* Deferred.succeed(list.reply, backends);
+    const health = yield* Queue.take(runtime.calls);
+    if (health._tag !== "health") return yield* Effect.die(`Expected health, got ${health._tag}`);
+    yield* Deferred.succeed(health.reply, {
+      isolation: "container",
+      privateNetworkBlock: { applied: true },
+      baseImage: null,
+    });
+  });
 
 const attach = (threadId: ThreadId, sandboxId: SandboxId, generation: number) =>
   dispatch({
@@ -311,8 +335,9 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         });
         assert.deepInclude(yield* getSandbox(sandboxId), { state: "waking", generation: 3 });
 
-        // The generation 2 start runs first, in queue order, and returns without a driver call.
-        assert.equal(yield* runtime.worker.drain(1), 1);
+        // Generation 2's start and its deadline's stop run first, in queue order, and return
+        // without a driver call.
+        assert.equal(yield* runtime.worker.drain(2), 2);
         assert.equal(yield* Queue.size(runtime.calls), 0);
         const started = yield* Deferred.make<number>();
         yield* runAnswering(runtime, (call) =>
@@ -361,5 +386,143 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       assert.deepInclude(sandbox?.failure ?? {}, { code: "lost", retryable: true });
       assert.equal(yield* Queue.size(runtime.calls), 0);
     }),
+  );
+  it.effect("adopts a backend found by name once, after its create's answer was lost", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("reconcile-created");
+      const name = `pair-0f1e2d3c-${sandboxId}-g1`;
+      const backend: BackendSandbox = {
+        driverRef: `container-${sandboxId}`,
+        name,
+        sandboxId,
+        status: "running",
+        createdAt: yield* DateTime.now,
+      };
+      yield* Effect.gen(function* () {
+        yield* answerReconcilePass(runtime, [backend]);
+        assert.deepInclude(yield* getSandbox(sandboxId), {
+          state: "provisioning",
+          driverRef: backend.driverRef,
+        });
+        const afterFirst = (yield* sandboxEvents(threadId)).length;
+        yield* TestClock.adjust("10 minutes");
+        yield* answerReconcilePass(runtime, [backend]);
+        assert.equal((yield* sandboxEvents(threadId)).length, afterFirst);
+        // The requeued create reports under the same id, so its receipt drops the duplicate.
+        yield* runAnswering(runtime, (call) =>
+          call._tag === "create"
+            ? Deferred.succeed(call.reply, { driverRef: backend.driverRef, baseImage: null })
+            : Effect.die(`Expected create, got ${call._tag}`),
+        );
+        assert.equal((yield* sandboxEvents(threadId)).length, afterFirst);
+      }).pipe(
+        Effect.provide(
+          SandboxReconciler.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(Scheduler.layer, runtime.layerDriver, ThreadCommandExecutor.layer),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("destroys the sandbox when its owner thread is deleted", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("delete");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attach(threadId, sandboxId, 1);
+      yield* dispatch({ type: "thread.delete", commandId: CommandId.make("delete"), threadId });
+      // Deletion cleanup effects run first; the destroy is the only one that calls the driver.
+      const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
+      const call = yield* Effect.raceFirst(
+        Queue.take(runtime.calls),
+        Fiber.join(run).pipe(Effect.andThen(Effect.die("Deletion never destroyed the sandbox."))),
+      );
+      if (call._tag !== "destroy") return yield* Effect.die(`Expected destroy, got ${call._tag}`);
+      assert.equal(call.ref, `pair-0f1e2d3c-${sandboxId}-g1`);
+      yield* Deferred.succeed(call.reply, undefined);
+      yield* Fiber.join(run);
+      assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
+      const [last] = (yield* sandboxEvents(threadId)).slice(-1);
+      assert.equal(last?.type === "sandbox.updated" && last.payload.state, "destroyed");
+    }),
+  );
+});
+
+// Sweeps read every sandbox in the database, so they get one of their own.
+it.layer(layerTest)("sandbox lifecycle worker", (it) => {
+  it.effect("stops a ready Docker sandbox once its owner settles, and not before", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("settle");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attach(threadId, sandboxId, 1);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+
+      yield* dispatch({ type: "thread.settle", commandId: CommandId.make("settle:1"), threadId });
+      yield* dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("unsettle"),
+        threadId,
+        reason: "user",
+      });
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+
+      yield* dispatch({ type: "thread.settle", commandId: CommandId.make("settle:2"), threadId });
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(sandboxId), {
+        state: "sleeping",
+        sleepReason: "settled",
+      });
+      const sleeps = (yield* sandboxEvents(threadId)).filter(
+        (event) => event.type === "sandbox.updated" && event.payload.state === "sleeping",
+      );
+      assert.equal(sleeps.length, 1);
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "stop"
+          ? Deferred.succeed(call.reply, undefined)
+          : Effect.die(`Expected stop, got ${call._tag}`),
+      );
+      assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails a sandbox whose runner never connects at the boot deadline", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { sandboxId } = yield* provisioned("deadline");
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+      yield* TestClock.adjust("9 minutes");
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "provisioning");
+      yield* TestClock.adjust("1 minute");
+      yield* sweep();
+      const sandbox = yield* getSandbox(sandboxId);
+      assert.equal(sandbox?.state, "failed");
+      assert.deepEqual(sandbox?.failure, {
+        code: "boot-timeout",
+        message: "The machine did not connect in time.",
+        retryable: true,
+      });
+      // The create still queued ahead of it runs, then the deadline's stop frees the machine.
+      yield* runAnswering(runtime, answerCreate);
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "stop"
+          ? Deferred.succeed(call.reply, undefined)
+          : Effect.die(`Expected stop, got ${call._tag}`),
+      );
+      assert.deepInclude(yield* getSandbox(sandboxId), {
+        state: "failed",
+        driverRef: `pair-0f1e2d3c-${sandboxId}-g1`,
+      });
+    }).pipe(Effect.scoped),
   );
 });
