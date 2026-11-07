@@ -141,6 +141,9 @@ const concat = <A extends Uint8Array | string>(parts: ReadonlyArray<A>): A => {
 
 /** One `output` element holds at most this much (03 4.5 batching). */
 const BATCH_UNITS = 64 * 1024;
+/** Pushes closer than this are one burst; its wake-up waits up to `FLUSH_DELAY_MS` to batch. */
+const HOT_GAP_MS = 0.5;
+const FLUSH_DELAY_MS = 1;
 /** Lease expiry: SIGTERM every group, SIGKILL this long after. */
 const LEASE_KILL_GRACE_MS = 10_000;
 
@@ -239,6 +242,9 @@ class OutputBuffer<A extends Uint8Array | string> {
   private wake = Deferred.makeUnsafe<void>();
   readonly ended = Deferred.makeUnsafe<void>();
   private overLimit = false;
+  private unannounced = 0;
+  private flushScheduled = false;
+  private lastPushAt = Number.NEGATIVE_INFINITY;
   paused = false;
   pausedAt = 0;
   /** Open while the source may be read. */
@@ -268,7 +274,25 @@ class OutputBuffer<A extends Uint8Array | string> {
     this.chunks.push({ seq: this.nextSeq, data });
     this.nextSeq += data.length;
     this.flow.added(this.self, data.length);
-    this.notify();
+    this.unannounced += data.length;
+    // A burst's reads land one per loop turn, so a turn is too short to batch them: while data
+    // arrives back to back, wake readers at a full batch or after FLUSH_DELAY_MS. A lone write
+    // wakes them on the next check phase.
+    const now = performance.now();
+    const hot = now - this.lastPushAt < HOT_GAP_MS;
+    this.lastPushAt = now;
+    if (this.unannounced >= BATCH_UNITS) {
+      this.notify();
+    } else if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      const flush = () => {
+        this.flushScheduled = false;
+        if (this.unannounced > 0) this.notify();
+      };
+      // @effect-diagnostics-next-line globalTimers:off -- push runs in a source callback, not a fiber.
+      if (hot) setTimeout(flush, FLUSH_DELAY_MS);
+      else setImmediate(flush);
+    }
   }
 
   end(): void {
@@ -404,6 +428,7 @@ class OutputBuffer<A extends Uint8Array | string> {
   }
 
   private notify(): void {
+    this.unannounced = 0;
     const wake = this.wake;
     this.wake = Deferred.makeUnsafe<void>();
     Deferred.doneUnsafe(wake, Exit.void);

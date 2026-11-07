@@ -362,6 +362,7 @@ const startRunner = Effect.fn("startRunner")(function* (
             PAIR_SANDBOX_ID: sandboxId,
             PAIR_RUNNER_BUILD: harness.bundle.runnerBuildId,
             PAIR_RUNNER_DIR: stateDir,
+            PAIR_AGENT_USER: NodeOS.userInfo().username,
           },
           stdin: "ignore",
           stdout: "ignore",

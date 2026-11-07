@@ -135,7 +135,10 @@ describe("runner process handles", () => {
           }),
         );
         expect(yield* Fiber.join(waiter)).toEqual({ exitCode: 0, signal: null });
-        expect(log).toEqual(["early", "late", "wait"]);
+        // A burst's wake-up is batched, so the reader's "late" may land after the wait.
+        expect(log[0]).toBe("early");
+        expect(log.slice(1).toSorted()).toEqual(["late", "wait"]);
+        expect((yield* readText(client, handle, 1)).text).toBe("earlylate");
       }),
     ),
   );
@@ -230,6 +233,41 @@ describe("runner PTYs", () => {
         );
         expect(text).toMatch(/24 80[\s\S]*hello[\s\S]*30 100[\s\S]*<hello>/);
         expect(yield* client["pty.wait"]({ handle })).toEqual({ exitCode: 0, signal: 0 });
+      }),
+    ),
+  );
+});
+
+describe("runner output bursts", () => {
+  it.effect("stamps coalesced PTY chunks with contiguous offsets and resumes inside one", () =>
+    withRunner((client) =>
+      Effect.gen(function* () {
+        const { handle } = yield* client["pty.open"]({
+          shell: "/bin/sh",
+          args: ["-c", 'i=0; while [ $i -lt 3000 ]; do printf "line %05d\\n" $i; i=$((i+1)); done'],
+          cwd: "/",
+          cols: 80,
+          rows: 24,
+          env,
+        });
+        const chunks = Array.from(
+          yield* client["pty.output"]({ handle, fromSeq: 0 }).pipe(Stream.runCollect),
+        );
+        let offset = 0;
+        for (const chunk of chunks) {
+          expect(chunk.seq).toBe(offset);
+          expect(chunk.data.length).toBeLessThanOrEqual(64 * 1024);
+          offset += chunk.data.length;
+        }
+        const text = chunks.map((chunk) => chunk.data).join("");
+        expect(text).toContain("line 02999");
+
+        const from = Math.floor(text.length / 2);
+        const tail = Array.from(
+          yield* client["pty.output"]({ handle, fromSeq: from }).pipe(Stream.runCollect),
+        );
+        expect(tail[0]?.seq).toBe(from);
+        expect(tail.map((chunk) => chunk.data).join("")).toBe(text.slice(from));
       }),
     ),
   );
