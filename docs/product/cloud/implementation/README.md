@@ -13,6 +13,7 @@ against the repo; the [findings](#verification-findings) are at the end.
 | [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                         |
 | [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.      |
 | [m2-m5.md](./m2-m5.md)                                     | M2–M5 at PR level: sharper scope, the dependencies the code reveals, and the decision each needs first. |
+| [progress.md](./progress.md)                               | Build status, how to resume, and notes from every landed PR (temporary).                                |
 
 To implement a PR: read its spec, then the owner-doc sections its title row in 10 §2 names, then
 re-read every file and symbol the spec cites, since line numbers drift with upstream merges. Every
