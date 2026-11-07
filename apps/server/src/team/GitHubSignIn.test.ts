@@ -33,7 +33,12 @@ const bind = (memberId: MemberId, githubUserId: number, githubLogin: string) =>
   TeamMembers.TeamMembers.pipe(
     Effect.flatMap((team) =>
       // Bound, but the token stopped working: signing in must reconnect it.
-      team.setGitHub(memberId, { githubUserId, githubLogin, githubConnectedAt: null }),
+      team.setGitHub(memberId, {
+        githubUserId,
+        githubLogin,
+        githubConnectedAt: null,
+        githubSource: "app",
+      }),
     ),
   );
 

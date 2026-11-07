@@ -187,13 +187,16 @@ it.layer(layerTeam)("TeamMembers", (it) => {
         INSERT INTO member_push_devices (device_id, member_id, session_id, token, platform, updated_at)
         VALUES ('phone', ${invited.member.id}, ${session.sessionId}, 'ExponentPushToken[cleo]', 'ios', '2026-11-01T00:00:00.000Z')
       `;
-        const tokenName = TeamMembers.memberGitHubSecretName(invited.member.id);
-        yield* secrets.set(tokenName, new TextEncoder().encode("{}"));
+        const tokenNames = [
+          TeamMembers.memberGitHubSecretName(invited.member.id),
+          TeamMembers.memberGitHubTokenSecretName(invited.member.id),
+        ];
+        for (const name of tokenNames) yield* secrets.set(name, new TextEncoder().encode("{}"));
 
         const removed = yield* team.remove({ memberId: invited.member.id });
 
         expect(yield* sql`SELECT device_id FROM member_push_devices`).toEqual([]);
-        expect(Option.isNone(yield* secrets.get(tokenName))).toBe(true);
+        for (const name of tokenNames) expect(Option.isNone(yield* secrets.get(name))).toBe(true);
 
         expect(removed.removedAt).not.toBeNull();
         expect((yield* Effect.flip(authenticate))._tag).toBe("ServerAuthInvalidCredentialError");
@@ -214,25 +217,26 @@ it.layer(layerTeam)("TeamMembers", (it) => {
         const members = yield* Members.MemberRepository;
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const { member } = yield* team.invite({ name: "Finn", role: "member" });
-        const tokenName = TeamMembers.memberGitHubSecretName(member.id);
+        const tokenName = TeamMembers.memberGitHubTokenSecretName(member.id);
         const connect = Effect.gen(function* () {
-          yield* secrets.set(tokenName, new TextEncoder().encode("{}"));
+          yield* secrets.set(tokenName, new TextEncoder().encode("ghp_pasted"));
           return yield* team.setGitHub(member.id, {
             githubUserId: 7,
             githubLogin: "finn",
             githubConnectedAt: "2026-10-01T00:00:00.000Z",
+            githubSource: "token",
           });
         });
         const stored = members
           .getById(member.id)
           .pipe(Effect.map((record) => Option.getOrThrow(record).githubUserId));
 
-        expect((yield* connect).github).toEqual({ login: "finn", connected: true });
+        const bound = { login: "finn", connected: true, source: "token" };
+        expect((yield* connect).github).toEqual(bound);
         // The same login, in any case, keeps the proven binding.
-        expect((yield* team.update({ memberId: member.id, githubLogin: "Finn" })).github).toEqual({
-          login: "finn",
-          connected: true,
-        });
+        expect((yield* team.update({ memberId: member.id, githubLogin: "Finn" })).github).toEqual(
+          bound,
+        );
         expect(yield* stored).toBe(7);
 
         const claimed = yield* team.update({ memberId: member.id, githubLogin: "finn-work" });

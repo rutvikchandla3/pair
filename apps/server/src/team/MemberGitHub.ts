@@ -24,6 +24,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import type * as Members from "../persistence/Members.ts";
 import * as TeamMembers from "./TeamMembers.ts";
 import * as TeamState from "./TeamState.ts";
 
@@ -33,8 +34,9 @@ export interface MemberGitHubCredential {
 }
 
 /**
- * Each member's own GitHub connection, linked through the GitHub App device flow. The token stays
- * in the secret store; the member row holds only the proven account, which the team stream shows.
+ * Each member's own GitHub connection, linked through the GitHub App device flow or a pasted token.
+ * The token stays in the secret store; the member row holds only the proven account and which of
+ * the two it came from, which the team stream shows.
  */
 export class MemberGitHub extends Context.Service<
   MemberGitHub,
@@ -58,6 +60,13 @@ export class MemberGitHub extends Context.Service<
     ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
     /** Drops the token and the binding. GitHub keeps the grant until the member revokes it. */
     readonly disconnect: (memberId: MemberId) => Effect.Effect<TeamMember, TeamError>;
+    /** Checks the token with GitHub, binds its account, and replaces any device-flow session. */
+    readonly setToken: (
+      memberId: MemberId,
+      token: Redacted.Redacted<string>,
+    ) => Effect.Effect<TeamMember, SourceControlSignInError | TeamError>;
+    /** Deletes the pasted token; unbinds the account only when the token was its source. */
+    readonly clearToken: (memberId: MemberId) => Effect.Effect<TeamMember, TeamError>;
     /** The member's token, refreshed when due; none when not connected or no longer usable. */
     readonly credentialFor: (
       memberId: MemberId,
@@ -99,6 +108,9 @@ const make = Effect.gen(function* () {
   const refreshLocks = new Map<MemberId, Semaphore.Semaphore>();
 
   const secretName = TeamMembers.memberGitHubSecretName;
+  const tokenSecretName = TeamMembers.memberGitHubTokenSecretName;
+  const secretNameFor = (memberId: MemberId, source: Members.MemberGitHubSource) =>
+    source === "token" ? tokenSecretName(memberId) : secretName(memberId);
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
   const activeRecord = (memberId: MemberId) =>
@@ -122,24 +134,36 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const readToken = (memberId: MemberId) =>
+    secrets.get(tokenSecretName(memberId)).pipe(
+      Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes))),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not read a member's GitHub token.", { memberId, cause }).pipe(
+          Effect.as(Option.none<string>()),
+        ),
+      ),
+    );
+
   const writeSession = (memberId: MemberId, session: GitHubDeviceFlow.GitHubAppSession) =>
     secrets.set(
       secretName(memberId),
       new TextEncoder().encode(GitHubDeviceFlow.encodeSession(session)),
     );
 
-  /** The token stopped working: keep the account so the row offers Reconnect. */
+  /** The token stopped working: keep the account and its source so the row offers Reconnect. */
   const markDisconnected = Effect.fn("MemberGitHub.markDisconnected")(function* (
     memberId: MemberId,
   ) {
-    yield* secrets.remove(secretName(memberId)).pipe(Effect.ignore);
     const record = yield* activeRecord(memberId);
+    const source = Option.getOrUndefined(record)?.githubSource === "token" ? "token" : "app";
+    yield* secrets.remove(secretNameFor(memberId, source)).pipe(Effect.ignore);
     if (Option.isNone(record) || record.value.githubConnectedAt == null) return;
     yield* team
       .setGitHub(memberId, {
         githubUserId: record.value.githubUserId ?? null,
         githubLogin: record.value.githubLogin ?? null,
         githubConnectedAt: null,
+        githubSource: record.value.githubSource ?? null,
       })
       .pipe(
         Effect.catch((cause) =>
@@ -148,29 +172,57 @@ const make = Effect.gen(function* () {
       );
   });
 
+  const requireUnclaimed = Effect.fnUntraced(function* (
+    memberId: MemberId,
+    viewer: GitHubDeviceFlow.GitHubViewer,
+  ) {
+    // The CLI writes members directly, so check against fresh rows.
+    yield* teamState.reload.pipe(Effect.ignore);
+    for (const record of (yield* Ref.get(teamState.members)).values()) {
+      if (
+        record.id !== memberId &&
+        record.removedAt === null &&
+        record.githubUserId === viewer.id
+      ) {
+        return yield* linkError(`That GitHub account is connected to ${record.name}.`);
+      }
+    }
+  });
+
+  /** Binds the account to the stored credential, then drops the other source's secret. */
+  const bind = Effect.fnUntraced(function* (
+    memberId: MemberId,
+    viewer: GitHubDeviceFlow.GitHubViewer,
+    source: Members.MemberGitHubSource,
+  ) {
+    const member = yield* team
+      .setGitHub(memberId, {
+        githubUserId: viewer.id,
+        githubLogin: viewer.login,
+        githubConnectedAt: yield* nowIso,
+        githubSource: source,
+      })
+      .pipe(
+        Effect.tapError(() => secrets.remove(secretNameFor(memberId, source)).pipe(Effect.ignore)),
+      );
+    yield* secrets.remove(secretNameFor(memberId, source === "token" ? "app" : "token")).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not delete a member's replaced GitHub credential.", {
+          memberId,
+          cause,
+        }),
+      ),
+    );
+    return member;
+  });
+
   const connect: MemberGitHub["Service"]["connect"] = Effect.fn("MemberGitHub.connect")(
     function* (memberId, viewer, session) {
-      // The CLI writes members directly, so check against fresh rows.
-      yield* teamState.reload.pipe(Effect.ignore);
-      for (const record of (yield* Ref.get(teamState.members)).values()) {
-        if (
-          record.id !== memberId &&
-          record.removedAt === null &&
-          record.githubUserId === viewer.id
-        ) {
-          return yield* linkError(`That GitHub account is connected to ${record.name}.`);
-        }
-      }
+      yield* requireUnclaimed(memberId, viewer);
       yield* writeSession(memberId, session).pipe(
         Effect.mapError((cause) => linkError("The server could not save the connection.", cause)),
       );
-      return yield* team
-        .setGitHub(memberId, {
-          githubUserId: viewer.id,
-          githubLogin: viewer.login,
-          githubConnectedAt: yield* nowIso,
-        })
-        .pipe(Effect.tapError(() => secrets.remove(secretName(memberId)).pipe(Effect.ignore)));
+      return yield* bind(memberId, viewer, "app");
     },
   );
 
@@ -247,27 +299,71 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const disconnect: MemberGitHub["Service"]["disconnect"] = Effect.fn("MemberGitHub.disconnect")(
-    function* (memberId) {
-      yield* cancel(memberId);
-      yield* secrets.remove(secretName(memberId)).pipe(
-        Effect.catch((cause) =>
-          Effect.logError("Could not delete a member's GitHub connection.", { cause }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new TeamError({
-                  reason: "internal",
-                  message: "Could not delete the GitHub connection.",
-                }),
-              ),
+  const removeSecret = (name: string) =>
+    secrets.remove(name).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("Could not delete a member's GitHub connection.", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new TeamError({
+                reason: "internal",
+                message: "Could not delete the GitHub connection.",
+              }),
             ),
           ),
         ),
-      );
+      ),
+    );
+
+  const unbind = (memberId: MemberId) =>
+    team.setGitHub(memberId, {
+      githubUserId: null,
+      githubLogin: null,
+      githubConnectedAt: null,
+      githubSource: null,
+    });
+
+  // Removes both secrets, so an older client's Disconnect also clears a pasted token.
+  const disconnect: MemberGitHub["Service"]["disconnect"] = Effect.fn("MemberGitHub.disconnect")(
+    function* (memberId) {
+      yield* cancel(memberId);
+      yield* removeSecret(secretName(memberId));
+      yield* removeSecret(tokenSecretName(memberId));
+      return yield* unbind(memberId);
+    },
+  );
+
+  const setToken: MemberGitHub["Service"]["setToken"] = Effect.fn("MemberGitHub.setToken")(
+    function* (memberId, token) {
+      // The cause can hold the request and its token, and this error reaches the client.
+      const viewer = yield* flow
+        .viewer(HOST, Redacted.value(token))
+        .pipe(
+          Effect.mapError(() =>
+            linkError("The server could not reach GitHub to check that token."),
+          ),
+        );
+      if (viewer === null) return yield* linkError("GitHub refused that token.");
+      yield* requireUnclaimed(memberId, viewer);
+      yield* cancel(memberId);
+      yield* secrets
+        .set(tokenSecretName(memberId), new TextEncoder().encode(Redacted.value(token)))
+        .pipe(Effect.mapError((cause) => linkError("The server could not save the token.", cause)));
+      return yield* bind(memberId, viewer, "token");
+    },
+  );
+
+  const clearToken: MemberGitHub["Service"]["clearToken"] = Effect.fn("MemberGitHub.clearToken")(
+    function* (memberId) {
+      const record = Option.getOrUndefined(yield* activeRecord(memberId));
+      yield* removeSecret(tokenSecretName(memberId));
+      if (record === undefined || record.githubSource === "token") return yield* unbind(memberId);
+      // A device-flow connection stays; rewriting the row returns it as it is.
       return yield* team.setGitHub(memberId, {
-        githubUserId: null,
-        githubLogin: null,
-        githubConnectedAt: null,
+        githubUserId: record.githubUserId ?? null,
+        githubLogin: record.githubLogin ?? null,
+        githubConnectedAt: record.githubConnectedAt ?? null,
+        githubSource: record.githubSource ?? null,
       });
     },
   );
@@ -286,9 +382,15 @@ const make = Effect.gen(function* () {
   const credentialFor: MemberGitHub["Service"]["credentialFor"] = Effect.fn(
     "MemberGitHub.credentialFor",
   )(function* (memberId) {
-    if (!enabled) return Option.none();
     const record = yield* activeRecord(memberId);
     if (Option.isNone(record) || record.value.githubConnectedAt == null) return Option.none();
+    if (record.value.githubSource === "token") {
+      // A pasted token needs no client ID and has no refresh: GitHub refusing it is the expiry.
+      const pasted = yield* readToken(memberId);
+      if (Option.isNone(pasted)) yield* markDisconnected(memberId);
+      return Option.map(pasted, (value) => ({ host: HOST, token: Redacted.make(value) }));
+    }
+    if (!enabled) return Option.none();
     const token = yield* refreshLock(memberId).withPermits(1)(
       Effect.gen(function* () {
         const session = yield* readSession(memberId);
@@ -344,6 +446,8 @@ const make = Effect.gen(function* () {
     cancel,
     connect,
     disconnect,
+    setToken,
+    clearToken,
     credentialFor,
     check,
   });

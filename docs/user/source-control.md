@@ -55,7 +55,8 @@ push or pull with a credential for the thread's own repository, or a fork of it,
    and write, **Pull requests** read and write, and **Metadata** read. Enter its App ID and paste
    the private key (`.pem`) it generates.
 2. Without an App, or for a repository it is not installed on, the thread owner's own GitHub,
-   connected in **Settings → Team** on their row.
+   connected or [pasted as a token](./team.md#bring-your-own-github-token) in **Settings → Team**
+   on their row.
 3. Otherwise the push fails with "Connect GitHub to push".
 
 Cloud threads can't push to other repositories, or to hosts other than github.com, yet.

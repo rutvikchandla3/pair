@@ -402,6 +402,8 @@ export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitM
   operation: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
+  /** Clients render copy from this, never from `detail`; a string so later codes still decode. */
+  code: Schema.optionalKey(TrimmedNonEmptyStringSchema),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

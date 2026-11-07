@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type MemberId,
   type OrchestrationV2ThreadShellSandbox,
+  type TeamMember,
 } from "@t3tools/contracts";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import { Atom } from "effect/reactivity";
@@ -46,6 +47,18 @@ function presentation(
     Partial<Pick<SandboxStatePresentation, "tone" | "rowWord" | "actions">>,
 ): SandboxStatePresentation {
   return { tone: "neutral", rowWord: null, actions: [], ownerOnly: OWNER_ONLY, ...fields };
+}
+
+/**
+ * Which credential a cloud thread's pushes get: the GitHub App's, else the thread owner's own
+ * GitHub (connected or a pasted token), else none, and the push is refused.
+ */
+export function cloudPushCredential(input: {
+  readonly appConfigured: boolean;
+  readonly owner: TeamMember | undefined;
+}): "app" | "owner" | "missing" {
+  if (input.appConfigured) return "app";
+  return input.owner?.github?.connected === true ? "owner" : "missing";
 }
 
 export function sandboxStatePresentation(

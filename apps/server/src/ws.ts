@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -2453,6 +2454,9 @@ export const layerWsRpc = (
         [WS_METHODS.teamGitHubLinkWait]: () => memberGitHub.wait(currentSession.memberId),
         [WS_METHODS.teamGitHubLinkCancel]: () => memberGitHub.cancel(currentSession.memberId),
         [WS_METHODS.teamGitHubDisconnect]: () => memberGitHub.disconnect(currentSession.memberId),
+        [WS_METHODS.teamGitHubTokenSet]: (input) =>
+          memberGitHub.setToken(currentSession.memberId, Redacted.make(input.token)),
+        [WS_METHODS.teamGitHubTokenClear]: () => memberGitHub.clearToken(currentSession.memberId),
         [WS_METHODS.presenceSubscribe]: (_input, metadata) =>
           Stream.unwrap(
             presence.subscribe({

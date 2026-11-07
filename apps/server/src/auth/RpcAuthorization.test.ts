@@ -21,6 +21,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  clientRpcRequiredScopes,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -92,12 +93,17 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.teamGitHubLinkWait,
       WS_METHODS.teamGitHubLinkCancel,
       WS_METHODS.teamGitHubDisconnect,
+      WS_METHODS.teamGitHubTokenSet,
+      WS_METHODS.teamGitHubTokenClear,
       WS_METHODS.presenceSubscribe,
       WS_METHODS.presenceReport,
       WS_METHODS.pushRegister,
       WS_METHODS.pushUnregister,
     ]) {
       expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(method));
+    }
+    for (const method of [WS_METHODS.teamGitHubTokenSet, WS_METHODS.teamGitHubTokenClear]) {
+      expect(clientRpcRequiredScopes(method, {})).toEqual([requiredScopeForRpcMethod(method)]);
     }
   });
 

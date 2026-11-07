@@ -80,6 +80,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pushUnregister]: AuthOrchestrationReadScope,
   // Ownership, not a scope, limits which accounts a member can change.
   [WS_METHODS.teamProviderAccountsMutate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.teamGitHubTokenSet]: AuthOrchestrationOperateScope,
+  [WS_METHODS.teamGitHubTokenClear]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

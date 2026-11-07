@@ -235,6 +235,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamGitHubLinkWait]: "team",
   [WS_METHODS.teamGitHubLinkCancel]: "team",
   [WS_METHODS.teamGitHubDisconnect]: "team",
+  [WS_METHODS.teamGitHubTokenSet]: "team",
+  [WS_METHODS.teamGitHubTokenClear]: "team",
   [WS_METHODS.presenceSubscribe]: "presence",
   [WS_METHODS.presenceReport]: "presence",
   [WS_METHODS.pushRegister]: "push",

@@ -82,9 +82,10 @@ In a team, pull requests Pair opens with the server's GitHub account end with
 
 ## GitHub
 
-Each member can connect their own GitHub account on their row in **Settings → Team**. This needs a
-GitHub App that your team owns. Until the server has one, admins see **Set up GitHub** at the top
-of **Settings → Team**.
+Each member can connect their own GitHub account on their row in **Settings → Team**. Connecting
+needs a GitHub App that your team owns. Until the server has one, admins see **Set up GitHub** at
+the top of **Settings → Team**, and members can still
+[use a token instead](#bring-your-own-github-token).
 
 ### Set up the GitHub App
 
@@ -124,6 +125,21 @@ shows **Reconnect**.
 
 An admin can set a member's GitHub username under **Edit**. A new username or an empty one
 disconnects that member's account.
+
+### Bring your own GitHub token
+
+Without the GitHub App, or instead of it, choose **Use a token instead** on your own row and paste
+a GitHub token: a fine-grained token with **Contents** and **Pull requests** read and write on your
+repositories, or the output of `gh auth token`. The server checks it with GitHub, and the row shows
+**Using a token for @you**.
+
+The server uses the token for pushes from your cloud threads when no GitHub App covers the
+repository, and for PRs you create from Pair. Agents in your cloud threads can read it, so give it
+only the repositories and permissions they need.
+
+**Remove token** deletes it from the server. Delete it on GitHub too, under **Settings → Developer
+settings → Personal access tokens**, if you no longer use it. If GitHub stops accepting it, your
+row says so; remove it and paste a new one.
 
 ### Sign in with GitHub
 

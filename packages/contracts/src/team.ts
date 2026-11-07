@@ -12,6 +12,7 @@ import {
   AuthStandardClientScopes,
 } from "./auth.ts";
 import {
+  ForwardCompatibleOptional,
   IsoDateTime,
   MemberId,
   NonNegativeInt,
@@ -27,6 +28,8 @@ export type MemberRole = typeof MemberRole.Type;
 export const TeamMemberGitHub = Schema.Struct({
   login: TrimmedNonEmptyString,
   connected: Schema.Boolean,
+  /** The device flow or a pasted token; absent on old servers and on a claimed, unproven login. */
+  source: ForwardCompatibleOptional(Schema.Literals(["app", "token"])),
 });
 export type TeamMemberGitHub = typeof TeamMemberGitHub.Type;
 

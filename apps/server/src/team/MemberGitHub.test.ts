@@ -37,6 +37,11 @@ const storedUserId = (memberId: MemberId) =>
     Effect.map((record) => Option.getOrThrow(record).githubUserId),
   );
 
+const setToken = (memberId: MemberId, token: string) =>
+  MemberGitHub.MemberGitHub.pipe(
+    Effect.flatMap((service) => service.setToken(memberId, Redacted.make(token))),
+  );
+
 const tokenOf = (memberId: MemberId) =>
   MemberGitHub.MemberGitHub.pipe(
     Effect.flatMap((service) => service.credentialFor(memberId)),
@@ -52,7 +57,7 @@ it.effect(
       const memberId = yield* invite("Bob");
       const member = yield* linked(memberId);
 
-      expect(member.github).toEqual({ login: "octocat", connected: true });
+      expect(member.github).toEqual({ login: "octocat", connected: true, source: "app" });
       expect(JSON.stringify(member)).not.toContain("ghu_first");
       expect(yield* storedUserId(memberId)).toBe(42);
       expect(storedToken(memberId)).toMatchObject({
@@ -65,7 +70,7 @@ it.effect(
 );
 
 it.effect("refuses a GitHub account another member already connected", () => {
-  const { layer, storedToken } = harness();
+  const { layer, storedToken, pastedToken } = harness();
   return Effect.gen(function* () {
     yield* linked(yield* invite("Alice"));
     const bob = yield* invite("Bob");
@@ -74,10 +79,83 @@ it.effect("refuses a GitHub account another member already connected", () => {
     expect(exit._tag === "Failure" && JSON.stringify(exit.cause)).toContain(
       "That GitHub account is connected to Alice.",
     );
+    const pasted = yield* Effect.flip(setToken(bob, "ghp_bob"));
+    expect(pasted.message).toContain("That GitHub account is connected to Alice.");
     expect(yield* memberGitHub(bob)).toBeUndefined();
     expect(storedToken(bob)).toBeUndefined();
+    expect(pastedToken(bob)).toBeUndefined();
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "a pasted token binds its account and serves as the credential without the app's client ID",
+  () => {
+    const { layer, github, pastedToken } = harness({ clientId: "" });
+    return Effect.gen(function* () {
+      const service = yield* MemberGitHub.MemberGitHub;
+      const memberId = yield* invite("Bob");
+
+      const member = yield* setToken(memberId, "ghp_pasted");
+      expect(member.github).toEqual({ login: "octocat", connected: true, source: "token" });
+      expect(JSON.stringify(member)).not.toContain("ghp_pasted");
+      expect(pastedToken(memberId)).toBe("ghp_pasted");
+      expect(yield* tokenOf(memberId)).toBe("ghp_pasted");
+
+      // Revoked on GitHub: still bound to the token source, so the row offers a new one.
+      github.userStatus = 401;
+      yield* service.check(memberId);
+      expect(yield* memberGitHub(memberId)).toEqual({
+        login: "octocat",
+        connected: false,
+        source: "token",
+      });
+      expect(pastedToken(memberId)).toBeUndefined();
+      expect(yield* tokenOf(memberId)).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a refused token binds nothing", () => {
+  const { layer, github, pastedToken } = harness();
+  return Effect.gen(function* () {
+    const memberId = yield* invite("Bob");
+    github.userStatus = 401;
+
+    const refused = yield* Effect.flip(setToken(memberId, "ghp_revoked"));
+    expect(refused.message).toContain("GitHub refused that token.");
+    expect(yield* memberGitHub(memberId)).toBeUndefined();
+    expect(pastedToken(memberId)).toBeUndefined();
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "clearing a pasted token unbinds, and clearing with a device-flow session keeps it",
+  () => {
+    const { layer, storedToken, pastedToken } = harness();
+    return Effect.gen(function* () {
+      const service = yield* MemberGitHub.MemberGitHub;
+      const memberId = yield* invite("Bob");
+
+      // Each source replaces the other, so one member never holds both.
+      yield* setToken(memberId, "ghp_pasted");
+      yield* linked(memberId);
+      expect(pastedToken(memberId)).toBeUndefined();
+      expect((yield* service.clearToken(memberId)).github).toEqual({
+        login: "octocat",
+        connected: true,
+        source: "app",
+      });
+      expect(yield* tokenOf(memberId)).toBe("ghu_first");
+
+      yield* setToken(memberId, "ghp_pasted");
+      expect(storedToken(memberId)).toBeUndefined();
+      expect(yield* service.clearToken(memberId)).not.toHaveProperty("github");
+      expect(yield* storedUserId(memberId)).toBeNull();
+      expect(pastedToken(memberId)).toBeUndefined();
+      expect(yield* tokenOf(memberId)).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("refreshes a token near expiry and keeps the rotated pair", () => {
   const { layer, github, storedToken } = harness();
@@ -116,7 +194,11 @@ it.effect("a refused refresh leaves the member disconnected but still bound", ()
 
     yield* TestClock.adjust(8 * HOUR);
     expect(yield* tokenOf(memberId)).toBeUndefined();
-    expect(yield* memberGitHub(memberId)).toEqual({ login: "octocat", connected: false });
+    expect(yield* memberGitHub(memberId)).toEqual({
+      login: "octocat",
+      connected: false,
+      source: "app",
+    });
     expect(yield* storedUserId(memberId)).toBe(42);
     expect(storedToken(memberId)).toBeUndefined();
   }).pipe(Effect.provide(layer));
@@ -131,11 +213,19 @@ it.effect("check disconnects when GitHub refuses the token, and not when GitHub 
 
     github.userStatus = 502;
     yield* service.check(memberId);
-    expect(yield* memberGitHub(memberId)).toEqual({ login: "octocat", connected: true });
+    expect(yield* memberGitHub(memberId)).toEqual({
+      login: "octocat",
+      connected: true,
+      source: "app",
+    });
 
     github.userStatus = 401;
     yield* service.check(memberId);
-    expect(yield* memberGitHub(memberId)).toEqual({ login: "octocat", connected: false });
+    expect(yield* memberGitHub(memberId)).toEqual({
+      login: "octocat",
+      connected: false,
+      source: "app",
+    });
     expect(storedToken(memberId)).toBeUndefined();
   }).pipe(Effect.provide(layer));
 });

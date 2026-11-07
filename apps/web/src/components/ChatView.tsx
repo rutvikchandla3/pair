@@ -14,6 +14,7 @@ import {
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
+import { useCloudPushBanner } from "./sandbox/cloudPushBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
   applyOptimisticUserMessagesAction,
@@ -1106,6 +1107,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
+  const cloudPushBannerItem = useCloudPushBanner(environmentId, serverThread?.source ?? null);
   const activeProjectDefaultModelSelection =
     !isServerThread && draftFallback
       ? draftFallback.selection
@@ -2617,6 +2619,7 @@ export default function ChatView(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const cloudPushItems = cloudPushBannerItem === null ? [] : [cloudPushBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -2624,6 +2627,7 @@ export default function ChatView(props: ChatViewProps) {
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...cloudPushItems,
         ...systemComposerBannerItems,
       ];
     }
@@ -2633,6 +2637,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...cloudPushItems,
       ...systemComposerBannerItems,
       branchMismatchBannerItem({
         mismatchKey: activeBranchMismatchKey,

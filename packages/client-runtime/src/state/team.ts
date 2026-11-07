@@ -290,5 +290,13 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:github-disconnect",
       tag: WS_METHODS.teamGitHubDisconnect,
     }),
+    setGitHubToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-token-set",
+      tag: WS_METHODS.teamGitHubTokenSet,
+    }),
+    clearGitHubToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:github-token-clear",
+      tag: WS_METHODS.teamGitHubTokenClear,
+    }),
   };
 }

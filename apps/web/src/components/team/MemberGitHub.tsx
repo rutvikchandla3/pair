@@ -72,15 +72,24 @@ export function OwnGitHubConnection({
   const disconnect = useAtomCommand(teamEnvironment.disconnectGitHub, {
     label: "disconnect GitHub",
   });
+  const setToken = useAtomCommand(teamEnvironment.setGitHubToken, { reportFailure: false });
+  const clearToken = useAtomCommand(teamEnvironment.clearGitHubToken, {
+    label: "remove GitHub token",
+  });
   const [state, setState] = useState<LinkState>({ status: "idle" });
   const [busy, setBusy] = useState(false);
-  if (!enabled) return null;
+  // Null while the token form is closed.
+  const [tokenDraft, setTokenDraft] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   const github = member.github;
   const connected = github?.connected === true;
+  const usesToken = github?.source === "token";
   const waiting = !connected && state.status === "waiting" ? state.prompt : null;
 
   const connect = async () => {
+    setTokenDraft(null);
+    setTokenError(null);
     setState({ status: "starting" });
     const started = await start({ environmentId, input: {} });
     if (started._tag !== "Success") {
@@ -112,14 +121,76 @@ export function OwnGitHubConnection({
     toastCommandFailure("Could not disconnect GitHub", result);
   };
 
+  const saveToken = async () => {
+    const token = tokenDraft?.trim() ?? "";
+    if (token === "") return;
+    setBusy(true);
+    setTokenError(null);
+    const result = await setToken({ environmentId, input: { token } });
+    setBusy(false);
+    if (result._tag === "Success") {
+      setTokenDraft(null);
+      setState({ status: "idle" });
+    } else {
+      setTokenError(failureMessage(result.cause));
+    }
+  };
+
+  const removeToken = async () => {
+    const confirmed = await requestConfirmDialog(
+      "Remove your GitHub token? This server deletes it. To revoke it on GitHub too, delete it in your GitHub token settings.",
+      { variant: "destructive" },
+    );
+    if (confirmed !== true) return;
+    setBusy(true);
+    const result = await clearToken({ environmentId, input: {} });
+    setBusy(false);
+    toastCommandFailure("Could not remove the GitHub token", result);
+  };
+
+  const tokenButton =
+    tokenDraft === null ? (
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={busy}
+        onClick={() => {
+          setTokenError(null);
+          setTokenDraft("");
+        }}
+      >
+        Use a token instead
+      </Button>
+    ) : null;
+
   let subtitle: ReactNode;
   let action: ReactNode;
-  if (connected) {
+  if (usesToken) {
+    subtitle = connected
+      ? `Using a token for @${github.login}`
+      : `@${github.login} · GitHub refused the token`;
+    action = (
+      <div className="flex items-center gap-2">
+        <Button
+          size="xs"
+          variant={connected ? "outline" : "ghost"}
+          disabled={busy}
+          onClick={() => void removeToken()}
+        >
+          Remove token
+        </Button>
+        {connected ? null : tokenButton}
+      </div>
+    );
+  } else if (connected) {
     subtitle = `Connected as @${github.login}`;
     action = (
-      <Button size="xs" variant="outline" disabled={busy} onClick={() => void disconnectGitHub()}>
-        Disconnect
-      </Button>
+      <div className="flex items-center gap-2">
+        {tokenButton}
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => void disconnectGitHub()}>
+          Disconnect
+        </Button>
+      </div>
     );
   } else if (waiting !== null) {
     subtitle = "Approve the app on GitHub to finish connecting.";
@@ -137,9 +208,11 @@ export function OwnGitHubConnection({
     );
   } else {
     subtitle =
-      github === undefined
-        ? "Connect your own GitHub account."
-        : `@${github.login} · not connected`;
+      github !== undefined
+        ? `@${github.login} · not connected`
+        : enabled
+          ? "Connect your own GitHub account."
+          : "Use your own GitHub token to push and open pull requests.";
     action = (
       <div className="flex items-center gap-2">
         {github !== undefined ? (
@@ -147,21 +220,26 @@ export function OwnGitHubConnection({
             Disconnect
           </Button>
         ) : null}
-        <Button
-          size="xs"
-          disabled={busy || state.status === "starting"}
-          onClick={() => void connect()}
-        >
-          {state.status === "starting" ? <Spinner /> : null}
-          {state.status === "failed"
-            ? "Try again"
-            : github === undefined
-              ? "Connect GitHub"
-              : "Reconnect"}
-        </Button>
+        {tokenButton}
+        {enabled ? (
+          <Button
+            size="xs"
+            disabled={busy || state.status === "starting"}
+            onClick={() => void connect()}
+          >
+            {state.status === "starting" ? <Spinner /> : null}
+            {state.status === "failed"
+              ? "Try again"
+              : github === undefined
+                ? "Connect GitHub"
+                : "Reconnect"}
+          </Button>
+        ) : null}
       </div>
     );
   }
+
+  const failure = tokenError ?? (state.status === "failed" && !connected ? state.message : null);
 
   return (
     <div className="mt-3 overflow-hidden rounded-lg border border-border">
@@ -176,21 +254,59 @@ export function OwnGitHubConnection({
         <div className="shrink-0">{action}</div>
       </div>
       {waiting !== null ? <DeviceCodePrompt prompt={waiting} /> : null}
+      {tokenDraft !== null ? (
+        <form
+          className="flex flex-wrap items-center gap-2 border-t border-border p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveToken();
+          }}
+        >
+          <div className="min-w-0 flex-1">
+            <Input
+              aria-label="GitHub token"
+              type="password"
+              autoComplete="off"
+              placeholder="A fine-grained token, or gh auth token"
+              value={tokenDraft}
+              disabled={busy}
+              onChange={(event) => setTokenDraft(event.target.value)}
+            />
+          </div>
+          <Button
+            size="xs"
+            variant="ghost"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setTokenDraft(null);
+              setTokenError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button size="xs" type="submit" disabled={busy || tokenDraft.trim() === ""}>
+            {busy ? <Spinner /> : null}
+            Save
+          </Button>
+        </form>
+      ) : null}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <span className="min-w-0 flex-1">
           Your GitHub connection is stored on this server. Anyone who can run commands here,
-          including agents, could use it to act as you on GitHub.
+          including agents, could use it to act as you on GitHub. Agents in your cloud threads can
+          read it.
         </span>
-        {github !== undefined && REVOKE_URL !== undefined ? (
+        {github !== undefined && !usesToken && REVOKE_URL !== undefined ? (
           <ExternalLink href={REVOKE_URL}>Revoke on GitHub</ExternalLink>
         ) : null}
       </div>
-      {state.status === "failed" && !connected ? (
+      {failure !== null ? (
         <p
           role="alert"
           className="border-t border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive"
         >
-          {state.message}
+          {failure}
         </p>
       ) : null}
     </div>

@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  cloudPushCredential,
   createSandboxEnvironmentAtoms,
   sandboxStatePresentation,
   type SandboxAction,
@@ -183,6 +184,38 @@ describe("sandboxStatePresentation", () => {
       ...expected,
       ownerOnly: ["sleep", "discard"],
     });
+  });
+});
+
+describe("cloudPushCredential", () => {
+  const owner = (github?: TeamMember["github"]): TeamMember => ({
+    id: MemberId.make("member-owner"),
+    name: "Owner",
+    role: "member",
+    color: "hsl(0, 60%, 50%)",
+    isOwner: false,
+    createdAt: since,
+    removedAt: null,
+    ...(github === undefined ? {} : { github }),
+  });
+
+  it.each([
+    ["the App answers first", true, owner(), "app"],
+    [
+      "a connected owner pushes",
+      false,
+      owner({ login: "o", connected: true, source: "token" }),
+      "owner",
+    ],
+    [
+      "a disconnected owner pushes nothing",
+      false,
+      owner({ login: "o", connected: false }),
+      "missing",
+    ],
+    ["an unknown owner pushes nothing", false, undefined, "missing"],
+  ] as const)("%s", (_name, appConfigured, member, expected) => {
+    expect(cloudPushCredential({ appConfigured, owner: member })).toBe(expected);
   });
 });
 

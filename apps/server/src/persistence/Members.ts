@@ -14,6 +14,10 @@ import {
   PersistenceSqlError,
 } from "./Errors.ts";
 
+/** Which secret holds the member's GitHub credential: the device-flow session or a pasted token. */
+export const MemberGitHubSource = Schema.Literals(["app", "token"]);
+export type MemberGitHubSource = typeof MemberGitHubSource.Type;
+
 export const MemberRecord = Schema.Struct({
   id: MemberId,
   name: TrimmedNonEmptyString,
@@ -29,6 +33,7 @@ export const MemberRecord = Schema.Struct({
   githubLogin: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   /** Null while bound means the token stopped working and the member must reconnect. */
   githubConnectedAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+  githubSource: Schema.optionalKey(Schema.NullOr(MemberGitHubSource)),
 });
 export type MemberRecord = typeof MemberRecord.Type;
 
@@ -61,12 +66,13 @@ export const SetMemberRoleInput = Schema.Struct({
 });
 export type SetMemberRoleInput = typeof SetMemberRoleInput.Type;
 
-/** Writes all three GitHub columns; all null unbinds. */
+/** Writes all four GitHub columns; all null unbinds. */
 export const SetMemberGitHubInput = Schema.Struct({
   id: MemberId,
   githubUserId: Schema.NullOr(Schema.Int),
   githubLogin: Schema.NullOr(TrimmedNonEmptyString),
   githubConnectedAt: Schema.NullOr(IsoDateTime),
+  githubSource: Schema.NullOr(MemberGitHubSource),
   updatedAt: IsoDateTime,
 });
 export type SetMemberGitHubInput = typeof SetMemberGitHubInput.Type;
@@ -128,7 +134,8 @@ const make = Effect.gen(function* () {
     removed_at AS "removedAt",
     github_user_id AS "githubUserId",
     github_login AS "githubLogin",
-    github_connected_at AS "githubConnectedAt"
+    github_connected_at AS "githubConnectedAt",
+    github_source AS "githubSource"
   `;
 
   const listRows = SqlSchema.findAll({
@@ -188,7 +195,8 @@ const make = Effect.gen(function* () {
     execute: (input) => sql`
       UPDATE members
       SET github_user_id = ${input.githubUserId}, github_login = ${input.githubLogin},
-        github_connected_at = ${input.githubConnectedAt}, updated_at = ${input.updatedAt}
+        github_connected_at = ${input.githubConnectedAt}, github_source = ${input.githubSource},
+        updated_at = ${input.updatedAt}
       WHERE id = ${input.id} AND removed_at IS NULL
       RETURNING ${columns}
     `,

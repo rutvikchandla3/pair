@@ -580,6 +580,8 @@ export const WS_METHODS = {
   teamGitHubLinkWait: "team.githubLinkWait",
   teamGitHubLinkCancel: "team.githubLinkCancel",
   teamGitHubDisconnect: "team.githubDisconnect",
+  teamGitHubTokenSet: "team.githubTokenSet",
+  teamGitHubTokenClear: "team.githubTokenClear",
   presenceSubscribe: "presence.subscribe",
   presenceReport: "presence.report",
   pushRegister: "push.register",
@@ -2069,6 +2071,19 @@ const WsTeamGitHubDisconnectRpc = Rpc.make(WS_METHODS.teamGitHubDisconnect, {
   error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
 });
 
+// Both act on the caller's own member. The token is write-only: no response carries it.
+const WsTeamGitHubTokenSetRpc = Rpc.make(WS_METHODS.teamGitHubTokenSet, {
+  payload: Schema.Struct({ token: TrimmedNonEmptyString }),
+  success: TeamMember,
+  error: Schema.Union([SourceControlSignInError, TeamError, EnvironmentAuthorizationError]),
+});
+
+const WsTeamGitHubTokenClearRpc = Rpc.make(WS_METHODS.teamGitHubTokenClear, {
+  payload: Schema.Struct({}),
+  success: TeamMember,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsPresenceSubscribeRpc = Rpc.make(WS_METHODS.presenceSubscribe, {
   payload: Schema.Struct({}),
   success: PresenceUpdate,
@@ -2148,6 +2163,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamGitHubLinkWaitRpc,
   WsTeamGitHubLinkCancelRpc,
   WsTeamGitHubDisconnectRpc,
+  WsTeamGitHubTokenSetRpc,
+  WsTeamGitHubTokenClearRpc,
   WsPresenceSubscribeRpc,
   WsPresenceReportRpc,
   WsPushRegisterRpc,

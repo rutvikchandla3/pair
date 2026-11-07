@@ -79,6 +79,9 @@ const memberColor = (id: MemberId): string => {
 
 /** Where a member's GitHub token lives, so it never reaches SQLite or the team stream. */
 export const memberGitHubSecretName = (memberId: MemberId) => `github-member-${memberId}`;
+/** Where a token the member pasted lives; `members.github_source` says which of the two is used. */
+export const memberGitHubTokenSecretName = (memberId: MemberId) =>
+  `github-member-token-${memberId}`;
 
 const toTeamMember = (record: Members.MemberRecord): TeamMember => ({
   id: record.id,
@@ -89,7 +92,13 @@ const toTeamMember = (record: Members.MemberRecord): TeamMember => ({
   ...(record.gitEmail === null ? {} : { gitEmail: record.gitEmail }),
   ...(record.githubLogin == null
     ? {}
-    : { github: { login: record.githubLogin, connected: record.githubConnectedAt != null } }),
+    : {
+        github: {
+          login: record.githubLogin,
+          connected: record.githubConnectedAt != null,
+          ...(record.githubSource == null ? {} : { source: record.githubSource }),
+        },
+      }),
   isOwner: record.isOwner,
   createdAt: record.createdAt,
   removedAt: record.removedAt,
@@ -240,9 +249,11 @@ const make = Effect.gen(function* () {
   });
 
   const forgetGitHubToken = (memberId: MemberId) =>
-    secrets
-      .remove(memberGitHubSecretName(memberId))
-      .pipe(Effect.catch(internalError("Could not delete the member's GitHub connection.")));
+    Effect.forEach(
+      [memberGitHubSecretName(memberId), memberGitHubTokenSecretName(memberId)],
+      secrets.remove,
+      { discard: true },
+    ).pipe(Effect.catch(internalError("Could not delete the member's GitHub connection.")));
 
   const writeGitHub = Effect.fnUntraced(function* (
     memberId: MemberId,
@@ -271,6 +282,7 @@ const make = Effect.gen(function* () {
           githubUserId: null,
           githubLogin,
           githubConnectedAt: null,
+          githubSource: null,
         });
       }
     }

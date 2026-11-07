@@ -129,7 +129,11 @@ export function harness(options: { readonly clientId?: string } = {}) {
     const bytes = secrets.get(TeamMembers.memberGitHubSecretName(memberId));
     return bytes === undefined ? undefined : JSON.parse(new TextDecoder().decode(bytes));
   };
-  return { layer, github, storedToken };
+  const pastedToken = (memberId: MemberId) => {
+    const bytes = secrets.get(TeamMembers.memberGitHubTokenSecretName(memberId));
+    return bytes === undefined ? undefined : new TextDecoder().decode(bytes);
+  };
+  return { layer, github, storedToken, pastedToken };
 }
 
 export const invite = (name: string, githubLogin?: string) =>
