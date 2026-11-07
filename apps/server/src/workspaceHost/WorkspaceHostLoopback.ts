@@ -43,6 +43,9 @@ export const layerLoopback = (root: string, options: RunnerTesting.RunnerTesting
         options,
       );
       const socket = yield* runner.connect();
+      // Ends the boot while the runner still answers: a host finalizer's call (a PTY's release)
+      // would otherwise wait out the lease for a runner that is already gone.
+      yield* Effect.addFinalizer(() => Effect.ignore(hub.revoke(LOOPBACK_SANDBOX_ID)));
       yield* hub.connection(LOOPBACK_SANDBOX_ID);
       const host = yield* hosts.forPath(`${SANDBOX_ROOT}/${LOOPBACK_SANDBOX_ID}`);
       yield* hosts.register(root, host);

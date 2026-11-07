@@ -112,7 +112,8 @@ it.layer(layerTest)("SandboxWorkspaceHost on the loopback runner", (it) => {
       const host = yield* hostFor(tmpRoot);
       const { runner } = yield* WorkspaceHostLoopback.LoopbackRunner;
       for (const { script, killSignal, expected } of [
-        // The frame's killSignal reaches the group: the trap answers it.
+        // The frame's killSignal reaches the group: the trap answers it. `wait` runs the trap at
+        // once, where a foreground `sleep` loop can swallow the signal between its fork and exec.
         {
           script: "trap 'exit 7' USR1",
           killSignal: "SIGUSR1" as const,
@@ -131,7 +132,7 @@ it.layer(layerTest)("SandboxWorkspaceHost on the loopback runner", (it) => {
             yield* host.spawner.spawn(
               ChildProcess.make(
                 "/bin/sh",
-                ["-c", `${script}; echo started > "$1"; while :; do sleep 1; done`, "sh", fifo],
+                ["-c", `${script}; echo started > "$1"; sleep 300 & wait`, "sh", fifo],
                 { killSignal, forceKillAfter: "100 millis", stdout: "ignore", stderr: "ignore" },
               ),
             );

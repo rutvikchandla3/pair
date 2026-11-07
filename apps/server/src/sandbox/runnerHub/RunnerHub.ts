@@ -489,7 +489,8 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
         const slot = yield* slotFor(sandboxId);
         yield* closeLive(slot);
         yield* cancelLease(slot);
-        yield* endBoot(slot);
+        // Lost before the boot scope closes: its finalizers' calls (a PTY's release) fail fast
+        // instead of waiting for a socket that cannot return, which would hold this lock forever.
         yield* setState(
           slot,
           slot.boot === undefined
@@ -501,6 +502,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
                 lostReason: "drained",
               },
         );
+        yield* endBoot(slot);
       }).pipe(locked);
     },
   );
