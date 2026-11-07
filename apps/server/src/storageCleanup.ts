@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.8): restore, rollback, PR discovery and cleanup disk checks */
 import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
@@ -51,7 +50,6 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import * as WorkspaceHosts from "./workspaceHost/WorkspaceHosts.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
 
@@ -307,7 +305,8 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
-  const fs = yield* FileSystem.FileSystem;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: managed worktree roots, orphan folders, project roots, the pnpm store and T3 home files
+  const serverFs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
@@ -319,7 +318,7 @@ const make = Effect.gen(function* () {
     liveTerminals.set(terminal.threadId, threadTerminals);
   };
 
-  const isWindows = yield* HostProcess.isWindows;
+  const isWindows = (yield* hosts.local.info).platform === "win32";
   const pathKey = (target: string) => {
     const resolved = path.resolve(target);
     return isWindows ? resolved.toLowerCase() : resolved;
@@ -354,7 +353,7 @@ const make = Effect.gen(function* () {
   const sharedPnpmVirtualStore = Effect.fnUntraced(
     function* (root: string) {
       const nodeModules = path.join(root, "node_modules");
-      const text = yield* fs.readFileString(path.join(nodeModules, ".modules.yaml"));
+      const text = yield* serverFs.readFileString(path.join(nodeModules, ".modules.yaml"));
       const manifest = yield* decodePnpmModulesManifest(
         yield* Effect.try({
           try: () => parseYaml(text),
@@ -368,8 +367,8 @@ const make = Effect.gen(function* () {
       }
       const virtualStore = path.resolve(nodeModules, manifest.virtualStoreDir ?? ".pnpm");
       const [store, virtual] = yield* Effect.all([
-        fs.stat(manifest.storeDir),
-        fs.stat(virtualStore),
+        serverFs.stat(manifest.storeDir),
+        serverFs.stat(virtualStore),
       ]);
       return store.dev === virtual.dev ? virtualStore : null;
     },
@@ -378,6 +377,7 @@ const make = Effect.gen(function* () {
 
   const measureWorktree = Effect.fn("storageCleanup.measureWorktree")(
     function* (worktreePath: string) {
+      const fs = (yield* hosts.forPath(worktreePath)).fileSystem;
       const root = yield* fs.realPath(worktreePath);
       const skipped = yield* sharedPnpmVirtualStore(root);
       const pending = [root];
@@ -450,7 +450,7 @@ const make = Effect.gen(function* () {
       const projectPath = path.resolve(project.workspaceRoot);
       if (pathKey(projectPath) === pathKey(worktreePath) || inside(worktreePath, projectPath))
         return true;
-      const realPath = yield* fs
+      const realPath = yield* serverFs
         .realPath(projectPath)
         .pipe(Effect.orElseSucceed(() => projectPath));
       if (pathKey(realPath) === pathKey(worktreePath) || inside(worktreePath, realPath))
@@ -474,7 +474,7 @@ const make = Effect.gen(function* () {
       const resolved = path.resolve(row.worktreePath);
       referenced.add(pathKey(resolved));
       referenced.add(
-        pathKey(yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
+        pathKey(yield* serverFs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
       );
     }
     const referencedAncestors = new Set<string>();
@@ -486,11 +486,11 @@ const make = Effect.gen(function* () {
     }
     const projectRoots = (yield* Effect.forEach(
       yield* Effect.filter(projects, (project) =>
-        fs.exists(path.resolve(project.workspaceRoot)).pipe(Effect.orElseSucceed(() => true)),
+        serverFs.exists(path.resolve(project.workspaceRoot)).pipe(Effect.orElseSucceed(() => true)),
       ),
       (project) => {
         const resolved = path.resolve(project.workspaceRoot);
-        return fs.realPath(resolved).pipe(
+        return serverFs.realPath(resolved).pipe(
           Effect.orElseSucceed(() => resolved),
           Effect.map((realPath) => [resolved, realPath]),
         );
@@ -504,12 +504,14 @@ const make = Effect.gen(function* () {
     const directories = Effect.fnUntraced(function* (parent: string, managedRoot: string) {
       if (inProject(parent, managedRoot)) return [];
       const result: string[] = [];
-      for (const name of yield* fs.readDirectory(parent).pipe(Effect.orElseSucceed(() => []))) {
+      for (const name of yield* serverFs
+        .readDirectory(parent)
+        .pipe(Effect.orElseSucceed(() => []))) {
         const target = path.join(parent, name);
         if (!inside(parent, target) || inProject(target, managedRoot)) continue;
         const directory = yield* Effect.gen(function* () {
-          if (pathKey(yield* fs.realPath(target)) !== pathKey(target)) return false;
-          return (yield* fs.stat(target)).type === "Directory";
+          if (pathKey(yield* serverFs.realPath(target)) !== pathKey(target)) return false;
+          return (yield* serverFs.stat(target)).type === "Directory";
         }).pipe(Effect.orElseSucceed(() => false));
         if (directory) result.push(target);
       }
@@ -530,10 +532,11 @@ const make = Effect.gen(function* () {
           projectRoots.some((root) => pathKey(root) === key || inside(worktreePath, root))
         )
           return;
-        const modified = Option.getOrNull((yield* fs.stat(worktreePath)).mtime);
+        const modified = Option.getOrNull((yield* serverFs.stat(worktreePath)).mtime);
         if (modified !== null && modified.getTime() > now - ORPHAN_WORKTREE_GRACE_MS) return;
         const gitPath = path.join(worktreePath, ".git");
-        const linked = (yield* fs.exists(gitPath)) && (yield* fs.stat(gitPath)).type === "File";
+        const linked =
+          (yield* serverFs.exists(gitPath)) && (yield* serverFs.stat(gitPath)).type === "File";
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
         if (!orphanSizes.has(key) && (firstMeasurement || remaining > 0)) {
@@ -566,8 +569,8 @@ const make = Effect.gen(function* () {
         yield* Effect.gen(function* () {
           if (referenced.has(pathKey(projectDirectory))) return;
           const gitPath = path.join(projectDirectory, ".git");
-          if (yield* fs.exists(gitPath)) {
-            if ((yield* fs.stat(gitPath)).type === "File") yield* report(projectDirectory);
+          if (yield* serverFs.exists(gitPath)) {
+            if ((yield* serverFs.stat(gitPath)).type === "File") yield* report(projectDirectory);
             return;
           }
           for (const worktreePath of yield* directories(projectDirectory, root)) {
@@ -586,6 +589,7 @@ const make = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
   ) {
+    const fs = (yield* hosts.forPath(cwd)).fileSystem;
     const failure = (detail: string) =>
       new GitCommandError({
         operation: "StorageCleanup.branchChanged",
@@ -673,6 +677,7 @@ const make = Effect.gen(function* () {
 
   const submoduleRemoval = Effect.fn("StorageCleanup.submoduleRemoval")(
     function* (cwd: string, rules: WorktreeCleanupRules) {
+      const fs = (yield* hosts.forPath(cwd)).fileSystem;
       const inspect = (args: string[], maxOutputBytes = 64 * 1024) =>
         git.execute({
           operation: "StorageCleanup.submodules",
@@ -822,10 +827,10 @@ const make = Effect.gen(function* () {
       serverSettings,
       config.worktreesDir,
       path,
-      yield* HostProcess.HomeDirectory,
+      (yield* hosts.local.info).homeDirectory,
     )) {
-      const root = yield* fs.exists(directory).pipe(
-        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
+      const root = yield* serverFs.exists(directory).pipe(
+        Effect.flatMap((exists) => (exists ? serverFs.realPath(directory) : Effect.succeed(null))),
         Effect.orElseSucceed(() => null),
       );
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
@@ -906,6 +911,10 @@ const make = Effect.gen(function* () {
         return reason;
       };
       yield* Effect.gen(function* () {
+        // A worktree on a machine that is not connected is skipped, never removed.
+        const host = yield* hosts.forPath(worktreePath).pipe(Effect.option);
+        if (Option.isNone(host)) return;
+        const fs = host.value.fileSystem;
         if (!(yield* fs.exists(worktreePath))) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
@@ -1194,7 +1203,7 @@ const make = Effect.gen(function* () {
           if (changes !== null) return keep(changes);
         }
         yield* removeLinkedWorktree({
-          host: hosts.local,
+          host: host.value,
           operation: "StorageCleanup.cleanupGit",
           cwd: project.workspaceRoot,
           worktreePath,
@@ -1240,18 +1249,18 @@ const make = Effect.gen(function* () {
     rotatedLogs: boolean,
     removed: { files: number; bytes: number },
   ) {
-    if (days === null || !(yield* fs.exists(root))) return removed;
+    if (days === null || !(yield* serverFs.exists(root))) return removed;
     // A symlinked parent (a linked T3 home) is fine; a symlinked folder is not.
-    const realRoot = yield* fs.realPath(root);
-    const realParent = yield* fs.realPath(path.dirname(root));
+    const realRoot = yield* serverFs.realPath(root);
+    const realParent = yield* serverFs.realPath(path.dirname(root));
     if (realRoot !== path.join(realParent, path.basename(root))) return removed;
     const visit = Effect.fn("StorageCleanup.visitFiles")(function* (
       directory: string,
     ): Effect.fn.Return<void, PlatformError | ServerSettingsError> {
-      for (const name of yield* fs.readDirectory(directory)) {
+      for (const name of yield* serverFs.readDirectory(directory)) {
         const target = path.join(directory, name);
-        if ((yield* fs.realPath(target)) !== target || !inside(realRoot, target)) continue;
-        const stat = yield* fs.stat(target);
+        if ((yield* serverFs.realPath(target)) !== target || !inside(realRoot, target)) continue;
+        const stat = yield* serverFs.stat(target);
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
         } else if (stat.type === "File" && (!rotatedLogs || /\.(?:log|ndjson)\.\d+$/.test(name))) {
@@ -1260,7 +1269,7 @@ const make = Effect.gen(function* () {
             const current = (yield* settingsService.getSettings).storageCleanup;
             if ((rotatedLogs ? current.logsAfterDays : current.browserArtifactsAfterDays) !== days)
               return;
-            yield* fs.remove(target);
+            yield* serverFs.remove(target);
             removed.files++;
             removed.bytes += Number(stat.size);
           }

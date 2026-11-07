@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
@@ -52,7 +53,7 @@ const unrelatedProject = Option.some({
 const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      NodeServices.layer,
+      WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
       Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
@@ -223,7 +224,7 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           ThreadCommandExecutor.layer,
-          NodeServices.layer,
+          WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
           ServerSettings.layerTest(),
           Layer.mock(ProjectStore.ProjectStoreV2)({

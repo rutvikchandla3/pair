@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.8): restore, rollback, PR discovery and cleanup disk checks */
 import {
   CommandId,
   type OrchestrationProjectShell,
@@ -12,7 +11,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -26,6 +24,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -102,7 +101,7 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
@@ -181,13 +180,15 @@ export const make = Effect.gen(function* () {
             });
           if (first.branch !== null && repository === null) return finishBackfill(group);
           // A worktree folder can outlive its .git, and git there fails with not_a_repository.
-          // An unreadable .git keeps the worktree rather than failing the whole group.
+          // An unreadable .git or an unavailable host keeps the worktree rather than failing the group.
+          const worktreePath = first.worktreePath;
           const cwd =
-            first.worktreePath !== null &&
-            (yield* fileSystem
-              .exists(path.join(first.worktreePath, ".git"))
-              .pipe(Effect.orElseSucceed(() => true)))
-              ? first.worktreePath
+            worktreePath !== null &&
+            (yield* hosts.forPath(worktreePath).pipe(
+              Effect.flatMap((host) => host.fileSystem.exists(path.join(worktreePath, ".git"))),
+              Effect.orElseSucceed(() => true),
+            ))
+              ? worktreePath
               : project.workspaceRoot;
           const detected =
             first.branch === null

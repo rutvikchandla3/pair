@@ -15,6 +15,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
@@ -26,6 +28,10 @@ import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./P
 import * as ProjectStore from "./ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+
+const layerHosts = WorkspaceHostTesting.layerFromContext.pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 it.effect.each([
   "nested",
@@ -94,7 +100,7 @@ it.effect.each([
     const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          NodeServices.layer,
+          WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
           ServerSettings.layerTest(),
           ThreadCommandExecutor.layer,
@@ -192,7 +198,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       { id: ThreadId.make("restore-removed"), worktreePath },
       { cwd: worktreePath },
       {
-        fileSystem,
+        hosts: yield* WorkspaceHosts.WorkspaceHosts,
         path,
         projections: {
           getShellSnapshot: () => Effect.succeed({ threads: [], archivedThreads: [] }),
@@ -201,7 +207,56 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       },
     );
     assert.isTrue(isolated);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(layerHosts)),
+);
+
+it.effect(
+  "a sandbox thread's worktree leaves a local restore isolated without touching disk",
+  () => {
+    const recording = WorkspaceHostTesting.makeRecording();
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-v2-restore-sandbox-",
+      });
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      recording.ops.files.length = 0;
+      const isolated = yield* isCheckpointRestoreIsolated(
+        { id: ThreadId.make("restore-local"), worktreePath },
+        { cwd: worktreePath },
+        {
+          hosts,
+          path,
+          projections: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: ThreadId.make("restore-sandbox"),
+                    projectId: ProjectId.make("restore-project"),
+                    deletedAt: null,
+                    worktreePath: "/t3-sandbox/sbx_x/w",
+                    lineage: { sideChat: false },
+                  },
+                ],
+                archivedThreads: [],
+              }),
+            getCheckpointContext: () =>
+              Effect.succeed({ checkpointScopes: [{ cwd: "/t3-sandbox/sbx_x/w/nested" }] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.isTrue(isolated);
+      // Only this thread's scope and worktree resolve; the sandbox paths stay lexical.
+      assert.deepEqual(recording.ops.files, ["realPath", "realPath"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(recording.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    );
+  },
 );
 
 it.effect.each([
@@ -235,7 +290,7 @@ it.effect.each([
         { id: parentId, worktreePath },
         { cwd: worktreePath },
         {
-          fileSystem,
+          hosts: yield* WorkspaceHosts.WorkspaceHosts,
           path,
           projections: {
             getShellSnapshot: () => Effect.succeed({ threads: [sideChat], archivedThreads: [] }),
@@ -250,5 +305,5 @@ it.effect.each([
         },
       );
       assert.equal(result, isolated);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(layerHosts)),
 );

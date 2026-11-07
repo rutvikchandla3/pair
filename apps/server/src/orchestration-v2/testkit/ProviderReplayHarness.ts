@@ -547,6 +547,7 @@ export function layerWithRegistry<Error>(
     layerCommandOutputHubProvided,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 

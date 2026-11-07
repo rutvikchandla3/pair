@@ -1,10 +1,10 @@
 import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
+import type { WorkspaceHosts } from "../workspaceHost/WorkspaceHosts.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
   "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
@@ -15,13 +15,13 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
     thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
     scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
     dependencies: {
-      readonly fileSystem: FileSystem.FileSystem;
+      readonly hosts: WorkspaceHosts["Service"];
       readonly projections: ProjectionStoreV2["Service"];
       readonly projects: ProjectStore.ProjectStoreV2["Service"];
       readonly path: Path.Path;
     },
   ) {
-    const { fileSystem, projections, projects, path } = dependencies;
+    const { hosts, projections, projects, path } = dependencies;
     const contains = (parent: string, child: string) => {
       const relative = path.relative(parent, child);
       return (
@@ -29,19 +29,28 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
       );
     };
+    const realPath = <Missing extends string | null>(target: string, missing: Missing) =>
+      hosts.forPath(target).pipe(
+        Effect.flatMap((host) =>
+          host.fileSystem.realPath(target).pipe(
+            Effect.catchIf(
+              (error) => error.reason._tag === "NotFound",
+              (_error) => Effect.succeed<string | Missing>(missing),
+            ),
+          ),
+        ),
+        // Another machine's path stays lexical, so the containment test stays conservative.
+        Effect.catchTags({
+          WorkspaceHostUnavailableError: (_error) =>
+            Effect.succeed<string | Missing>(path.resolve(target)),
+        }),
+      );
     const worktreePath = thread.worktreePath;
     let shared = worktreePath == null;
     if (!shared && worktreePath !== null) {
       // Storage cleanup may have removed the worktree; rollback recreates it.
-      const resolve = (target: string) =>
-        fileSystem.realPath(target).pipe(
-          Effect.catchIf(
-            (error) => error.reason._tag === "NotFound",
-            (_error) => Effect.succeed(path.resolve(target)),
-          ),
-        );
-      const cwd = yield* resolve(scope.cwd);
-      const worktreeCwd = yield* resolve(worktreePath);
+      const cwd = yield* realPath(scope.cwd, path.resolve(scope.cwd));
+      const worktreeCwd = yield* realPath(worktreePath, path.resolve(worktreePath));
       shared = cwd !== worktreeCwd;
       if (!shared) {
         const shell = yield* projections.getShellSnapshot();
@@ -86,12 +95,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           for (const candidate of paths) {
             if (checkedPaths.has(candidate)) continue;
             checkedPaths.add(candidate);
-            const otherCwd = yield* fileSystem.realPath(candidate).pipe(
-              Effect.catchIf(
-                (error) => error.reason._tag === "NotFound",
-                (_error) => Effect.succeed(null),
-              ),
-            );
+            const otherCwd = yield* realPath(candidate, null);
             if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
               shared = true;
               break;

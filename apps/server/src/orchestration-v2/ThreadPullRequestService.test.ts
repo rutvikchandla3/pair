@@ -34,6 +34,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventId } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it("rejects a pull-request result when the project root changes before dispatch", () => {
@@ -176,7 +177,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           yield* service.drain;
 
           expect(lookups.slice(lookupsBeforeIdle)).toEqual([]);
-        }).pipe(Effect.provide(dependencies));
+        }).pipe(
+          Effect.provide(
+            WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+          ),
+        );
       }),
     ),
   );
@@ -297,7 +302,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* Deferred.succeed(activation, undefined);
             yield* Deferred.await(sweepStarted);
             yield* service.drain;
-          }).pipe(Effect.provide(dependencies));
+          }).pipe(
+            Effect.provide(
+              WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+            ),
+          );
 
           expect(lookupCwds).toEqual([cwd]);
         }),
@@ -418,7 +427,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(lookups.slice(sweepLookups.length)).toEqual([
             { branch: child.branch, refresh: true },
           ]);
-        }).pipe(Effect.provide(dependencies));
+        }).pipe(
+          Effect.provide(
+            WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+          ),
+        );
       }),
     ),
   );
@@ -546,7 +559,11 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* Deferred.succeed(activation, undefined);
             yield* Deferred.await(sweepStarted);
             yield* service.drain;
-          }).pipe(Effect.provide(dependencies));
+          }).pipe(
+            Effect.provide(
+              WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+            ),
+          );
 
           if (sameBranch) {
             expect(commands).toEqual([]);

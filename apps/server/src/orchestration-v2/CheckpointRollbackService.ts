@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.8): restore, rollback, PR discovery and cleanup disk checks */
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -11,7 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -22,6 +21,7 @@ import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -117,6 +117,7 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | FileSystem.FileSystem
   | Path.Path
+  | WorkspaceHosts.WorkspaceHosts
   | ProjectStore.ProjectStoreV2
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
@@ -131,11 +132,18 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;
-    const fileSystem = yield* FileSystem.FileSystem;
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+
+    // An unavailable host counts as existing: a sandbox checkout is never recreated on this disk.
+    const worktreeExists = (worktreePath: string) =>
+      hosts.forPath(worktreePath).pipe(
+        Effect.flatMap((host) => host.fileSystem.exists(worktreePath)),
+        Effect.catchTags({ WorkspaceHostUnavailableError: (_error) => Effect.succeed(true) }),
+      );
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -221,7 +229,7 @@ export const layer: Layer.Layer<
       if (
         worktreePath != null &&
         branch != null &&
-        !(yield* fileSystem.exists(worktreePath)) &&
+        !(yield* worktreeExists(worktreePath)) &&
         (yield* isManagedWorktreePath(worktreePath))
       ) {
         const project = yield* projects.get(context.thread.projectId);
@@ -238,7 +246,7 @@ export const layer: Layer.Layer<
       if (
         input.restoreFiles !== false &&
         !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          fileSystem,
+          hosts,
           projections,
           projects,
           path,

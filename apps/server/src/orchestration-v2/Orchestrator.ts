@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.8): restore, rollback, PR discovery and cleanup disk checks */
 import type {
   GuestShareId,
   MemberId,
@@ -96,7 +95,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -213,6 +211,7 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
   decideSandboxCommand,
   planSandboxOnThreadDelete,
@@ -1170,7 +1169,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -12849,7 +12848,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
           projects,
           path,
-          fileSystem,
+          hosts,
           projections: projectionStore,
         }).pipe(
           Effect.mapError(
@@ -15117,7 +15116,7 @@ export const layer: Layer.Layer<
   OrchestratorV2,
   never,
   | CheckpointServiceV2
-  | FileSystem.FileSystem
+  | WorkspaceHosts.WorkspaceHosts
   | Path.Path
   | CommandPolicyV2
   | CommandReceiptStoreV2
