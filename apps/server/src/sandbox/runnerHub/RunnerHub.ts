@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
@@ -102,6 +103,11 @@ export type RunnerHubFact =
       readonly reason: "lease-expired" | "runner-restarted";
     };
 
+export interface RunnerBoot {
+  readonly sandboxId: SandboxId;
+  readonly connection: RunnerConnection;
+}
+
 /** An authenticated connect. The token is present only on the enrollment connect. */
 export interface AuthenticatedRunner extends RunnerGrant {
   readonly sandboxToken: Option.Option<Redacted.Redacted<string>>;
@@ -135,6 +141,8 @@ export class RunnerHub extends Context.Service<
     readonly serve: (runner: AuthenticatedRunner, socket: Socket.Socket) => Effect.Effect<void>;
     /** One consumer: `RunnerHubFacts`. */
     readonly facts: Stream.Stream<RunnerHubFact>;
+    /** Each new runner boot once, from its first hello; subscribers see boots after they start. */
+    readonly boots: Stream.Stream<RunnerBoot>;
   }
 >()("t3/sandbox/runnerHub/RunnerHub") {}
 
@@ -179,6 +187,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
   const serverBootId = yield* random.uuidV4();
   const hubScope = yield* Effect.scope;
   const facts = yield* Queue.unbounded<RunnerHubFact>();
+  const boots = yield* PubSub.unbounded<RunnerBoot>();
   const leases = yield* FiberMap.make<SandboxId>();
   // Every slot change runs under this lock; nothing slow runs inside it.
   const lock = yield* Semaphore.make(1);
@@ -299,7 +308,12 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
     const liveClient = awaitClient(slot, info);
     // The ops' process table outlives sockets; once the boot is gone its reads fail fast.
     const ops = yield* RunnerOpsClient.make(liveClient(undefined)).pipe(Scope.provide(hubScope));
-    return makeRunnerConnection(info, liveClient, ops);
+    const ended = SubscriptionRef.changes(slot.state).pipe(
+      Stream.filter((state) => state.boot?.info !== info || state.status._tag === "lost"),
+      Stream.runHead,
+      Effect.asVoid,
+    );
+    return makeRunnerConnection(info, liveClient, ops, { scope: hubScope, ended });
   });
 
   const attach = Effect.fnUntraced(function* (
@@ -353,6 +367,8 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       client,
       lostReason: "lease-expired",
     });
+    if (boot !== current.boot)
+      PubSub.publishUnsafe(boots, { sandboxId: slot.sandboxId, connection: boot });
     return true;
   });
 
@@ -532,6 +548,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
     authorizeDownload,
     serve,
     facts: Stream.fromQueue(facts),
+    boots: Stream.fromPubSub(boots),
   });
 });
 

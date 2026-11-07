@@ -19,6 +19,7 @@ import type * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type * as Brand from "effect/Brand";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
+import type * as Scope from "effect/Scope";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Stream from "effect/Stream";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the Claude Agent SDK's process type uses Node streams.
@@ -77,6 +78,15 @@ export interface ProcessGroupProcess {
   off(event: "error", listener: (error: Error) => void): void;
 }
 
+/** A server listener an agent calls back into: the MCP endpoint or the Codex token broker. */
+export interface ServerEndpoint {
+  readonly name: "mcp" | "codex-token";
+  /** The server-side address: the `/mcp` URL or the broker's socket path. */
+  readonly address: string;
+  /** mcp: the `McpSessionRegistry` providerSessionId; codex-token: the provider instance id. */
+  readonly ownerKey: string;
+}
+
 /** The machine a thread's workspace lives on. A value, not a layer. */
 export interface WorkspaceHost {
   readonly id: WorkspaceHostId;
@@ -97,6 +107,13 @@ export interface WorkspaceHost {
     input: ProcessGroupSpawnInput,
     hooks: ProcessGroupHooks,
   ) => ProcessGroupProcess;
+  /**
+   * The address an agent on this host uses for `endpoint`, valid until the scope closes. Local:
+   * `endpoint.address` itself. Sandbox: a forward the runner listens on.
+   */
+  readonly exposeServerEndpoint: (
+    endpoint: ServerEndpoint,
+  ) => Effect.Effect<string, WorkspaceHostUnavailableError, Scope.Scope>;
 }
 
 export type CoarseOperationError = RunnerOpsError | RunnerLostError;

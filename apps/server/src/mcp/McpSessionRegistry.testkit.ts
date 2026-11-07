@@ -7,6 +7,7 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
+    endpoint: "http://127.0.0.1/mcp",
     issue: ({ threadId, providerInstanceId }) =>
       Effect.succeed({
         config: {

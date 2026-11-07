@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- forward listeners and their accepted sockets are node:net.
+import * as NodeNet from "node:net";
+
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -19,6 +22,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import {
+  RunnerForwardId,
   RunnerHandleId,
   RunnerLostError,
   RunnerSystemError,
@@ -37,9 +41,14 @@ import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as GroupWatcher from "./GroupWatcher.ts";
 
 /** Output streams by `RunnerHandleState.next` key. */
-export type StreamKey = `fd:${number}` | "pty";
+export type StreamKey = `fd:${number}` | "pty" | "tcp";
 /** Input channels by `RunnerHandleState.next` key; `in:file` is an `fs.writeStream` handle. */
-export type InputKey = `in:${number}` | "in:pty" | "in:file";
+export type InputKey = `in:${number}` | "in:pty" | "in:file" | "in:tcp";
+
+/** Where a forward listens: an ephemeral loopback port, or a Unix socket at `path`. */
+export type ListenTarget =
+  | { readonly _tag: "tcp" }
+  | { readonly _tag: "unix"; readonly path: string };
 
 export type InputOp =
   | { readonly _tag: "data"; readonly data: Uint8Array | string }
@@ -85,6 +94,23 @@ const signalError = (method: string, cause: unknown) => {
     method,
     description: cause instanceof Error ? cause.message : String(cause),
     ...(code === undefined ? {} : { syscall: "kill" }),
+  });
+};
+
+const netError = (method: string, cause: unknown) => {
+  const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+  return new RunnerSystemError({
+    reason:
+      code === "EADDRINUSE"
+        ? "AlreadyExists"
+        : code === "EACCES" || code === "EPERM"
+          ? "PermissionDenied"
+          : code === "ENOENT"
+            ? "NotFound"
+            : "Unknown",
+    module: "Net",
+    method,
+    description: cause instanceof Error ? cause.message : String(cause),
   });
 };
 
@@ -386,7 +412,7 @@ interface InputChannel {
 }
 
 interface Entry {
-  readonly kind: "process" | "pty" | "file";
+  readonly kind: "process" | "pty" | "file" | "tcp";
   readonly scope: Scope.Closeable;
   readonly pid: number;
   readonly outputs: ReadonlyMap<StreamKey, OutputBuffer<Uint8Array> | OutputBuffer<string>>;
@@ -434,6 +460,20 @@ export class HandleTable extends Context.Service<
       readonly atomic: boolean;
     }) => Effect.Effect<RunnerHandleId, RunnerCallError>;
     readonly closeFileWriter: (handle: RunnerHandleId) => Effect.Effect<void, RunnerCallError>;
+    /**
+     * Listens until `closeListener` or the end of this server boot's handles. Each accept is a
+     * `tcp` handle, announced on `events` to every subscriber until its first read or write.
+     */
+    readonly openListener: (
+      target: ListenTarget,
+    ) => Effect.Effect<
+      { readonly forwardId: RunnerForwardId; readonly address: string },
+      RunnerCallError
+    >;
+    /** Stops listening and drops the accepts no one has claimed. Idempotent. */
+    readonly closeListener: (forwardId: RunnerForwardId) => Effect.Effect<void>;
+    /** Ends an accepted connection after its applied writes and frees the handle. */
+    readonly closeTcp: (handle: RunnerHandleId) => Effect.Effect<void, RunnerCallError>;
     /** Units from `fromSeq`; ends after the source's EOF is read. Never holds the handle's scope. */
     readonly output: <K extends StreamKey>(
       handle: RunnerHandleId,
@@ -461,7 +501,10 @@ export class HandleTable extends Context.Service<
     readonly live: Effect.Effect<ReadonlyArray<RunnerHandleState>>;
     /** The current limits; the output window reads them per chunk. */
     readonly limits: () => RunnerLimits;
-    /** `handle.exited`, and `resource.pressure` whenever the paused set changes. */
+    /**
+     * Unclaimed `forward.accepted` first, then `handle.exited`, `forward.accepted`, and
+     * `resource.pressure` whenever the paused set changes.
+     */
     readonly events: Stream.Stream<RunnerEvent>;
     /** The current pressure, then each change. */
     readonly pressure: Stream.Stream<RunnerPressure>;
@@ -490,6 +533,9 @@ const make = Effect.fn("HandleTable.make")(function* () {
   );
   PubSub.publishUnsafe(pressure, { bufferedBytes: 0, pausedHandles: 0 });
   const entries = new Map<RunnerHandleId, Entry>();
+  const listeners = new Map<RunnerForwardId, Scope.Closeable>();
+  // Accepts the server has not read or written yet; a resubscribed `events` repeats them.
+  const unclaimed = new Map<RunnerHandleId, RunnerForwardId>();
   let counter = 0;
   let drained = false;
   let serverBootId: string | undefined;
@@ -820,10 +866,151 @@ const make = Effect.fn("HandleTable.make")(function* () {
       Effect.flatMap((entry) => entry.commit),
     );
 
+  const acceptTcp = (forwardId: RunnerForwardId, socket: NodeNet.Socket) =>
+    allocate.pipe(
+      Effect.flatMap((allocated) =>
+        register(
+          allocated,
+          Effect.gen(function* () {
+            socket.on("error", () => undefined);
+            const buffer = new OutputBuffer<Uint8Array>(flow, fdLimit, (paused) =>
+              paused ? socket.pause() : socket.resume(),
+            );
+            socket.on("data", (chunk: Buffer) =>
+              buffer.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)),
+            );
+            socket.once("end", () => buffer.end());
+            socket.once("close", () => buffer.end());
+            // Writes resolve once flushed, so ending here loses nothing the server sent.
+            yield* Scope.addFinalizer(
+              allocated.scope,
+              Effect.sync(() => socket.destroySoon()),
+            );
+            if (!buffer.paused) socket.resume();
+            const entry: Entry = {
+              kind: "tcp",
+              scope: allocated.scope,
+              pid: 0,
+              outputs: new Map([["tcp", buffer]]),
+              inputs: new Map([
+                [
+                  "in:tcp",
+                  makeInput((op) =>
+                    op._tag === "data" && typeof op.data !== "string"
+                      ? Effect.callback<void, RunnerSystemError>((resume) => {
+                          socket.write(op.data, (error) =>
+                            resume(error ? Effect.fail(netError("tcp.write", error)) : Effect.void),
+                          );
+                        })
+                      : Effect.fail(runnerBadArgument("tcp.write", "expected bytes")),
+                  ),
+                ],
+              ]),
+              exit: yield* Deferred.make<ExitInfo, RunnerLostError>(),
+              commit: Effect.fail(runnerBadArgument("fs.writeStream.close", "not a file writer")),
+            };
+            return [entry, allocated.handle] as const;
+          }),
+        ),
+      ),
+      Effect.tap((connectionId) =>
+        Effect.sync(() => {
+          unclaimed.set(connectionId, forwardId);
+          PubSub.publishUnsafe(events, { _tag: "forward.accepted", forwardId, connectionId });
+        }),
+      ),
+      Effect.catch(() => Effect.sync(() => socket.destroy())),
+    );
+
+  const openListener: HandleTable["Service"]["openListener"] = Effect.fn(
+    "HandleTable.openListener",
+  )(function* (target) {
+    if (drained) return yield* new RunnerLostError({ reason: "drained" });
+    counter += 1;
+    const forwardId = RunnerForwardId.make(`${runnerBootId}:forward:${counter}`);
+    const scope = yield* Scope.fork(tableScope, "sequential");
+    return yield* Effect.gen(function* () {
+      const accepted = yield* Queue.unbounded<NodeNet.Socket>();
+      // Half-open allowed: a client that ends its side still reads the answer.
+      const server = NodeNet.createServer({ allowHalfOpen: true, pauseOnConnect: true }, (socket) =>
+        Queue.offerUnsafe(accepted, socket),
+      );
+      server.on("error", () => undefined);
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.suspend(() => {
+          server.close();
+          const dropped: Array<readonly [RunnerHandleId, Entry]> = [];
+          for (const [handle, owner] of unclaimed) {
+            const entry = entries.get(handle);
+            if (owner !== forwardId) continue;
+            unclaimed.delete(handle);
+            if (entry !== undefined) dropped.push([handle, entry]);
+          }
+          return Effect.forEach(
+            dropped,
+            ([handle, entry]) =>
+              closeEntry(handle, entry, new RunnerLostError({ reason: "drained", handle })),
+            { discard: true },
+          );
+        }),
+      );
+      if (target._tag === "unix") {
+        // A fixed path left by an earlier runner process.
+        yield* fs.remove(target.path, { force: true }).pipe(Effect.mapError(toSystemError));
+      }
+      yield* Effect.callback<void, RunnerSystemError>((resume) => {
+        const onError = (error: Error) => resume(Effect.fail(netError("forward.open", error)));
+        server.once("error", onError);
+        const listening = () => {
+          server.off("error", onError);
+          resume(Effect.void);
+        };
+        if (target._tag === "tcp") server.listen({ host: "127.0.0.1", port: 0 }, listening);
+        else server.listen(target.path, listening);
+      });
+      let address: string;
+      if (target._tag === "unix") {
+        // Agents run as another user than the runner.
+        yield* fs.chmod(target.path, 0o666).pipe(Effect.mapError(toSystemError));
+        address = target.path;
+      } else {
+        address = `127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}`;
+      }
+      yield* Queue.take(accepted).pipe(
+        Effect.flatMap((socket) => acceptTcp(forwardId, socket)),
+        Effect.forever,
+        Effect.forkIn(scope),
+      );
+      listeners.set(forwardId, scope);
+      return { forwardId, address };
+    }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
+  });
+
+  const closeListener: HandleTable["Service"]["closeListener"] = (forwardId) =>
+    Effect.suspend(() => {
+      const scope = listeners.get(forwardId);
+      listeners.delete(forwardId);
+      return scope === undefined ? Effect.void : Scope.close(scope, Exit.void);
+    });
+
+  const closeTcp: HandleTable["Service"]["closeTcp"] = (handle) =>
+    lookup(handle).pipe(
+      Effect.flatMap((entry) =>
+        entry.kind === "tcp"
+          ? Effect.suspend(() => {
+              unclaimed.delete(handle);
+              return closeEntry(handle, entry, new RunnerLostError({ reason: "drained", handle }));
+            })
+          : Effect.fail(runnerBadArgument("tcp.close", `${handle} is not a connection`)),
+      ),
+    );
+
   const output: HandleTable["Service"]["output"] = (handle, key, fromSeq) =>
     Stream.unwrap(
       lookup(handle).pipe(
         Effect.flatMap((entry) => {
+          unclaimed.delete(handle);
           const buffer = entry.outputs.get(key);
           return buffer === undefined
             ? Effect.fail(runnerBadArgument("output", `${key} is not an output of ${handle}`))
@@ -840,6 +1027,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
   const write: HandleTable["Service"]["write"] = (handle, key, seq, op) =>
     lookup(handle).pipe(
       Effect.flatMap((entry) => {
+        unclaimed.delete(handle);
         const channel = entry.inputs.get(key);
         if (channel === undefined) {
           return Effect.fail(runnerBadArgument("write", `${key} is not an input of ${handle}`));
@@ -870,7 +1058,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
   const signal: HandleTable["Service"]["signal"] = (handle, sig, group) =>
     lookup(handle).pipe(
       Effect.flatMap((entry) =>
-        entry.kind === "file"
+        entry.kind === "file" || entry.kind === "tcp"
           ? Effect.fail(runnerBadArgument("signal", `${handle} is not a process`))
           : signalPid("process.signal", group ? -entry.pid : entry.pid, sig),
       ),
@@ -906,7 +1094,11 @@ const make = Effect.fn("HandleTable.make")(function* () {
         buffer.discard(new RunnerLostError({ reason, handle }));
       }
     }
-    const live = all.filter(([, entry]) => entry.kind !== "file");
+    // Unclaimed accepts are in `all`, so the listeners' finalizers need not drop them.
+    unclaimed.clear();
+    for (const scope of listeners.values()) yield* Scope.close(scope, Exit.void);
+    listeners.clear();
+    const live = all.filter(([, entry]) => entry.kind === "process" || entry.kind === "pty");
     for (const [, entry] of live) yield* Effect.ignore(signalPid(reason, -entry.pid, "SIGTERM"));
     yield* Effect.forEach(live, ([, entry]) => Deferred.await(entry.exit), {
       concurrency: "unbounded",
@@ -1000,6 +1192,9 @@ const make = Effect.fn("HandleTable.make")(function* () {
     openPty,
     openFileWriter,
     closeFileWriter,
+    openListener,
+    closeListener,
+    closeTcp,
     output,
     write,
     signal,
@@ -1008,7 +1203,17 @@ const make = Effect.fn("HandleTable.make")(function* () {
     drain,
     live,
     limits: () => flow.limits,
-    events: Stream.fromPubSub(events),
+    events: Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(events);
+        const pending = Array.from(unclaimed, ([connectionId, forwardId]): RunnerEvent => ({
+          _tag: "forward.accepted",
+          forwardId,
+          connectionId,
+        }));
+        return Stream.concat(Stream.fromIterable(pending), Stream.fromSubscription(subscription));
+      }),
+    ),
     pressure: Stream.fromPubSub(pressure),
     stats,
   });

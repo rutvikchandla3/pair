@@ -27,6 +27,8 @@ export interface McpIssuedCredential {
 }
 
 export interface McpSessionRegistryShape {
+  /** The `/mcp` URL issued configs carry; sandbox forwards proxy to it. */
+  readonly endpoint: string;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
@@ -177,6 +179,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     }));
 
   return McpSessionRegistry.of({
+    endpoint,
     issue,
     resolve,
     touch,

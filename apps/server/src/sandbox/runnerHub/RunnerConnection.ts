@@ -1,5 +1,7 @@
 import {
   type RunnerCallError,
+  type RunnerForwardId,
+  type RunnerForwardName,
   type RunnerHandleId,
   type RunnerInfo,
   RunnerLostError,
@@ -11,7 +13,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Queue from "effect/Queue";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as RpcClient from "effect/rpc/RpcClient";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
@@ -21,7 +23,7 @@ import type { CoarseOperations } from "../../workspaceHost/WorkspaceHost.ts";
 export type RunnerClient = RpcClient.FromGroup<typeof RunnerRpcGroup, RpcClientError>;
 
 /** Output streams by `RunnerHandleState.next` key. */
-export type RunnerOutputKey = `fd:${number}` | "pty";
+export type RunnerOutputKey = `fd:${number}` | "pty" | "tcp";
 
 /** At most this much input waits per pipe before `write` suspends (03 4.5). */
 const WRITER_QUEUE_BYTES = 1024 * 1024;
@@ -44,6 +46,15 @@ export interface RunnerPtyWriter {
   readonly failed: Effect.Effect<never, RunnerCallError>;
 }
 
+/** One connection accepted by a forward in the sandbox. */
+export interface RunnerTcpConnection {
+  /** What the sandbox side sent, resumed across socket drops; ends at its EOF. */
+  readonly read: Stream.Stream<Uint8Array, RunnerCallError>;
+  readonly write: (data: Uint8Array) => Effect.Effect<void, RunnerCallError>;
+  /** Ends the connection after everything written. Closing the scope instead drops unsent bytes. */
+  readonly close: Effect.Effect<void, RunnerCallError>;
+}
+
 /**
  * One runner boot as seen by the server, across socket drops inside the lease. `output` and
  * `writer` resume on the next socket of the same boot; they fail with `RunnerLostError` once the
@@ -62,7 +73,7 @@ export interface RunnerConnection {
     ): Stream.Stream<string, RunnerCallError>;
     (
       handle: RunnerHandleId,
-      stream: `fd:${number}`,
+      stream: `fd:${number}` | "tcp",
       fromSeq?: number,
     ): Stream.Stream<Uint8Array, RunnerCallError>;
   };
@@ -74,6 +85,17 @@ export interface RunnerConnection {
   readonly ptyWriter: (
     handle: RunnerHandleId,
   ) => Effect.Effect<RunnerPtyWriter, never, Scope.Scope>;
+  /**
+   * Listens in the sandbox until the scope closes and returns the in-sandbox address. `serve` runs
+   * once per accepted connection, in a scope of its own inside the caller's.
+   */
+  readonly openForward: (input: {
+    readonly name: RunnerForwardName;
+    readonly ownerKey: string;
+    readonly serve: (connection: RunnerTcpConnection) => Effect.Effect<void, never, Scope.Scope>;
+  }) => Effect.Effect<string, RunnerCallError, Scope.Scope>;
+  /** Completes once this boot is gone. */
+  readonly ended: Effect.Effect<void>;
 }
 
 /**
@@ -157,6 +179,11 @@ export const makeRunnerConnection = (
   info: RunnerInfo,
   awaitClient: AwaitClient,
   ops: CoarseOperations,
+  boot: {
+    /** Lives as long as the hub; holds the boot's `runner.events` subscription. */
+    readonly scope: Scope.Scope;
+    readonly ended: Effect.Effect<void>;
+  },
 ): RunnerConnection => {
   /** Runs `call` on the live client, again on the next socket after a transport failure. */
   const onLiveClient = <A>(
@@ -187,11 +214,13 @@ export const makeRunnerConnection = (
       const open = (client: RunnerClient) =>
         (stream === "pty"
           ? client["pty.output"]({ handle, fromSeq: next })
-          : client["process.output"]({
-              handle,
-              fd: Number(stream.slice(3)),
-              fromSeq: next,
-            })) as Stream.Stream<
+          : stream === "tcp"
+            ? client["tcp.read"]({ connectionId: handle, fromSeq: next })
+            : client["process.output"]({
+                handle,
+                fd: Number(stream.slice(3)),
+                fromSeq: next,
+              })) as Stream.Stream<
           { readonly seq: number; readonly data: A },
           RunnerCallError | RpcClientError
         >;
@@ -272,11 +301,17 @@ export const makeRunnerConnection = (
     return { enqueue, whenRoom, failed, checkFailed };
   });
 
-  const pipeWriter: RunnerConnection["pipeWriter"] = Effect.fnUntraced(function* (handle, fd) {
+  const byteWriter = Effect.fnUntraced(function* (
+    send: (
+      client: RunnerClient,
+      seq: number,
+      op: { readonly _tag: "data"; readonly data: Uint8Array } | { readonly _tag: "close" },
+    ) => Effect.Effect<unknown, RunnerCallError | RpcClientError>,
+  ) {
     const writer = yield* makeWriter((client, seq, op) =>
       op._tag === "data"
-        ? client["process.write"]({ handle, fd, seq, data: op.data as Uint8Array })
-        : client["process.closeInput"]({ handle, fd, seq }),
+        ? send(client, seq, { _tag: "data", data: op.data as Uint8Array })
+        : send(client, seq, { _tag: "close" }),
     );
     return {
       write: (data) =>
@@ -292,6 +327,13 @@ export const makeRunnerConnection = (
       }),
     } satisfies RunnerPipeWriter;
   });
+
+  const pipeWriter: RunnerConnection["pipeWriter"] = (handle, fd) =>
+    byteWriter((client, seq, op) =>
+      op._tag === "data"
+        ? client["process.write"]({ handle, fd, seq, data: op.data })
+        : client["process.closeInput"]({ handle, fd, seq }),
+    );
 
   const ptyWriter: RunnerConnection["ptyWriter"] = Effect.fnUntraced(function* (handle) {
     const writer = yield* makeWriter((client, seq, op) => {
@@ -314,5 +356,121 @@ export const makeRunnerConnection = (
     } satisfies RunnerPtyWriter;
   });
 
-  return { info, ops, client: awaitClient(undefined), output, pipeWriter, ptyWriter };
+  // Accepts by forward. The runner repeats unclaimed accepts on every subscription and may announce
+  // one before `forward.open` has answered, so early ones wait and repeats are dropped.
+  const routes = new Map<RunnerForwardId, Queue.Queue<RunnerHandleId>>();
+  const early = new Map<RunnerForwardId, Set<RunnerHandleId>>();
+  const routed = new Set<RunnerHandleId>();
+  let subscribed = false;
+
+  const route = (forwardId: RunnerForwardId, connectionId: RunnerHandleId) => {
+    if (routed.has(connectionId)) return;
+    const accepts = routes.get(forwardId);
+    if (accepts === undefined) {
+      const waiting = early.get(forwardId) ?? new Set();
+      waiting.add(connectionId);
+      early.set(forwardId, waiting);
+      return;
+    }
+    routed.add(connectionId);
+    Queue.offerUnsafe(accepts, connectionId);
+  };
+
+  const events = (failed: RunnerClient | undefined): Stream.Stream<void, RunnerCallError> =>
+    Stream.unwrap(
+      awaitClient(failed).pipe(
+        Effect.map((client) =>
+          client["runner.events"]({}).pipe(
+            Stream.map((event) => {
+              if (event._tag === "forward.accepted") route(event.forwardId, event.connectionId);
+            }),
+            Stream.catchCause((cause) =>
+              isTransportFailure(cause)
+                ? events(client)
+                : Stream.failCause(cause as Cause.Cause<RunnerCallError>),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  const subscribe = Effect.suspend(() => {
+    if (subscribed) return Effect.void;
+    subscribed = true;
+    // Ends with the boot (`RunnerLostError`).
+    return events(undefined).pipe(Stream.runDrain, Effect.ignore, Effect.forkIn(boot.scope));
+  });
+
+  const serveConnection = Effect.fn("RunnerConnection.serveForwardConnection")(
+    function* (
+      connectionId: RunnerHandleId,
+      serve: (connection: RunnerTcpConnection) => Effect.Effect<void, never, Scope.Scope>,
+    ) {
+      const writer = yield* byteWriter((client, seq, op) =>
+        op._tag === "data"
+          ? client["tcp.write"]({ connectionId, seq, data: op.data })
+          : client["tcp.close"]({ connectionId }),
+      );
+      yield* serve({ read: output(connectionId, "tcp"), ...writer });
+    },
+    Effect.scoped,
+    // Idempotent on the runner; after a `close` this one fails and is ignored.
+    (effect, connectionId) =>
+      effect.pipe(
+        Effect.ensuring(
+          awaitClient(undefined).pipe(
+            Effect.flatMap((client) => client["tcp.close"]({ connectionId })),
+            Effect.ignore,
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => routed.delete(connectionId))),
+      ),
+  );
+
+  const openForward: RunnerConnection["openForward"] = Effect.fn("RunnerConnection.openForward")(
+    function* ({ name, ownerKey, serve }) {
+      const scope = yield* Effect.scope;
+      yield* subscribe;
+      // Not retried: a lost answer would leave a second listener behind.
+      const { forwardId, address } = yield* awaitClient(undefined).pipe(
+        Effect.flatMap((client) => client["forward.open"]({ name, ownerKey })),
+        Effect.catchTags({
+          RpcClientError: () => Effect.fail(new RunnerLostError({ reason: "runner-restarted" })),
+        }),
+      );
+      const accepts = yield* Queue.unbounded<RunnerHandleId>();
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.suspend(() => {
+          routes.delete(forwardId);
+          early.delete(forwardId);
+          return onLiveClient((client) => client["forward.close"]({ forwardId })).pipe(
+            Effect.ignore,
+          );
+        }),
+      );
+      routes.set(forwardId, accepts);
+      for (const connectionId of early.get(forwardId) ?? []) route(forwardId, connectionId);
+      early.delete(forwardId);
+      yield* Queue.take(accepts).pipe(
+        Effect.flatMap((connectionId) =>
+          serveConnection(connectionId, serve).pipe(Effect.forkIn(scope)),
+        ),
+        Effect.forever,
+        Effect.forkIn(scope),
+      );
+      return address;
+    },
+  );
+
+  return {
+    info,
+    ops,
+    client: awaitClient(undefined),
+    output,
+    pipeWriter,
+    ptyWriter,
+    openForward,
+    ended: boot.ended,
+  };
 };

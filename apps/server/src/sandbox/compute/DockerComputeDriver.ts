@@ -140,7 +140,8 @@ export const containerCreateBody = (input: {
     PidsLimit: 4096,
     // A restart cannot re-enroll: the bootstrap file is gone.
     RestartPolicy: { Name: "no" },
-    Tmpfs: { "/run/pair-runner": "rw,nosuid,nodev,noexec,mode=0700,size=16m" },
+    // Traversable but not listable, so agents reach the forward sockets; the token stays 0600.
+    Tmpfs: { "/run/pair-runner": "rw,nosuid,nodev,noexec,mode=0711,size=16m" },
     Mounts: [
       { Type: "volume", Source: input.volume, Target: `/t3-sandbox/${input.sandboxId}` },
       // By directory, so a restarted server's new socket inode is visible; read-only, so the

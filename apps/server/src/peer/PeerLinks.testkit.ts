@@ -108,6 +108,7 @@ export const servePeer = <E, R>(
       McpHttpServer.layerMcpTransport(tools).pipe(
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            endpoint: "http://127.0.0.1/mcp",
             resolve: () => Effect.undefined,
           }),
         ),

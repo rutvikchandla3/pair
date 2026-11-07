@@ -30,7 +30,7 @@ export class RunnerConfigError extends Schema.TaggedError<RunnerConfigError>()(
   }
 }
 
-const DEFAULT_STATE_DIR = "/run/pair-runner";
+export const DEFAULT_STATE_DIR = "/run/pair-runner";
 
 /**
  * Reads the bootstrap's values. The enrollment secret comes from the bootstrap's

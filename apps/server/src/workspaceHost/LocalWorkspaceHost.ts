@@ -187,5 +187,6 @@ export const make = Effect.gen(function* () {
       platform === "win32"
         ? spawnWindowsProcess(input, hooks)
         : spawnProcessGroup(input, hooks.onExit, hooks.onStderr, hooks.onStderrClose),
+    exposeServerEndpoint: (endpoint) => Effect.succeed(endpoint.address),
   } satisfies WorkspaceHost;
 });

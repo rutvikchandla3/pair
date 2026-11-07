@@ -7,6 +7,7 @@ import {
   CheckpointRef,
   NonNegativeInt,
   PositiveInt,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { OrchestrationV2CheckpointFileSummary } from "./orchestrationV2.ts";
@@ -674,10 +675,37 @@ const RunnerTcpWriteRpc = Rpc.make(RUNNER_METHODS.tcpWrite, {
   error: RunnerCallError,
 });
 
+/** Ends the connection after every applied write and frees its handle. */
 const RunnerTcpCloseRpc = Rpc.make(RUNNER_METHODS.tcpClose, {
   payload: Schema.Struct({ connectionId: RunnerHandleId }),
   error: RunnerCallError,
 });
+
+// One JSON line each way on the `git-credential` forward, between `t3 runner git-credential` and
+// the server. Not an RPC: the runner only carries the bytes.
+
+export const RunnerGitCredentialRequest = Schema.Struct({
+  version: Schema.Literal(1),
+  operation: Schema.Literals(["get", "store", "erase"]),
+  protocol: Schema.String,
+  host: Schema.String,
+  path: Schema.optionalKey(Schema.String),
+  /** `T3CODE_THREAD_ID` of the helper's environment; terminals and scripts have none. */
+  threadId: Schema.optionalKey(ThreadId),
+});
+export type RunnerGitCredentialRequest = typeof RunnerGitCredentialRequest.Type;
+
+export const RunnerGitCredentialResponse = Schema.Struct({
+  version: Schema.Literal(1),
+  credential: Schema.NullOr(
+    Schema.Struct({
+      username: Schema.String,
+      password: Schema.Redacted(Schema.String),
+      expiresAt: Schema.DateTimeUtc,
+    }),
+  ),
+});
+export type RunnerGitCredentialResponse = typeof RunnerGitCredentialResponse.Type;
 
 // Coarse operations run existing server services inside the runner, with the payloads and
 // results of the client RPCs they back.

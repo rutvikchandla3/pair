@@ -42,8 +42,14 @@ const runPrefetchCli = async (argv: ReadonlyArray<string>): Promise<void> => {
 
 export const runRunnerCli = async (argv: ReadonlyArray<string>): Promise<void> => {
   if (argv[0] === "prefetch") return runPrefetchCli(argv.slice(1));
+  if (argv[0] === "git-credential") {
+    const { runGitCredentialHelper } = await import("./gitCredentialHelper.ts");
+    return runGitCredentialHelper(argv.slice(1));
+  }
   if (argv.length > 0) {
-    process.stderr.write(`t3 runner takes no arguments or prefetch, got: ${argv.join(" ")}\n`);
+    process.stderr.write(
+      `t3 runner takes no arguments, prefetch or git-credential, got: ${argv.join(" ")}\n`,
+    );
     process.exitCode = 64;
     return;
   }

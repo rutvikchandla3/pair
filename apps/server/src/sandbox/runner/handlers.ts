@@ -11,13 +11,14 @@ import {
   RUNNER_METHODS,
   RUNNER_PROTOCOL_VERSION,
   RunnerCoreRpcGroup,
-  RunnerSystemError,
   type RunnerFileInfo,
+  type RunnerForwardId,
   type RunnerWatchEvent,
 } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { HandleTable, runnerBadArgument, toSystemError } from "./HandleTable.ts";
+import { listenTarget } from "./forwards.ts";
 import * as ProcessRun from "./ProcessRun.ts";
 import { RunnerConfig } from "./RunnerConfig.ts";
 import { RunnerCredential } from "./RunnerSocketServer.ts";
@@ -58,14 +59,6 @@ export const coalesceWatchEvents = <E, R>(events: Stream.Stream<FileSystem.Watch
     }),
   );
 
-const notSupported = (method: string) =>
-  new RunnerSystemError({
-    reason: "Unknown",
-    module: "Runner",
-    method,
-    description: "not supported",
-  });
-
 const systemErrors = Effect.mapError(toSystemError);
 
 export const layer = RunnerCoreRpcGroup.toLayer(
@@ -75,6 +68,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
     const config = yield* RunnerConfig;
     const credential = yield* RunnerCredential;
     const arch = yield* HostProcess.Architecture;
+    let gitForward: RunnerForwardId | undefined;
 
     const writeAtomic = Effect.fn("runner.fs.writeAtomic")(function* (
       path: string,
@@ -220,11 +214,26 @@ export const layer = RunnerCoreRpcGroup.toLayer(
           ).pipe(Stream.runForEach((batch) => Queue.offer(queue, batch))),
         ).pipe(Stream.mapError(toSystemError)),
 
-      [RUNNER_METHODS.forwardOpen]: () => Effect.fail(notSupported(RUNNER_METHODS.forwardOpen)),
-      [RUNNER_METHODS.forwardClose]: () => Effect.fail(notSupported(RUNNER_METHODS.forwardClose)),
-      [RUNNER_METHODS.tcpRead]: () => Stream.fail(notSupported(RUNNER_METHODS.tcpRead)),
-      [RUNNER_METHODS.tcpWrite]: () => Effect.fail(notSupported(RUNNER_METHODS.tcpWrite)),
-      [RUNNER_METHODS.tcpClose]: () => Effect.fail(notSupported(RUNNER_METHODS.tcpClose)),
+      // The owner key is the server's to check; the runner only listens.
+      [RUNNER_METHODS.forwardOpen]: Effect.fn("runner.forward.open")(function* ({ name }) {
+        // A new server boot opens its own git forward at the same path.
+        if (name === "git-credential" && gitForward !== undefined) {
+          yield* table.closeListener(gitForward);
+        }
+        const opened = yield* table.openListener(
+          listenTarget(name, config.stateDir, SecureRandom.uuidV4Unsafe()),
+        );
+        if (name === "git-credential") gitForward = opened.forwardId;
+        return opened;
+      }),
+      [RUNNER_METHODS.forwardClose]: ({ forwardId }) => table.closeListener(forwardId),
+      [RUNNER_METHODS.tcpRead]: ({ connectionId, fromSeq }) =>
+        table.output(connectionId, "tcp", fromSeq),
+      [RUNNER_METHODS.tcpWrite]: ({ connectionId, seq, data }) =>
+        table
+          .write(connectionId, "in:tcp", seq, { _tag: "data", data })
+          .pipe(Effect.map((appliedThrough) => ({ appliedThrough }))),
+      [RUNNER_METHODS.tcpClose]: ({ connectionId }) => table.closeTcp(connectionId),
     });
   }),
 );

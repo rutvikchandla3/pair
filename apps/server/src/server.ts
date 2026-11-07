@@ -127,10 +127,12 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
+import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
@@ -750,7 +752,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
-  Layer.provideMerge(CodexManagedTokenBroker.layer),
+  // Forwards reach the broker, the hub below and the MCP registry provided at the root.
+  Layer.provideMerge(
+    RunnerForwards.layer.pipe(
+      Layer.provide(GitCredentialService.layerNone),
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provideMerge(CodexManagedTokenBroker.layer),
+    ),
+  ),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(MemberPushDevices.layer),
   Layer.provideMerge(GitHubSignIn.layer),

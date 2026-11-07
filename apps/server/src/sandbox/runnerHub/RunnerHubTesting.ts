@@ -17,6 +17,7 @@ import * as SocketServer from "effect/socket/SocketServer";
 
 import * as HandleTable from "../runner/HandleTable.ts";
 import * as RunnerMain from "../runner/main.ts";
+import { RunnerConfig } from "../runner/RunnerConfig.ts";
 import { RunnerCredential } from "../runner/RunnerSocketServer.ts";
 import * as RunnerTesting from "../runner/runnerTesting.ts";
 import { RunnerHub } from "./RunnerHub.ts";
@@ -108,6 +109,8 @@ export interface TestRunner {
   /** Authenticates with the hub, as the route does, and serves the pair until it ends. */
   /** The runner's own table, for what the socket cannot show (pressure, live handles). */
   readonly table: HandleTable.HandleTable["Service"];
+  /** Where this runner's Unix forwards listen, as `/run/pair-runner` in a sandbox. */
+  readonly stateDir: string;
   readonly connect: (
     authorization?: Redacted.Redacted<string>,
     faults?: PairFaults,
@@ -150,6 +153,7 @@ export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
   );
   const credential = Context.get(context, RunnerCredential);
   const table = Context.get(context, HandleTable.HandleTable);
+  const { stateDir } = Context.get(context, RunnerConfig);
   let enrolled = false;
   const authorization = credential.authorization.pipe(
     Effect.map((current) =>
@@ -184,5 +188,5 @@ export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
     };
   });
 
-  return { authorization, table, connect } satisfies TestRunner;
+  return { authorization, table, stateDir, connect } satisfies TestRunner;
 });
