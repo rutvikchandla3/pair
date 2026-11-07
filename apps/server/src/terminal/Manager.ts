@@ -67,6 +67,7 @@ import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxProcessEnvironment from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import { sandboxScriptEnvironment } from "../sandbox/scripts/sandboxScriptEnvironment.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
@@ -2471,12 +2472,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
-              session.runtimeEnv,
+              host.kind === "sandbox"
+                ? yield* sandboxScriptEnvironment(host, session.cwd, session.runtimeEnv)
+                : session.runtimeEnv,
               platform,
               info.homeDirectory,
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
+            // These are server paths, so a sandbox never gets them.
             if (
+              host.kind === "local" &&
               options.managedBinaryCacheDir !== undefined &&
               options.managedBinaryToolsDir !== undefined
             ) {

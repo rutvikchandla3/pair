@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the test's own temp root.
+import * as NodeOS from "node:os";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -25,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -47,6 +51,7 @@ import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import * as WorkspaceHostLoopback from "../workspaceHost/WorkspaceHostLoopback.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
@@ -250,6 +255,8 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  /** Routes through these hosts instead of building local ones. */
+  hosts?: WorkspaceHosts.WorkspaceHosts["Service"];
   /** Registers the fixture's temp dir as a sandbox host with this base env. */
   sandbox?: {
     readonly environment: Record<string, string>;
@@ -285,10 +292,12 @@ const createManager = (
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
       const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
-      const hosts = yield* WorkspaceHosts.WorkspaceHosts.pipe(
-        Effect.provide(WorkspaceHostTesting.layerFromContext),
-        Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
-      );
+      const hosts =
+        options.hosts ??
+        (yield* WorkspaceHosts.WorkspaceHosts.pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
+          Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter),
+        ));
       if (options.sandbox !== undefined) {
         const local = yield* hosts.local.info;
         yield* hosts.register(baseDir, {
@@ -2001,9 +2010,85 @@ it.layer(
       expect(seen).toEqual(["sbx_0000000000000000000a thread-1"]);
       expect(env?.TEAM).toBe("1");
       expect(env?.PATH).toBe("/opt/pair-runner/build:/usr/bin");
-      expect(env?.T3CODE_PROJECT_ROOT).toBe("/repo");
+      // Not a git checkout: the script's root falls back to where it runs.
+      expect(env?.T3CODE_PROJECT_ROOT).toBe(baseDir);
       expect(env?.SERVER_ONLY).toBeUndefined();
     }),
+  );
+
+  it.effect("points a sandbox script's paths at the clone and leaves local terminals alone", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const loopback = yield* WorkspaceHosts.WorkspaceHosts;
+      const ptyAdapter = new FakePtyAdapter();
+      const run = (cwd: string, args: ReadonlyArray<string>) =>
+        spawner.exitCode(ChildProcess.make("git", args, { cwd }));
+
+      const box = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-terminal-box-" });
+      const clone = path.join(box, "repos", "example");
+      const worktree = path.join(box, "worktrees", "feature");
+      yield* fileSystem.makeDirectory(clone, { recursive: true });
+      yield* run(clone, ["init", "--initial-branch=main"]);
+      yield* run(clone, [
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      yield* run(clone, ["worktree", "add", worktree, "-b", "feature"]);
+      const cloneRealPath = yield* fileSystem.realPath(clone);
+
+      const sandboxSpawns: Array<string> = [];
+      const sandbox = yield* loopback.forPath(box);
+      yield* loopback.register(box, {
+        ...sandbox,
+        pty: ptyAdapter,
+        spawner: ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") sandboxSpawns.push(command.command);
+          return sandbox.spawner.spawn(command);
+        }),
+      });
+      const plain = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-terminal-plain-" });
+      const localSpawns: Array<string> = [];
+      yield* loopback.register(plain, {
+        ...loopback.local,
+        pty: ptyAdapter,
+        spawner: ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand") localSpawns.push(command.command);
+          return loopback.local.spawner.spawn(command);
+        }),
+      });
+      const { manager } = yield* createManager(5, { hosts: loopback, ptyAdapter });
+      const env = { T3CODE_PROJECT_ROOT: "/server/path", T3CODE_WORKTREE_PATH: worktree };
+
+      yield* manager.open(openInput({ cwd: worktree, env }));
+      yield* manager.open(openInput({ cwd: worktree, terminalId: "plain" }));
+      yield* manager.open(
+        openInput({
+          cwd: plain,
+          terminalId: "local",
+          env: { T3CODE_PROJECT_ROOT: "/server/path" },
+        }),
+      );
+
+      const [script, shell, local] = ptyAdapter.spawnInputs.map((input) => input.env);
+      expect(script?.T3CODE_PROJECT_ROOT).toBe(cloneRealPath);
+      expect(script?.T3CODE_WORKTREE_PATH).toBe(worktree);
+      expect(script?.T3CODE_SANDBOX).toBe("1");
+      expect(shell?.T3CODE_PROJECT_ROOT).toBeUndefined();
+      expect(shell?.T3CODE_SANDBOX).toBe("1");
+      expect(local?.T3CODE_PROJECT_ROOT).toBe("/server/path");
+      expect(local?.T3CODE_SANDBOX).toBeUndefined();
+      // Git answers on the sandbox host, once for the script, and never for a local terminal.
+      expect(sandboxSpawns).toEqual(["git"]);
+      expect(localSpawns).toEqual([]);
+    }).pipe(Effect.provide(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir()))),
   );
 
   it.effect("fails a sandbox terminal's start when its cloud env cannot be read", () =>
