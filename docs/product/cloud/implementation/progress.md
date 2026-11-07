@@ -15,10 +15,9 @@ no specs yet ([README](./README.md): write them after M1 lands).
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1 (42): 1.1–1.17, 1.19–1.39, 1.42–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
-  coalescing), the runner revoke fix, and `fix-flaky-kill`.
+  coalescing), the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**In flight (2026-11-07, second session):** 1.18 and `fix-cloud-delegate` (see 1.42's note), each in
-`../pair-wt/<id>` on `wt/<id>`. Worktrees live in the container only: after a restart, recreate them
+**In flight (2026-11-07, second session):** 1.18, in `../pair-wt/1.18` on `wt/1.18`. Worktrees live in the container only: after a restart, recreate them
 from `feat/pair` and relaunch those PRs.
 
 **Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
@@ -642,6 +641,12 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - `chat.newCloud` (no default binding) in contracts keybindings, chatRouteCommands, and the palette ("New cloud thread in <project>", hidden when Cloud is unavailable). New-thread-on-branch from a cloud thread opens a cloud draft (menu and Sidebar).
 - "Starting machine: cloning" can't show as the spec's step 1 caption: cloning runs after `ready`. Mobile (1.41) can mirror the atom's shape.
 - For 1.45: `docs/user/keybindings.md` needs `chat.newCloud`. Owed in the integrated pass: `test-t3-app` steps 1–6 and captures.
+
+## fix-cloud-delegate (landed)
+
+- `delegated_task.request` gains optional `sandbox: { sandboxId, driverId, size }` (the run still records `worktree`, no union widens). The orchestrator gives a cloud child that `sandboxId` and provisions it in the delegation's commit through `dispatchSandboxCommand`, which now takes an optional `pendingThread` (keep it if 1.18 changes the signature). The MCP service derives the id with `sandboxIdForLaunch(commandId)`; `provisionCloud` is local to ThreadLaunchService again.
+- Cloud delegation from a parent already on a machine is allowed now (the child gets its own); the no-branch refusal stays. Shared delegated children go through `gateCloudMessage`.
+- Untested edge: a shared child of a parent on a `destroyed` machine likely fails with a projection error instead of a clear refusal. `existing_worktree`/`worktree` delegation from cloud parents is still unhandled (1.16).
 
 ## Open follow-ups and risks
 
