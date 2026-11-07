@@ -1,0 +1,33 @@
+import { ComputeDriverId, type SandboxDriverInstance } from "@t3tools/contracts";
+
+/** A Docker host other than a local socket cannot reach this server's disk (03 §3.2). */
+export function isRemoteDockerHost(dockerHost: string): boolean {
+  const host = dockerHost.trim();
+  return host !== "" && !host.startsWith("unix://");
+}
+
+export function dockerDriverFormError(input: {
+  readonly label: string;
+  readonly dockerHost: string;
+  readonly runnerUrl: string;
+}): string | null {
+  const host = input.dockerHost.trim();
+  const runnerUrl = input.runnerUrl.trim();
+  if (input.label.trim() === "") return "Name the driver.";
+  if (host.startsWith("ssh://"))
+    return "Docker over ssh:// is not supported. Forward the socket and use unix://.";
+  if (host !== "" && !/^(unix|tcp):\/\/./.test(host))
+    return "Use a unix:// socket or a tcp:// address.";
+  if (isRemoteDockerHost(host) && runnerUrl === "")
+    return "A remote Docker host needs a runner URL: an address of this server its machines can reach.";
+  if (runnerUrl !== "" && !/^https?:\/\/./.test(runnerUrl))
+    return "The runner URL must start with http:// or https://.";
+  return null;
+}
+
+export function nextDriverId(drivers: ReadonlyArray<SandboxDriverInstance>): ComputeDriverId {
+  const taken = new Set<string>(drivers.map((driver) => driver.id));
+  let index = 1;
+  while (taken.has(index === 1 ? "docker" : `docker-${index}`)) index += 1;
+  return ComputeDriverId.make(index === 1 ? "docker" : `docker-${index}`);
+}

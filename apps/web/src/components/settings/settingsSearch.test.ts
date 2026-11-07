@@ -201,6 +201,14 @@ describe("searchSettings", () => {
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
       ["Create API token", "authorized-clients"],
+      ["Cloud overview", "cloud-overview"],
+      ["Docker driver", "cloud-docker-driver"],
+      ["Base image", "cloud-base-image"],
+      ["Machine limits", "cloud-caps"],
+      ["Environment variables", "cloud-env"],
+      ["Allow cloud threads", "project-cloud-allowed"],
+      ["Cloud as default workspace", "project-defaults-to-cloud"],
+      ["Cloud variables", "project-cloud-env"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }
@@ -239,6 +247,27 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
     for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "boring-sidebar"]) {
       expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
+    }
+    // Settings → Cloud edits one environment; only its project rows reach a project scope.
+    for (const id of [
+      "cloud-overview",
+      "cloud-docker-driver",
+      "cloud-base-image",
+      "cloud-caps",
+      "cloud-env",
+      "cloud-test",
+    ]) {
+      expect(
+        isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "environment"),
+      ).toBe(true);
+      expect(
+        isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "project"),
+      ).toBe(false);
+    }
+    for (const id of ["project-cloud-allowed", "project-defaults-to-cloud", "project-cloud-env"]) {
+      expect(
+        isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "project"),
+      ).toBe(true);
     }
   });
 });

@@ -169,6 +169,7 @@ it.effect("retries a partial project deletion without repeating child events or 
         maintain: unused,
         deleteThreadNamespace: unused,
         remove: (id) => Effect.sync(() => void removedMirrors.push(id)),
+        diskBytes: unused(),
       });
       const service = yield* ProjectService.make.pipe(
         Effect.provideService(EventSink.EventSinkV2, failingEventSink),

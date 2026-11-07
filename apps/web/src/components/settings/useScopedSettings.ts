@@ -21,11 +21,13 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planProjectOverridePatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  type ProjectOverrideChanges,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
@@ -103,6 +105,14 @@ export function useUpdateScopedSettings() {
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
     run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+}
+
+/** Project scope only: writes project-only override keys, such as Cloud's, with any scoped key. */
+export function useUpdateProjectOverrides() {
+  const { scope, environments } = useSettingsScope();
+  const run = useRunScopedPlan();
+  return (changes: ProjectOverrideChanges) =>
+    run(planProjectOverridePatch(scope, environments, changes));
 }
 
 export function useClearScopedSettings() {

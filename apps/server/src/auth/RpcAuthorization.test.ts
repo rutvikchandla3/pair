@@ -107,6 +107,16 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets members read Cloud's overview and keeps the driver check, which boots a machine, admin only", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver)).toBe(AuthSettingsWriteScope);
+    expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
+    expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
+    expect(clientRpcRequiredScopes(WS_METHODS.sandboxCheckDriver, { driverId: "local" })).toEqual([
+      AuthSettingsWriteScope,
+    ]);
+    expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxOverview));
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

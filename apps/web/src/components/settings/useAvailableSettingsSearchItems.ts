@@ -40,6 +40,9 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           hasServerConfig: true,
         }),
     ) === true;
+  const hasSandbox =
+    environments.some((environment) => environment.serverConfig?.settings.sandbox !== undefined) ===
+    true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -76,5 +79,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasTeamSettings,
     isTeamMode,
     hasTeamGitHub,
+    hasSandbox,
   });
 }

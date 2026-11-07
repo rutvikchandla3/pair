@@ -7,6 +7,13 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  SandboxDriverCheckError,
+  SandboxDriverCheckInput,
+  SandboxDriverCheckResult,
+  SandboxOverview,
+  SandboxOverviewError,
+} from "./sandbox.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -552,6 +559,8 @@ export const WS_METHODS = {
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
+  sandboxOverview: "sandbox.overview",
+  sandboxCheckDriver: "sandbox.checkDriver",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -990,6 +999,18 @@ const WsServerCheckOtlpEndpointRpc = Rpc.make(WS_METHODS.serverCheckOtlpEndpoint
   payload: OtlpEndpointCheckInput,
   success: OtlpEndpointCheckResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsSandboxOverviewRpc = Rpc.make(WS_METHODS.sandboxOverview, {
+  payload: Schema.Struct({}),
+  success: SandboxOverview,
+  error: Schema.Union([SandboxOverviewError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
+  payload: SandboxDriverCheckInput,
+  success: SandboxDriverCheckResult,
+  error: Schema.Union([SandboxDriverCheckError, EnvironmentAuthorizationError]),
 });
 
 const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
@@ -2220,6 +2241,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
+  WsSandboxOverviewRpc,
+  WsSandboxCheckDriverRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

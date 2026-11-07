@@ -343,6 +343,10 @@ export function ProviderEnvironmentSection(props: {
   /** Variables an administrator's policy pins: listed by name, never editable or removable. */
   readonly managed?: { readonly names: ReadonlySet<string>; readonly reason: string } | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
+  readonly title?: string;
+  readonly description?: string;
+  /** Why a name cannot be saved here; such a row shows invalid and holds back the save. */
+  readonly invalidName?: (name: string) => string | null;
 }) {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
@@ -362,6 +366,7 @@ export function ProviderEnvironmentSection(props: {
     const published: ProviderInstanceEnvironmentVariable[] = [];
     for (const row of nextRows) {
       const name = row.name.trim();
+      if (props.invalidName?.(name)) return;
       if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
         if (
           name.length > 0 ||
@@ -425,8 +430,8 @@ export function ProviderEnvironmentSection(props: {
 
   return (
     <SettingsRow
-      title="Variables"
-      description="API keys, base URLs, and other per-instance CLI settings."
+      title={props.title ?? "Variables"}
+      description={props.description ?? "API keys, base URLs, and other per-instance CLI settings."}
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
@@ -447,11 +452,13 @@ export function ProviderEnvironmentSection(props: {
                 </div>
               );
             }
+            const invalidReason = props.invalidName?.(variable.name.trim()) ?? null;
             const nameInput = (
               <DraftInput
                 size="sm"
                 font="mono"
                 className="min-w-0 flex-1"
+                aria-invalid={invalidReason !== null || undefined}
                 value={variable.name}
                 onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
                 disabled={variable.valueRedacted === true}
@@ -516,6 +523,9 @@ export function ProviderEnvironmentSection(props: {
                   {value}
                   {sensitiveToggle}
                 </div>
+                {invalidReason !== null ? (
+                  <p className="text-xs text-destructive">{invalidReason}</p>
+                ) : null}
               </div>
             );
             return (

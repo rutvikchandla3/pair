@@ -1,6 +1,9 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  isReservedSandboxEnvName,
   type ModelSelection,
+  type ProjectSettingsOverrides,
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
@@ -35,6 +38,8 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+import { useSecretSources } from "./SecretSourceInput";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -49,6 +54,7 @@ import {
   useScopedSettings,
   useScopedSettingsMixed,
   useScopedSettingSource,
+  useUpdateProjectOverrides,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
@@ -62,6 +68,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateProjectOverrides = useUpdateProjectOverrides();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -125,6 +132,25 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     isTeamMode &&
     target?.sources.defaultThreadEnvMode === "environment" &&
     representative?.serverConfig?.settings.defaultThreadEnvMode === null;
+
+  // Cloud's project rows exist once an environment of the project has Cloud set up (08 §2).
+  const projectOverrides = (candidate: (typeof targets)[number]): ProjectSettingsOverrides =>
+    candidate.projectId === null
+      ? {}
+      : (candidate.settings.projectSettingsOverrides[candidate.projectId] ?? {});
+  const cloudTargets = isProjectScope
+    ? targets.filter((candidate) => candidate.settings.sandbox !== undefined)
+    : [];
+  const showCloud = cloudTargets.length > 0;
+  const cloudAllowed = cloudTargets.map(
+    (candidate) => projectOverrides(candidate).sandboxAllowed !== false,
+  );
+  const prefersCloud = cloudTargets.map(
+    (candidate) => projectOverrides(candidate).defaultsToCloud === true,
+  );
+  const mixedCloudAllowed = new Set(cloudAllowed).size > 1;
+  const mixedPrefersCloud = new Set(prefersCloud).size > 1;
+  const workspaceIsCloud = showCloud && !mixedPrefersCloud && prefersCloud[0] === true;
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
@@ -236,38 +262,79 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       control={
         <Select
           value={
-            mixedWorkspace
+            mixedWorkspace || mixedPrefersCloud
               ? null
-              : teamWorkspaceDefault
-                ? "worktree"
-                : (effective?.defaultThreadEnvMode ?? null)
+              : workspaceIsCloud
+                ? "cloud"
+                : teamWorkspaceDefault
+                  ? "worktree"
+                  : (effective?.defaultThreadEnvMode ?? null)
           }
           onValueChange={(value) => {
-            if (value === "local" || value === "worktree")
+            if (value === "cloud") updateProjectOverrides({ defaultsToCloud: true });
+            else if ((value === "local" || value === "worktree") && showCloud)
+              // One write, so the entry never holds the new mode with Cloud still on.
+              updateProjectOverrides({ defaultThreadEnvMode: value, defaultsToCloud: undefined });
+            else if (value === "local" || value === "worktree")
               updateSettings({ defaultThreadEnvMode: value });
           }}
         >
           <SelectTrigger size="sm" aria-label="Default workspace">
             <SelectValue>
               {(value: string | null) =>
-                value === "local" || value === "worktree"
-                  ? teamWorkspaceDefault
-                    ? TEAM_DEFAULT_ENV_MODE_LABEL
-                    : resolveEnvModeLabel(value)
-                  : unavailable
-                    ? "Unavailable"
-                    : "Mixed"
+                value === "cloud"
+                  ? "Cloud"
+                  : value === "local" || value === "worktree"
+                    ? teamWorkspaceDefault
+                      ? TEAM_DEFAULT_ENV_MODE_LABEL
+                      : resolveEnvModeLabel(value)
+                    : unavailable
+                      ? "Unavailable"
+                      : "Mixed"
               }
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
             <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+            {showCloud ? (
+              <SelectItem value="cloud" disabled={!cloudAllowed.some(Boolean)}>
+                Cloud
+              </SelectItem>
+            ) : null}
           </SelectPopup>
         </Select>
       }
     />
   );
+
+  const cloudRows =
+    showCloud && target !== null ? (
+      <>
+        <SettingsRow
+          {...searchableSetting("project-cloud-allowed")}
+          mixed={mixedCloudAllowed}
+          description="Members can start cloud threads in this project. Turning it off keeps existing cloud threads running."
+          control={
+            <Switch
+              aria-label="Allow cloud threads"
+              mixed={mixedCloudAllowed}
+              checked={mixedCloudAllowed ? false : (cloudAllowed[0] ?? true)}
+              onCheckedChange={(enabled) =>
+                updateProjectOverrides({ sandboxAllowed: enabled ? undefined : false })
+              }
+            />
+          }
+        />
+        <ProjectCloudVariables
+          environmentId={target.environmentId}
+          environment={projectOverrides(target).sandboxEnv ?? []}
+          onChange={(sandboxEnv) =>
+            updateProjectOverrides({ sandboxEnv: sandboxEnv.length === 0 ? undefined : sandboxEnv })
+          }
+        />
+      </>
+    ) : null;
 
   const fallbackRow = !isProjectScope ? (
     <SettingsRow
@@ -353,6 +420,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           {modelRow}
           {fallbackRow}
           {workspaceRow}
+          {cloudRows}
         </>
       ) : category === "general" ? (
         <>
@@ -540,6 +608,28 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       )}
     </SettingsSection>
+  );
+}
+
+function ProjectCloudVariables(props: {
+  readonly environmentId: EnvironmentId;
+  readonly environment: NonNullable<ProjectSettingsOverrides["sandboxEnv"]>;
+  readonly onChange: (environment: NonNullable<ProjectSettingsOverrides["sandboxEnv"]>) => void;
+}) {
+  const secretSources = useSecretSources(props.environmentId);
+  return (
+    <div id={searchableSetting("project-cloud-env").id}>
+      <ProviderEnvironmentSection
+        environment={props.environment}
+        title={searchableSetting("project-cloud-env").title}
+        description="Set in this project's cloud machines, over the team's Cloud variables."
+        invalidName={(name) =>
+          isReservedSandboxEnvName(name) ? "Pair sets this variable on every machine." : null
+        }
+        secretSources={secretSources}
+        onChange={props.onChange}
+      />
+    </div>
   );
 }
 

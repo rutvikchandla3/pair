@@ -16,6 +16,7 @@ import {
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
+  planProjectOverridePatch,
   planScopedSettingsPatch,
   scopedIdleCompaction,
   resolveScopedSettingsTargets,
@@ -644,6 +645,28 @@ describe("null patches at project scope", () => {
         },
       },
     });
+    // Cloud's project-only keys share the entry, so one write moves the workspace off Cloud.
+    expect(
+      planProjectOverridePatch(scope, environments, {
+        defaultThreadEnvMode: "local",
+        defaultsToCloud: undefined,
+        sandboxAllowed: false,
+      }).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultThreadEnvMode: "local",
+          defaultAutoPull: true,
+          sandboxAllowed: false,
+        },
+      },
+    });
+    expect(
+      planProjectOverridePatch(scope, environments, {
+        defaultThreadEnvMode: undefined,
+        defaultAutoPull: undefined,
+      }).serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
   });
 });
 

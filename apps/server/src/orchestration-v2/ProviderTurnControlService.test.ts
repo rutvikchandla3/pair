@@ -258,6 +258,7 @@ it.effect(
           getSandbox: () => Effect.die("unused getSandbox"),
           listSandboxThreads: () => Effect.die("unused listSandboxThreads"),
           countSandboxAdmission: () => Effect.die("unused countSandboxAdmission"),
+          countSandboxStates: Effect.die("unused countSandboxStates"),
           memberUsageSince: () => Effect.die("unused memberUsageSince"),
           findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),

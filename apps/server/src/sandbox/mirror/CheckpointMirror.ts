@@ -83,6 +83,8 @@ export class CheckpointMirror extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<void, CheckpointMirrorError>;
     readonly remove: (projectId: ProjectId) => Effect.Effect<void>;
+    /** Every mirror's size on disk; files removed mid-walk count as nothing. */
+    readonly diskBytes: Effect.Effect<number>;
   }
 >()("t3/sandbox/mirror/CheckpointMirror") {}
 
@@ -466,6 +468,19 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const diskBytes = Effect.gen(function* () {
+    if (!(yield* fs.exists(mirrorsDir))) return 0;
+    let total = 0;
+    for (const entry of yield* fs.readDirectory(mirrorsDir, { recursive: true })) {
+      const info = yield* fs.stat(path.join(mirrorsDir, entry)).pipe(Effect.option);
+      if (info._tag === "Some" && info.value.type === "File") total += Number(info.value.size);
+    }
+    return total;
+  }).pipe(
+    Effect.orElseSucceed(() => 0),
+    Effect.withSpan("CheckpointMirror.diskBytes"),
+  );
+
   // A crash between a project's deletion commit and `remove` leaves its mirror behind.
   yield* Effect.gen(function* () {
     if (!(yield* fs.exists(mirrorsDir))) return;
@@ -495,6 +510,7 @@ const make = Effect.gen(function* () {
     maintain,
     deleteThreadNamespace,
     remove,
+    diskBytes,
   });
 });
 

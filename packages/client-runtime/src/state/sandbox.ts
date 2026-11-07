@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
   type EnvironmentId,
   type MemberId,
   type OrchestrationV2AppThread,
@@ -12,7 +13,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { discardSandbox, retrySandbox, sleepSandbox, wakeSandbox } from "../operations/commands.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import { canMemberDeleteThread, type createTeamEnvironmentAtoms } from "./team.ts";
 
 export type SandboxAction = "wake" | "sleep" | "retry" | "discard";
@@ -168,6 +169,21 @@ export function createSandboxEnvironmentAtoms<R, E>(
 
   return {
     ...commands,
+    /** Settings → Cloud's Overview; health runs each driver's checks, so it is read on demand. */
+    overview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:sandbox:overview",
+      tag: WS_METHODS.sandboxOverview,
+      staleTimeMs: 30_000,
+    }),
+    /** Boots and discards one machine; settings:write, like the driver it tests. */
+    checkDriver: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandbox:check-driver",
+      tag: WS_METHODS.sandboxCheckDriver,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.driverId}`,
+      },
+    }),
     /** The command's scope, then the delete rule (owner or admin in team mode) for sleep and discard. */
     actionAllowedAtom: (key: {
       readonly environmentId: EnvironmentId;

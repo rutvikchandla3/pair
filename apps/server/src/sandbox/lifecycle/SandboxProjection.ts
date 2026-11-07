@@ -256,6 +256,32 @@ export const countAdmission = Effect.fn("SandboxProjection.countAdmission")(func
   return { running: rows[0]?.running ?? 0, waiting: rows[0]?.waiting ?? 0 };
 });
 
+/** Settings → Cloud's machine counts; a machine waiting for admission counts as waiting only. */
+export const countStates = Effect.fn("SandboxProjection.countStates")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{
+    readonly ready: number | null;
+    readonly sleeping: number | null;
+    readonly failed: number | null;
+    readonly waiting: number | null;
+  }>`
+    SELECT
+      SUM(CASE WHEN state = 'ready' THEN 1 ELSE 0 END) AS ready,
+      SUM(CASE WHEN state = 'sleeping' THEN 1 ELSE 0 END) AS sleeping,
+      SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE WHEN state IN ('provisioning', 'waking') AND admission_since IS NOT NULL
+        THEN 1 ELSE 0 END) AS waiting
+    FROM orchestration_v2_projection_sandboxes
+  `;
+  const row = rows[0];
+  return {
+    ready: row?.ready ?? 0,
+    sleeping: row?.sleeping ?? 0,
+    failed: row?.failed ?? 0,
+    waiting: row?.waiting ?? 0,
+  };
+});
+
 /** Live (not deleted) threads using the sandbox, oldest first: attached_at, then thread_id. */
 export const listSandboxThreads = Effect.fn("SandboxProjection.listSandboxThreads")(function* (
   id: SandboxId,

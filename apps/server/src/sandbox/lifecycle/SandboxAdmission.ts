@@ -10,7 +10,7 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 
 /** 04 §4 and D5; there is no member cap in M1. */
-const STARTS_PER_MINUTE = 10;
+export const STARTS_PER_MINUTE = 10;
 const TOKEN_INTERVAL_MS = 60_000 / STARTS_PER_MINUTE;
 
 export interface AdmissionSnapshot {

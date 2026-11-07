@@ -612,6 +612,10 @@ export interface ProjectionStoreV2Shape {
     { readonly running: number; readonly waiting: number },
     ProjectionStoreV2Error
   >;
+  readonly countSandboxStates: Effect.Effect<
+    Effect.Success<ReturnType<typeof SandboxProjection.countStates>>,
+    ProjectionStoreV2Error
+  >;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -7939,6 +7943,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const countSandboxStates: ProjectionStoreV2Shape["countSandboxStates"] = withSql(
+      SandboxProjection.countStates(),
+    ).pipe(
+      Effect.mapError(
+        (cause) => new ProjectionStoreReadError({ threadId: ThreadId.make("sandboxes"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7966,6 +7978,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSandbox: readOnReader(getSandbox),
       listSandboxThreads: readOnReader(listSandboxThreads),
       countSandboxAdmission: readOnReader(countSandboxAdmission),
+      countSandboxStates: countSandboxStates.pipe(NodeSqliteClient.readOnly),
       memberUsageSince: readOnReader(memberUsageSince),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

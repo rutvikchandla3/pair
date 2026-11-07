@@ -247,8 +247,10 @@ it.effect("deletes one thread's namespace, and removes the mirror idempotently",
     const tips = yield* mirror.tips(projectId, [...refs, "refs/heads/main"]);
     assert.deepEqual([...tips.keys()].toSorted(), ["refs/heads/main", `${second}branch`]);
 
+    assert.isAbove(yield* mirror.diskBytes, 0);
     yield* mirror.remove(projectId);
     assert.isFalse(yield* fs.exists(mirror.gitDir(projectId)));
+    assert.equal(yield* mirror.diskBytes, 0);
     yield* mirror.remove(projectId);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

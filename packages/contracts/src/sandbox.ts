@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import type { OrchestrationV2Sandbox } from "./orchestrationV2.ts";
 
 /** Path-safe: the server addresses a sandbox's files under `/t3-sandbox/<id>/`. */
@@ -116,3 +116,83 @@ export const sandboxImageLabel = (sandbox: Pick<OrchestrationV2Sandbox, "baseIma
     : sandbox.baseImage.version !== null
       ? `Pair base ${sandbox.baseImage.version}`
       : `Base image ${sandbox.baseImage.ref}`;
+
+/** What Settings → Cloud shows of a driver's isolation; `runc` is not a security boundary (01 J1). */
+export const SandboxDriverIsolation = Schema.Literals(["rootless", "gvisor", "runc", "unknown"]);
+export type SandboxDriverIsolation = typeof SandboxDriverIsolation.Type;
+
+export const SandboxDriverHealth = Schema.Struct({
+  driverId: ComputeDriverId,
+  reachable: Schema.Boolean,
+  isolation: SandboxDriverIsolation,
+  /** How many of its machines run at once before new ones wait; read only in M1 (D5). */
+  runningCap: NonNegativeInt,
+  /** Why it is unreachable, or what is wrong with its base image. Never names the host. */
+  message: Schema.optionalKey(Schema.String),
+});
+export type SandboxDriverHealth = typeof SandboxDriverHealth.Type;
+
+/** Settings → Cloud's Overview; members may read it, so it carries no host or env value. */
+export const SandboxOverview = Schema.Struct({
+  drivers: Schema.Array(SandboxDriverHealth),
+  machines: Schema.Struct({
+    ready: NonNegativeInt,
+    sleeping: NonNegativeInt,
+    failed: NonNegativeInt,
+    waiting: NonNegativeInt,
+  }),
+  /** Server-wide; there is no member cap in M1 (D5). */
+  startsPerMinute: NonNegativeInt,
+  baseImage: Schema.Struct({ ref: Schema.String, label: Schema.String }),
+  mirrorBytes: NonNegativeInt,
+});
+export type SandboxOverview = typeof SandboxOverview.Type;
+
+export class SandboxOverviewError extends Schema.TaggedError<SandboxOverviewError>()(
+  "SandboxOverviewError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "Could not read the Cloud status.";
+  }
+}
+
+export const SandboxDriverCheckInput = Schema.Struct({ driverId: ComputeDriverId });
+export type SandboxDriverCheckInput = typeof SandboxDriverCheckInput.Type;
+
+export const SandboxDriverCheckStep = Schema.Literals([
+  "image",
+  "create",
+  "runner",
+  "git",
+  "discard",
+]);
+export type SandboxDriverCheckStep = typeof SandboxDriverCheckStep.Type;
+
+/** The steps that ran, in order; a failed step ends the check, and `discard` follows any create. */
+export const SandboxDriverCheckResult = Schema.Struct({
+  steps: Schema.Array(
+    Schema.Struct({
+      step: SandboxDriverCheckStep,
+      ok: Schema.Boolean,
+      durationMs: NonNegativeInt,
+      message: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type SandboxDriverCheckResult = typeof SandboxDriverCheckResult.Type;
+
+export class SandboxDriverCheckError extends Schema.TaggedError<SandboxDriverCheckError>()(
+  "SandboxDriverCheckError",
+  {
+    driverId: ComputeDriverId,
+    reason: Schema.Literals(["not-configured", "unavailable"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.reason === "not-configured"
+      ? `Compute driver ${this.driverId} is not configured.`
+      : "Could not start the check.";
+  }
+}

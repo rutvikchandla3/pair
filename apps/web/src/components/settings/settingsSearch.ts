@@ -33,6 +33,7 @@ export type SettingsPath =
   | "/settings/worktrees"
   | "/settings/connections"
   | "/settings/team"
+  | "/settings/cloud"
   | "/settings/access"
   | "/settings/secrets"
   | "/settings/maintenance"
@@ -72,6 +73,8 @@ export interface SettingsSearchItem {
   readonly teamOnly?: boolean;
   readonly teamModeOnly?: boolean;
   readonly teamGitHubOnly?: boolean;
+  /** Rows that exist once an environment has Cloud set up (`ServerSettings.sandbox`). */
+  readonly sandboxOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -90,6 +93,7 @@ export interface SettingsSearchAvailability {
   readonly hasTeamSettings?: boolean;
   readonly isTeamMode?: boolean;
   readonly hasTeamGitHub?: boolean;
+  readonly hasSandbox?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -110,6 +114,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/worktrees": "Worktrees",
   "/settings/connections": "Environments",
   "/settings/team": "Team",
+  "/settings/cloud": "Cloud",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
   "/settings/maintenance": "Maintenance",
@@ -153,6 +158,8 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/connections",
       "/settings/team",
+      // Shown on solo servers too: Cloud is about machines, not people.
+      "/settings/cloud",
       "/settings/access",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
     ],
@@ -1218,6 +1225,75 @@ export const SETTINGS_SEARCH_ITEMS = [
     teamGitHubOnly: true,
   },
   {
+    id: "cloud-overview",
+    title: "Cloud overview",
+    to: "/settings/cloud",
+    searchTerms: ["cloud machines sandboxes running asleep failed waiting status mirror size"],
+    environmentOnly: true,
+  },
+  {
+    id: "cloud-docker-driver",
+    title: "Docker driver",
+    to: "/settings/cloud",
+    searchTerms: [
+      "docker host DOCKER_HOST rootless gvisor runc isolation machine compute driver runner url size add remove",
+    ],
+    environmentOnly: true,
+  },
+  {
+    id: "cloud-base-image",
+    title: "Base image",
+    to: "/settings/cloud",
+    searchTerms: ["cloud machine image t3-sandbox pair base override registry mirror"],
+    environmentOnly: true,
+  },
+  {
+    id: "cloud-caps",
+    title: "Machine limits",
+    to: "/settings/cloud",
+    searchTerms: ["cloud caps team cap starts per minute rate member cap vcpus"],
+    environmentOnly: true,
+  },
+  {
+    id: "cloud-env",
+    title: "Cloud environment variables",
+    to: "/settings/cloud",
+    searchTerms: ["cloud env variables secrets api keys machines sandbox team reserved"],
+    environmentOnly: true,
+  },
+  {
+    id: "cloud-test",
+    title: "Test a machine",
+    to: "/settings/cloud",
+    searchTerms: ["cloud check boot runner git docker driver verify"],
+    environmentOnly: true,
+  },
+  {
+    id: "project-cloud-allowed",
+    title: "Allow cloud threads",
+    to: "/settings/projects",
+    scope: "project",
+    searchTerms: ["cloud machines sandbox project turn off disallow"],
+    sandboxOnly: true,
+  },
+  {
+    id: "project-defaults-to-cloud",
+    title: "Cloud as default workspace",
+    to: "/settings/projects",
+    targetId: "new-threads",
+    scope: "project",
+    searchTerms: ["cloud new threads start machine default workspace mode"],
+    sandboxOnly: true,
+  },
+  {
+    id: "project-cloud-env",
+    title: "Project cloud variables",
+    to: "/settings/projects",
+    scope: "project",
+    searchTerms: ["cloud environment variables env secrets api keys machines sandbox project"],
+    sandboxOnly: true,
+  },
+  {
     id: "secret-providers",
     title: "Secret providers",
     to: "/settings/secrets",
@@ -1261,6 +1337,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",
   "/settings/team": "connections",
+  "/settings/cloud": "environment",
   "/settings/access": "connections",
   "/settings/secrets": null,
   "/settings/scheduled-tasks": null,
@@ -1394,7 +1471,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.teamOnly || availability.hasTeamSettings === true) &&
       (!item.teamModeOnly || availability.isTeamMode === true) &&
-      (!item.teamGitHubOnly || availability.hasTeamGitHub === true),
+      (!item.teamGitHubOnly || availability.hasTeamGitHub === true) &&
+      (!item.sandboxOnly || availability.hasSandbox === true),
   );
 }
 

@@ -334,6 +334,38 @@ export function planScopedSettingsPatch(
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
+export type ProjectOverrideChanges = {
+  readonly [Key in keyof ProjectSettingsOverrides]?: ProjectSettingsOverrides[Key] | undefined;
+};
+
+/** Writes keys into each member's override entry as given; `undefined` removes a key. */
+export function planProjectOverridePatch(
+  scope: ResolvedSettingsScope,
+  environments: readonly ScopedSettingsEnvironment[],
+  changes: ProjectOverrideChanges,
+) {
+  const serverWrites =
+    scope.kind === "project" || scope.kind === "checkout"
+      ? projectOverrideWrites(scope, environments, (current) => {
+          const next: Record<string, unknown> = { ...current };
+          for (const [key, value] of Object.entries(changes)) {
+            if (value === undefined) delete next[key];
+            else next[key] = value;
+          }
+          return Object.keys(next).length === 0 ? null : (next as ProjectSettingsOverrides);
+        })
+      : [];
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    unavailableReason:
+      serverWrites.length > 0
+        ? null
+        : "Connect the selected checkouts, or update their environments, to save a project override.",
+  };
+}
+
 export function planScopedSettingsClear(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
