@@ -10,22 +10,22 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (41 of 57):**
+**Landed on `feat/pair` (42 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
-- 1.12 sessions on sandbox hosts (critical path)
+- 1.16 cloud launch (critical path)
 - 1.29 revocation
 - 1.35 push and PR
 - fix-flaky-kill
 
-**Not started (12), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (11), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -544,6 +544,15 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Migration 090_MemberGitHubSource (`members.github_source`; backfill `app` where github_user_id not null). Next free migration id: 91.
 - MemberGitHub `setToken` (validates via GitHub /user, refuses an account another member holds, secret store only `github-member-token-<id>`), `clearToken`, `credentialFor` returns a pasted token without the App client id. Token and device-flow session replace each other.
 - client-runtime `setGitHubToken`/`clearGitHubToken`, `cloudPushCredential({appConfigured,…})` (1.41 reuses). Web: Settings → Team own row "Use a token instead"; `components/sandbox/cloudPushBanner.tsx` in ChatView (attention group). docs/user/team.md "Bring your own GitHub token".
+
+## 1.12 sessions on sandbox hosts (landed) — Replay runs a full turn on the loopback sandbox host
+
+- Session manager refuses all providers except claudeAgent, codex and Replay on a sandbox (`ProviderCloudUnsupportedError`, provider/Errors.ts) before any adapter runs; opens the thread's `mcp` forward in the session scope; refuses reusing a shared session from another machine. `McpProviderSessions.useEndpoint`. Shared session ids keyed by the thread's sandbox (Orchestrator passes `thread.sandboxId`).
+- ACP/Replay: MCP bridge via the sandbox's `t3`; Replay runs `node <bundle>/replay/dev-replay-agent.mjs`.
+- Codex: image's `codex`, `CODEX_HOME=/t3-sandbox/<id>/homes/<instance>`; `CodexManagedRuntime.resolveFor(host)` (bundle `t3` + codex-token forward; no auth.json).
+- Claude: sandbox/providers/ClaudeSandboxProcess.ts bridge on `spawner`; Claude home in the sandbox; fork/subagent lookup/settings via the bundle's history worker. Task output tail uses the sandbox file watch.
+- Provider processes start on `forProcess(host, threadId)`. Provider homes created by `mkdir` as the agent (no chown in the sandbox fs).
+- OPEN: `T3CODE_SANDBOX` not set for providers (1.24 sets it for scripts). ACP/Codex app-server processes lack T3CODE_THREAD_ID (git answers for the owner thread). workflowFileRead.ts + Claude transcript reads still server-side ("not routed yet").
 
 ## Open follow-ups and risks
 
