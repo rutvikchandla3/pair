@@ -127,6 +127,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
@@ -753,7 +754,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(MemberGitHub.layer),
   // Above layerAuth, which provides their database.
   Layer.provideMerge(RunnerHub.layer),
-  Layer.provideMerge(RunnerGrants.layer),
+  Layer.provideMerge(Layer.mergeAll(RunnerGrants.layer, RunnerBundle.layer)),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),
   Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),

@@ -62,6 +62,13 @@ export class RunnerGrants extends Context.Service<
     readonly authenticate: (
       token: Redacted.Redacted<string>,
     ) => Effect.Effect<RunnerGrant, RunnerAuthError | RunnerGrantError>;
+    /**
+     * For bundle downloads: a sandbox token, or an enrollment secret that is still unspent. It
+     * never consumes the secret, so the runner can enroll with it after the download.
+     */
+    readonly authorizeDownload: (
+      credential: Redacted.Redacted<string>,
+    ) => Effect.Effect<RunnerGrant, RunnerAuthError | RunnerGrantError>;
     /** Revokes every generation of the sandbox. */
     readonly revoke: (sandboxId: SandboxId) => Effect.Effect<void, RunnerGrantError>;
   }
@@ -165,6 +172,25 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const findDownloadGrant = SqlSchema.findOneOption({
+    Request: Schema.Struct({ credentialHash: Schema.String, now: Schema.String }),
+    Result: GrantRow,
+    execute: ({ credentialHash, now }) => sql`
+      SELECT sandbox_id AS "sandboxId", boot_generation AS "generation"
+      FROM sandbox_runner_grants
+      WHERE revoked_at IS NULL
+        AND (
+          token_hash = ${credentialHash}
+          OR (
+            enrollment_hash = ${credentialHash}
+            AND enrollment_consumed_at IS NULL
+            AND enrollment_expires_at > ${now}
+          )
+        )
+      LIMIT 1
+    `,
+  });
+
   const revokeAll = SqlSchema.void({
     Request: Schema.Struct({ sandboxId: SandboxId, now: Schema.String }),
     execute: ({ sandboxId, now }) => sql`
@@ -226,6 +252,17 @@ const make = Effect.gen(function* () {
     return { sandboxId: row.value.sandboxId, generation: row.value.generation };
   });
 
+  const authorizeDownload: RunnerGrants["Service"]["authorizeDownload"] = Effect.fn(
+    "RunnerGrants.authorizeDownload",
+  )(function* (credential) {
+    const row = yield* findDownloadGrant({
+      credentialHash: yield* hash(credential),
+      now: yield* nowIso,
+    }).pipe(Effect.mapError(toRepositoryError("RunnerGrants.authorizeDownload")));
+    if (Option.isNone(row)) return yield* new RunnerAuthError({ reason: "unknown" });
+    return row.value;
+  });
+
   const revoke: RunnerGrants["Service"]["revoke"] = Effect.fn("RunnerGrants.revoke")(
     function* (sandboxId) {
       yield* revokeAll({ sandboxId, now: yield* nowIso }).pipe(
@@ -234,7 +271,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return RunnerGrants.of({ mint, enroll, authenticate, revoke });
+  return RunnerGrants.of({ mint, enroll, authenticate, authorizeDownload, revoke });
 });
 
 export const layer = Layer.effect(RunnerGrants, make);

@@ -4,11 +4,57 @@
  */
 import { isEntrypoint } from "../../entrypoint.ts";
 
-export const runRunnerCli = async (argv: ReadonlyArray<string>): Promise<void> => {
-  if (argv.length > 0) {
-    process.stderr.write(`t3 runner takes no arguments, got: ${argv.join(" ")}\n`);
+/** Exit code for a Node outside the bundle's range: the image owns Node (05), not the runner. */
+const EXIT_UNSUPPORTED_NODE = 78;
+
+/** The bundle's `MANIFEST.json` sits beside `runner.mjs`; a full CLI build has none. */
+const bundleNodeRange = async (): Promise<string | undefined> => {
+  const { readFile } = await import("node:fs/promises");
+  try {
+    const manifest: unknown = JSON.parse(
+      await readFile(new URL("./MANIFEST.json", import.meta.url), "utf8"),
+    );
+    return typeof manifest === "object" &&
+      manifest !== null &&
+      "node" in manifest &&
+      typeof manifest.node === "string"
+      ? manifest.node
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const runPrefetchCli = async (argv: ReadonlyArray<string>): Promise<void> => {
+  if (argv.length !== 1) {
+    process.stderr.write("usage: t3 runner prefetch <runnerBuildId>\n");
     process.exitCode = 64;
     return;
+  }
+  const [NodeRuntime, NodeServices, Effect, { prefetch }] = await Promise.all([
+    import("@effect/platform-node/NodeRuntime"),
+    import("@effect/platform-node/NodeServices"),
+    import("effect/Effect"),
+    import("./prefetch.ts"),
+  ]);
+  NodeRuntime.runMain(prefetch(argv[0]!).pipe(Effect.provide(NodeServices.layer)));
+};
+
+export const runRunnerCli = async (argv: ReadonlyArray<string>): Promise<void> => {
+  if (argv[0] === "prefetch") return runPrefetchCli(argv.slice(1));
+  if (argv.length > 0) {
+    process.stderr.write(`t3 runner takes no arguments or prefetch, got: ${argv.join(" ")}\n`);
+    process.exitCode = 64;
+    return;
+  }
+  const nodeRange = await bundleNodeRange();
+  if (nodeRange !== undefined) {
+    const { satisfiesSemverRange } = await import("@t3tools/shared/semver");
+    if (!satisfiesSemverRange(process.versions.node, nodeRange)) {
+      process.stderr.write(`t3 runner needs Node ${nodeRange}, running ${process.versions.node}\n`);
+      process.exitCode = EXIT_UNSUPPORTED_NODE;
+      return;
+    }
   }
   const [NodeRuntime, Exit, Runtime, { runRunner }] = await Promise.all([
     import("@effect/platform-node/NodeRuntime"),

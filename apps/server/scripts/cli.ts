@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - Effect has no synchronous digest for the lockfile hash.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -6,13 +7,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeCrypto from "node:crypto";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import { listBundledModules } from "../../../scripts/lib/cli-external-packages.ts";
+import { stageRuntimeExternals } from "../../../scripts/build-cli-archive.ts";
 import { injectLinuxArm64Sea } from "../../../scripts/lib/linux-arm64-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
+import serverPackageJson from "../package.json" with { type: "json" };
+import { RUNNER_PROTOCOL_VERSION } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -21,7 +27,15 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliRunnerBundleCheckError,
 } from "./cliErrors.ts";
+import { SCENARIOS as DEV_REPLAY_SCENARIOS } from "./dev-replay-agent.ts";
+import {
+  computeRunnerBuildId,
+  encodeRunnerManifest,
+  RUNNER_MANIFEST_FILE,
+  type RunnerManifest,
+} from "../src/sandbox/runnerHub/RunnerBundle.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -66,6 +80,158 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
 
+const RUNNER_MAX_BYTES = 25 * 1024 * 1024;
+const RUNNER_EXTERNALS = ["node-pty", "@ff-labs/fff-node"];
+const RUNNER_SHIM = '#!/bin/sh\nexec node "$(dirname "$0")/runner.mjs" "$@"\n';
+
+/** What the runner must never carry (03 §2.1); the lint fence sees direct imports only. */
+const isFencedRunnerModule = (module: string) =>
+  /(?:^|\/)src\/(?:orchestration-v2|persistence|auth)\//.test(module) ||
+  (/(?:^|\/)src\/provider\//.test(module) &&
+    !module.endsWith("src/provider/CodexManagedTokenProtocol.ts"));
+
+/** Installs the runner's native externals into `stageDir/node_modules`, linux x64 and arm64 glibc. */
+const stageRunnerExternals = Effect.fn("stageRunnerExternals")(function* (
+  repoRoot: string,
+  stageDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* stageRuntimeExternals({
+    repoRoot,
+    stageDir,
+    platform: "linux",
+    arch: "universal",
+    version: serverPackageJson.version,
+    packages: RUNNER_EXTERNALS,
+  });
+  // The sandbox image is Ubuntu (glibc), and conpty is Windows-only: both would double the size.
+  const nodeModules = path.join(stageDir, "node_modules");
+  for (const entry of yield* fs.readDirectory(path.join(nodeModules, "@ff-labs"))) {
+    if (entry.endsWith("-musl")) {
+      yield* fs.remove(path.join(nodeModules, "@ff-labs", entry), { recursive: true });
+    }
+  }
+  yield* fs.remove(path.join(nodeModules, "node-pty/third_party"), {
+    recursive: true,
+    force: true,
+  });
+});
+
+/**
+ * Builds the runner bundle into `out` (docs/product/cloud/03-runner.md §2): the unsplit runner and
+ * history worker, linux externals, the `t3` shim and `MANIFEST.json` with the tree's id. `cache`
+ * keeps the externals install per lockfile, for source-run servers.
+ */
+const buildRunner = Effect.fn("buildRunner")(function* (input: {
+  readonly out: string;
+  readonly dev: boolean;
+  readonly externalsCache: string | undefined;
+  readonly verbose: boolean;
+}) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const repoRoot = yield* RepoRoot;
+  const serverDir = path.join(repoRoot, "apps/server");
+  const out = path.resolve(input.out);
+
+  yield* fs.remove(out, { recursive: true, force: true });
+  yield* fs.makeDirectory(out, { recursive: true });
+  const pack = yield* resolveSpawnCommand("vp", ["pack"]);
+  yield* runCommand(
+    ChildProcess.make(pack.command, pack.args, {
+      cwd: serverDir,
+      env: {
+        ...process.env,
+        T3CODE_PACK_EXE: "",
+        T3CODE_PACK_RUNNER_ONLY: "1",
+        T3CODE_RUNNER_OUT_DIR: out,
+        T3CODE_RUNNER_DEV: input.dev ? "1" : "",
+      },
+      stdout: input.verbose ? "inherit" : "ignore",
+      stderr: "inherit",
+      shell: pack.shell,
+    }),
+  );
+
+  const fenced = listBundledModules(yield* fs.readFileString(path.join(out, "runner.mjs"))).filter(
+    isFencedRunnerModule,
+  );
+  if (fenced.length > 0) {
+    return yield* new ServerCliRunnerBundleCheckError({
+      check: "fenced-module",
+      detail: `runner.mjs inlines ${fenced.join(", ")}`,
+    });
+  }
+  const workerImports = findEsmImportsOfExternalPackages(
+    yield* fs.readFileString(path.join(out, "claude-history-worker.mjs")),
+  );
+  if (workerImports.length > 0) {
+    return yield* new ServerCliRunnerBundleCheckError({
+      check: "worker-import",
+      detail: `claude-history-worker.mjs imports ${workerImports.join(", ")}`,
+    });
+  }
+
+  if (input.dev) {
+    // At the agent's own relative paths: it resolves `new URL(scenario.file, import.meta.url)`.
+    for (const scenario of DEV_REPLAY_SCENARIOS) {
+      const target = path.resolve(out, "replay", scenario.file);
+      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.copyFile(path.resolve(serverDir, "scripts", scenario.file), target);
+    }
+  }
+
+  if (input.externalsCache === undefined) {
+    const stageDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-externals-" });
+    yield* stageRunnerExternals(repoRoot, stageDir);
+    yield* fs.copy(path.join(stageDir, "node_modules"), path.join(out, "node_modules"));
+  } else {
+    const lockHash = NodeCrypto.createHash("sha256")
+      .update(yield* fs.readFile(path.join(repoRoot, "pnpm-lock.yaml")))
+      .digest("hex");
+    const cached = path.join(input.externalsCache, `externals-${lockHash}`);
+    if (!(yield* fs.exists(cached))) {
+      const stageDir = `${cached}.staging-${NodeCrypto.randomUUID()}`;
+      yield* fs.makeDirectory(stageDir, { recursive: true });
+      yield* stageRunnerExternals(repoRoot, stageDir).pipe(
+        Effect.onError(() =>
+          fs.remove(stageDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+      );
+      yield* fs.rename(stageDir, cached);
+    }
+    yield* fs.copy(path.join(cached, "node_modules"), path.join(out, "node_modules"));
+  }
+
+  yield* fs.writeFileString(path.join(out, "t3"), RUNNER_SHIM);
+  yield* fs.chmod(path.join(out, "t3"), 0o755);
+
+  let bytes = 0;
+  for (const entry of yield* fs.readDirectory(out, { recursive: true })) {
+    const info = yield* fs.stat(path.join(out, entry));
+    if (info.type === "File") bytes += Number(info.size);
+  }
+  if (bytes > RUNNER_MAX_BYTES) {
+    return yield* new ServerCliRunnerBundleCheckError({
+      check: "size",
+      detail: `${bytes} bytes, over ${RUNNER_MAX_BYTES}`,
+    });
+  }
+
+  const manifest: typeof RunnerManifest.Type = {
+    runnerBuildId: yield* computeRunnerBuildId(out),
+    protocolVersion: RUNNER_PROTOCOL_VERSION,
+    node: serverPackageJson.engines.node,
+    builtFrom: input.dev ? "source" : "release",
+  };
+  yield* fs.writeFileString(
+    path.join(out, RUNNER_MANIFEST_FILE),
+    `${yield* encodeRunnerManifest(manifest)}\n`,
+  );
+  yield* Effect.log(`[cli] Built runner ${manifest.runnerBuildId} (${bytes} bytes) in ${out}`);
+}, Effect.scoped);
+
 const buildCmd = Command.make(
   "build",
   {
@@ -98,6 +264,13 @@ const buildCmd = Command.make(
       } else {
         yield* Effect.logWarning("[cli] Web dist not found. Skipping client bundle.");
       }
+
+      yield* buildRunner({
+        out: path.join(serverDir, "dist/runner"),
+        dev: false,
+        externalsCache: undefined,
+        verbose: config.verbose,
+      });
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
 
@@ -166,6 +339,33 @@ const buildExeCmd = Command.make(
   ),
 );
 
+const buildRunnerCmd = Command.make(
+  "build-runner",
+  {
+    out: Flag.String("out").pipe(Flag.withDescription("Directory to write the bundle tree to.")),
+    dev: Flag.Boolean("dev").pipe(
+      Flag.withDescription("Add the Replay (dev) agent and its transcripts."),
+      Flag.withDefault(false),
+    ),
+    externalsCache: Flag.String("externals-cache").pipe(
+      Flag.withDescription("Keep the native externals install here, keyed by pnpm-lock.yaml."),
+      Flag.optional,
+    ),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+  },
+  (config) =>
+    buildRunner({
+      out: config.out,
+      dev: config.dev,
+      externalsCache: Option.getOrUndefined(config.externalsCache),
+      verbose: config.verbose,
+    }),
+).pipe(
+  Command.withDescription(
+    "Build the sandbox runner bundle (runner.mjs, externals, MANIFEST.json).",
+  ),
+);
+
 /** Publish after the GitHub release exists; the launcher downloads from it. */
 const publishCmd = Command.make(
   "publish",
@@ -207,7 +407,7 @@ const publishCmd = Command.make(
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),
-  Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
+  Command.withSubcommands([buildCmd, buildRunnerCmd, buildExeCmd, publishCmd]),
 );
 
 Command.run(cli, { version: "0.0.0" }).pipe(

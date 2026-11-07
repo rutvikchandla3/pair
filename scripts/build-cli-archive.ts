@@ -130,13 +130,17 @@ const requireInput = Effect.fn("requireInput")(function* (inputPath: string, hin
   }
 });
 
-/** Installed runtimes cannot rely on pnpm's store layout surviving archival. */
-const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (input: {
+/**
+ * Installed runtimes cannot rely on pnpm's store layout surviving archival. The runner bundle
+ * stages a subset (`packages`) for both Linux architectures.
+ */
+export const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (input: {
   readonly repoRoot: string;
   readonly stageDir: string;
   readonly platform: BuildPlatform;
-  readonly arch: BuildArch;
+  readonly arch: BuildArch | "universal";
   readonly version: string;
+  readonly packages?: ReadonlyArray<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -156,8 +160,13 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
       hint: "The archive stages fff's platform binary from this version.",
     });
   }
+  const externals = selectCliRuntimeExternalDependencies(serverDependencies);
   const dependencies = {
-    ...selectCliRuntimeExternalDependencies(serverDependencies),
+    ...(input.packages === undefined
+      ? externals
+      : Object.fromEntries(
+          Object.entries(externals).filter(([name]) => input.packages?.includes(name)),
+        )),
     ...resolveFffNativeDependencies(input.platform, input.arch, fffNodeVersion),
   };
   const patchedDependencies = createStagePatchedDependencies(
@@ -203,12 +212,14 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
     "vp install --prod (cli archive runtime externals)",
   );
 
-  const platformKey = cliArchivePlatformKey(input.platform, input.arch);
+  const platformKeys = (input.arch === "universal" ? BuildArch.literals : [input.arch]).map(
+    (arch) => cliArchivePlatformKey(input.platform, arch),
+  );
   const prebuildsDir = path.join(input.stageDir, "node_modules/node-pty/prebuilds");
   const foreignPrebuilds = (yield* fs
     .readDirectory(prebuildsDir)
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter(
-    (entry) => entry !== platformKey,
+    (entry) => !platformKeys.includes(entry),
   );
   for (const entry of [
     "package.json",

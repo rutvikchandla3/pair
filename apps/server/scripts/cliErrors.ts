@@ -58,3 +58,15 @@ export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCli
     return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
   }
 }
+
+export class ServerCliRunnerBundleCheckError extends Schema.TaggedError<ServerCliRunnerBundleCheckError>()(
+  "ServerCliRunnerBundleCheckError",
+  {
+    check: Schema.Literals(["fenced-module", "worker-import", "size"]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Runner bundle check "${this.check}" failed: ${this.detail}`;
+  }
+}

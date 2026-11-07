@@ -21,14 +21,17 @@ export PAIR_RUNNER_URL PAIR_SANDBOX_ID PAIR_RUNNER_BUILD PAIR_RUNNER_ENROLL
 # A fresh volume is root-owned.
 install -d -o t3 -g t3 "/t3-sandbox/$PAIR_SANDBOX_ID"
 
-# fetch <path> <out>: GET from the server with the enrollment secret, which goes through curl's
-# stdin config and never argv. PAIR_RUNNER_URL is http(s)://host or unix:/path/to/socket.
+# fetch <path> <out>: GET from the server with the runner's credential, which goes through curl's
+# stdin config and never argv: the sandbox token once the runner has enrolled (the secret is spent
+# then), else the enrollment secret. PAIR_RUNNER_URL is http(s)://host or unix:/path/to/socket.
 fetch() {
   case "$PAIR_RUNNER_URL" in
     unix:*) base=http://runner sock="${PAIR_RUNNER_URL#unix:}" ;;
     *) base="${PAIR_RUNNER_URL%/}" sock= ;;
   esac
-  printf 'header = "Authorization: Bearer %s"\n' "$PAIR_RUNNER_ENROLL" |
+  credential="$PAIR_RUNNER_ENROLL"
+  if [ -s "$RUN_DIR/token" ]; then credential="$(cat "$RUN_DIR/token")"; fi
+  printf 'header = "Authorization: Bearer %s"\n' "$credential" |
     curl -fsS --config - --speed-limit 1 --speed-time 60 ${sock:+--unix-socket "$sock"} \
       -o "$2" "$base$1"
 }

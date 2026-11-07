@@ -63,6 +63,83 @@ const packExecutableTargets = packExecutableTarget
     ]
   : undefined;
 
+const packDeps = {
+  // alwaysBundle=false has no opinion; neverBundle must retain transitive native acceleration.
+  alwaysBundle: shouldBundleCliDependency,
+  neverBundle: (id: string) => isExternalCliDependency(id),
+  onlyBundle: false as const,
+};
+
+const packDefine = {
+  __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
+  __T3CODE_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel),
+  __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
+  __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+    repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+  ),
+  __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
+    repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
+  ),
+  __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: JSON.stringify(
+    repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ?? "",
+  ),
+  __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: JSON.stringify(
+    repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ?? "",
+  ),
+  __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
+    repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
+  ),
+};
+
+// The runner bundle (docs/product/cloud/03-runner.md): one unsplit entry per element, since a
+// single chunk needs a single input. No `clean`, which would wipe what element 1 built.
+const runnerOutDir = process.env.T3CODE_RUNNER_OUT_DIR ?? "dist/runner";
+const runnerEntries: ReadonlyArray<Record<string, string>> = [
+  { runner: "src/sandbox/runner/bin.ts" },
+  { "claude-history-worker": "src/claude-history-worker.ts" },
+  ...(process.env.T3CODE_RUNNER_DEV === "1"
+    ? [{ "replay/dev-replay-agent": "scripts/dev-replay-agent.ts" }]
+    : []),
+];
+const runnerPackElements = packExecutable
+  ? []
+  : runnerEntries.map((entry) => ({
+      entry,
+      outDir: runnerOutDir,
+      clean: false,
+      sourcemap: false,
+      outputOptions: { codeSplitting: false },
+      deps: packDeps,
+      define: packDefine,
+    }));
+
+const serverPackElement = {
+  // SEA embeds one entry; expose the history worker as a hidden subcommand.
+  entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
+  outDir: packExecutable ? "dist-exe" : "dist",
+  sourcemap: !packExecutable,
+  clean: true,
+  // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+  // SEA can only resolve built-ins; keep dynamic imports inside its one module.
+  ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
+  ...(packMode === "1"
+    ? {
+        exe: {
+          fileName: "t3",
+          outDir: "dist-exe",
+          ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
+          // Node SEA useCodeCache breaks import(), which the server needs.
+          seaConfig: { useCodeCache: false },
+        },
+      }
+    : {}),
+  deps: packDeps,
+  banner: {
+    js: "#!/usr/bin/env node\n",
+  },
+  define: packDefine,
+};
+
 // The root config's `projects` route repo-root runs to package configs,
 // including this one. Inheriting them would make this config a container.
 const { projects: _rootTestProjects, ...baseTestConfig } = baseConfig.test ?? {};
@@ -81,56 +158,11 @@ export default mergeConfig(
         },
       },
     },
-    pack: {
-      // SEA embeds one entry; expose the history worker as a hidden subcommand.
-      entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
-      outDir: packExecutable ? "dist-exe" : "dist",
-      sourcemap: !packExecutable,
-      clean: true,
-      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
-      // SEA can only resolve built-ins; keep dynamic imports inside its one module.
-      ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
-      ...(packMode === "1"
-        ? {
-            exe: {
-              fileName: "t3",
-              outDir: "dist-exe",
-              ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
-              // Node SEA useCodeCache breaks import(), which the server needs.
-              seaConfig: { useCodeCache: false },
-            },
-          }
-        : {}),
-      deps: {
-        // alwaysBundle=false has no opinion; neverBundle must retain transitive native acceleration.
-        alwaysBundle: shouldBundleCliDependency,
-        neverBundle: (id: string) => isExternalCliDependency(id),
-        onlyBundle: false,
-      },
-      banner: {
-        js: "#!/usr/bin/env node\n",
-      },
-      define: {
-        __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
-        __T3CODE_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel),
-        __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
-        __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
-        ),
-        __T3CODE_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: JSON.stringify(
-          repoEnv.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() ?? "",
-        ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_URL?.trim() ?? "",
-        ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() ?? "",
-        ),
-        __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
-          repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
-        ),
-      },
-    },
+    pack: [
+      // The dev runner build (`build-runner --dev`) packs the runner elements alone.
+      ...(process.env.T3CODE_PACK_RUNNER_ONLY === "1" ? [] : [serverPackElement]),
+      ...runnerPackElements,
+    ],
     test: {
       // Parallel sqlite/git/worktree/orchestration tests introduce load-sensitive flakes.
       fileParallelism: false,

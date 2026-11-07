@@ -1,23 +1,33 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { assert, it } from "@effect/vitest";
 import { SandboxId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
+import { Headers, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 
+import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as RunnerBundle from "./RunnerBundle.ts";
 import * as RunnerGrants from "./RunnerGrants.ts";
 import * as RunnerHub from "./RunnerHub.ts";
 import * as RunnerRoute from "./RunnerRoute.ts";
 
-const layerHub = RunnerHub.layer.pipe(
-  Layer.provideMerge(RunnerGrants.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(NodeCrypto.layer),
+const layerHub = Layer.mergeAll(
+  RunnerHub.layer.pipe(
+    Layer.provideMerge(RunnerGrants.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(NodeCrypto.layer),
+  ),
+  RunnerBundle.layerTest([{ path: "runner.mjs", content: "runner" }]).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-runner-route-test-" })),
+    Layer.provide(NodeServices.layer),
+  ),
 );
 
 type Upgrade =
@@ -54,34 +64,88 @@ it.live("answers 400, 426 and 401 without spending a secret, then upgrades and s
     const hub = Context.get(services, RunnerHub.RunnerHub);
     const client = Context.get(services, HttpClient.HttpClient);
     const address = Context.get(services, HttpServer.HttpServer).address;
+    const { runnerBuildId } = yield* Context.get(services, RunnerBundle.RunnerBundle).current;
     assert(address._tag !== "UnixPathAddress");
     const url = `ws://127.0.0.1:${address.port}/runner/v1/connect`;
 
     const secret = yield* hub.mintEnrollment(SandboxId.make("sbx_0000000000000000000a"), 1);
     const enroll = `Enroll ${Redacted.value(secret)}`;
+    const current = { "x-pair-runner-protocol": "1", "x-pair-runner-build": runnerBuildId };
+    const otherBuild = { status: 426, body: JSON.stringify({ protocolVersion: 1, runnerBuildId }) };
 
     const plain = yield* client.execute(
       HttpClientRequest.get("/runner/v1/connect").pipe(
-        HttpClientRequest.setHeaders({ authorization: enroll, "x-pair-runner-protocol": "1" }),
+        HttpClientRequest.setHeaders({ authorization: enroll, ...current }),
       ),
     );
     assert.equal(plain.status, 400);
     assert.deepStrictEqual(
-      yield* upgrade(url, { authorization: enroll, "x-pair-runner-protocol": "2" }),
-      { status: 426, body: JSON.stringify({ protocolVersion: 1 }) },
+      yield* upgrade(url, { authorization: enroll, ...current, "x-pair-runner-protocol": "2" }),
+      otherBuild,
     );
-    assert.deepStrictEqual(
-      yield* upgrade(url, { authorization: "Bearer unknown", "x-pair-runner-protocol": "1" }),
-      { status: 401, body: "" },
-    );
-
-    // The secret survived both refusals: the upgrade succeeds and the hub sends runner.hello.
-    const upgraded = yield* upgrade(url, { authorization: enroll, "x-pair-runner-protocol": "1" });
-    assert.equal(upgraded.status, 101);
-    assert("firstFrame" in upgraded && upgraded.firstFrame.byteLength > 0);
     assert.deepStrictEqual(
       yield* upgrade(url, { authorization: enroll, "x-pair-runner-protocol": "1" }),
-      { status: 401, body: "" },
+      otherBuild,
     );
+    assert.deepStrictEqual(yield* upgrade(url, { authorization: "Bearer unknown", ...current }), {
+      status: 401,
+      body: "",
+    });
+
+    // The secret survived every refusal: the upgrade succeeds and the hub sends runner.hello.
+    const upgraded = yield* upgrade(url, { authorization: enroll, ...current });
+    assert.equal(upgraded.status, 101);
+    assert("firstFrame" in upgraded && upgraded.firstFrame.byteLength > 0);
+    assert.deepStrictEqual(yield* upgrade(url, { authorization: enroll, ...current }), {
+      status: 401,
+      body: "",
+    });
   }).pipe(Effect.scoped),
+);
+
+it.live("serves the current bundle and its digest to a runner credential only", () =>
+  Effect.gen(function* () {
+    const services = yield* Layer.build(
+      HttpRouter.serve(RunnerRoute.layer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(layerHub),
+      ),
+    );
+    const hub = Context.get(services, RunnerHub.RunnerHub);
+    const client = Context.get(services, HttpClient.HttpClient);
+    const info = yield* Context.get(services, RunnerBundle.RunnerBundle).current;
+    const fs = yield* FileSystem.FileSystem;
+    const secret = yield* hub.mintEnrollment(SandboxId.make("sbx_0000000000000000000a"), 1);
+    // pair-bootstrap.sh sends the enrollment secret as a bearer credential.
+    const get = (file: string, authorization?: string) =>
+      client.execute(
+        HttpClientRequest.get(`/runner/v1/bundle/${file}`).pipe(
+          HttpClientRequest.setHeaders(authorization === undefined ? {} : { authorization }),
+        ),
+      );
+    const bearer = `Bearer ${Redacted.value(secret)}`;
+
+    assert.equal((yield* get(`${info.runnerBuildId}.tar.gz`)).status, 401);
+    assert.equal((yield* get(`${info.runnerBuildId}.tar.gz`, "Bearer unknown")).status, 401);
+    const foreign = yield* get(`${"0".repeat(64)}.tar.gz`, bearer);
+    assert.equal(foreign.status, 404);
+    assert.equal(foreign.headers["x-pair-runner-build"], info.runnerBuildId);
+
+    const digest = yield* get(`${info.runnerBuildId}.sha256`, bearer);
+    assert.equal(yield* digest.text, `${info.tarballSha256}  ${info.runnerBuildId}.tar.gz\n`);
+    const tarball = yield* get(`${info.runnerBuildId}.tar.gz`, `Enroll ${Redacted.value(secret)}`);
+    assert.equal(tarball.status, 200);
+    assert.deepStrictEqual(
+      new Uint8Array(yield* tarball.arrayBuffer),
+      yield* fs.readFile(info.tarballPath),
+    );
+    // Downloads never spend the secret.
+    assert.deepStrictEqual(
+      yield* hub.authorizeDownload(Headers.fromInput({ authorization: bearer })),
+      {
+        sandboxId: SandboxId.make("sbx_0000000000000000000a"),
+        generation: 1,
+      },
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

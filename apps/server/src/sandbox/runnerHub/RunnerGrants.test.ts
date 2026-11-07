@@ -43,6 +43,24 @@ it.layer(layer)("RunnerGrants", (it) => {
       }),
     },
     {
+      name: "authorizes downloads with an unspent secret or a token without spending the secret",
+      run: Effect.gen(function* () {
+        const grants = yield* RunnerGrants.RunnerGrants;
+        const secret = yield* grants.mint(sandboxA, 1);
+        const grant = { sandboxId: sandboxA, generation: 1 };
+        assert.deepStrictEqual(yield* grants.authorizeDownload(secret), grant);
+        assert.deepStrictEqual(yield* grants.authorizeDownload(secret), grant);
+        const { token } = yield* grants.enroll(secret);
+        assert.equal(yield* refusal(grants.authorizeDownload(secret)), "unknown");
+        assert.deepStrictEqual(yield* grants.authorizeDownload(token), grant);
+        const expiring = yield* grants.mint(sandboxB, 1);
+        yield* TestClock.adjust("15 minutes");
+        assert.equal(yield* refusal(grants.authorizeDownload(expiring)), "unknown");
+        yield* grants.revoke(sandboxA);
+        assert.equal(yield* refusal(grants.authorizeDownload(token)), "unknown");
+      }),
+    },
+    {
       name: "refuses an enrollment after fifteen minutes",
       run: Effect.gen(function* () {
         const grants = yield* RunnerGrants.RunnerGrants;

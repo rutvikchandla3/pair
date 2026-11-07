@@ -49,6 +49,14 @@ const MAX_FRAME_BYTES = 256 * 1024 + 1024;
 const PROTOCOL_HEADER = "x-pair-runner-protocol";
 const CREDENTIAL = /^(Enroll|Bearer) ([A-Za-z0-9_-]+)$/;
 
+const parseCredential = (headers: Headers.Headers) => {
+  const authorization = Headers.get(headers, "authorization");
+  if (Option.isNone(authorization)) return Effect.fail(new RunnerAuthError({ reason: "missing" }));
+  const match = CREDENTIAL.exec(authorization.value);
+  if (match === null) return Effect.fail(new RunnerAuthError({ reason: "malformed" }));
+  return Effect.succeed({ scheme: match[1], credential: Redacted.make(match[2]!) });
+};
+
 export class RunnerProtocolMismatchError extends Schema.TaggedError<RunnerProtocolMismatchError>()(
   "RunnerProtocolMismatchError",
   { expected: Schema.Number, received: Schema.String },
@@ -119,6 +127,10 @@ export class RunnerHub extends Context.Service<
       AuthenticatedRunner,
       RunnerAuthError | RunnerProtocolMismatchError | RunnerGrantError
     >;
+    /** Route only: bundle downloads take a sandbox token or an unspent enrollment secret. */
+    readonly authorizeDownload: (
+      headers: Headers.Headers,
+    ) => Effect.Effect<RunnerGrant, RunnerAuthError | RunnerGrantError>;
     /** Route only: serves the upgraded socket until it ends, is replaced or is revoked. */
     readonly serve: (runner: AuthenticatedRunner, socket: Socket.Socket) => Effect.Effect<void>;
     /** One consumer: `RunnerHubFacts`. */
@@ -369,12 +381,8 @@ const make = Effect.gen(function* () {
           received: protocol,
         });
       }
-      const authorization = Headers.get(headers, "authorization");
-      if (Option.isNone(authorization)) return yield* new RunnerAuthError({ reason: "missing" });
-      const match = CREDENTIAL.exec(authorization.value);
-      if (match === null) return yield* new RunnerAuthError({ reason: "malformed" });
-      const credential = Redacted.make(match[2]!);
-      if (match[1] === "Enroll") {
+      const { scheme, credential } = yield* parseCredential(headers);
+      if (scheme === "Enroll") {
         const { grant, token } = yield* grants.enroll(credential);
         return { ...grant, sandboxToken: Option.some(token) };
       }
@@ -382,6 +390,13 @@ const make = Effect.gen(function* () {
       return { ...grant, sandboxToken: Option.none() };
     },
   );
+
+  const authorizeDownload: RunnerHub["Service"]["authorizeDownload"] = Effect.fn(
+    "RunnerHub.authorizeDownload",
+  )(function* (headers) {
+    const { credential } = yield* parseCredential(headers);
+    return yield* grants.authorizeDownload(credential);
+  });
 
   const serve: RunnerHub["Service"]["serve"] = Effect.fn("RunnerHub.serve")(
     function* (runner, socket) {
@@ -457,6 +472,7 @@ const make = Effect.gen(function* () {
     status,
     revoke,
     authenticate,
+    authorizeDownload,
     serve,
     facts: Stream.fromQueue(facts),
   });

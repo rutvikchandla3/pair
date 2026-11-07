@@ -55,23 +55,27 @@ export function selectCliRuntimeExternalDependencies(
   );
 }
 
+/** The source path of every module inlined into a bundle, in bundle order. */
+export function listBundledModules(source: string): ReadonlyArray<string> {
+  // Rolldown marks each inlined module with a `//#region <path>` line; newer
+  // releases (vite-plus 1.4) emit a bare `// <path>` line instead.
+  const regionPattern = /^\/\/(?:#region)?[ \t]+(\S+)[ \t]*$/gm;
+  return Array.from(source.matchAll(regionPattern), (region) => region[1] ?? "");
+}
+
 /** regionCount distinguishes a clean bundle from a changed marker format the scan cannot see. */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;
   readonly inlined: ReadonlyArray<string>;
   readonly inlinedPackages: ReadonlyArray<string>;
 } {
-  // Rolldown marks each inlined module with a `//#region <path>` line; newer
-  // releases (vite-plus 1.4) emit a bare `// <path>` line instead.
-  const regionPattern = /^\/\/(?:#region)?[ \t]+(\S+)[ \t]*$/gm;
   const packagePattern = /node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g;
 
   let regionCount = 0;
   const inlined = new Set<string>();
   const inlinedPackages = new Set<string>();
-  for (const region of source.matchAll(regionPattern)) {
+  for (const regionPath of listBundledModules(source)) {
     regionCount += 1;
-    const regionPath = region[1] ?? "";
     for (const candidate of regionPath.matchAll(packagePattern)) {
       const name = candidate[1];
       if (name === undefined || name === ".pnpm") continue;
