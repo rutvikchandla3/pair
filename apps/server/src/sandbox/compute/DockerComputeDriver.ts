@@ -1,0 +1,748 @@
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import type {
+  DockerSandboxDriver,
+  EnvironmentId,
+  SandboxId,
+  SandboxSize,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
+
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  type BackendSandbox,
+  type BackendSandboxStatus,
+  type BaseImageInfo,
+  type ComputeCapabilities,
+  ComputeDriver,
+  type ComputeDriverCreateInput,
+  ComputeDriverError,
+  type ComputeDriverHealth,
+  parseSandboxTags,
+  type SandboxBootstrap,
+} from "./ComputeDriver.ts";
+import {
+  type DockerEngine,
+  DockerEngineError,
+  type DockerHost,
+  type EngineContainer,
+  type EngineImage,
+  type EngineInfo,
+  makeDockerEngine,
+  mapEngineError,
+  parseDockerHost,
+  readFirstTarFile,
+  ustar,
+} from "./DockerEngineApi.ts";
+
+/** Until 1.23 resolves and pulls the published image, it must already exist on the daemon. */
+const DEFAULT_BASE_IMAGE = "t3-sandbox:dev";
+/** The runner's drain grace. */
+const STOP_GRACE_SECONDS = 10;
+const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
+/** Where a local server's runner socket directory is mounted. */
+const SERVER_SOCKET_MOUNT = "/run/pair-server";
+const RUNNING_STATES = new Set(["running", "restarting", "paused"]);
+
+const SIZES: ComputeCapabilities["sizes"] = [
+  { size: "small", vcpus: 2, memoryGb: 4 },
+  { size: "default", vcpus: 4, memoryGb: 8 },
+  { size: "large", vcpus: 8, memoryGb: 16 },
+];
+
+const capabilities: ComputeCapabilities = {
+  persistentDisk: true,
+  memoryOnStop: false,
+  snapshot: false,
+  imageBuild: "snapshot",
+  maxSessionMs: null,
+  diskRetentionDays: null,
+  // The floor; `health` reports what the daemon offers.
+  isolation: "container",
+  egressRules: "none",
+  regions: [],
+  nestedDocker: false,
+  sizes: SIZES,
+};
+
+/** gVisor whenever the daemon offers it. */
+export const isolationFromInfo = (
+  info: Pick<EngineInfo, "Runtimes" | "SecurityOptions">,
+): { readonly isolation: ComputeCapabilities["isolation"]; readonly runtime: "runc" | "runsc" } => {
+  if (info.Runtimes != null && "runsc" in info.Runtimes) {
+    return { isolation: "gvisor", runtime: "runsc" };
+  }
+  const rootless = (info.SecurityOptions ?? []).some((option) =>
+    option.split(",").includes("name=rootless"),
+  );
+  return { isolation: rootless ? "rootless-container" : "container", runtime: "runc" };
+};
+
+const limitsFor = (size: SandboxSize, info: Pick<EngineInfo, "NCPU" | "MemTotal">) => {
+  const spec = SIZES.find((entry) => entry.size === size) ?? SIZES[0]!;
+  return {
+    nanoCpus: Math.min(spec.vcpus, info.NCPU) * 1e9,
+    memoryBytes: Math.min(spec.memoryGb * 2 ** 30, info.MemTotal),
+  };
+};
+
+export const containerCreateBody = (input: {
+  readonly image: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly sandboxId: SandboxId;
+  readonly volume: string;
+  readonly network: string;
+  readonly limits: { readonly nanoCpus: number; readonly memoryBytes: number };
+  readonly runtime: "runc" | "runsc";
+  /** Local daemon only: what to bind from the server's machine. */
+  readonly local: Option.Option<{
+    readonly serverSocketDir: string;
+    readonly bundle: Option.Option<{ readonly runnerBuildId: string; readonly path: string }>;
+  }>;
+}) => ({
+  Image: input.image,
+  Labels: input.labels,
+  // Nothing from the bootstrap: env shows in `docker inspect` (03 §2.2).
+  Env: [],
+  HostConfig: {
+    Runtime: input.runtime,
+    NetworkMode: input.network,
+    Privileged: false,
+    // Docker's default set otherwise: sudo and apt need the rest. No `no-new-privileges` (breaks
+    // sudo, 06 §9); default seccomp and AppArmor profiles.
+    CapDrop: ["NET_RAW", "MKNOD"],
+    NanoCpus: input.limits.nanoCpus,
+    Memory: input.limits.memoryBytes,
+    MemorySwap: input.limits.memoryBytes,
+    PidsLimit: 4096,
+    // A restart cannot re-enroll: the bootstrap file is gone.
+    RestartPolicy: { Name: "no" },
+    Tmpfs: { "/run/pair-runner": "rw,nosuid,nodev,noexec,mode=0700,size=16m" },
+    Mounts: [
+      { Type: "volume", Source: input.volume, Target: `/t3-sandbox/${input.sandboxId}` },
+      // By directory, so a restarted server's new socket inode is visible. Never the Docker socket.
+      ...Option.match(input.local, {
+        onNone: () => [],
+        onSome: (local) => [
+          { Type: "bind", Source: local.serverSocketDir, Target: SERVER_SOCKET_MOUNT },
+          ...Option.match(local.bundle, {
+            onNone: () => [],
+            onSome: (bundle) => [
+              {
+                Type: "bind",
+                Source: bundle.path,
+                Target: `/opt/pair-runner/${bundle.runnerBuildId}`,
+                ReadOnly: true,
+              },
+            ],
+          }),
+        ],
+      }),
+    ],
+  },
+});
+
+const PRIVATE_RANGES = [
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+  "100.64.0.0/10",
+  "169.254.0.0/16",
+  "0.0.0.0/8",
+  "198.18.0.0/15",
+  "224.0.0.0/4",
+];
+const IPTABLES_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,27}$/;
+const BRIDGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$/;
+const HOST_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
+
+const isIpv4Cidr = (value: string) => {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(value);
+  return (
+    match !== null &&
+    match.slice(1, 5).every((octet) => Number(octet) <= 255) &&
+    Number(match[5]) <= 32
+  );
+};
+
+/** The helper's exit codes the driver turns into a reason. */
+const EGRESS_EXIT_NO_DOCKER_USER = 3;
+const EGRESS_EXIT_UNRESOLVED = 4;
+
+/**
+ * The fixed script the egress helper runs on the Docker host's network namespace. Inputs are
+ * validated here and never reach the shell unchecked; it throws on any other value.
+ */
+export const egressScript = (input: {
+  readonly chain: string;
+  readonly subnet: string;
+  readonly bridge: string;
+  readonly allow: ReadonlyArray<{ readonly host: string; readonly port: number }>;
+}): string => {
+  if (!IPTABLES_NAME.test(`${input.chain}-in`)) throw new Error("Invalid egress chain name.");
+  if (!isIpv4Cidr(input.subnet)) throw new Error("Invalid egress subnet.");
+  if (!BRIDGE_NAME.test(input.bridge)) throw new Error("Invalid egress bridge name.");
+  for (const entry of input.allow) {
+    if (!HOST_NAME.test(entry.host) || !Number.isInteger(entry.port)) {
+      throw new Error("Invalid egress allow entry.");
+    }
+    if (entry.port < 1 || entry.port > 65535) throw new Error("Invalid egress allow entry.");
+  }
+  const { chain, subnet, bridge } = input;
+  const inbound = `${chain}-in`;
+  const allow = input.allow.flatMap((entry) => [
+    `addrs=$(getent ahostsv4 '${entry.host}' | awk '{print $1}' | sort -u)`,
+    `[ -n "$addrs" ] || exit ${EGRESS_EXIT_UNRESOLVED}`,
+    `for a in $addrs; do`,
+    `  allow="$allow-A ${chain} -d $a/32 -p tcp --dport ${entry.port} -j RETURN\n"`,
+    `  allow="$allow-A ${inbound} -d $a/32 -p tcp --dport ${entry.port} -j RETURN\n"`,
+    `done`,
+  ]);
+  return [
+    "set -eu",
+    // Whichever backend holds Docker's chain is the one the kernel consults for it.
+    "if iptables-legacy -S DOCKER-USER >/dev/null 2>&1; then ipt=iptables-legacy",
+    "elif iptables-nft -S DOCKER-USER >/dev/null 2>&1; then ipt=iptables-nft",
+    `else exit ${EGRESS_EXIT_NO_DOCKER_USER}; fi`,
+    "allow=''",
+    ...allow,
+    // Declaring the chains in a no-flush restore replaces their rules in one transaction.
+    `printf '*filter\\n:${chain} - [0:0]\\n:${inbound} - [0:0]\\n%b%b%bCOMMIT\\n' \\`,
+    `  '-A ${chain} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\\n-A ${inbound} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\\n' \\`,
+    `  "$allow" \\`,
+    `  '${[
+      ...PRIVATE_RANGES.map((range) => `-A ${chain} -d ${range} -j DROP`),
+      `-A ${chain} -j RETURN`,
+      `-A ${inbound} -j DROP`,
+    ].join("\\n")}\\n' | "$ipt-restore" -n`,
+    `"$ipt" -C DOCKER-USER -s '${subnet}' -j '${chain}' 2>/dev/null || "$ipt" -I DOCKER-USER -s '${subnet}' -j '${chain}'`,
+    `"$ipt" -C INPUT -i '${bridge}' -j '${inbound}' 2>/dev/null || "$ipt" -I INPUT -i '${bridge}' -j '${inbound}'`,
+  ].join("\n");
+};
+
+const egressScriptOrNull = (input: Parameters<typeof egressScript>[0]) => {
+  try {
+    return egressScript(input);
+  } catch {
+    return null;
+  }
+};
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+type EngineSetup =
+  | { readonly _tag: "Ready"; readonly engine: DockerEngine; readonly local: boolean }
+  | {
+      readonly _tag: "Unusable";
+      readonly reason: "unsupported" | "invalid-request";
+      readonly cause: Error;
+    };
+
+const statusOf = (state: string): BackendSandboxStatus => {
+  if (RUNNING_STATES.has(state)) return "running";
+  if (state === "created" || state === "exited") return "stopped";
+  return "failed";
+};
+
+const baseImageInfo = (ref: string, image: EngineImage): BaseImageInfo => ({
+  ref,
+  digest: image.RepoDigests?.[0]?.split("@")[1] ?? image.Id,
+  version: image.Config?.Labels?.["org.opencontainers.image.version"] ?? null,
+});
+
+/** The driver over an Engine client; `make` builds the client from the instance's config. */
+export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(function* (
+  config: DockerSandboxDriver,
+  installId: EnvironmentId,
+  setup: EngineSetup,
+) {
+  const settings = yield* ServerSettingsService;
+  const driverId = config.id;
+  const installKey = installId.slice(0, 8);
+  const networkName = `pair-${installKey}`;
+  const setupLock = yield* Semaphore.make(1);
+  // Only touched while holding `setupLock`.
+  let blockEnsuredOnCreate = false;
+
+  const failure = (
+    operation: ComputeDriverError["operation"],
+    reason: ComputeDriverError["reason"],
+    cause?: unknown,
+  ) =>
+    new ComputeDriverError({
+      driverId,
+      operation,
+      reason,
+      retryable: false,
+      ...(cause === undefined ? {} : { cause }),
+    });
+
+  const engineFor = (operation: ComputeDriverError["operation"]) =>
+    setup._tag === "Ready"
+      ? Effect.succeed(setup)
+      : Effect.fail(failure(operation, setup.reason, setup.cause));
+
+  /** Maps Engine failures to this operation and retries transient ones; every call is idempotent. */
+  const run =
+    (operation: ComputeDriverError["operation"]) =>
+    <A, R>(effect: Effect.Effect<A, DockerEngineError | ComputeDriverError, R>) =>
+      effect.pipe(
+        Effect.catchTags({
+          DockerEngineError: (error) => Effect.fail(mapEngineError(error, { driverId, operation })),
+        }),
+        Effect.retry({
+          ...TRANSIENT_RETRY,
+          while: (error) => error.retryable && error.reason === "unavailable",
+        }),
+      );
+
+  const baseImageRef = (operation: ComputeDriverError["operation"]) =>
+    settings.getSettings.pipe(
+      Effect.map((current) => current.sandbox?.baseImage ?? DEFAULT_BASE_IMAGE),
+      Effect.mapError((cause) => failure(operation, "unavailable", cause)),
+    );
+
+  const ensureNetwork = Effect.fn("DockerComputeDriver.ensureNetwork")(function* (
+    engine: DockerEngine,
+  ) {
+    const existing = yield* engine.inspectNetwork(networkName);
+    if (existing !== null) return existing;
+    yield* engine.createNetwork({
+      Name: networkName,
+      CheckDuplicate: true,
+      Driver: "bridge",
+      EnableIPv6: false,
+      Labels: { "pair.install": installId, "pair.role": "network" },
+      Options: {
+        "com.docker.network.bridge.name": networkName,
+        // Sandboxes cannot reach each other, as separate networks would give.
+        "com.docker.network.bridge.enable_icc": "false",
+      },
+    });
+    const created = yield* engine.inspectNetwork(networkName);
+    if (created === null) {
+      return yield* new DockerEngineError({ endpoint: "GET /networks/{id}", failure: "response" });
+    }
+    return created;
+  });
+
+  const runnerAllow = (): ReadonlyArray<{ readonly host: string; readonly port: number }> => {
+    const url = config.runnerUrl === undefined ? null : URL.parse(config.runnerUrl);
+    if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return [];
+    const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+    return [{ host: url.hostname, port }];
+  };
+
+  /** Never reports `applied: true` unless the helper exited 0 on this pass. */
+  const ensureBlock = Effect.fn("DockerComputeDriver.ensureBlock")(function* (
+    engine: DockerEngine,
+    image: string,
+  ) {
+    const network = yield* ensureNetwork(engine);
+    const subnet = network.IPAM.Config?.find((entry) => isIpv4Cidr(entry.Subnet ?? ""))?.Subnet;
+    if (subnet === undefined) {
+      return { applied: false, reason: "The sandbox network has no IPv4 subnet." } as const;
+    }
+    const script = egressScriptOrNull({
+      chain: `PAIR-${installKey}`,
+      subnet,
+      bridge: networkName,
+      allow: runnerAllow(),
+    });
+    if (script === null) {
+      return {
+        applied: false,
+        reason: "The install id or runner URL cannot be written as firewall rules.",
+      } as const;
+    }
+    if ((yield* engine.inspectImage(image)) === null) {
+      return {
+        applied: false,
+        reason: `The egress helper needs the base image ${image} on the Docker host.`,
+      } as const;
+    }
+    const helper = `${networkName}-egress`;
+    // Removed by name rather than AutoRemove, so its exit code can be read first.
+    yield* engine.removeContainer(helper);
+    const code = yield* Effect.gen(function* () {
+      yield* engine.createContainer(helper, {
+        Image: image,
+        User: "0",
+        Entrypoint: ["/bin/sh", "-c"],
+        Cmd: [script],
+        Labels: { "pair.install": installId, "pair.role": "egress" },
+        // The only container with NET_ADMIN or host networking, and it runs a fixed script.
+        HostConfig: {
+          NetworkMode: "host",
+          CapAdd: ["NET_ADMIN", "NET_RAW"],
+          Runtime: "runc",
+          RestartPolicy: { Name: "no" },
+        },
+      });
+      yield* engine.startContainer(helper);
+      return yield* engine.waitContainer(helper);
+    }).pipe(Effect.ensuring(engine.removeContainer(helper).pipe(Effect.ignore)));
+    if (code === 0) return { applied: true } as const;
+    return {
+      applied: false,
+      reason:
+        code === EGRESS_EXIT_NO_DOCKER_USER
+          ? "Docker has no DOCKER-USER chain; its firewall backend is not iptables."
+          : code === EGRESS_EXIT_UNRESOLVED
+            ? "The runner URL's host does not resolve on the Docker host."
+            : `The egress helper exited with code ${code}.`,
+    } as const;
+  });
+
+  const blockOrReason = (engine: DockerEngine, image: string) =>
+    ensureBlock(engine, image).pipe(
+      Effect.catchTags({
+        DockerEngineError: (error) =>
+          Effect.succeed({
+            applied: false,
+            reason: `The Docker daemon refused the egress helper (${error.endpoint}).`,
+          } as const),
+      }),
+    );
+
+  const serverUrlFor = (operation: ComputeDriverError["operation"], serverUrl: string) => {
+    if (!serverUrl.startsWith("unix:")) return Effect.succeed(serverUrl);
+    // A remote daemon cannot bind a socket on the server's machine.
+    if (setup._tag !== "Ready" || !setup.local)
+      return Effect.fail(failure(operation, "invalid-request"));
+    const basename = serverUrl.slice(serverUrl.lastIndexOf("/") + 1);
+    return Effect.succeed(`unix:${SERVER_SOCKET_MOUNT}/${basename}`);
+  };
+
+  const readGeneration = Effect.fn("DockerComputeDriver.readGeneration")(function* (
+    engine: DockerEngine,
+    driverRef: string,
+  ) {
+    const archive = yield* engine.getArchive(driverRef, "/etc/pair-runner/generation");
+    const file = archive === null ? null : readFirstTarFile(archive);
+    const text = file === null ? "" : decoder.decode(file).trim();
+    return /^\d+$/.test(text) ? Number(text) : null;
+  });
+
+  /** Writes the bootstrap into the container layer (never env or the volume), then starts it. */
+  const boot = Effect.fn("DockerComputeDriver.boot")(function* (
+    operation: "create" | "start",
+    engine: DockerEngine,
+    container: EngineContainer,
+    bootstrap: SandboxBootstrap,
+  ) {
+    const driverRef = container.Name.replace(/^\//, "");
+    if (RUNNING_STATES.has(container.State.Status)) {
+      // A replay must not restart a healthy runner of the same generation.
+      if ((yield* readGeneration(engine, driverRef)) === bootstrap.generation) return;
+      yield* engine.stopContainer(driverRef, STOP_GRACE_SECONDS);
+    }
+    const values = {
+      PAIR_RUNNER_URL: yield* serverUrlFor(operation, bootstrap.serverUrl),
+      PAIR_SANDBOX_ID: bootstrap.sandboxId,
+      PAIR_RUNNER_BUILD: bootstrap.runnerBuildId,
+      PAIR_RUNNER_ENROLL: Redacted.value(bootstrap.enrollmentSecret),
+    };
+    if (Object.values(values).some((value) => /[\0\n\r]/.test(value))) {
+      return yield* failure(operation, "invalid-request");
+    }
+    const env = Object.entries(values)
+      .map(([name, value]) => `${name}=${shellQuote(value)}\n`)
+      .join("");
+    yield* engine.putArchive(
+      driverRef,
+      "/",
+      ustar([
+        { name: "etc/pair-runner", mode: 0o700 },
+        { name: "etc/pair-runner/bootstrap.env", mode: 0o600, content: encoder.encode(env) },
+        {
+          name: "etc/pair-runner/generation",
+          mode: 0o644,
+          content: encoder.encode(`${bootstrap.generation}\n`),
+        },
+      ]),
+    );
+    yield* engine.startContainer(driverRef);
+  });
+
+  const create = Effect.fn("DockerComputeDriver.create")(function* (
+    input: ComputeDriverCreateInput,
+  ) {
+    const { engine, local } = yield* engineFor("create");
+    const image =
+      input.image.type === "build" ? input.image.imageRef : yield* baseImageRef("create");
+    const imageInfo = yield* engine.inspectImage(image);
+    if (imageInfo === null) return yield* failure("create", "not-found");
+    const info = yield* engine.info;
+    const network = yield* setupLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (!blockEnsuredOnCreate) {
+          blockEnsuredOnCreate = true;
+          const block = yield* blockOrReason(engine, yield* baseImageRef("create"));
+          // Sandboxes still start; health and the reconciler try again.
+          if (!block.applied) {
+            yield* Effect.logWarning("Private network block not applied", {
+              reason: block.reason,
+            });
+          }
+        }
+        return yield* ensureNetwork(engine);
+      }),
+    );
+    const labels = { ...input.tags, "pair.size": input.size };
+    // The volume takes the container's name: a stray from a lost create owns its own disk.
+    yield* engine.createVolume({ Name: input.name, Labels: labels });
+    const socketPath = input.bootstrap.serverUrl.startsWith("unix:")
+      ? input.bootstrap.serverUrl.slice("unix:".length)
+      : null;
+    const created = yield* engine.createContainer(
+      input.name,
+      containerCreateBody({
+        image,
+        labels,
+        sandboxId: input.sandboxId,
+        volume: input.name,
+        network: network.Id,
+        limits: limitsFor(input.size, info),
+        runtime: isolationFromInfo(info).runtime,
+        local:
+          local && socketPath !== null
+            ? Option.some({
+                serverSocketDir: socketPath.slice(0, socketPath.lastIndexOf("/")) || "/",
+                bundle: Option.none(),
+              })
+            : Option.none(),
+      }),
+    );
+    const container = yield* engine.inspectContainer(input.name);
+    if (container === null) return yield* failure("create", "unavailable");
+    if (!created) {
+      const existing = container.Config.Labels ?? {};
+      if (
+        existing["pair.sandbox"] !== input.tags["pair.sandbox"] ||
+        existing["pair.generation"] !== input.tags["pair.generation"]
+      ) {
+        return yield* failure("create", "conflict");
+      }
+    }
+    yield* boot("create", engine, container, input.bootstrap);
+    return {
+      driverRef: input.name,
+      baseImage: input.image.type === "base" ? baseImageInfo(image, imageInfo) : null,
+    };
+  }, run("create"));
+
+  const start = Effect.fn("DockerComputeDriver.start")(function* (
+    driverRef: string,
+    bootstrap: SandboxBootstrap,
+  ) {
+    const { engine } = yield* engineFor("start");
+    const container = yield* engine.inspectContainer(driverRef);
+    if (container === null) return yield* failure("start", "not-found");
+    yield* boot("start", engine, container, bootstrap);
+  }, run("start"));
+
+  const stop = Effect.fn("DockerComputeDriver.stop")(function* (driverRef: string) {
+    const { engine } = yield* engineFor("stop");
+    yield* engine.stopContainer(driverRef, STOP_GRACE_SECONDS);
+  }, run("stop"));
+
+  const destroy = Effect.fn("DockerComputeDriver.destroy")(function* (driverRef: string) {
+    const { engine } = yield* engineFor("destroy");
+    yield* engine.removeContainer(driverRef);
+    yield* engine.removeVolume(driverRef).pipe(
+      Effect.catchTags({
+        // Still in use, e.g. by a container mid-removal: the caller retries.
+        DockerEngineError: (error) =>
+          error.status === 409
+            ? Effect.fail(
+                new ComputeDriverError({
+                  driverId,
+                  operation: "destroy",
+                  reason: "conflict",
+                  retryable: true,
+                  backendStatus: 409,
+                  cause: error,
+                }),
+              )
+            : Effect.fail(error),
+      }),
+    );
+  }, run("destroy"));
+
+  const status = Effect.fn("DockerComputeDriver.status")(function* (driverRef: string) {
+    const { engine } = yield* engineFor("status");
+    const container = yield* engine.inspectContainer(driverRef);
+    const now = yield* DateTime.now;
+    if (container === null) {
+      return {
+        driverRef,
+        name: driverRef,
+        sandboxId: null,
+        status: "missing",
+        createdAt: now,
+      } satisfies BackendSandbox;
+    }
+    return {
+      driverRef,
+      name: container.Name.replace(/^\//, ""),
+      sandboxId: parseSandboxTags(container.Config.Labels ?? {})?.sandboxId ?? null,
+      status: statusOf(container.State.Status),
+      createdAt: DateTime.make(container.Created).pipe(Option.getOrElse(() => now)),
+    } satisfies BackendSandbox;
+  }, run("status"));
+
+  const list = Effect.fn("DockerComputeDriver.list")(function* (
+    tags: Readonly<Record<string, string>>,
+  ) {
+    const { engine } = yield* engineFor("list");
+    // Never another install's resources, whatever the caller asks for.
+    const filter = { ...tags, "pair.install": installId };
+    const now = yield* DateTime.now;
+    const containers = yield* engine.listContainers(filter, ["pair.sandbox"]);
+    const volumes = yield* engine.listVolumes(filter);
+    const sandboxes: Array<BackendSandbox> = containers.map((container) => {
+      const name = (container.Names[0] ?? container.Id).replace(/^\//, "");
+      return {
+        driverRef: name,
+        name,
+        sandboxId: parseSandboxTags(container.Labels ?? {})?.sandboxId ?? null,
+        status: statusOf(container.State),
+        createdAt: DateTime.make(container.Created * 1000).pipe(Option.getOrElse(() => now)),
+      };
+    });
+    const named = new Set(sandboxes.map((sandbox) => sandbox.name));
+    // A disk whose container is gone, so the reconciler can remove it.
+    for (const volume of volumes) {
+      if (named.has(volume.Name)) continue;
+      sandboxes.push({
+        driverRef: volume.Name,
+        name: volume.Name,
+        sandboxId: parseSandboxTags(volume.Labels ?? {})?.sandboxId ?? null,
+        status: "stopped",
+        createdAt:
+          volume.CreatedAt === undefined
+            ? now
+            : DateTime.make(volume.CreatedAt).pipe(Option.getOrElse(() => now)),
+      });
+    }
+    return sandboxes;
+  }, run("list"));
+
+  const deleteImage = Effect.fn("DockerComputeDriver.deleteImage")(function* (imageRef: string) {
+    const { engine } = yield* engineFor("deleteImage");
+    yield* engine.removeImage(imageRef);
+  }, run("deleteImage"));
+
+  const health = Effect.gen(function* () {
+    const { engine } = yield* engineFor("health");
+    const info = yield* engine.info;
+    const image = yield* baseImageRef("health");
+    const privateNetworkBlock = yield* setupLock.withPermits(1)(blockOrReason(engine, image));
+    const imageInfo = yield* engine.inspectImage(image);
+    return {
+      isolation: isolationFromInfo(info).isolation,
+      privateNetworkBlock,
+      baseImage: imageInfo === null ? { missing: image } : baseImageInfo(image, imageInfo),
+    } satisfies ComputeDriverHealth;
+  }).pipe(run("health"), Effect.withSpan("DockerComputeDriver.health"));
+
+  return ComputeDriver.of({
+    driverId,
+    kind: "docker",
+    capabilities,
+    create,
+    start,
+    stop,
+    destroy,
+    status,
+    list,
+    deleteImage,
+    health,
+  });
+});
+
+const SSH_ADVICE =
+  "Docker over ssh:// is not supported. Forward the socket with `ssh -NL <local.sock>:/var/run/docker.sock` and use unix://.";
+
+const resolveEngine = Effect.fn("DockerComputeDriver.resolveEngine")(function* (host: DockerHost) {
+  const fs = yield* FileSystem.FileSystem;
+  if (host._tag === "Unsupported") {
+    return {
+      _tag: "Unusable",
+      reason: "unsupported",
+      cause: new Error(
+        host.scheme === "ssh"
+          ? SSH_ADVICE
+          : `Docker hosts of kind ${host.scheme} are not supported.`,
+      ),
+    } satisfies EngineSetup;
+  }
+  if (host._tag === "Unix") {
+    let socketPath = host.socketPaths.at(-1)!;
+    for (const candidate of host.socketPaths) {
+      if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+        socketPath = candidate;
+        break;
+      }
+    }
+    const dispatcher = yield* NodeHttpClient.makeDispatcherOptions({ connect: { socketPath } });
+    const client = yield* NodeHttpClient.makeUndici.pipe(
+      Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
+    );
+    return {
+      _tag: "Ready",
+      engine: makeDockerEngine(client, "http://docker"),
+      local: true,
+    } satisfies EngineSetup;
+  }
+  let connect: { readonly ca: string; readonly cert: string; readonly key: string } | undefined;
+  if (host.tls !== null) {
+    const read = (name: string) => fs.readFileString(`${host.tls!.certPath}/${name}`);
+    const files = yield* Effect.all([read("ca.pem"), read("cert.pem"), read("key.pem")]).pipe(
+      Effect.result,
+    );
+    if (files._tag === "Failure") {
+      return {
+        _tag: "Unusable",
+        reason: "invalid-request",
+        cause: new Error("DOCKER_CERT_PATH must hold ca.pem, cert.pem and key.pem.", {
+          cause: files.failure,
+        }),
+      } satisfies EngineSetup;
+    }
+    const [ca, cert, key] = files.success;
+    connect = { ca, cert, key };
+  }
+  const dispatcher = yield* NodeHttpClient.makeDispatcherOptions(
+    connect === undefined ? undefined : { connect },
+  );
+  const client = yield* NodeHttpClient.makeUndici.pipe(
+    Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
+  );
+  return {
+    _tag: "Ready",
+    engine: makeDockerEngine(client, host.origin),
+    local: false,
+  } satisfies EngineSetup;
+});
+
+/**
+ * The registry factory for `kind: "docker"`. The undici dispatcher lives in the registry's scope
+ * for this instance, so a config change closes it.
+ */
+export const make = Effect.fn("DockerComputeDriver.make")(function* (config: DockerSandboxDriver) {
+  const installId = yield* (yield* ServerEnvironmentIdentity).getEnvironmentId;
+  const env = yield* HostProcess.Environment;
+  const host = parseDockerHost(config.dockerHost, env, yield* HostProcess.HomeDirectory);
+  return yield* makeWithEngine(config, installId, yield* resolveEngine(host));
+});

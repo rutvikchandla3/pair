@@ -1,0 +1,46 @@
+name: Sandbox Docker
+
+on:
+  pull_request:
+    paths:
+      - apps/server/src/sandbox/**
+      - infra/sandbox-image/**
+      - .github/workflows/sandbox-docker.yml
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-docker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Docker compute driver contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3...
+
+      - name: Build the contract image
+        run: docker build -t t3-sandbox-contract:test apps/server/src/sandbox/compute/testdata/stand-in-runner
+
+      - name: Run the contract suite on the local daemon
+        working-directory: apps/server
+        env:
+          T3_TEST_DOCKER: "1"
+        run: vp test run src/sandbox/compute/DockerComputeDriver.contract.test.ts
