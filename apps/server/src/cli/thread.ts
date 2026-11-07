@@ -11,6 +11,7 @@ import {
   type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadStatus,
   type OrchestratorMcpThreadTimelineItem,
+  type OrchestrationV2ThreadShellSandbox,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
@@ -552,6 +553,7 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
     tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
   const ended = (waited: OrchestratorMcpThreadWaitResult) =>
     ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
+  let waitingForMachineShown = false;
   while (true) {
     const waited = yield* waitSlice(WAIT_SLICE_MS);
     if (!waited.timedOut) return ended(waited);
@@ -562,6 +564,10 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       { threadId, limit: 1, runLimit: 1 },
       OrchestratorMcpThreadReadResult,
     );
+    if (!waitingForMachineShown && thread.sandbox?.admission !== undefined) {
+      waitingForMachineShown = true;
+      yield* Console.error("Waiting for a machine");
+    }
     if (thread.pendingRequestCount > 0) {
       // The count is thread-wide: if this run ended since the slice, the
       // request belongs to a later run.
@@ -623,22 +629,51 @@ export const titleFromMessage = (message: string) => {
   return `${firstLine.slice(0, end).trimEnd()}…`;
 };
 
-const launchWorkspaceStrategy = (input: {
-  readonly worktree: Option.Option<string>;
-  readonly branch: Option.Option<string>;
-}) =>
-  Option.match(input.worktree, {
-    onNone: () =>
-      Option.isSome(input.branch)
-        ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
-        : Effect.void,
-    onSome: (baseRef) =>
-      Effect.succeed({
-        type: "worktree" as const,
-        baseRef,
-        ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
-      }),
-  });
+export const launchWorkspaceStrategy = Effect.fn("cli.thread.launchWorkspaceStrategy")(
+  function* (input: {
+    readonly worktree: Option.Option<string>;
+    readonly cloud: Option.Option<string>;
+    readonly branch: Option.Option<string>;
+  }) {
+    if (Option.isSome(input.worktree) && Option.isSome(input.cloud)) {
+      return yield* new ThreadUsageError({ detail: "Use --worktree or --cloud, not both." });
+    }
+    // --branch names the new branch for either.
+    const baseRef = Option.getOrUndefined(Option.orElse(input.worktree, () => input.cloud));
+    if (baseRef === undefined) {
+      if (Option.isNone(input.branch)) return undefined;
+      return yield* new ThreadUsageError({
+        detail: "--branch needs --worktree or --cloud <base-ref>.",
+      });
+    }
+    return {
+      type: Option.isSome(input.cloud) ? ("cloud" as const) : ("worktree" as const),
+      baseRef,
+      ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
+    };
+  },
+);
+
+const MACHINE_STATE_LABEL = {
+  provisioning: "starting",
+  ready: "ready",
+  sleeping: "asleep",
+  waking: "waking",
+  failed: "failed",
+  destroyed: "discarded",
+} as const;
+
+const machineLabel = (sandbox: OrchestrationV2ThreadShellSandbox) => {
+  if (sandbox.state === null) return "status unknown";
+  if (sandbox.state === "provisioning" && sandbox.admission !== undefined) {
+    return "waiting for a machine";
+  }
+  if (sandbox.state === "ready" && sandbox.runnerConnected === false) return "reconnecting";
+  const label = MACHINE_STATE_LABEL[sandbox.state];
+  return sandbox.state === "failed" && sandbox.failureCode !== undefined
+    ? `${label} (${sandbox.failureCode})`
+    : label;
+};
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
@@ -743,8 +778,14 @@ const threadStartCommand = Command.make("start", {
     ),
     Flag.optional,
   ),
+  cloud: Flag.String("cloud").pipe(
+    Flag.withDescription(
+      "Run on a cloud machine, checked out from this branch, tag, or commit on the remote.",
+    ),
+    Flag.optional,
+  ),
   branch: Flag.String("branch").pipe(
-    Flag.withDescription("Branch name for the new worktree."),
+    Flag.withDescription("Branch name for the new worktree or cloud checkout."),
     Flag.optional,
   ),
   wait: waitFlag,
@@ -875,6 +916,9 @@ const threadShowCommand = Command.make("show", {
           );
           if (thread.worktreePath !== null) {
             yield* Console.log(`${thread.branch ?? "(no branch)"}  ${thread.worktreePath}`);
+          }
+          if (thread.sandbox !== undefined) {
+            yield* Console.log(`Machine: ${machineLabel(thread.sandbox)}`);
           }
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);

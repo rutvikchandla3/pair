@@ -22,6 +22,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import { isCloudLaunchRefusal } from "../../../sandbox/lifecycle/CloudPreparation.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -263,6 +264,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: error.message,
+              });
+            }
+            // A refused cloud launch is refused before anything exists.
+            if (error._tag === "ThreadLaunchError" && isCloudLaunchRefusal(error.cause)) {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: `${error.cause.message} No thread was created.`,
               });
             }
             // The administrator's ceiling refuses the mode; say so rather than "unavailable".

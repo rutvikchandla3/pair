@@ -2048,6 +2048,8 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
             ),
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
+        checkCloudLaunch: launches.checkCloudLaunch,
+        provisionCloud: launches.provisionCloud,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
       }),
@@ -2669,6 +2671,11 @@ it.effect.each([
 });
 
 it.effect.each([
+  {
+    name: "a server without Cloud set up",
+    settings: { providerInstances: cloudSettings.providerInstances },
+    refusal: { _tag: "CloudLaunchError", reason: "no-driver" },
+  },
   {
     name: "a project that turned cloud off",
     settings: {

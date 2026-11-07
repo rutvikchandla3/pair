@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ProviderInteractionMode,
   ProjectId,
   type RunId,
@@ -127,6 +128,8 @@ type PreparationInput = Pick<ThreadLaunchInput, "commandId" | "projectId" | "ini
   readonly existingWorktreePath?: string | null;
 };
 
+type CloudPlacement = Effect.Success<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>;
+
 export interface ThreadLaunchPreparationInput {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
@@ -194,6 +197,28 @@ export class ThreadLaunchService extends Context.Service<
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    /** Refuses a cloud launch before anything exists; `launch` runs the same check. */
+    readonly checkCloudLaunch: (input: {
+      readonly projectId: ProjectId;
+      readonly instanceId: ProviderInstanceId;
+    }) => Effect.Effect<
+      CloudPlacement,
+      Effect.Error<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>
+    >;
+    /**
+     * Gives a thread created without one, such as a delegated task's child, its machine before
+     * its run is prepared. The machine derives from `commandId`, so a replay provisions the same one.
+     */
+    readonly provisionCloud: (input: {
+      readonly commandId: CommandId;
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly placement: CloudPlacement;
+    }) => Effect.Effect<
+      void,
+      | Orchestrator.OrchestratorV2Error
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -261,6 +286,25 @@ const make = Effect.gen(function* () {
         ...(threadId === undefined ? {} : { threadId }),
         cause,
       });
+
+  const checkCloudLaunch: ThreadLaunchService["Service"]["checkCloudLaunch"] = (input) =>
+    CloudPreparation.resolveCloudLaunch(input.projectId, input.instanceId).pipe(
+      Effect.provide(cloudServices),
+    );
+
+  const provisionCloud: ThreadLaunchService["Service"]["provisionCloud"] = Effect.fn(
+    "ThreadLaunchService.provisionCloud",
+  )(function* (input) {
+    yield* threads.dispatch({
+      type: "sandbox.provision",
+      commandId: CommandId.make(`${input.commandId}:sandbox`),
+      threadId: input.threadId,
+      sandboxId: CloudPreparation.sandboxIdForLaunch(input.commandId),
+      projectId: input.projectId,
+      driverId: input.placement.driverId,
+      size: input.placement.size,
+    });
+  });
 
   const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
     receipts
@@ -928,13 +972,10 @@ const make = Effect.gen(function* () {
           : request;
       const cloud =
         input.workspaceStrategy.type === "cloud"
-          ? yield* CloudPreparation.resolveCloudLaunch(
-              input.projectId,
-              input.modelSelection.instanceId,
-            ).pipe(
-              Effect.provide(cloudServices),
-              Effect.mapError(mapError(input, "resolve-project")),
-            )
+          ? yield* checkCloudLaunch({
+              projectId: input.projectId,
+              instanceId: input.modelSelection.instanceId,
+            }).pipe(Effect.mapError(mapError(input, "resolve-project")))
           : null;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
@@ -1084,18 +1125,13 @@ const make = Effect.gen(function* () {
         }
         const sandboxId =
           cloud === null ? undefined : CloudPreparation.sandboxIdForLaunch(input.commandId);
-        if (cloud !== null && sandboxId !== undefined) {
-          yield* threads
-            .dispatch({
-              type: "sandbox.provision",
-              commandId: CommandId.make(`${input.commandId}:sandbox`),
-              threadId,
-              sandboxId,
-              projectId: input.projectId,
-              driverId: cloud.driverId,
-              size: cloud.size,
-            })
-            .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        if (cloud !== null) {
+          yield* provisionCloud({
+            commandId: input.commandId,
+            threadId,
+            projectId: input.projectId,
+            placement: cloud,
+          }).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         }
         let runId: RunId | null = null;
         let messageSequence: number | undefined;
@@ -1321,7 +1357,14 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    checkCloudLaunch,
+    provisionCloud,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);
