@@ -192,6 +192,8 @@ branch into `feat/pair`. Several workers run at once in sibling worktrees on thi
 - The container can restart without warning (background shells die). Commit work-in-progress to
   `wt/<PR>` every time a meaningful piece compiles (`wip:` commits are fine; squash before your
   final report). Don't park long test runs in background shells you wait on.
+- To squash, run `git reset --soft $(git merge-base HEAD feat/pair)` and commit. Never
+  `git reset --soft feat/pair` after the lead moved it: your commit would revert landed PRs.
 - Do not commit plans or scratch notes, and do not edit `docs/product/cloud/implementation/progress.md`
   (the lead owns it).
 
