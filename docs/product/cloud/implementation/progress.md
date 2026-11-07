@@ -23,7 +23,6 @@ pushed — if the container is gone, restart these from their spec):
 - 1.16 cloud launch (critical path)
 - 1.35 push and PR
 - 1.26 provider credentials
-- fix-flaky-kill
 
 **Not started (10), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
@@ -562,9 +561,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - server.ts: RunnerForwards/GitCredentialService moved into the top merge of `layerRuntimeCoreDependenciesBase`; one shared GitHubAppInstallationTokens.
 - Client: `sharesOtherOwnersMachine` (client-runtime), web `components/sandbox/sharedMachineBanner.tsx` in ChatView. Mobile banner → 1.41.
 
+## fix-flaky-kill (landed)
+
+- Kill-test flake was a test race (dash defers a trap during `sleep` in a loop); script now ends `sleep 300 & wait`.
+- Real bug: `RunnerHub.revoke` closed the boot scope before marking the boot lost, so in-flight host finalizers (e.g. `pty.release`) waited for a reconnect while holding the hub lock (120 s hang). `revoke` now marks the boot `lost` ("drained") before `endBoot`, like `expire`. `WorkspaceHostLoopback` revokes in a finalizer while the in-process runner still answers — any test layer that tears its runner down before the hub must revoke first.
+- Not changed: hub shutdown when `hubScope` closes without a revoke (an in-flight release could still wait).
+
 ## Open follow-ups and risks
 
-- FLAKY: `SandboxWorkspaceHost.test.ts` "closing a spawn scope signals with killSignal and escalates on the runner" fails ~1 in 2 under load (fix in flight as `fix-flaky-kill`).
 - Web browser tests can't launch in this container (Playwright browser version mismatch); environment only.
 
 - Runner PTY budgets (1.44) still miss after the perf-pty fix under load; re-benchmark on an idle machine and decide whether to batch acks in the hub.
