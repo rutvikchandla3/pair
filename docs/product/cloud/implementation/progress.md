@@ -10,27 +10,27 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (47 of 57):**
+**Landed on `feat/pair` (48 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (36): 1.1–1.16, 1.19–1.23, 1.25–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
+- M1 (36): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.37, 1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
-**In flight (2026-11-07, second session):** 1.17, 1.38, 1.42, 1.24, each in `../pair-wt/<id>` on
+**In flight (2026-11-07, second session):** 1.17, 1.38, 1.42, 1.43, each in `../pair-wt/<id>` on
 `wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
 and relaunch those PRs.
 
-**Not started (10)**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
-| Start when | PRs                                                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------------------------------------- |
-| now        | 1.17 shared sandboxes (critical), 1.24 setup scripts, 1.38 web Cloud mode, 1.42 MCP + CLI, 1.43 machine-failed push |
-| after 1.17 | 1.18 admission                                                                                                      |
-| after 1.38 | 1.39 web header + menus                                                                                             |
-| after 1.18 | 1.40 Settings → Cloud (also 1.16, 1.23, 1.25, 1.30 — landed)                                                        |
-| after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                                                |
-| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes                                            |
+| Start when | PRs                                                                                             |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| in flight  | 1.17 shared sandboxes (critical), 1.38 web Cloud mode, 1.42 MCP + CLI, 1.43 machine-failed push |
+| after 1.17 | 1.18 admission                                                                                  |
+| after 1.38 | 1.39 web header + menus                                                                         |
+| after 1.18 | 1.40 Settings → Cloud (also 1.16, 1.23, 1.25, 1.30 — landed)                                    |
+| after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                            |
+| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes                        |
 
 Before the integrated pass: rebuild `t3-sandbox:dev` (1.28 changed the image), re-run
 `vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
@@ -594,6 +594,13 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - SandboxEffects/recovery use `Effect.serviceOption(ThreadLaunchService)` (production wiring not asserted by a test).
 - E2E test (ThreadLaunchService.test.ts, it.live): fake driver + real hub + in-process runner → ready → real clone/worktree → deferred run released (stops before a provider turn).
 - For later: 1.17 replaces the non-owner refusal in `decideCloudPrompt` with `request-wake`; 1.24 setup scripts still get sandbox paths without sandbox handling; 1.42 MCP schema lacks `cloud`. Cloud threads' own `root`/`existing_worktree` delegation strategies unhandled.
+
+## 1.24 setup scripts (landed)
+
+- `sandbox/scripts/sandboxScriptEnvironment.ts` takes `Pick<WorkspaceHost, "spawner">`; Manager.ts calls it only when `host.kind === "sandbox"`. Every terminal on a sandbox host gets `T3CODE_SANDBOX=1`; scripts (with `T3CODE_PROJECT_ROOT`) get the clone root from `git rev-parse --git-common-dir` run in the sandbox, falling back to the worktree path or cwd.
+- Also fixed 1.25's "TODO 1.24": sandbox terminals no longer get the server's managed ACP bin dirs on PATH.
+- 1.16's setup script goes through `ProjectSetupScriptRunner` → `terminalManager.open`, so it is covered.
+- `T3CODE_SANDBOX` is still not set for provider processes (1.12's open note). A root-owned clone would trip git's dubious-ownership check and silently fall back; the clone is made through the sandbox spawner (agent uid), so check ownership once in the integrated pass.
 
 ## Open follow-ups and risks
 
