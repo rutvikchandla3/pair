@@ -491,6 +491,45 @@ export default defineConfig({
         },
       },
       {
+        // The runner is the sandbox's own machine, so it reads its disk and spawns directly. A
+        // later override replaces the import rule, so this repeats the server's paths and patterns.
+        files: ["apps/server/src/sandbox/runner/**"],
+        rules: {
+          "t3code/workspace-host-boundary": "off",
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                {
+                  group: [
+                    "@t3tools/source-control-*/client/*",
+                    "../client/*",
+                    "../../client/*",
+                    "../../../client/*",
+                  ],
+                  message:
+                    "A forge's client entry is UI-only; the server reads its `shared/definition`.",
+                },
+                {
+                  group: [
+                    "**/orchestration-v2/**",
+                    "**/persistence/**",
+                    "**/auth/**",
+                    "**/provider/**",
+                    "**/sandbox/runnerHub/**",
+                    "@t3tools/provider-*",
+                    "@t3tools/provider-*/**",
+                  ],
+                  message:
+                    "The runner ships into sandboxes: no orchestration, persistence, auth or adapters.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
         files: ["apps/mobile/src/**"],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": "error",

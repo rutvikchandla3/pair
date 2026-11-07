@@ -35,6 +35,9 @@ if (
   } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  } else if (command === "runner") {
+    const { runRunnerCli } = await import("./sandbox/runner/bin.ts");
+    await runRunnerCli(process.argv.slice(3));
   } else {
     enableCliCompileCache();
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
