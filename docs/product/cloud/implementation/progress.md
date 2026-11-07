@@ -16,15 +16,49 @@ no specs yet ([README](./README.md): write them after M1 lands).
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**In flight:** nothing (2026-11-07, second session).
-
 **Left:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
-[M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass), which also collect the
-PR-level runtime evidence workers could not (dev servers, `test-t3-app`, `test-t3-mobile`, captures,
-transcripts; each PR's note below says what it owes). Before them: rebuild `t3-sandbox:dev` if the
-container restarted (built 2026-11-07 after 1.28), and re-run `vp run bench:runner` on an idle
-machine. Live evals for 1.42 need a model API key. Two security decisions are open (see the risks
-at the end).
+[M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
+PR-level runtime evidence workers could not (each PR's note below says what it owes). Nothing is
+in flight and no worktrees exist; start from `feat/pair`.
+
+## Where this run stopped (2026-11-07)
+
+### Remaining work
+
+1. **Integrated passes, server side** (possible in a cloud container with Docker): `vp run dev` with
+   Docker and the Replay (dev) provider; Settings → Cloud **Test** against the real daemon; a cloud
+   thread from `t3 thread start --cloud main`; a side chat sharing the machine; settle → container
+   stops and diffs still read from the mirror; kill the container → "Machine failed", Retry,
+   Discard and the push; the 1.24 setup-script env transcript (also confirm the clone is owned by
+   the `t3` user, not root); the 1.42 CLI transcript and `--cloud`/`--worktree` usage error; the
+   M0 metrics comparison (OTLP receiver, before/after git command counts); `vp run bench:runner` on
+   an idle machine. Rebuild `t3-sandbox:dev` first if the container restarted (Machine setup step 4).
+2. **Integrated passes that need resources a cloud container lacks:** seeded data (a real
+   `~/.t3/userdata` to copy from), a test GitHub repo plus a GitHub App key (and a member token) for
+   the two push/PR runs, real provider credentials for one Claude (Haiku) and one Codex turn, a
+   phone or simulator for `test-t3-mobile`, and a working browser for `test-t3-app` captures on web
+   and desktop (Playwright's pinned browser does not launch here).
+3. **Check in the pass:** web's branch picker must not send `origin/<branch>` as `baseRefForCloud`
+   (mobile strips the prefix since 1.41; the server branches from `origin/<base>` and refuses it).
+4. **Live evals for 1.42:** `threads-vs-tasks.ndjson` on the old and new text, Sonnet and Opus
+   (needs a model API key; the dry run passes). The PR needs the `agent-context-increase` label.
+5. **PR links:** `docs/product/pair-features.md`'s "Cloud threads on Docker" entry gets PR links
+   once the M1 work has GitHub PR numbers.
+6. **Then:** delete this file (the merged commits are the record) and write M2's full specs
+   ([m2-m5.md](./m2-m5.md); maintainer decision #2, the hosted vendor, is due at M2's start).
+
+### Open questions for the maintainer
+
+1. **Integrated passes:** run the server-side part in a cloud container now, or do both passes on
+   a machine with real data, credentials and a device?
+2. **Server-internal commands from clients:** every `OrchestrationV2Command` is dispatchable by any
+   client with operate scope, including `sandbox.provision`, `sandbox.created` and
+   `sandbox.runner.attached`, so a member can provision a machine past `checkCloudLaunch`
+   (`sandboxAllowed`, credential refusals). Predates this run. Should ws.ts refuse server-only
+   command types from clients before M1 ships?
+3. **Driver settings exposure:** the settings stream sends `sandbox` driver config (`dockerHost`,
+   `runnerUrl`) to every member; only the UI hides it. Limit it to admins?
+4. **1.42 evals:** run them with an API key in a later session, or will a maintainer?
 
 ## How to resume
 
@@ -107,6 +141,8 @@ cd /home/user/pair
 for d in 0 2 4 8 16; do sleep $d; git push -q -u origin feat/pair && { echo pushed $(git rev-parse --short HEAD); exit 0; }; done
 exit 1
 ```
+
+Workers read `../pair-wt/WORKER_BRIEF.md` (the brief below) and `../pair-wt/HANDOFF.md` (a copy of "Notes from landed PRs" below, to the end of this file); recreate both from this file in a fresh container.
 
 Per PR: `mkwt.sh <id>`, launch a worker with the prompt below, and on its report `land.sh <id> && push.sh`, then append the worker's notes to the section below and update Status here. On a rebase conflict, resolve in the worktree, `git rebase --continue`, rerun `land.sh`. `land.sh` fails on any `error TS` line, not only the exit code.
 
