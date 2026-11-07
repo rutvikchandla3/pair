@@ -10,27 +10,27 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (37 of 57):**
+**Landed on `feat/pair` (38 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.12 sessions on sandbox hosts (critical path)
-- 1.31 mirror sync
+- 1.28 git credentials
+- 1.33 stopped reads
 - `perf-pty`: follow-up from 1.44 — coalesce runner PTY output (see 1.44's notes below)
 
-**Not started (18), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (16), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
 | after 1.12 | 1.16 cloud launch (critical), 1.26 provider credentials (also 1.13, 1.25), 1.34 attachments                          |
-| now        | 1.28 git credentials (needs 1.13, 1.20, 1.25, 1.27 — all landed)                                                     |
-| after 1.31 | 1.33 stopped reads (also 1.11, 1.32)                                                                                 |
+| now        | 1.33 stopped reads (in flight next)                                                                                  |
 | after 1.16 | 1.17 shared sandboxes, 1.24 setup scripts, 1.38 web Cloud mode (also 1.37), 1.42 MCP + CLI, 1.43 machine-failed push |
 | after 1.28 | 1.28a owner's GitHub, then 1.29 revocation (also 1.19), 1.35 push + PR (also 1.31)                                   |
 | after 1.17 | 1.18 admission                                                                                                       |
@@ -506,6 +506,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - contracts: `isReservedSandboxEnvName` (incl. `PAIR_` prefix); settings op `"use-reserved-sandbox-env"`; serverSettings refuses reserved names on write.
 - terminal/Manager.ts uses `forProcess(host)` on sandbox hosts (option `sandboxEnvironment`).
 - TODO 1.24: sandbox terminals still append the server's managed ACP binary dirs to PATH. TODO 1.28: add T3CODE_THREAD_ID + git committer names.
+
+## 1.31 mirror sync (landed)
+
+- sandbox/mirror/MirrorSync.ts: `MirrorHooks` (Reference, default no-op), `MirrorSyncError`, `MirrorSync.sync` (returns the ProjectId), `make({ maxBundleBytes })`. Ref tips from `for-each-ref` in the sandbox; skip refs already at that oid; `git bundle create` with prerequisite tiers (previous ordinal + mirror branch + seed origin/HEAD → seed → none; "bad object" drops a tier); bundle streamed to `<stateDir>/sandbox/tmp/<uuid>.bundle` with a cap; strict `importBundle` then `updateRefs`.
+- MirrorSyncWorker.ts (one layer: worker + real MirrorHooks, `layerMirrorSync` in server.ts): seeds from threads on non-destroyed sandboxes; retries every 30 s; `flush`, `drain`; hourly maintenance per mirror. `afterCapture` (prefix check for local threads), `afterRollback` → `deleteRefs`.
+- CheckpointMirror: `updateRefs` (oid format-checked), `maintain`. SandboxProjection `listLiveSandboxThreadIds`.
+- ThreadDeletion queues effect `sandbox.mirror.forget-thread` (replay-safe). `isSandboxEffectRequest`/`SandboxEffectRequest` now require `generation`. `sandbox.stop` calls `flush` before `driver.stop`. EffectWorker/SandboxEffects reach mirror/worker via `Effect.serviceOption`.
+- The worker only checks a ready ref exists in the mirror (not its oid); capture-time updateRefs corrects it. `ensure` refetches seed origin refs every sync.
 
 ## Open follow-ups and risks
 
