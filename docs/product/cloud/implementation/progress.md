@@ -10,21 +10,21 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (43 of 57):**
+**Landed on `feat/pair` (44 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29, 1.35.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.16 cloud launch (critical path)
-- 1.35 push and PR
 - 1.26 provider credentials
+- 1.34 attachments
 
-**Not started (10), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (9), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -566,6 +566,13 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Kill-test flake was a test race (dash defers a trap during `sleep` in a loop); script now ends `sleep 300 & wait`.
 - Real bug: `RunnerHub.revoke` closed the boot scope before marking the boot lost, so in-flight host finalizers (e.g. `pty.release`) waited for a reconnect while holding the hub lock (120 s hang). `revoke` now marks the boot `lost` ("drained") before `endBoot`, like `expire`. `WorkspaceHostLoopback` revokes in a finalizer while the in-process runner still answers — any test layer that tears its runner down before the hub must revoke first.
 - Not changed: hub shutdown when `hubScope` closes without a revoke (an in-flight release could still wait).
+
+## 1.35 push + PR from cloud threads (landed)
+
+- sandbox/credentials/SandboxGitHooks.ts: Context.Reference (default no-op); real layer acts only on `/t3-sandbox/` cwds: picks the thread (caller if attached → thread whose worktreePath is the cwd → owner), refuses `cloud-push-unsupported-host` (non-GitHub) / `github-credential-missing` before git runs, else returns `{ T3CODE_THREAD_ID }`.
+- GitCredentialService `sourceFor(threadId)` (`app-installation` | `member-account` | none; never mints). GitManager `pushCurrentBranch(threadId)` uses the hook env; GitVcsDriver `pushCurrentBranch(options.env)`. server.ts `layerGitCredentialService` shared by RunnerForwards and the hook.
+- client-runtime `state/vcsAction.ts` `vcsActionErrorMessage` (codes → copy); used by web GitActionsControl toast. 1.41 reuses it.
+- Gaps: App key set but not installed → hook allows, helper fallback decides (missing owner credential shows as git stderr). SourceControlRepositoryService publish push doesn't use the hook.
 
 ## Open follow-ups and risks
 
