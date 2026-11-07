@@ -10,27 +10,27 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (55 of 57):**
+**Landed on `feat/pair` (56 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (44): 1.1–1.40, 1.42–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
+- M1 (45): 1.1–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
   coalescing), the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**In flight (2026-11-07, second session):** 1.41, in `../pair-wt/1.41` on `wt/1.41`. Worktrees live in the container only: after a restart, recreate them
+**In flight (2026-11-07, second session):** 1.45, in `../pair-wt/1.45` on `wt/1.45`. Worktrees live in the container only: after a restart, recreate them
 from `feat/pair` and relaunch those PRs.
 
 **Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
-| Start when | PRs                                                                      |
-| ---------- | ------------------------------------------------------------------------ |
-| in flight  | 1.41 mobile                                                              |
-| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes |
+| Start when | PRs                             |
+| ---------- | ------------------------------- |
+| in flight  | 1.45 cloud guide                |
+| last       | the M0 and M1 integrated passes |
 
 Before the integrated pass: rebuild `t3-sandbox:dev` if the container restarted (built 2026-11-07 after 1.28), re-run
 `vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
 
-Critical path left: 1.41.
+Critical path left: 1.45, then the integrated passes.
 
 ## How to resume
 
@@ -665,6 +665,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - client-runtime `state/sandbox.ts`: `overview` query (30 s stale, never polls — Docker health runs a privileged egress helper; the page has Refresh) and single-flight `checkDriver`.
 - Web: `/settings/cloud` (`CloudSettings.tsx` + logic), search rows (cloud project rows `sandboxOnly`), project rows in `ProjectDefaultsSettings.tsx`. Turning Cloud default off removes `defaultsToCloud` in the same override write.
 - Open: the settings stream still sends `dockerHost`/`runnerUrl` to every member (only the UI hides Compute). No real-Docker run of the check yet. Owed in the integrated pass: `test-t3-app` steps and captures.
+
+## 1.41 mobile (landed)
+
+- Shared code moved out of web into client-runtime: `threadMachineAtom` (`createSandboxEnvironmentAtoms` takes `threadShells`), action labels, isolation and machine-count labels, `githubAppConfigured`; `cloudModelDisabledReason` is in `@t3tools/shared/sandboxCredentials`. Web uses them.
+- Mobile `lib/newTaskWorkspaceMode.ts` (`NewTaskWorkspaceMode`; the spec's location made import cycles the dependency-graph test caught), used by drafts, outbox, send path and new-task screens. The toggle becomes a menu with Cloud once a driver exists.
+- Cloud threads: header label and Machine menu (Sleep/Discard live only there), list-row symbol + word with Wake/Retry, composer notices (failure, discarded, push, shared machine), Local-only model reason. Read-only Machines page in Settings (needs at least one driver); GitHub token row on your own Team row.
+- Mobile strips a remote prefix from a cloud base branch (the server branches from `origin/<base>`, so `origin/main` would be refused). Check web's picker can't send `origin/...` as `baseRefForCloud` in the integrated pass.
+- Owed in the integrated pass: `test-t3-mobile` on iOS and Android and captures.
 
 ## Open follow-ups and risks
 
