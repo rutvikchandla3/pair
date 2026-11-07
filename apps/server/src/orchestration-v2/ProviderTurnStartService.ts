@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -149,6 +150,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | SandboxAttachments.SandboxAttachmentStaging
   | WorkspaceHosts.WorkspaceHosts
 > = Layer.effect(
   ProviderTurnStartServiceV2,
@@ -166,6 +168,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const attachmentStaging = yield* SandboxAttachments.SandboxAttachmentStaging;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
     // CLI and test runtimes have no team; their messages are never labelled.
     const teamState = yield* Effect.serviceOption(TeamState.TeamState);
@@ -839,6 +842,23 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      // The agent in a sandbox opens files there, not on this server.
+      const staged = yield* Effect.result(
+        attachmentStaging.stage({
+          cwd: resolvedRuntimePolicy.cwd,
+          attachments: message.attachments,
+        }),
+      );
+      if (staged._tag === "Failure") {
+        if (input.willRetry === true) return yield* staged.failure;
+        yield* settleStartFailure({
+          signal: "attachment-staging-failure",
+          title: "Couldn't copy attachments to the machine",
+          error: staged.failure,
+          message: staged.failure.message,
+        });
+        return;
+      }
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
       ) {

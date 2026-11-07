@@ -18,6 +18,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { labelUserMessageForProvider } from "./SenderLabel.ts";
@@ -89,12 +90,15 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | SandboxAttachments.SandboxAttachmentStaging
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const attachmentStaging = yield* SandboxAttachments.SandboxAttachmentStaging;
     // CLI and test runtimes have no team; their messages are never labelled.
     const teamState = yield* Effect.serviceOption(TeamState.TeamState);
 
@@ -383,6 +387,10 @@ export const layer: Layer.Layer<
                   message,
                   yield* Ref.get(teamState.value.members),
                 );
+          yield* attachmentStaging.stage({
+            cwd: loaded.session.value.providerSession.cwd,
+            attachments: message.attachments,
+          });
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,

@@ -177,6 +177,11 @@ import type {
   WorkspaceHostUnavailableError,
 } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
+import {
+  resolveSandboxExtractedTextPath,
+  sandboxAttachmentPath,
+  sandboxAttachmentsDirectory,
+} from "../../sandbox/attachments/SandboxAttachments.ts";
 import { makeSandboxClaudeProcess } from "../../sandbox/providers/ClaudeSandboxProcess.ts";
 import {
   ensureSandboxProviderHome,
@@ -2567,7 +2572,10 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly priority?: SDKUserMessage["priority"];
   readonly uuid?: SDKUserMessage["uuid"];
+  /** The server's folder: image and PDF bytes are read here. */
   readonly attachmentsDir: string;
+  /** The path the prompt names, for a machine where the server's path does not open. */
+  readonly promptAttachmentPath?: (attachment: ChatAttachment) => string | null;
   readonly fileSystem: FileSystem.FileSystem;
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
@@ -2589,11 +2597,13 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     text: input.text,
     attachments: input.attachments,
     resolveExtractedTextPath: (path) =>
-      DocumentText.resolveExtractedTextPath(path).pipe(
-        Effect.provideService(FileSystem.FileSystem, input.fileSystem),
-      ),
-    resolveAttachmentPath: (attachment) =>
-      resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
+      (input.promptAttachmentPath === undefined
+        ? DocumentText.resolveExtractedTextPath(path)
+        : resolveSandboxExtractedTextPath(input.attachmentsDir)(path)
+      ).pipe(Effect.provideService(FileSystem.FileSystem, input.fileSystem)),
+    resolveAttachmentPath:
+      input.promptAttachmentPath ??
+      ((attachment) => resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment })),
   });
 
   const dispatch =
@@ -5174,6 +5184,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const sessionHost = yield* hostAt(input.runtimePolicy.cwd);
+        // The agent opens attachments where it runs: staged copies, not the server's files.
+        const promptAttachmentPath =
+          sessionHost.kind === "sandbox"
+            ? (attachment: ChatAttachment) => sandboxAttachmentPath(sessionHost.id, attachment)
+            : undefined;
         // A sandbox session runs on the sandbox's environment and its own home (README P1).
         const sessionEnvironment =
           sessionHost.kind === "sandbox"
@@ -11025,7 +11040,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
-            attachmentsDir,
+            attachmentsDir:
+              sessionHost.kind === "sandbox"
+                ? sandboxAttachmentsDirectory(sessionHost.id)
+                : attachmentsDir,
             settings: adapterOptions.settings,
             ...(launchArgSettings === undefined
               ? {}
@@ -11277,6 +11295,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ),
                     attachments: turnInput.message.attachments,
                     attachmentsDir,
+                    ...(promptAttachmentPath === undefined ? {} : { promptAttachmentPath }),
                     fileSystem,
                     pdfReservation,
                     skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
@@ -11727,6 +11746,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachments: turnInput.message.attachments,
               priority: "now",
               attachmentsDir,
+              ...(promptAttachmentPath === undefined ? {} : { promptAttachmentPath }),
               fileSystem,
               pdfReservation,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),

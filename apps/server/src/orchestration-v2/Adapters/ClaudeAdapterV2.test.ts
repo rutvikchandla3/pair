@@ -2592,6 +2592,172 @@ describe("ClaudeAdapterV2 attachments", () => {
         ),
       ),
   );
+
+  it.effect(
+    "names staged sandbox copies on a sandbox host and still reads bytes on the server",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sandboxId = "sbx_00000000000000000123";
+          const cwd = `/t3-sandbox/${sandboxId}/worktrees/a`;
+          const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const claudeHome = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-v2-sandbox-home-",
+          });
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-v2-sandbox-attachments-",
+          });
+          const image = ChatImageAttachment.make({
+            type: "image",
+            id: ChatAttachmentId.make("thread-claude-sandbox-12345678-1234-1234-1234-123456789abc"),
+            name: "diagram.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          });
+          const document = ChatFileAttachment.make({
+            type: "file",
+            id: ChatAttachmentId.make("thread-claude-sandbox-abcdefab-1234-1234-1234-123456789abc"),
+            name: "requirements.docx",
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sizeBytes: 4,
+          });
+          const documentOnServer = path.join(attachmentsDir, attachmentRelativePath(document)!);
+          yield* fileSystem.writeFile(
+            path.join(attachmentsDir, attachmentRelativePath(image)!),
+            Uint8Array.from([1, 2, 3, 4]),
+          );
+          yield* fileSystem.writeFile(documentOnServer, Uint8Array.from([5, 6, 7, 8]));
+          yield* fileSystem.writeFileString(`${documentOnServer}.txt`, "extracted");
+
+          const spawner = ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(999_999_997),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            ),
+          );
+          const offered: Array<SDKUserMessage> = [];
+          const opened: Array<ReadonlyArray<string> | undefined> = [];
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: claudeHome },
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            hostForPath: () =>
+              Effect.succeed({
+                id: sandboxId,
+                kind: "sandbox",
+                fileSystem,
+                spawner,
+                info: Effect.succeed({
+                  platform: "linux",
+                  homeDirectory: "/home/t3",
+                  userId: undefined,
+                  environment: { PATH: "/usr/bin" },
+                  executablePath: "/opt/pair-runner/b/t3",
+                }),
+              }),
+            path,
+            random: yield* SecureRandom.SecureRandom,
+            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-sandbox-attachments"),
+              open: ({ options }) =>
+                Effect.gen(function* () {
+                  opened.push(options.additionalDirectories);
+                  const messages = yield* Queue.unbounded<SDKMessage>();
+                  return {
+                    messages: Stream.fromQueue(messages),
+                    offer: (message) => Effect.sync(() => void offered.push(message)),
+                    setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
+                    stopTask: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Queue.shutdown(messages),
+                  };
+                }),
+              forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+          const modelSelection = { ...CLAUDE_TEST_MODEL_SELECTION, options: [] };
+          const threadId = ThreadId.make("thread-claude-sandbox-attachments");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-sandbox"),
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const attemptId = RunAttemptId.make("attempt-claude-sandbox-attachments");
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId,
+              modelSelection,
+              text: "Look",
+              attachments: [image, document],
+              runtimePolicy,
+            }),
+          );
+
+          const folder = `/t3-sandbox/${sandboxId}/attachments/thread-claude-sandbox`;
+          const imagePath = `${folder}/${attachmentRelativePath(image)}`;
+          const documentPath = `${folder}/${attachmentRelativePath(document)}`;
+          assert.deepEqual(offered[0]?.message.content, [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "AQIDBA==" },
+            },
+            {
+              type: "text",
+              text: `Look\n\n[Attached image "diagram.png" is saved at: ${imagePath}]\n\n[Attached file "requirements.docx" is saved at: ${documentPath} (text extracted to: ${documentPath}.txt)]`,
+            },
+          ]);
+          assert.include(opened[0] ?? [], `/t3-sandbox/${sandboxId}/attachments`);
+          assert.notInclude(opened[0] ?? [], attachmentsDir);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
 });
 
 describe("ClaudeAdapterV2 native fork", () => {

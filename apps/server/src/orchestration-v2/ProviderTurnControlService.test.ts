@@ -30,6 +30,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import * as TeamState from "../team/TeamState.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -168,6 +169,14 @@ it.effect(
       );
       const interruptedThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
       const steered = yield* Ref.make<ReadonlyArray<string>>([]);
+      const steerCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const attachment = {
+        type: "image",
+        id: "thread-restart-session-12345678-1234-1234-1234-123456789abc",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      } as const;
       const steeringMessage: OrchestrationV2ConversationMessage = {
         id: MessageId.make("message:steer"),
         threadId,
@@ -175,7 +184,7 @@ it.effect(
         nodeId: null,
         role: "user",
         text: "Ship it",
-        attachments: [],
+        attachments: [attachment],
         streaming: false,
         createdBy: "user",
         creationSource: "web",
@@ -321,7 +330,9 @@ it.effect(
                   ? Option.some({
                       ...runtime,
                       steerTurn: ({ message }) =>
-                        Ref.update(steered, (texts) => [...texts, message.text]),
+                        Ref.update(steered, (texts) => [...texts, message.text]).pipe(
+                          Effect.andThen(Ref.update(steerCalls, (calls) => [...calls, "steer"])),
+                        ),
                     })
                   : Option.none(),
             ),
@@ -339,6 +350,13 @@ it.effect(
           Layer.mergeAll(
             layerProjection,
             layerSessionManager,
+            Layer.mock(SandboxAttachments.SandboxAttachmentStaging)({
+              stage: ({ cwd, attachments }) =>
+                Ref.update(steerCalls, (calls) => [
+                  ...calls,
+                  `stage ${cwd}: ${attachments.map((candidate) => candidate.id).join(",")}`,
+                ]),
+            }),
             TeamState.layerTest([
               {
                 id: MemberId.make("member-alice"),
@@ -372,6 +390,9 @@ it.effect(
       assert.deepEqual(yield* Ref.get(steered), [
         "Several people are prompting this thread; each message names its sender.\n\nMessage from Alice:\n\nShip it",
       ]);
+
+      // The machine gets the files, on the session's cwd, before the provider hears of the message.
+      assert.deepEqual(yield* Ref.get(steerCalls), ["stage /workspace: " + attachment.id, "steer"]);
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;

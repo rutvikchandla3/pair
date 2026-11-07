@@ -7,6 +7,8 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
+  ChatFileAttachment,
   CommandId,
   CheckpointId,
   CodexSettings,
@@ -43,9 +45,10 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
-import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { attachmentRelativePath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -1088,6 +1091,102 @@ describe("CodexAdapterV2 app-server in a sandbox", () => {
         assert.deepEqual(files, []);
       }).pipe(Effect.provide(factoryLayer.pipe(Layer.provide(NodeServices.layer))));
     },
+  );
+
+  it.effect(
+    "names staged sandbox copies of attachments and their extracted text on a sandbox host",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const scenario = "sandbox-attachments";
+        const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(scenario);
+        const sandboxId = "sbx_00000000000000000123";
+        const document = ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make("thread-codex-sandbox-12345678-1234-1234-1234-123456789abc"),
+          name: "requirements.docx",
+          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          sizeBytes: 4,
+        });
+        // Only the server holds the extracted text it looks up; the prompt names the staged copy.
+        const onServer = path.join(serverConfig.attachmentsDir, attachmentRelativePath(document)!);
+        yield* fileSystem.writeFile(onServer, Uint8Array.from([1, 2, 3, 4]));
+        yield* fileSystem.writeFileString(`${onServer}.txt`, "extracted");
+        const staged = `/t3-sandbox/${sandboxId}/attachments/thread-codex-sandbox/${attachmentRelativePath(document)}`;
+        const nativeThreadId = "native-sandbox-attachments";
+        const driver = yield* CodexReplay.makeReplayDriver(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "turn-sandbox-attachments",
+              prompt: "Read it",
+              sentPrompt: `Read it\n\n[Attached file "requirements.docx" is saved at: ${staged} (text extracted to: ${staged}.txt)]`,
+            }),
+          }),
+        );
+        const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CODEX_SETTINGS,
+          environment: {},
+          clientFactory: {
+            open: (openInput) =>
+              Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+                Effect.flatMap((context) =>
+                  Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                      providerSessionId: openInput.providerSessionId,
+                      cause,
+                    }),
+                ),
+              ),
+          },
+          hostForPath: () => Effect.succeed({ id: sandboxId as WorkspaceHostId, kind: "sandbox" }),
+          digest: yield* Digest.Digest,
+          fileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          serverConfig,
+        });
+        const threadId = ThreadId.make("thread-codex-sandbox-attachments");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-codex-sandbox-attachments"),
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const turnInput = makeCodexTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-sandbox-attachments"),
+          text: "Read it",
+        });
+        // The replay refuses a turn/start whose text differs from the one above.
+        yield* runtime.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, attachments: [document] },
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 });
 

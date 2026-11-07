@@ -22,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
@@ -275,6 +276,7 @@ it.effect.each(storageCases)(
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
+            providerSession: { cwd: "/workspace" },
             interruptTurn: () =>
               Effect.sync(() => {
                 calls.push("interrupt");
@@ -346,6 +348,9 @@ it.effect.each(storageCases)(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
             Layer.provide(layerSessions),
+            Layer.provide(
+              Layer.mock(SandboxAttachments.SandboxAttachmentStaging)({ stage: () => Effect.void }),
+            ),
           ),
         ),
       );

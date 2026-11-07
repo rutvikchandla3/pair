@@ -104,7 +104,15 @@ import { ChildProcess } from "effect/process";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
-import type { WorkspaceHost, WorkspaceHostInfo } from "../../workspaceHost/WorkspaceHost.ts";
+import type {
+  WorkspaceHost,
+  WorkspaceHostInfo,
+  WorkspaceHostUnavailableError,
+} from "../../workspaceHost/WorkspaceHost.ts";
+import {
+  resolveSandboxExtractedTextPath,
+  sandboxAttachmentPath,
+} from "../../sandbox/attachments/SandboxAttachments.ts";
 import {
   ensureSandboxProviderHome,
   sandboxProviderSessionEnvironmentFor,
@@ -1713,7 +1721,8 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments, MCP app snapshots and the shadow home
   const fileSystem = yield* FileSystem.FileSystem;
   // Instance env is the local host's; the client factory builds a sandbox session's own.
-  const hostEnvironment = (yield* (yield* WorkspaceHosts.WorkspaceHosts).local.info).environment;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const hostEnvironment = (yield* hosts.local.info).environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
   const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -1748,6 +1757,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     idAllocator,
     serverConfig,
     continuationRequests,
+    hostForPath: hosts.forPath,
     ...hooks,
   });
 });
@@ -1766,6 +1776,10 @@ export interface CodexAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
+  /** The machine a cwd lives on. Absent: every session is local. */
+  readonly hostForPath?: (
+    cwd: string,
+  ) => Effect.Effect<Pick<WorkspaceHost, "id" | "kind">, WorkspaceHostUnavailableError>;
   /** Omitting this leaves late completions projection-only. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -1804,6 +1818,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           environment: adapterOptions.environment,
           resolveRuntime: adapterOptions.resolveRuntime,
         });
+        const sessionCwd = input.runtimePolicy.cwd;
+        const sessionHost =
+          sessionCwd === null || adapterOptions.hostForPath === undefined
+            ? undefined
+            : yield* adapterOptions.hostForPath(sessionCwd).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -3365,16 +3393,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          // The agent opens attachments where it runs: staged copies, not the server's files.
+          const sandboxId = sessionHost?.kind === "sandbox" ? sessionHost.id : undefined;
           const text = yield* providerMessageTextWithAttachmentPaths({
             text: codexSkillMentionText(turnInput.message.text),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
-              DocumentText.resolveExtractedTextPath(path).pipe(
+              (sandboxId === undefined
+                ? DocumentText.resolveExtractedTextPath(path)
+                : resolveSandboxExtractedTextPath(serverConfig.attachmentsDir)(path)
+              ).pipe(
                 // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments and their extracted text live on the server
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
               ),
             resolveAttachmentPath: (attachment) =>
-              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+              sandboxId === undefined
+                ? resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment })
+                : sandboxAttachmentPath(sandboxId, attachment),
           });
           if (text.length > 0) {
             inputItems.push({

@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
+  ChatAttachmentId,
+  ChatImageAttachment,
   CheckpointScopeId,
   ContextHandoffId,
   ContextTransferId,
@@ -54,6 +56,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -201,6 +204,7 @@ function startWithMissingWorktree(
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        Layer.mock(SandboxAttachments.SandboxAttachmentStaging)({ stage: () => Effect.void }),
       ),
     ),
   );
@@ -293,6 +297,8 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly attachments?: OrchestrationV2ThreadProjection["messages"][number]["attachments"];
+  readonly stageFailure?: SandboxAttachments.SandboxAttachmentStagingError;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -368,7 +374,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
-    attachments: [],
+    attachments: input.attachments ?? [],
     streaming: false,
     createdBy: "user",
     creationSource: "web",
@@ -924,6 +930,9 @@ function makeLocalCommandHarness(input: {
       ),
     }),
   );
+  const stage = vi.fn<SandboxAttachments.SandboxAttachmentStaging["Service"]["stage"]>(() =>
+    input.stageFailure === undefined ? Effect.void : Effect.fail(input.stageFailure),
+  );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -1032,6 +1041,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: resolveRuntimePolicy,
         }),
+        Layer.mock(SandboxAttachments.SandboxAttachmentStaging)({ stage }),
       ),
     ),
   );
@@ -1043,6 +1053,7 @@ function makeLocalCommandHarness(input: {
       projection = next;
     },
     resolveRuntimePolicy,
+    stage,
     createWorktree,
     open,
     fallbackEnsureThread,
@@ -1702,6 +1713,67 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+effectIt.effect(
+  "stages the message's attachments on the turn's machine before the provider turn",
+  () =>
+    Effect.gen(function* () {
+      const attachment = ChatImageAttachment.make({
+        type: "image",
+        id: ChatAttachmentId.make(
+          "thread-native-account-command-12345678-1234-1234-1234-123456789abc",
+        ),
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      });
+      const harness = makeLocalCommandHarness({
+        text: "Look",
+        attachments: [attachment],
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+
+      yield* harness.start;
+
+      expect(harness.stage).toHaveBeenCalledExactlyOnceWith({
+        cwd: "/tmp/native-account-command",
+        attachments: [attachment],
+      });
+      expect(harness.stage.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.startRootRun.mock.invocationCallOrder[0]!,
+      );
+    }),
+);
+
+effectIt.effect("fails the run, or leaves it to retry, when attachments cannot be staged", () =>
+  Effect.gen(function* () {
+    const stageFailure = new SandboxAttachments.SandboxAttachmentStagingError({
+      attachmentId: "attachment-1",
+      cause: new Error("runner lost"),
+    });
+    const failed = makeLocalCommandHarness({
+      text: "Look",
+      stageFailure,
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    yield* failed.start;
+    expect(failed.startRootRun).not.toHaveBeenCalled();
+    expect(failed.projection().runs.at(-1)?.status).toBe("failed");
+    expect(failed.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: stageFailure.message } },
+    ]);
+
+    const retried = makeLocalCommandHarness({
+      text: "Look",
+      stageFailure,
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const error = yield* retried.startWithRetry.pipe(Effect.flip);
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(retried.startRootRun).not.toHaveBeenCalled();
+    expect(retried.projection().runs.at(-1)?.status).toBe("starting");
   }),
 );
 
