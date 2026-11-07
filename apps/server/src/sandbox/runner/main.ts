@@ -17,6 +17,7 @@ import * as OpsHandlers from "./opsHandlers.ts";
 import * as OpsLayer from "./opsLayer.ts";
 import { RunnerConfig, readRunnerConfig, type RunnerConfigShape } from "./RunnerConfig.ts";
 import * as RunnerSocketServer from "./RunnerSocketServer.ts";
+import { measureRunnerStartup } from "./startupMarks.ts";
 
 /** One frame carries at most a 256 KiB chunk (03 3.1); the hub uses the same cap. */
 const MAX_FRAME_BYTES = 256 * 1024 + 1024;
@@ -44,7 +45,10 @@ export const layerProtocol = Layer.effect(
           run: Effect.fn("RunnerProtocol.run")(function* <R, E, _>(
             handler: (socket: Socket.Socket) => Effect.Effect<_, E, R>,
           ) {
-            return yield* server.run((socket) => table.session(handler(socket)));
+            return yield* server.run((socket) => {
+              measureRunnerStartup("runner.dialed");
+              return table.session(handler(socket));
+            });
           }),
         }),
       ),

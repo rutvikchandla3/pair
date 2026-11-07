@@ -12,6 +12,7 @@
     "dev:marketing": "vp run --filter @t3tools/marketing dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "migrate-dev-db": "node apps/server/scripts/migrate-dev-db.ts",
+    "bench:runner": "node apps/server/scripts/runner-benchmark.ts",
     "sandbox-image:build": "node apps/server/scripts/sandbox-image.ts build",
     "start": "vp run --filter t3 start",
     "start:desktop": "vp run --filter @t3tools/desktop start",

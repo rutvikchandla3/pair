@@ -241,10 +241,16 @@ it.effect("a stalled reader pauses the source at its buffer limit and resumes it
       const stats = yield* runner.table.stats;
       assert.equal(stats.pausedHandles, 1);
       assert.isAtLeast(stats.bufferedBytes, 64 * KiB);
-      assert.isAtLeast(stats.highWater, stats.bufferedBytes);
+      assert.isAtLeast(stats.highWaterBytes, stats.bufferedBytes);
 
+      yield* TestClock.adjust("3 seconds");
       yield* first.resumeReader;
-      yield* awaitPressure(runner.table, (pressure) => pressure.pausedHandles === 0);
+      const resumed = yield* awaitPressure(
+        runner.table,
+        (pressure) => pressure.pausedHandles === 0,
+      );
+      assert.isAtLeast(resumed.pausedMsTotal, 3000);
+      assert.isAtLeast(resumed.highWaterBytes, 64 * KiB);
     }),
   ),
 );

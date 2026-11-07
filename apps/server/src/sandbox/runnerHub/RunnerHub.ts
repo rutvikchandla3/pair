@@ -1,11 +1,13 @@
 import { SandboxId } from "@t3tools/contracts";
 import {
   RUNNER_PROTOCOL_VERSION,
+  type RunnerHelloInput,
   type RunnerInfo,
   type RunnerLimits,
   RunnerLostError,
   RunnerRpcGroup,
 } from "@t3tools/contracts/runner";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -29,6 +32,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import * as Metrics from "../../observability/Metrics.ts";
 import * as RunnerOpsClient from "./RunnerOpsClient.ts";
 import {
   type AwaitClient,
@@ -42,6 +46,7 @@ import {
   type RunnerGrantError,
   RunnerGrants,
 } from "./RunnerGrants.ts";
+import { instrumentClient } from "./RunnerWireMetrics.ts";
 
 /** Processes survive a socket drop this long (03 §3.1); one value until a driver needs another. */
 const LEASE = Duration.seconds(120);
@@ -169,6 +174,8 @@ interface Slot {
    * not fired yet still drops the handles the hub already failed.
    */
   expiries: number;
+  /** The runner's `pausedMsTotal` already counted, so a reconnect adds only what is new. */
+  pausedMsCounted: number;
 }
 
 const absent: SlotState = {
@@ -206,6 +213,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       live: undefined,
       leaseEpoch: 0,
       expiries: 0,
+      pausedMsCounted: 0,
     };
     slots.set(sandboxId, slot);
     return slot;
@@ -372,6 +380,46 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
     return true;
   });
 
+  const hello = Effect.fn("RunnerHub.hello")(function* (
+    slot: Slot,
+    client: RunnerClient,
+    input: RunnerHelloInput,
+  ) {
+    yield* Effect.annotateCurrentSpan("sandboxId", slot.sandboxId);
+    const info = yield* client["runner.hello"](input);
+    yield* Effect.annotateCurrentSpan({
+      runnerBuildId: info.runnerBuildId,
+      handles: info.handles.length,
+    });
+    return info;
+  });
+
+  /** Feeds the buffer gauge and the paused counter from the runner's `resource.pressure` events. */
+  const observePressure = (slot: Slot, client: RunnerClient) =>
+    client["runner.events"]({}).pipe(
+      Stream.runForEach((event) =>
+        event._tag !== "resource.pressure"
+          ? Effect.void
+          : Effect.gen(function* () {
+              yield* Metric.update(
+                Metric.withAttributes(Metrics.runnerBufferHighWaterBytes, [
+                  ["sandboxId", slot.sandboxId],
+                ]),
+                event.highWaterBytes,
+              );
+              // A total below the last one means a new runner process counts from zero again.
+              const added =
+                event.pausedMsTotal >= slot.pausedMsCounted
+                  ? event.pausedMsTotal - slot.pausedMsCounted
+                  : event.pausedMsTotal;
+              slot.pausedMsCounted = event.pausedMsTotal;
+              if (added > 0) yield* Metric.update(Metrics.runnerSourcePausedTotal, added);
+            }),
+      ),
+      // The stream ends with its socket; the next socket starts its own.
+      Effect.ignoreCause,
+    );
+
   const mintEnrollment: RunnerHub["Service"]["mintEnrollment"] = Effect.fn(
     "RunnerHub.mintEnrollment",
   )(function* (sandboxId, bootGeneration) {
@@ -467,6 +515,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
 
   const serve: RunnerHub["Service"]["serve"] = Effect.fn("RunnerHub.serve")(
     function* (runner, socket) {
+      const startedAt = yield* Clock.monotonicTimeNanos;
       const socketId = nextSocketId++;
       const close = yield* Deferred.make<void>();
       const slot = yield* Effect.gen(function* () {
@@ -502,10 +551,12 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
           }),
           Effect.provideService(RpcSerialization.RpcSerialization, serialization),
         );
-        const client = yield* RpcClient.make(RunnerRpcGroup).pipe(
-          Effect.provideService(RpcClient.Protocol, protocol),
+        const client = instrumentClient(
+          yield* RpcClient.make(RunnerRpcGroup).pipe(
+            Effect.provideService(RpcClient.Protocol, protocol),
+          ),
         );
-        const hello = yield* client["runner.hello"]({
+        const answer = yield* hello(slot, client, {
           protocolVersion: RUNNER_PROTOCOL_VERSION,
           serverBootId: `${serverBootId}:${slot.expiries}`,
           leaseMs: Duration.toMillis(LEASE),
@@ -518,10 +569,17 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
           // A drop before the answer does not always reach the pending call.
           Effect.raceFirst(Deferred.await(disconnected).pipe(Effect.as(Option.none()))),
         );
-        if (Option.isNone(hello)) return;
-        const info = hello.value;
+        if (Option.isNone(answer)) return;
+        const info = answer.value;
+        yield* Metric.update(
+          Metrics.runnerAttachDuration,
+          Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
+        );
         const current = yield* attach(slot, socketId, runner, client, info).pipe(locked);
-        if (current) yield* Deferred.await(disconnected);
+        if (current) {
+          yield* observePressure(slot, client).pipe(Effect.forkScoped);
+          yield* Deferred.await(disconnected);
+        }
       }).pipe(
         Effect.raceFirst(Deferred.await(close)),
         Effect.catchCause((cause) => Effect.logInfo("runner socket ended", { cause })),

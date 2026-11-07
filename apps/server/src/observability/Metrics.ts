@@ -120,6 +120,30 @@ export const secretRefsConsumedTotal = Metric.counter("t3_secret_refs_consumed_t
   description: "Secret refs tools tried to use, by result.",
 });
 
+export const runnerBytesTotal = Metric.counter("t3_runner_bytes_total", {
+  description:
+    "Payload bytes carried between the server and sandbox runners, by channel and direction (in is runner to server).",
+  attributes: { unit: "By" },
+}); // attrs: channel = process | pty | fs | forward | ops, direction = in | out
+
+export const runnerCallDuration = Metric.timer("t3_runner_call_duration", {
+  description:
+    "Round trip of runner calls, by method. pty.input and process.write approximate the socket RTT.",
+});
+
+export const runnerSourcePausedTotal = Metric.counter("t3_runner_source_paused_ms_total", {
+  description: "Time runner sources spent paused because buffers were full.",
+});
+
+export const runnerBufferHighWaterBytes = Metric.gauge("t3_runner_buffer_high_water_bytes", {
+  description: "Highest bytes buffered by one sandbox's runner since its boot.",
+  attributes: { unit: "By" },
+});
+
+export const runnerAttachDuration = Metric.timer("t3_runner_attach_duration", {
+  description: "From the socket upgrade to the answered runner.hello.",
+});
+
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));

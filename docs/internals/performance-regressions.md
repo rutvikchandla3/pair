@@ -143,3 +143,27 @@ the screen freezes, and back does nothing. Release builds retry forever; dev bui
 heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
 updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
 `thread-work-log.tsx` is the example.
+
+## Runner
+
+```bash
+vp run bench:runner [--image <ref>] [--skip-docker] [--quick]
+```
+
+It serves the real `RunnerRoute` and `RunnerHub` on loopback and prints one table: a local baseline
+(the host's own spawner and PTY), a `runner.mjs` subprocess, and a container of the sandbox image
+on the same Linux machine. It exits 1 when a Docker figure misses its budget from
+[03 section 9](../product/cloud/03-runner.md#9-performance) and
+[2.3](../product/cloud/03-runner.md#23-startup-budget):
+
+- Startup to the answered `runner.hello`, p50: 500 ms with the bundle mounted, 700 ms fetched.
+- Provider stdout added over the local baseline: p50 1 ms, p99 5 ms. Keystroke to echo p50: 2 ms.
+- PTY throughput at least 50 MB/s; server CPU at most 5 ms per MB of output.
+- Server heap and RSS at most 8 MiB per attached idle sandbox.
+
+Run it on an idle machine: the figures are CPU-bound, and other processes move them. `--image` must
+hold the current `pair-bootstrap.sh` (`vp run sandbox-image:build` refreshes `t3-sandbox:dev`); an
+older image never enrolls and the run waits out the lease. Hub-side series are
+`t3_runner_bytes_total`, `t3_runner_call_duration`, `t3_runner_source_paused_ms_total`,
+`t3_runner_buffer_high_water_bytes` and `t3_runner_attach_duration`; runner startup shows in
+`vp run profile:startup` as `runner.import.main`, `runner.dialed` and `runner.hello`.

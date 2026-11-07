@@ -156,11 +156,8 @@ const DEFAULT_RUNNER_LIMITS: RunnerLimits = {
 export interface RunnerPressure {
   readonly bufferedBytes: number;
   readonly pausedHandles: number;
-}
-
-export interface RunnerBufferStats extends RunnerPressure {
-  readonly highWater: number;
-  readonly pausedMs: number;
+  readonly highWaterBytes: number;
+  readonly pausedMsTotal: number;
 }
 
 /**
@@ -203,8 +200,17 @@ class Flow {
     if (all) for (const each of this.buffers) each.settle(this.sandboxPaused);
     else buffer?.settle(this.sandboxPaused);
     if (all || this.pausedHandles !== before) {
-      this.publish({ bufferedBytes: this.unsent, pausedHandles: this.pausedHandles });
+      this.publish(this.snapshot());
     }
+  }
+
+  snapshot(): RunnerPressure {
+    return {
+      bufferedBytes: this.unsent,
+      pausedHandles: this.pausedHandles,
+      highWaterBytes: this.highWater,
+      pausedMsTotal: Math.round(this.pausedMs()),
+    };
   }
 
   pausedMs(): number {
@@ -508,7 +514,7 @@ export class HandleTable extends Context.Service<
     readonly events: Stream.Stream<RunnerEvent>;
     /** The current pressure, then each change. */
     readonly pressure: Stream.Stream<RunnerPressure>;
-    readonly stats: Effect.Effect<RunnerBufferStats>;
+    readonly stats: Effect.Effect<RunnerPressure>;
   }
 >()("t3/sandbox/runner/HandleTable") {}
 
@@ -531,7 +537,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
       PubSub.publishUnsafe(events, { _tag: "resource.pressure", ...current });
     },
   );
-  PubSub.publishUnsafe(pressure, { bufferedBytes: 0, pausedHandles: 0 });
+  PubSub.publishUnsafe(pressure, flow.snapshot());
   const entries = new Map<RunnerHandleId, Entry>();
   const listeners = new Map<RunnerForwardId, Scope.Closeable>();
   // Accepts the server has not read or written yet; a resubscribed `events` repeats them.
@@ -1178,12 +1184,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
       return effect;
     }).pipe(Effect.ensuring(socketEnded));
 
-  const stats: HandleTable["Service"]["stats"] = Effect.sync(() => ({
-    bufferedBytes: flow.unsent,
-    highWater: flow.highWater,
-    pausedHandles: flow.pausedHandles,
-    pausedMs: flow.pausedMs(),
-  }));
+  const stats: HandleTable["Service"]["stats"] = Effect.sync(() => flow.snapshot());
 
   return HandleTable.of({
     hello,

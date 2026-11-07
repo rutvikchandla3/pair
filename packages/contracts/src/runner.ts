@@ -229,6 +229,10 @@ export const RunnerEvent = Schema.Union([
   Schema.TaggedStruct("resource.pressure", {
     bufferedBytes: NonNegativeInt,
     pausedHandles: NonNegativeInt,
+    /** Most unsent output the runner held at once since it booted. */
+    highWaterBytes: NonNegativeInt,
+    /** Time sources spent paused, summed over handles, since the runner booted. */
+    pausedMsTotal: NonNegativeInt,
   }),
   Schema.TaggedStruct("handle.exited", { handle: RunnerHandleId }),
 ]);

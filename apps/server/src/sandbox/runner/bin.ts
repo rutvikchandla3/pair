@@ -2,6 +2,7 @@
  * The runner bundle's entry (`runner.mjs`). In a sandbox `t3` is this file, so it also answers
  * the fast paths agents spawn there; the full CLI reaches `t3 runner` through `src/bin.ts`.
  */
+import { measureRunnerStartup } from "./startupMarks.ts";
 import { isEntrypoint } from "../../entrypoint.ts";
 
 /** Exit code for a Node outside the bundle's range: the image owns Node (05), not the runner. */
@@ -62,12 +63,14 @@ export const runRunnerCli = async (argv: ReadonlyArray<string>): Promise<void> =
       return;
     }
   }
+  const importStart = performance.now();
   const [NodeRuntime, Exit, Runtime, { runRunner }] = await Promise.all([
     import("@effect/platform-node/NodeRuntime"),
     import("effect/Exit"),
     import("effect/Runtime"),
     import("./main.ts"),
   ]);
+  measureRunnerStartup("runner.import.main", importStart);
   NodeRuntime.runMain(runRunner(), {
     teardown: (exit, onExit) =>
       Exit.isSuccess(exit) && typeof exit.value === "number"

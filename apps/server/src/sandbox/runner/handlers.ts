@@ -22,6 +22,7 @@ import { listenTarget } from "./forwards.ts";
 import * as ProcessRun from "./ProcessRun.ts";
 import { RunnerConfig } from "./RunnerConfig.ts";
 import { RunnerCredential } from "./RunnerSocketServer.ts";
+import { measureRunnerStartup } from "./startupMarks.ts";
 
 const WATCH_COALESCE = "50 millis";
 const WATCH_BATCH_MAX = 1_024;
@@ -91,6 +92,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
           return yield* runnerBadArgument("runner.hello", `unsupported architecture ${arch}`);
         }
         const { runnerBootId, handles } = yield* table.hello(input);
+        measureRunnerStartup("runner.hello");
         return {
           runnerBootId,
           runnerBuildId: config.runnerBuildId,

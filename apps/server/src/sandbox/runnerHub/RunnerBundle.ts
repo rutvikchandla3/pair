@@ -203,6 +203,8 @@ const make = Effect.fn("RunnerBundle.make")(function* (
     Option.isSome(ready)
       ? Effect.succeed(ready.value)
       : prepare.pipe(
+          // Only the uncached path: a source build is slow, a cached read is not.
+          Effect.withSpan("RunnerBundle.current"),
           Effect.tap((info) =>
             Effect.sync(() => {
               ready = Option.some(info);

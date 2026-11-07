@@ -9,6 +9,7 @@ import {
   type RunnerSignal,
 } from "@t3tools/contracts/runner";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
@@ -118,6 +119,15 @@ const isTransportFailure = (cause: Cause.Cause<unknown>) =>
       (reason.error as { readonly _tag?: unknown } | null)?._tag === "RpcClientError",
   );
 
+/** Marks the span of whoever spawned the handle (their `RunnerConnection.spawn`, if they made one). */
+const markFirstByte = (handle: RunnerHandleId, stream: RunnerOutputKey) =>
+  Effect.currentSpan.pipe(
+    Effect.zipWith(Clock.currentTimeNanos, (span, now) =>
+      span.event("first-byte", now, { handle, stream }),
+    ),
+    Effect.ignore,
+  );
+
 const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number): A =>
   (typeof data === "string" ? data.slice(offset) : data.subarray(offset)) as A;
 
@@ -211,6 +221,7 @@ export const makeRunnerConnection = (
   ): Stream.Stream<A, RunnerCallError> =>
     Stream.suspend(() => {
       let next = fromSeq;
+      let firstByte = false;
       const open = (client: RunnerClient) =>
         (stream === "pty"
           ? client["pty.output"]({ handle, fromSeq: next })
@@ -238,7 +249,9 @@ export const makeRunnerConnection = (
                   // A resubscribe can repeat what the dropped socket already delivered.
                   const data = sliceFrom(chunk.data, next - chunk.seq);
                   next = Math.max(next, chunk.seq + chunk.data.length);
-                  return Effect.succeed(data);
+                  if (firstByte || data.length === 0) return Effect.succeed(data);
+                  firstByte = true;
+                  return markFirstByte(handle, stream).pipe(Effect.as(data));
                 }),
                 Stream.filter((data) => data.length > 0),
                 Stream.catchCause((cause) =>
