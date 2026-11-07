@@ -23,7 +23,6 @@ pushed — if the container is gone, restart these from their spec):
 - 1.12 sessions on sandbox hosts (critical path)
 - 1.28 git credentials
 - 1.33 stopped reads
-- `perf-pty`: follow-up from 1.44 — coalesce runner PTY output (see 1.44's notes below)
 
 **Not started (16), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
@@ -515,9 +514,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - ThreadDeletion queues effect `sandbox.mirror.forget-thread` (replay-safe). `isSandboxEffectRequest`/`SandboxEffectRequest` now require `generation`. `sandbox.stop` calls `flush` before `driver.stop`. EffectWorker/SandboxEffects reach mirror/worker via `Effect.serviceOption`.
 - The worker only checks a ready ref exists in the mirror (not its oid); capture-time updateRefs corrects it. `ensure` refetches seed origin refs every sync.
 
+## perf-pty follow-up (landed)
+
+- runner HandleTable `OutputBuffer.push` wakes the reader on `setImmediate` for a lone write; pushes <0.5 ms apart wait up to 1 ms or 64 KiB. Applies to all buffers. Benchmark loopback runner gets `PAIR_AGENT_USER`.
+- Under load (4–8 on 4 CPUs): mean frame 5.4 → ~27 KiB, CPU/MB ~16 → ~9 ms, PTY 32 → 38 MB/s loopback, Docker 25 → 29 MB/s. Budgets (≥50 MB/s, ≤5 ms/MB) still miss; stdout p99 noisy under load. RE-RUN `vp run bench:runner` on an IDLE machine in the integrated pass before judging. Remaining hub CPU: per-frame ack writev + websocket receive.
+
 ## Open follow-ups and risks
 
-- `perf-pty` (in flight): 1.44's PTY throughput and server CPU per MB budgets fail; coalesce PTY output in the runner.
+- Runner PTY budgets (1.44) still miss after the perf-pty fix under load; re-benchmark on an idle machine and decide whether to batch acks in the hub.
 - 1.16 must warm `RunnerBundle.current` outside the 60 s sandbox effect (source-run servers build the bundle on first use), and add `sandbox.release-waiters` to the boot-timeout arm (1.19).
 - The runner's fs ops run as root: anything the server writes into a sandbox that the `t3` agent must modify needs chown (1.12, 1.16, 1.24, 1.34).
 - `DEFAULT_BASE_IMAGE_REPOSITORY` is `ghcr.io/rutvikchandla3/t3-sandbox` (1.23): maintainers to confirm the owner.
