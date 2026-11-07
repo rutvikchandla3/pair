@@ -10,27 +10,21 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (56 of 57):**
+**Landed on `feat/pair` (57 of 57):**
 
-- M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
-  by M0's plan: "0.10 may slip into 1.10").
-- M1 (45): 1.1–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
-  coalescing), the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
+- M0, complete (11): 0.1–0.9, 0.11, and 0.10 folded into 1.11 (allowed by M0's plan).
+- M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
+  the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**In flight (2026-11-07, second session):** 1.45, in `../pair-wt/1.45` on `wt/1.45`. Worktrees live in the container only: after a restart, recreate them
-from `feat/pair` and relaunch those PRs.
+**In flight:** nothing (2026-11-07, second session).
 
-**Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
-
-| Start when | PRs                             |
-| ---------- | ------------------------------- |
-| in flight  | 1.45 cloud guide                |
-| last       | the M0 and M1 integrated passes |
-
-Before the integrated pass: rebuild `t3-sandbox:dev` if the container restarted (built 2026-11-07 after 1.28), re-run
-`vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
-
-Critical path left: 1.45, then the integrated passes.
+**Left:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
+[M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass), which also collect the
+PR-level runtime evidence workers could not (dev servers, `test-t3-app`, `test-t3-mobile`, captures,
+transcripts; each PR's note below says what it owes). Before them: rebuild `t3-sandbox:dev` if the
+container restarted (built 2026-11-07 after 1.28), and re-run `vp run bench:runner` on an idle
+machine. Live evals for 1.42 need a model API key. Two security decisions are open (see the risks
+at the end).
 
 ## How to resume
 
@@ -673,6 +667,13 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Cloud threads: header label and Machine menu (Sleep/Discard live only there), list-row symbol + word with Wake/Retry, composer notices (failure, discarded, push, shared machine), Local-only model reason. Read-only Machines page in Settings (needs at least one driver); GitHub token row on your own Team row.
 - Mobile strips a remote prefix from a cloud base branch (the server branches from `origin/<base>`, so `origin/main` would be refused). Check web's picker can't send `origin/...` as `baseRefForCloud` in the integrated pass.
 - Owed in the integrated pass: `test-t3-mobile` on iOS and Android and captures.
+
+## 1.45 cloud guide (landed)
+
+- `docs/user/cloud.md` (new) follows the code, not the spec: only Claude and Codex run in cloud; Codex needs a Pair-connected ChatGPT account or `OPENAI_API_KEY`; caps are per driver plus 10 starts a minute; Cloud only on new threads; setup scripts may `sudo apt-get` (the `t3` user has passwordless sudo). Linked from docs/README.md; team.md, keybindings.md (`chat.newCloud`), pair-features.md, decisions.md and 08's `create_threads` rows updated.
+- 08 was reformatted whole by the pre-commit `vp fmt` (none of `docs/product/cloud/*.md` was formatted); layout only.
+- pair-features.md's entry has no PR links until the M1 work has GitHub PR numbers.
+- Owed in the integrated pass: walk the guide on a dev server with Docker.
 
 ## Open follow-ups and risks
 
