@@ -24,6 +24,8 @@ import {
   sandboxTags,
 } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
+import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import type { SandboxEffectRequest } from "./SandboxDecisions.ts";
 
@@ -55,6 +57,8 @@ const isSandboxEffectError = Schema.is(SandboxEffectError);
 const isComputeDriverError = Schema.is(ComputeDriverError);
 const isDriverNotConfigured = Schema.is(ComputeDriverRegistry.ComputeDriverNotConfiguredError);
 const isBootstrapUnavailable = Schema.is(SandboxBootstrapSource.SandboxBootstrapUnavailableError);
+const isRunnerBundleUnavailable = Schema.is(RunnerBundle.RunnerBundleUnavailableError);
+const isRunnerRouteError = Schema.is(RunnerEndpoint.RunnerRouteError);
 
 export const isSandboxEffectRequest = (
   request: OrchestrationEffectRequestV2,
@@ -107,7 +111,10 @@ const failureFor = (
   return {
     code,
     message:
-      isComputeDriverError(error.cause) || isBootstrapUnavailable(error.cause)
+      isComputeDriverError(error.cause) ||
+      isBootstrapUnavailable(error.cause) ||
+      isRunnerBundleUnavailable(error.cause) ||
+      isRunnerRouteError(error.cause)
         ? error.cause.message
         : error.message,
     retryable: error.retryable,
@@ -189,7 +196,11 @@ const make = Effect.gen(function* () {
           ),
         );
       const bootstrap = bootstraps
-        .forGeneration({ sandboxId: record.id, generation: record.generation })
+        .forGeneration({
+          sandboxId: record.id,
+          generation: record.generation,
+          driverId: record.driverId,
+        })
         .pipe(Effect.mapError(fail(false)));
 
       switch (request.type) {

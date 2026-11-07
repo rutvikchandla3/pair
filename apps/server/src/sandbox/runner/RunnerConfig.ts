@@ -33,8 +33,9 @@ export class RunnerConfigError extends Schema.TaggedError<RunnerConfigError>()(
 const DEFAULT_STATE_DIR = "/run/pair-runner";
 
 /**
- * Reads the bootstrap's values. The enrollment secret comes from `PAIR_RUNNER_ENROLL`, else the
- * driver-mounted `<stateDir>/enroll`, and both are deleted before anything dials.
+ * Reads the bootstrap's values. The enrollment secret comes from the bootstrap's
+ * `<stateDir>/enroll`, never the environment (`/proc/<pid>/environ`), and is deleted before
+ * anything dials.
  */
 export const readRunnerConfig = Effect.fn("RunnerConfig.read")(function* () {
   const env = yield* HostProcess.Environment;
@@ -49,15 +50,12 @@ export const readRunnerConfig = Effect.fn("RunnerConfig.read")(function* () {
   const runnerBuildId = yield* required("PAIR_RUNNER_BUILD");
   const stateDir = env.PAIR_RUNNER_DIR?.trim() || DEFAULT_STATE_DIR;
 
-  const fromEnv = env.PAIR_RUNNER_ENROLL?.trim();
-  delete env.PAIR_RUNNER_ENROLL;
   const enrollFile = path.join(stateDir, "enroll");
-  const fromFile = yield* fs.readFileString(enrollFile).pipe(
+  const secret = yield* fs.readFileString(enrollFile).pipe(
     Effect.map((text) => text.trim()),
     Effect.orElseSucceed(() => ""),
   );
   yield* fs.remove(enrollFile, { force: true }).pipe(Effect.ignore);
-  const secret = fromEnv || fromFile;
 
   return {
     url,

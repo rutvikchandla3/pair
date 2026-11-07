@@ -46,14 +46,14 @@ run as `dist/bin.mjs`. Never npm (decision 5): the `t3` package there downloads 
 ([npm-launcher/t3.mjs](../../../scripts/npm-launcher/t3.mjs), [cliRelease.ts](../../../packages/shared/src/cliRelease.ts),
 [release.yml](../../../.github/workflows/release.yml), [decisions](../decisions.md)). It contains:
 
-| File | Purpose |
-| --- | --- |
-| `runner.mjs` | One file: the runner, plus the `acp-mcp-bridge`, `acp-mcp-call` and `__managed-chatgpt-token` fast paths that agents in the sandbox spawn as `t3 ...` |
-| `node_modules/node-pty/` | The pinned node-pty with its `linux-x64` and `linux-arm64` prebuilds. The npm tarball for `1.2.0-beta.15` ships both ([source](#sources)); only the release archive prunes them |
+| File                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runner.mjs`                | One file: the runner, plus the `acp-mcp-bridge`, `acp-mcp-call` and `__managed-chatgpt-token` fast paths that agents in the sandbox spawn as `t3 ...`                                                                                                                                                                                                                                                                                                                                                                        |
+| `node_modules/node-pty/`    | The pinned node-pty with its `linux-x64` and `linux-arm64` prebuilds. The npm tarball for `1.2.0-beta.15` ships both ([source](#sources)); only the release archive prunes them                                                                                                                                                                                                                                                                                                                                              |
 | `claude-history-worker.mjs` | The worker `runClaudeWorker` spawns for `forkSession` when the host is not a single executable ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)). It must run where `~/.claude` lives, in the sandbox. `__claude-history` is not a `bin.ts` fast path, so `runner.mjs` cannot stand in. Doc 02 points the spawn at this file. Built unsplit with `runner.mjs`: today's build splits chunks, so `dist/claude-history-worker.mjs` imports shared chunks and cannot be copied alone |
-| Claude Agent SDK | `@anthropic-ai/claude-agent-sdk`'s session functions, bundled into the worker as `vp pack` already does (not an external) |
-| `t3` | A POSIX shim: `exec node "$(dirname "$0")/runner.mjs" "$@"` |
-| `MANIFEST.json` | `runnerBuildId` (sha256 of the tree), `protocolVersion`, Node range |
+| Claude Agent SDK            | `@anthropic-ai/claude-agent-sdk`'s session functions, bundled into the worker as `vp pack` already does (not an external)                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `t3`                        | A POSIX shim: `exec node "$(dirname "$0")/runner.mjs" "$@"`                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `MANIFEST.json`             | `runnerBuildId` (sha256 of the tree), `protocolVersion`, Node range                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 The full CLI also gets `t3 runner`, for tests, in the [bin.ts](../../../apps/server/src/bin.ts) fast
 path that skips the [binCli.ts](../../../apps/server/src/binCli.ts) graph, as `acp-mcp-bridge` does.
@@ -89,7 +89,9 @@ The compute driver ([04 Sandbox lifecycle](./04-sandbox-lifecycle.md)) starts th
 bootstrap script as its command and four values: `PAIR_RUNNER_URL`, `PAIR_SANDBOX_ID`,
 `PAIR_RUNNER_BUILD` (the `runnerBuildId`) and `PAIR_RUNNER_ENROLL` (the enrollment secret). Where a driver can
 mount a file instead of setting an environment variable (Docker can), it does, since vendor APIs and
-`docker inspect` show environment variables.
+`docker inspect` show environment variables. The bootstrap hands the secret to the runner as the
+file `<stateDir>/enroll`, never through the runner's environment, which `/proc/<pid>/environ` keeps
+readable for the life of the process.
 
 ```mermaid
 sequenceDiagram
@@ -162,32 +164,32 @@ and sends its token in an `Authorization` upgrade header, so it needs no WebSock
   which [outboundHttp.ts](../../../apps/server/src/outboundHttp.ts) preserves. Whether `ws` follows
   it is unverified; if not, M5 adds an explicit agent.
 
-| Timer | Value | Owner |
-| --- | --- | --- |
-| Heartbeat ping | 15 s | RPC client on the server (`pingInterval`) |
-| Dead socket | 45 s without any frame | Both ends: `pingTimeout` on the server; the runner keeps its own frame timer, since `RpcServer` has none |
-| Redial backoff | 250 ms, doubling, cap 10 s, full jitter | Runner |
-| Lease (processes survive a drop) | 120 s, per-driver setting | `RunnerHub`, mirrored by the runner |
-| Drain grace (SIGTERM to SIGKILL) | 10 s | Runner |
-| Enrollment secret | 15 min, one use | `RunnerGrants` |
-| Token rotation | Every boot; also every 24 h from M2 | `RunnerGrants` |
-| Watch coalescing | 50 ms | Runner |
-| Status debounce to clients | 2 s | `RunnerHub` |
+| Timer                            | Value                                   | Owner                                                                                                    |
+| -------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Heartbeat ping                   | 15 s                                    | RPC client on the server (`pingInterval`)                                                                |
+| Dead socket                      | 45 s without any frame                  | Both ends: `pingTimeout` on the server; the runner keeps its own frame timer, since `RpcServer` has none |
+| Redial backoff                   | 250 ms, doubling, cap 10 s, full jitter | Runner                                                                                                   |
+| Lease (processes survive a drop) | 120 s, per-driver setting               | `RunnerHub`, mirrored by the runner                                                                      |
+| Drain grace (SIGTERM to SIGKILL) | 10 s                                    | Runner                                                                                                   |
+| Enrollment secret                | 15 min, one use                         | `RunnerGrants`                                                                                           |
+| Token rotation                   | Every boot; also every 24 h from M2     | `RunnerGrants`                                                                                           |
+| Watch coalescing                 | 50 ms                                   | Runner                                                                                                   |
+| Status debounce to clients       | 2 s                                     | `RunnerHub`                                                                                              |
 
 ### 3.2 What URL the runner dials
 
 The server picks the URL and passes it to the driver; the runner never guesses. An admin can
 override it per driver (`runnerUrl`) for reverse proxies and split DNS.
 
-| Server reachability | Driver | URL the runner dials |
-| --- | --- | --- |
-| Any | Docker on the server's Linux machine | `unix:` path to a runner-only socket in the state directory, bind-mounted into the container. Works whatever the server's bind host is, and exposes no port |
-| Any | Docker Desktop (macOS; Windows team servers are not supported in M1) | `http://host.docker.internal:<port>`. Docker Desktop resolves the name; on Linux it needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a desktop-mode server bound to `127.0.0.1` ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
-| LAN, tailnet or public | Docker on another host (`DOCKER_HOST`) | The server's address as that host's containers reach it, set by the admin. Same as BYOC |
-| Public HTTPS origin | Hosted, BYOC | `wss://<origin>/runner/v1/connect` |
-| T3 Connect only | Hosted, BYOC | `wss://<managed tunnel hostname>/runner/v1/connect`. The hostname comes from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). The relay never sees traffic; the tunnel carries it to the server's loopback origin like any client's |
-| Tailscale only | Hosted | Not supported. A vendor's sandbox is not on the tailnet. Settings says so and suggests T3 Connect |
-| Tailscale only | BYOC in a VPC with a route to the server | The server's private address, set by the admin |
+| Server reachability    | Driver                                                               | URL the runner dials                                                                                                                                                                                                                                                                                             |
+| ---------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Any                    | Docker on the server's Linux machine                                 | `unix:` path to a runner-only socket in the state directory, bind-mounted into the container. Works whatever the server's bind host is, and exposes no port                                                                                                                                                      |
+| Any                    | Docker Desktop (macOS; Windows team servers are not supported in M1) | `http://host.docker.internal:<port>`. Docker Desktop resolves the name; on Linux it needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a desktop-mode server bound to `127.0.0.1` ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
+| LAN, tailnet or public | Docker on another host (`DOCKER_HOST`)                               | The server's address as that host's containers reach it, set by the admin. Same as BYOC                                                                                                                                                                                                                          |
+| Public HTTPS origin    | Hosted, BYOC                                                         | `wss://<origin>/runner/v1/connect`                                                                                                                                                                                                                                                                               |
+| T3 Connect only        | Hosted, BYOC                                                         | `wss://<managed tunnel hostname>/runner/v1/connect`. The hostname comes from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). The relay never sees traffic; the tunnel carries it to the server's loopback origin like any client's                                        |
+| Tailscale only         | Hosted                                                               | Not supported. A vendor's sandbox is not on the tailnet. Settings says so and suggests T3 Connect                                                                                                                                                                                                                |
+| Tailscale only         | BYOC in a VPC with a route to the server                             | The server's private address, set by the admin                                                                                                                                                                                                                                                                   |
 
 ## 4. Protocol
 
@@ -215,29 +217,29 @@ pressure) is an element of a stream the server subscribed to: one RPC client, on
 
 ### 4.2 Catalog
 
-| Channel | Method | Kind | Notes |
-| --- | --- | --- | --- |
-| Control | `runner.hello` | call | First call on every socket. Server sends `serverBootId`, lease, limits and (on enrollment) the sandbox token; runner answers `RunnerInfo` with `runnerBootId` and live handles |
-| | `runner.events` | stream | Forward accepts, listening-port changes, resource pressure, handle exits |
-| | `runner.drain` | call | Before sleep or destroy: stop accepting work, kill groups after a grace, flush |
-| Process | `process.spawn` | call | Command, args, cwd, env, uid, stdio spec (extra fds allowed), process group, `forceKillAfterMs` (escalation runs on the runner, so a slow socket cannot delay it). Returns a handle |
-| | `process.output` | stream | One fd from `fromSeq`; bytes |
-| | `process.write` | call | One fd, `seq`, bytes. One in flight per fd |
-| | `process.closeInput` | call | EOF on one fd |
-| | `process.signal` | call | Signal the process or its group |
-| | `process.wait` | call | Resolves with exit code or signal |
-| | `process.run` | call, or stream with `stream: true` | Doc 02's exec frame: command, stdin and close in one request, output caps and timeout as in [ProcessRunner](../../../apps/server/src/processRunner.ts). One round trip per git call |
-| PTY | `pty.open` | call | Shell, args, cwd, env, cols, rows: [PtyAdapter](../../../packages/shared/src/PtyAdapter.ts)'s `PtySpawnInput` |
-| | `pty.output` | stream | UTF-8 text from `fromSeq`; decoded on the runner so chunks never split a code point |
-| | `pty.input`, `pty.resize`, `pty.signal` | call | Sequence-numbered per handle |
-| | `pty.wait` | call | `PtyExitEvent` |
-| Files | `fs.stat`, `fs.readDirectory`, `fs.readFile`, `fs.writeFile`, `fs.makeDirectory`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.realPath`, `fs.readLink`, `fs.symlink`, `fs.chmod`, `fs.makeTempDirectory` | call | The subset of Effect's `FileSystem` ([FileSystem.ts](../../../.repos/effect/packages/effect/src/FileSystem.ts)) that doc 02 needs. `readFile` takes an offset and a byte cap; `writeFile` is atomic (temp file and rename) when asked |
-| | `fs.readStream`, `fs.writeStream` | stream, calls | Files over 1 MiB in 64 KiB chunks |
-| Watch | `fs.watch` | stream | Path, recursive. Events coalesced on the runner |
-| TCP | `tcp.connect` | call | Doc 02's `ports.connect`. Loopback ports inside the sandbox only (M2) |
-| | `tcp.read`, `tcp.write`, `tcp.close` | stream, calls | Same seq and window rules as process fds |
-| Forwards | `forward.open` | call, scoped | Name and an opaque `ownerKey`; returns the in-sandbox address. Closing the scope closes the listener. Accepts arrive in `runner.events` as `forward.accepted { forwardId, connectionId }`; the server then uses `tcp.read`/`tcp.write` (M1) |
-| Coarse | `ops.<name>` | call or stream | The fixed list in section 4.6. Doc 02 owns the schemas |
+| Channel  | Method                                                                                                                                                                                                | Kind                                | Notes                                                                                                                                                                                                                                       |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Control  | `runner.hello`                                                                                                                                                                                        | call                                | First call on every socket. Server sends `serverBootId`, lease, limits and (on enrollment) the sandbox token; runner answers `RunnerInfo` with `runnerBootId` and live handles                                                              |
+|          | `runner.events`                                                                                                                                                                                       | stream                              | Forward accepts, listening-port changes, resource pressure, handle exits                                                                                                                                                                    |
+|          | `runner.drain`                                                                                                                                                                                        | call                                | Before sleep or destroy: stop accepting work, kill groups after a grace, flush                                                                                                                                                              |
+| Process  | `process.spawn`                                                                                                                                                                                       | call                                | Command, args, cwd, env, uid, stdio spec (extra fds allowed), process group, `forceKillAfterMs` (escalation runs on the runner, so a slow socket cannot delay it). Returns a handle                                                         |
+|          | `process.output`                                                                                                                                                                                      | stream                              | One fd from `fromSeq`; bytes                                                                                                                                                                                                                |
+|          | `process.write`                                                                                                                                                                                       | call                                | One fd, `seq`, bytes. One in flight per fd                                                                                                                                                                                                  |
+|          | `process.closeInput`                                                                                                                                                                                  | call                                | EOF on one fd                                                                                                                                                                                                                               |
+|          | `process.signal`                                                                                                                                                                                      | call                                | Signal the process or its group                                                                                                                                                                                                             |
+|          | `process.wait`                                                                                                                                                                                        | call                                | Resolves with exit code or signal                                                                                                                                                                                                           |
+|          | `process.run`                                                                                                                                                                                         | call, or stream with `stream: true` | Doc 02's exec frame: command, stdin and close in one request, output caps and timeout as in [ProcessRunner](../../../apps/server/src/processRunner.ts). One round trip per git call                                                         |
+| PTY      | `pty.open`                                                                                                                                                                                            | call                                | Shell, args, cwd, env, cols, rows: [PtyAdapter](../../../packages/shared/src/PtyAdapter.ts)'s `PtySpawnInput`                                                                                                                               |
+|          | `pty.output`                                                                                                                                                                                          | stream                              | UTF-8 text from `fromSeq`; decoded on the runner so chunks never split a code point                                                                                                                                                         |
+|          | `pty.input`, `pty.resize`, `pty.signal`                                                                                                                                                               | call                                | Sequence-numbered per handle                                                                                                                                                                                                                |
+|          | `pty.wait`                                                                                                                                                                                            | call                                | `PtyExitEvent`                                                                                                                                                                                                                              |
+| Files    | `fs.stat`, `fs.readDirectory`, `fs.readFile`, `fs.writeFile`, `fs.makeDirectory`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.realPath`, `fs.readLink`, `fs.symlink`, `fs.chmod`, `fs.makeTempDirectory` | call                                | The subset of Effect's `FileSystem` ([FileSystem.ts](../../../.repos/effect/packages/effect/src/FileSystem.ts)) that doc 02 needs. `readFile` takes an offset and a byte cap; `writeFile` is atomic (temp file and rename) when asked       |
+|          | `fs.readStream`, `fs.writeStream`                                                                                                                                                                     | stream, calls                       | Files over 1 MiB in 64 KiB chunks                                                                                                                                                                                                           |
+| Watch    | `fs.watch`                                                                                                                                                                                            | stream                              | Path, recursive. Events coalesced on the runner                                                                                                                                                                                             |
+| TCP      | `tcp.connect`                                                                                                                                                                                         | call                                | Doc 02's `ports.connect`. Loopback ports inside the sandbox only (M2)                                                                                                                                                                       |
+|          | `tcp.read`, `tcp.write`, `tcp.close`                                                                                                                                                                  | stream, calls                       | Same seq and window rules as process fds                                                                                                                                                                                                    |
+| Forwards | `forward.open`                                                                                                                                                                                        | call, scoped                        | Name and an opaque `ownerKey`; returns the in-sandbox address. Closing the scope closes the listener. Accepts arrive in `runner.events` as `forward.accepted { forwardId, connectionId }`; the server then uses `tcp.read`/`tcp.write` (M1) |
+| Coarse   | `ops.<name>`                                                                                                                                                                                          | call or stream                      | The fixed list in section 4.6. Doc 02 owns the schemas                                                                                                                                                                                      |
 
 `process.spawn` mirrors Effect's `ChildProcessSpawner` handle, extra fds included
 ([ChildProcessSpawner.ts](../../../.repos/effect/packages/effect/src/process/ChildProcessSpawner.ts)):
@@ -259,7 +261,11 @@ export const RunnerHelloInput = Schema.Struct({
   protocolVersion: Schema.Literal(RUNNER_PROTOCOL_VERSION),
   serverBootId: Schema.String,
   leaseMs: Schema.Int,
-  limits: Schema.Struct({ windowBytes: Schema.Int, handleBufferBytes: Schema.Int, sandboxBufferBytes: Schema.Int }),
+  limits: Schema.Struct({
+    windowBytes: Schema.Int,
+    handleBufferBytes: Schema.Int,
+    sandboxBufferBytes: Schema.Int,
+  }),
   sandboxToken: Schema.optional(Schema.Redacted(Schema.String)), // only on enrollment
 });
 
@@ -270,7 +276,9 @@ export const RunnerInfo = Schema.Struct({
   cpus: Schema.Int,
   memoryBytes: Schema.Int,
   /** Handles and forwards alive from this server boot, with each stream's next seq. */
-  handles: Schema.Array(Schema.Struct({ handle: RunnerHandleId, next: Schema.Record(Schema.String, StreamSeq) })),
+  handles: Schema.Array(
+    Schema.Struct({ handle: RunnerHandleId, next: Schema.Record(Schema.String, StreamSeq) }),
+  ),
 });
 
 export class RunnerLostError extends Schema.TaggedError<RunnerLostError>()("RunnerLostError", {
@@ -285,13 +293,20 @@ export const RunnerProcessOutputRpc = Rpc.make("process.output", {
 });
 
 export const RunnerProcessWriteRpc = Rpc.make("process.write", {
-  payload: Schema.Struct({ handle: RunnerHandleId, fd: Schema.Int, seq: StreamSeq, data: Schema.Uint8Array }),
+  payload: Schema.Struct({
+    handle: RunnerHandleId,
+    fd: Schema.Int,
+    seq: StreamSeq,
+    data: Schema.Uint8Array,
+  }),
   success: Schema.Struct({ appliedThrough: StreamSeq }),
   error: RunnerLostError,
 });
 
 // process.spawn takes the whole environment as `env`; a child inherits nothing from the runner.
-export class RunnerRpcGroup extends RpcGroup.make(/* hello, events, process.*, pty.*, fs.*, tcp.*, ops.* */) {}
+export class RunnerRpcGroup extends RpcGroup.make(
+  /* hello, events, process.*, pty.*, fs.*, tcp.*, ops.* */
+) {}
 ```
 
 A spawned process inherits nothing from the runner, so the sandbox token stays out of agents and
@@ -337,12 +352,12 @@ There is no order across handles, as with local pipes.
 Decision 2 fixes the M1 list. Each is an `ops.<name>` RPC merged into `RunnerRpcGroup`, with payload
 and result schemas from doc 02 in `packages/contracts`:
 
-| Operation | Existing server code it runs | Kind |
-| --- | --- | --- |
-| `search.entries`, `search.contents`, `entries.browse` | [WorkspaceSearchIndex.ts](../../../apps/server/src/workspace/WorkspaceSearchIndex.ts) and `WorkspaceEntries` | call |
-| `processes.table` | The terminal manager's process-table read ([Manager.ts](../../../apps/server/src/terminal/Manager.ts)) | stream, pushed on change |
-| `ports.listeners` | [PortScanner.ts](../../../apps/server/src/preview/PortScanner.ts)'s listener scan | stream, pushed on change |
-| `checkpoint.capture` | The capture path of [CheckpointStore.ts](../../../apps/server/src/checkpointing/CheckpointStore.ts) | call |
+| Operation                                             | Existing server code it runs                                                                                 | Kind                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| `search.entries`, `search.contents`, `entries.browse` | [WorkspaceSearchIndex.ts](../../../apps/server/src/workspace/WorkspaceSearchIndex.ts) and `WorkspaceEntries` | call                     |
+| `processes.table`                                     | The terminal manager's process-table read ([Manager.ts](../../../apps/server/src/terminal/Manager.ts))       | stream, pushed on change |
+| `ports.listeners`                                     | [PortScanner.ts](../../../apps/server/src/preview/PortScanner.ts)'s listener scan                            | stream, pushed on change |
+| `checkpoint.capture`                                  | The capture path of [CheckpointStore.ts](../../../apps/server/src/checkpointing/CheckpointStore.ts)          | call                     |
 
 The runner is the same build, so a coarse operation is never a second implementation. At start the
 runner builds a small layer: doc 02's `LocalWorkspaceHost`, which is correct inside the sandbox
@@ -362,13 +377,13 @@ group behind a small watcher that holds a pipe from the runner, the same trick a
 `CLAUDE_GROUP_WATCH_SCRIPT`: if the runner dies, the pipe closes and the watcher kills the group. So
 nothing outlives the runner that owns it.
 
-| Event | Processes | Server sees | Recovery |
-| --- | --- | --- | --- |
-| Socket drops, server and runner stay up | Keep running. Output fills the handle buffers, then pipes pause | Streams stall; calls wait for the runner, up to the lease | Runner redials with backoff. `runner.hello` returns live handles and their next seq; `RunnerHub` resubscribes each stream from the server's last received seq and resends unacknowledged writes |
-| No reconnect within the lease | Runner kills every group | Every handle fails with `RunnerLostError("lease-expired")` | Adapters take their existing crashed-process path. `RunnerHub` dispatches `sandbox.runner.lost` |
-| Server restarts | Runner redials and sees a new `serverBootId`; it kills every group of the old boot before answering `hello` | No old handles exist | Startup recovery runs as for local agents: [ProviderRuntimeRecoveryService.ts](../../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts) terminalizes runs and retires effects, and [RestartContinuation.ts](../../../apps/server/src/orchestration-v2/RestartContinuation.ts) continues interrupted turns. Terminals restart and restore history from the server's store |
-| Runner restarts (crash, OOM) | Watchers kill every group | `hello` with a new `runnerBootId` and no handles | `RunnerHub` fails the old handles with `runner-restarted` |
-| `runner.drain` (sleep, destroy) | SIGTERM, then SIGKILL after the drain grace | Handles fail with `drained` | Doc 04 sleeps only an idle sandbox |
+| Event                                   | Processes                                                                                                   | Server sees                                                | Recovery                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Socket drops, server and runner stay up | Keep running. Output fills the handle buffers, then pipes pause                                             | Streams stall; calls wait for the runner, up to the lease  | Runner redials with backoff. `runner.hello` returns live handles and their next seq; `RunnerHub` resubscribes each stream from the server's last received seq and resends unacknowledged writes                                                                                                                                                                                              |
+| No reconnect within the lease           | Runner kills every group                                                                                    | Every handle fails with `RunnerLostError("lease-expired")` | Adapters take their existing crashed-process path. `RunnerHub` dispatches `sandbox.runner.lost`                                                                                                                                                                                                                                                                                              |
+| Server restarts                         | Runner redials and sees a new `serverBootId`; it kills every group of the old boot before answering `hello` | No old handles exist                                       | Startup recovery runs as for local agents: [ProviderRuntimeRecoveryService.ts](../../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts) terminalizes runs and retires effects, and [RestartContinuation.ts](../../../apps/server/src/orchestration-v2/RestartContinuation.ts) continues interrupted turns. Terminals restart and restore history from the server's store |
+| Runner restarts (crash, OOM)            | Watchers kill every group                                                                                   | `hello` with a new `runnerBootId` and no handles           | `RunnerHub` fails the old handles with `runner-restarted`                                                                                                                                                                                                                                                                                                                                    |
+| `runner.drain` (sleep, destroy)         | SIGTERM, then SIGKILL after the drain grace                                                                 | Handles fail with `drained`                                | Doc 04 sleeps only an idle sandbox                                                                                                                                                                                                                                                                                                                                                           |
 
 A stream can never be asked to resume behind its buffer, because the runner pauses sources instead
 of evicting. If it happens anyway, that is a bug and the handle fails with `RunnerLostError`.
@@ -390,13 +405,13 @@ are the risk; M1 replay tests run Claude and Codex turns through a 60 s drop (in
 
 ## 6. Auth and token lifecycle
 
-| Credential | Who holds it | Lifetime | Reaches | Stored on the server as |
-| --- | --- | --- | --- | --- |
-| Enrollment secret | Driver, then bootstrap | One use, short TTL | `/runner/v1/bundle`, first `/runner/v1/connect` | SHA-256 hash in `sandbox_runner_grants` |
-| Sandbox token | Runner memory and `/run/pair-runner/token` | One boot of one sandbox | `/runner/v1/*` for that sandbox only | SHA-256 hash in `sandbox_runner_grants` |
-| Auth session | Clients | Days, renewable | `/api`, `/ws` by scope | `SessionStore` ([SessionStore.ts](../../../apps/server/src/auth/SessionStore.ts)) |
-| Member API token | Outside agents | 30–365 days | `/mcp` only | `SessionStore`, subject `mcp-client` ([EnvironmentAuth.ts](../../../apps/server/src/auth/EnvironmentAuth.ts)) |
-| MCP thread token | Agent processes | One provider session, in memory | `/mcp` as that thread | In memory ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts)) |
+| Credential        | Who holds it                               | Lifetime                        | Reaches                                         | Stored on the server as                                                                                       |
+| ----------------- | ------------------------------------------ | ------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Enrollment secret | Driver, then bootstrap                     | One use, short TTL              | `/runner/v1/bundle`, first `/runner/v1/connect` | SHA-256 hash in `sandbox_runner_grants`                                                                       |
+| Sandbox token     | Runner memory and `/run/pair-runner/token` | One boot of one sandbox         | `/runner/v1/*` for that sandbox only            | SHA-256 hash in `sandbox_runner_grants`                                                                       |
+| Auth session      | Clients                                    | Days, renewable                 | `/api`, `/ws` by scope                          | `SessionStore` ([SessionStore.ts](../../../apps/server/src/auth/SessionStore.ts))                             |
+| Member API token  | Outside agents                             | 30–365 days                     | `/mcp` only                                     | `SessionStore`, subject `mcp-client` ([EnvironmentAuth.ts](../../../apps/server/src/auth/EnvironmentAuth.ts)) |
+| MCP thread token  | Agent processes                            | One provider session, in memory | `/mcp` as that thread                           | In memory ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts))                       |
 
 Sandbox tokens never enter `SessionStore`, like guest tokens
 ([GuestShareService.ts](../../../apps/server/src/guest/GuestShareService.ts)), so no RPC, WebSocket
@@ -441,9 +456,14 @@ are one route in `server.ts`, one `bin.ts` fast-path branch and one `vp pack` en
 export class RunnerHub extends Context.Service<
   RunnerHub,
   {
-    readonly mintEnrollment: (sandboxId: SandboxId, bootGeneration: number) => Effect.Effect<Redacted.Redacted<string>, RunnerGrantError>;
+    readonly mintEnrollment: (
+      sandboxId: SandboxId,
+      bootGeneration: number,
+    ) => Effect.Effect<Redacted.Redacted<string>, RunnerGrantError>;
     /** Waits up to the lease for a connected runner. */
-    readonly connection: (sandboxId: SandboxId) => Effect.Effect<RunnerConnection, RunnerUnavailableError | RunnerLostError>;
+    readonly connection: (
+      sandboxId: SandboxId,
+    ) => Effect.Effect<RunnerConnection, RunnerUnavailableError | RunnerLostError>;
     readonly status: (sandboxId: SandboxId) => Stream.Stream<RunnerConnectionStatus>;
     readonly revoke: (sandboxId: SandboxId) => Effect.Effect<void>;
   }
@@ -451,12 +471,21 @@ export class RunnerHub extends Context.Service<
 
 /** The typed RPC client plus resumable wrappers; doc 02's SandboxWorkspaceHost builds on this. */
 export interface RunnerConnection {
-  readonly spawn: (input: ProcessSpawnInput) => Effect.Effect<RunnerProcess, RunnerCallError, Scope.Scope>;
-  readonly openPty: (input: PtySpawnInput) => Effect.Effect<RunnerPty, RunnerCallError, Scope.Scope>;
+  readonly spawn: (
+    input: ProcessSpawnInput,
+  ) => Effect.Effect<RunnerProcess, RunnerCallError, Scope.Scope>;
+  readonly openPty: (
+    input: PtySpawnInput,
+  ) => Effect.Effect<RunnerPty, RunnerCallError, Scope.Scope>;
   readonly fs: RunnerFileSystem; // maps onto Effect's FileSystem subset
   readonly watch: (path: string, recursive: boolean) => Stream.Stream<WatchEvent, RunnerCallError>;
-  readonly connectTcp: (port: number) => Effect.Effect<RunnerTcpConnection, RunnerCallError, Scope.Scope>;
-  readonly openForward: (name: ForwardName, ownerKey: string) => Effect.Effect<string, RunnerCallError, Scope.Scope>;
+  readonly connectTcp: (
+    port: number,
+  ) => Effect.Effect<RunnerTcpConnection, RunnerCallError, Scope.Scope>;
+  readonly openForward: (
+    name: ForwardName,
+    ownerKey: string,
+  ) => Effect.Effect<string, RunnerCallError, Scope.Scope>;
   readonly ops: CoarseOperations; // doc 02's typed list
 }
 ```
@@ -483,14 +512,14 @@ while the sandbox boots; no effect holds a socket across commands. Tests drain
 
 What agents in a sandbox actually call on the server today:
 
-| Callback | How it works locally | Needs a route from the sandbox? |
-| --- | --- | --- |
-| Claude and Codex hooks | Claude SDK callbacks over the CLI's stdio ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)); Codex `hook/completed` over app-server stdio ([CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts)) | No. They ride `process.output` and `process.write` |
-| MCP tools | HTTP to `/mcp` at the server's listen address (`127.0.0.1` when it listens on all interfaces) with a per-provider-session bearer token ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts)) | Yes |
-| ACP agents' MCP | The agent spawns `t3 acp-mcp-bridge`, which calls the same HTTP endpoint ([AcpMcpStdioBridge.ts](../../../apps/server/src/mcp/AcpMcpStdioBridge.ts)) | Yes, plus `t3` on the sandbox's `PATH` (the bundle's shim) |
-| Codex managed ChatGPT token | Codex's `auth.command` runs the server's own CLI as `__managed-chatgpt-token <socket> <instance> <environment> <profile key>`, which asks a local IPC socket ([managedChatGptToken.ts](../../../apps/server/src/cli/managedChatGptToken.ts), [CodexManagedTokenProtocol.ts](../../../apps/server/src/provider/CodexManagedTokenProtocol.ts)) | Yes, if doc 06 keeps this path |
-| Git credential helper | Doc 06 | Yes |
-| [AgentAwarenessRelay.ts](../../../apps/server/src/relay/AgentAwarenessRelay.ts), [HeldHooksWaker.ts](../../../apps/server/src/relay/HeldHooksWaker.ts) | Server to T3 Connect relay | No; unchanged on the server |
+| Callback                                                                                                                                               | How it works locally                                                                                                                                                                                                                                                                                                                         | Needs a route from the sandbox?                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Claude and Codex hooks                                                                                                                                 | Claude SDK callbacks over the CLI's stdio ([ClaudeAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts)); Codex `hook/completed` over app-server stdio ([CodexAdapterV2.ts](../../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts))                                                            | No. They ride `process.output` and `process.write`         |
+| MCP tools                                                                                                                                              | HTTP to `/mcp` at the server's listen address (`127.0.0.1` when it listens on all interfaces) with a per-provider-session bearer token ([McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts))                                                                                                                         | Yes                                                        |
+| ACP agents' MCP                                                                                                                                        | The agent spawns `t3 acp-mcp-bridge`, which calls the same HTTP endpoint ([AcpMcpStdioBridge.ts](../../../apps/server/src/mcp/AcpMcpStdioBridge.ts))                                                                                                                                                                                         | Yes, plus `t3` on the sandbox's `PATH` (the bundle's shim) |
+| Codex managed ChatGPT token                                                                                                                            | Codex's `auth.command` runs the server's own CLI as `__managed-chatgpt-token <socket> <instance> <environment> <profile key>`, which asks a local IPC socket ([managedChatGptToken.ts](../../../apps/server/src/cli/managedChatGptToken.ts), [CodexManagedTokenProtocol.ts](../../../apps/server/src/provider/CodexManagedTokenProtocol.ts)) | Yes, if doc 06 keeps this path                             |
+| Git credential helper                                                                                                                                  | Doc 06                                                                                                                                                                                                                                                                                                                                       | Yes                                                        |
+| [AgentAwarenessRelay.ts](../../../apps/server/src/relay/AgentAwarenessRelay.ts), [HeldHooksWaker.ts](../../../apps/server/src/relay/HeldHooksWaker.ts) | Server to T3 Connect relay                                                                                                                                                                                                                                                                                                                   | No; unchanged on the server                                |
 
 So "hooks" need nothing; MCP, the Codex token broker and git credentials need **named forwards**.
 Doc 02's `exposeServerEndpoint` calls `forward.open` within the provider session's scope; the runner
@@ -499,11 +528,11 @@ each accepted connection to the target fixed for that name, and remembers the `o
 provider session) so a target can check who opened it. A sandbox shared by several threads simply
 has several forwards; when a session ends, its forward closes:
 
-| Forward | In the sandbox | Server-side target |
-| --- | --- | --- |
-| `mcp` | `127.0.0.1:<auto>` | The server's own HTTP listener, at the address `McpSessionRegistry` uses today. An HTTP proxy, not a splice: `/mcp` also accepts member API tokens and cannot tell a forwarded connection from a local one, so `RunnerForwards` passes only a bearer that `McpSessionRegistry.resolve` maps to a thread token whose `providerSessionId` is the forward's `ownerKey` (doc 06) |
-| `codex-token` | Unix socket under `/run/pair-runner/` | The Codex managed token broker's socket |
-| `git-credential` | Unix socket under `/run/pair-runner/` | The git credential service doc 06 defines (M1) |
+| Forward          | In the sandbox                        | Server-side target                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp`            | `127.0.0.1:<auto>`                    | The server's own HTTP listener, at the address `McpSessionRegistry` uses today. An HTTP proxy, not a splice: `/mcp` also accepts member API tokens and cannot tell a forwarded connection from a local one, so `RunnerForwards` passes only a bearer that `McpSessionRegistry.resolve` maps to a thread token whose `providerSessionId` is the forward's `ownerKey` (doc 06) |
+| `codex-token`    | Unix socket under `/run/pair-runner/` | The Codex managed token broker's socket                                                                                                                                                                                                                                                                                                                                      |
+| `git-credential` | Unix socket under `/run/pair-runner/` | The git credential service doc 06 defines (M1)                                                                                                                                                                                                                                                                                                                               |
 
 The sandbox cannot name a target, so a forward is not a path into the server's network. Reaching
 the loopback listener grants nothing by itself: the auth policy depends on the configured bind host,
@@ -518,13 +547,13 @@ as today and swaps only the endpoint for the `mcp` forward address.
 
 Budgets, measured from bytes leaving the child to bytes entering the adapter or terminal manager:
 
-| Path | Docker, same machine | Hosted, RTT r |
-| --- | --- | --- |
-| Provider stdout, added latency p50 / p99 | 1 ms / 5 ms | r/2 + 2 ms / r/2 + 10 ms |
-| Keystroke to echo in the terminal manager | 2 ms | r + 3 ms |
-| PTY throughput (`cat` of a large file) | 50 MB/s | Link speed, window permitting: 256 KiB / r |
-| Server CPU per MB of runner output | Under 5 ms (compression off) | Under 15 ms (compression on) |
-| Server memory per sandbox | Under 8 MiB steady | Same |
+| Path                                      | Docker, same machine         | Hosted, RTT r                              |
+| ----------------------------------------- | ---------------------------- | ------------------------------------------ |
+| Provider stdout, added latency p50 / p99  | 1 ms / 5 ms                  | r/2 + 2 ms / r/2 + 10 ms                   |
+| Keystroke to echo in the terminal manager | 2 ms                         | r + 3 ms                                   |
+| PTY throughput (`cat` of a large file)    | 50 MB/s                      | Link speed, window permitting: 256 KiB / r |
+| Server CPU per MB of runner output        | Under 5 ms (compression off) | Under 15 ms (compression on)               |
+| Server memory per sandbox                 | Under 8 MiB steady           | Same                                       |
 
 Measure with spans for `runner.hello`, spawn and first byte; metrics in
 [Metrics.ts](../../../apps/server/src/observability/Metrics.ts) for bytes by channel and direction,
@@ -542,14 +571,14 @@ grows.
 
 Follow [testing](../../internals/testing.md): no sleeps, no polling, no wall-clock deltas.
 
-| Layer | How | What |
-| --- | --- | --- |
-| Codec | Plain `it` | Each schema round-trips through SchemaBinary; frame size cap |
-| Runner handlers | `it.effect` with `RpcTest.makeClient(RunnerRpcGroup)` against the real handlers in-process | Spawn, fds, PTY, fs, watch, forwards; seq dedup; ordering; `wait` after last byte |
-| Hub with in-process runner | `it.effect`. Server `RpcClient` and runner `RpcServer` joined by an in-memory socket pair built with `Socket.make` ([Socket.ts](../../../.repos/effect/packages/effect/src/socket/Socket.ts)) | Resume, lease expiry on `TestClock.adjust`, boot-id handling, revocation closing the socket |
-| Fault injection | The socket pair takes a `Deferred` per fault: drop now, drop after N bytes, stall the reader | Mid-chunk drop, drop during resend, drop during `hello`, stalled server, half-open socket replaced by a new connect |
-| Real subprocess | `it.live` (allowed for subprocess fixtures): `node src/bin.ts runner` against a test HTTP server on an ephemeral port | Enrollment, token, real pipes and PTY, watcher kills the group when the runner is killed by the PID the test spawned |
-| Provider replay | Claude and Codex replay fixtures through `SandboxWorkspaceHost` with a 60 s injected drop | No adapter timeout inside the lease; turn completes |
+| Layer                      | How                                                                                                                                                                                           | What                                                                                                                 |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Codec                      | Plain `it`                                                                                                                                                                                    | Each schema round-trips through SchemaBinary; frame size cap                                                         |
+| Runner handlers            | `it.effect` with `RpcTest.makeClient(RunnerRpcGroup)` against the real handlers in-process                                                                                                    | Spawn, fds, PTY, fs, watch, forwards; seq dedup; ordering; `wait` after last byte                                    |
+| Hub with in-process runner | `it.effect`. Server `RpcClient` and runner `RpcServer` joined by an in-memory socket pair built with `Socket.make` ([Socket.ts](../../../.repos/effect/packages/effect/src/socket/Socket.ts)) | Resume, lease expiry on `TestClock.adjust`, boot-id handling, revocation closing the socket                          |
+| Fault injection            | The socket pair takes a `Deferred` per fault: drop now, drop after N bytes, stall the reader                                                                                                  | Mid-chunk drop, drop during resend, drop during `hello`, stalled server, half-open socket replaced by a new connect  |
+| Real subprocess            | `it.live` (allowed for subprocess fixtures): `node src/bin.ts runner` against a test HTTP server on an ephemeral port                                                                         | Enrollment, token, real pipes and PTY, watcher kills the group when the runner is killed by the PID the test spawned |
+| Provider replay            | Claude and Codex replay fixtures through `SandboxWorkspaceHost` with a 60 s injected drop                                                                                                     | No adapter timeout inside the lease; turn completes                                                                  |
 
 Tests wait on persisted events (`sandbox.runner.attached`), on `RunnerHub.status` elements, or on a
 `Deferred` the fault socket completes. Flow-control tests assert counts: the source paused at the
@@ -557,21 +586,21 @@ buffer size, bytes delivered equal bytes written, no duplicates.
 
 ## 11. Work breakdown
 
-| # | Milestone | Pull request | Depends on |
-| --- | --- | --- | --- |
-| 1 | M1 | Contracts: `runner.ts` schemas, `RunnerRpcGroup`, errors, subpath export; codec tests | M0 seam merged |
-| 2 | M1 | Runner core: `runner/main.ts`, `bin.ts` fast path, one-socket RPC server protocol, process and PTY handlers with group watchers, fs and watch handlers; in-process tests | 1 |
-| 3 | M1 | Server route and `RunnerHub`: `/runner/v1/connect`, `RunnerGrants` and migration, enrollment, token, one-socket replacement, status stream, `attached` and `lost` commands | 1, doc 04's sandbox commands |
-| 4 | M1 | Flow control and resume: generalized output window into `packages/shared`, seq buffers, pause at source, lease, writer fibers; fault-injection tests | 2, 3 |
-| 5 | M1 | Bundle: `vp pack` runner entry, node-pty linux prebuilds, manifest and `runnerBuildId`, `/runner/v1/bundle`, bootstrap script, dev-mode build, Docker read-only mount, `t3 runner prefetch <runnerBuildId>` for doc 05's image builds | 2 |
-| 6 | M1 | Coarse operations: runner-local layer, `ops.*` handlers for decision 2's list, lint fence | 2, doc 02's schemas |
-| 7 | M1 | Forwards: `forward.open`, `mcp`, `codex-token` and `git-credential`, `RunnerForwards`, `t3` shim on `PATH` for ACP bridges | 3, 4, doc 02 |
-| 8 | M1 | Docker routes: runner-only Unix socket listener, `host.docker.internal`, per-driver `runnerUrl` for `DOCKER_HOST` | 3, doc 04's Docker driver |
-| 9 | M1 | Benchmarks and metrics; startup budget check, mounted and fetched | 4, 5 |
-| 10 | M2 | TCP tunnels (`tcp.connect`) for previews | 4, doc 07 |
-| 11 | M2 | Hosted URL selection (public origin, T3 Connect hostname), periodic token rotation, compression per route | 3 |
-| 12 | M4 | SSH over a TCP tunnel to the sandbox's sshd; `/mcp`-only in-process listener for forwards | 10, doc 07 |
-| 13 | M5 | Private CA and explicit proxy support, BYOC network checklist, optional tailnet join | 11, doc 09 |
+| #   | Milestone | Pull request                                                                                                                                                                                                                          | Depends on                   |
+| --- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 1   | M1        | Contracts: `runner.ts` schemas, `RunnerRpcGroup`, errors, subpath export; codec tests                                                                                                                                                 | M0 seam merged               |
+| 2   | M1        | Runner core: `runner/main.ts`, `bin.ts` fast path, one-socket RPC server protocol, process and PTY handlers with group watchers, fs and watch handlers; in-process tests                                                              | 1                            |
+| 3   | M1        | Server route and `RunnerHub`: `/runner/v1/connect`, `RunnerGrants` and migration, enrollment, token, one-socket replacement, status stream, `attached` and `lost` commands                                                            | 1, doc 04's sandbox commands |
+| 4   | M1        | Flow control and resume: generalized output window into `packages/shared`, seq buffers, pause at source, lease, writer fibers; fault-injection tests                                                                                  | 2, 3                         |
+| 5   | M1        | Bundle: `vp pack` runner entry, node-pty linux prebuilds, manifest and `runnerBuildId`, `/runner/v1/bundle`, bootstrap script, dev-mode build, Docker read-only mount, `t3 runner prefetch <runnerBuildId>` for doc 05's image builds | 2                            |
+| 6   | M1        | Coarse operations: runner-local layer, `ops.*` handlers for decision 2's list, lint fence                                                                                                                                             | 2, doc 02's schemas          |
+| 7   | M1        | Forwards: `forward.open`, `mcp`, `codex-token` and `git-credential`, `RunnerForwards`, `t3` shim on `PATH` for ACP bridges                                                                                                            | 3, 4, doc 02                 |
+| 8   | M1        | Docker routes: runner-only Unix socket listener, `host.docker.internal`, per-driver `runnerUrl` for `DOCKER_HOST`                                                                                                                     | 3, doc 04's Docker driver    |
+| 9   | M1        | Benchmarks and metrics; startup budget check, mounted and fetched                                                                                                                                                                     | 4, 5                         |
+| 10  | M2        | TCP tunnels (`tcp.connect`) for previews                                                                                                                                                                                              | 4, doc 07                    |
+| 11  | M2        | Hosted URL selection (public origin, T3 Connect hostname), periodic token rotation, compression per route                                                                                                                             | 3                            |
+| 12  | M4        | SSH over a TCP tunnel to the sandbox's sshd; `/mcp`-only in-process listener for forwards                                                                                                                                             | 10, doc 07                   |
+| 13  | M5        | Private CA and explicit proxy support, BYOC network checklist, optional tailnet join                                                                                                                                                  | 11, doc 09                   |
 
 ## Open questions
 

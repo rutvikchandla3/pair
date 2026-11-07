@@ -24,6 +24,8 @@ import * as Schema from "effect/Schema";
 
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { RunnerBundle, RunnerBundleUnavailableError } from "../runnerHub/RunnerBundle.ts";
+import { RunnerEndpoint } from "../runnerHub/RunnerEndpoint.ts";
 import { sandboxBackendName, sandboxTags } from "./ComputeDriver.ts";
 import { computeDriverContract } from "./computeDriverContract.ts";
 import * as DockerComputeDriver from "./DockerComputeDriver.ts";
@@ -99,6 +101,13 @@ const makeContractDriver = (installId: EnvironmentId) =>
           }),
           ServerSettingsService.layerTest({
             sandbox: { drivers: [config], baseImage: CONTRACT_IMAGE },
+          }),
+          // The suite hands each bootstrap its own socket; no route is needed past the egress block.
+          Layer.succeed(RunnerEndpoint, {
+            planFor: () => Effect.succeed({ serverUrl: "unix:/unused/runner.sock" }),
+          }),
+          Layer.succeed(RunnerBundle, {
+            current: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
           }),
           NodeServices.layer,
         ),

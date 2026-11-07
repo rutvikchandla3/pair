@@ -55,6 +55,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
+import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
@@ -129,6 +130,7 @@ const layerTest = Layer.mergeAll(
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
+      Layer.mock(SandboxBootstrapSource.SandboxBootstrapSource)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
     ),
   ),

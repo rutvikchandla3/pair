@@ -16,7 +16,11 @@ if [ -f "$ENV_FILE" ]; then
   rm -f "$ENV_FILE"
 fi
 : "${PAIR_RUNNER_URL:?}" "${PAIR_SANDBOX_ID:?}" "${PAIR_RUNNER_BUILD:?}" "${PAIR_RUNNER_ENROLL:?}"
-export PAIR_RUNNER_URL PAIR_SANDBOX_ID PAIR_RUNNER_BUILD PAIR_RUNNER_ENROLL
+# The secret stays out of every child's environment (/proc/<pid>/environ): the runner reads it
+# from $RUN_DIR/enroll, the tmpfs only root can read, and deletes it.
+enroll="$PAIR_RUNNER_ENROLL"
+unset PAIR_RUNNER_ENROLL
+export PAIR_RUNNER_URL PAIR_SANDBOX_ID PAIR_RUNNER_BUILD
 
 # A fresh volume is root-owned.
 install -d -o t3 -g t3 "/t3-sandbox/$PAIR_SANDBOX_ID"
@@ -29,7 +33,7 @@ fetch() {
     unix:*) base=http://runner sock="${PAIR_RUNNER_URL#unix:}" ;;
     *) base="${PAIR_RUNNER_URL%/}" sock= ;;
   esac
-  credential="$PAIR_RUNNER_ENROLL"
+  credential="$enroll"
   if [ -s "$RUN_DIR/token" ]; then credential="$(cat "$RUN_DIR/token")"; fi
   printf 'header = "Authorization: Bearer %s"\n' "$credential" |
     curl -fsS --config - --speed-limit 1 --speed-time 60 ${sock:+--unix-socket "$sock"} \
@@ -61,6 +65,10 @@ ensure_bundle "$PAIR_RUNNER_BUILD"
 build="$PAIR_RUNNER_BUILD"
 tries=0
 while :; do
+  # A 426 retry has not spent the secret; once the runner holds a token, it dials with that.
+  if [ ! -s "$RUN_DIR/token" ]; then
+    (umask 077 && printf '%s' "$enroll" >"$RUN_DIR/enroll")
+  fi
   code=0
   "$BUNDLES/$build/t3" runner || code=$?
   # 75: the server runs another build (03 2.2). Fetch the one it named, once.

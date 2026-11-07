@@ -17,6 +17,16 @@ import * as Semaphore from "effect/Semaphore";
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
+  RunnerBundle,
+  type RunnerBundleInfo,
+  type RunnerBundleUnavailableError,
+} from "../runnerHub/RunnerBundle.ts";
+import {
+  RunnerEndpoint,
+  type RunnerDialPlan,
+  type RunnerRouteError,
+} from "../runnerHub/RunnerEndpoint.ts";
+import {
   type BackendSandbox,
   type BackendSandboxStatus,
   type BaseImageInfo,
@@ -48,7 +58,7 @@ const DEFAULT_BASE_IMAGE = "t3-sandbox:dev";
 const STOP_GRACE_SECONDS = 10;
 const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
 /** Where a local server's runner socket directory is mounted. */
-const SERVER_SOCKET_MOUNT = "/run/pair-server";
+const SERVER_SOCKET_MOUNT = "/run/pair-host";
 const RUNNING_STATES = new Set(["running", "restarting", "paused"]);
 
 const SIZES: ComputeCapabilities["sizes"] = [
@@ -127,11 +137,17 @@ export const containerCreateBody = (input: {
     Tmpfs: { "/run/pair-runner": "rw,nosuid,nodev,noexec,mode=0700,size=16m" },
     Mounts: [
       { Type: "volume", Source: input.volume, Target: `/t3-sandbox/${input.sandboxId}` },
-      // By directory, so a restarted server's new socket inode is visible. Never the Docker socket.
+      // By directory, so a restarted server's new socket inode is visible; read-only, so the
+      // sandbox cannot replace it. Never the Docker socket.
       ...Option.match(input.local, {
         onNone: () => [],
         onSome: (local) => [
-          { Type: "bind", Source: local.serverSocketDir, Target: SERVER_SOCKET_MOUNT },
+          {
+            Type: "bind",
+            Source: local.serverSocketDir,
+            Target: SERVER_SOCKET_MOUNT,
+            ReadOnly: true,
+          },
           ...Option.match(local.bundle, {
             onNone: () => [],
             onSome: (bundle) => [
@@ -264,6 +280,12 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
   config: DockerSandboxDriver,
   installId: EnvironmentId,
   setup: EngineSetup,
+  runner: {
+    /** How this instance's sandboxes reach the server; the egress block must let it through. */
+    readonly route: Effect.Effect<RunnerDialPlan, RunnerRouteError>;
+    /** The server's own bundle, which a local daemon mounts instead of downloading. */
+    readonly bundle: Effect.Effect<RunnerBundleInfo, RunnerBundleUnavailableError>;
+  },
 ) {
   const settings = yield* ServerSettingsService;
   const driverId = config.id;
@@ -335,12 +357,16 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     return created;
   });
 
-  const runnerAllow = (): ReadonlyArray<{ readonly host: string; readonly port: number }> => {
-    const url = config.runnerUrl === undefined ? null : URL.parse(config.runnerUrl);
-    if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return [];
-    const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
-    return [{ host: url.hostname, port }];
-  };
+  const runnerAllow = runner.route.pipe(
+    Effect.map((plan): ReadonlyArray<{ readonly host: string; readonly port: number }> => {
+      const url = URL.parse(plan.serverUrl);
+      if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return [];
+      const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+      return [{ host: url.hostname, port }];
+    }),
+    // A sandbox that cannot dial fails at boot with the route's reason, not here.
+    Effect.orElseSucceed(() => []),
+  );
 
   /** Never reports `applied: true` unless the helper exited 0 on this pass. */
   const ensureBlock = Effect.fn("DockerComputeDriver.ensureBlock")(function* (
@@ -356,7 +382,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
       chain: `PAIR-${installKey}`,
       subnet,
       bridge: networkName,
-      allow: runnerAllow(),
+      allow: yield* runnerAllow,
     });
     if (script === null) {
       return {
@@ -504,6 +530,18 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     const socketPath = input.bootstrap.serverUrl.startsWith("unix:")
       ? input.bootstrap.serverUrl.slice("unix:".length)
       : null;
+    // A bundle of another build than this boot's would not be the one it runs.
+    const bundle =
+      local && socketPath !== null
+        ? yield* runner.bundle.pipe(
+            Effect.map((info) =>
+              info.runnerBuildId === input.bootstrap.runnerBuildId
+                ? Option.some({ runnerBuildId: info.runnerBuildId, path: info.directory })
+                : Option.none(),
+            ),
+            Effect.orElseSucceed(() => Option.none()),
+          )
+        : Option.none();
     const created = yield* engine.createContainer(
       input.name,
       containerCreateBody({
@@ -518,7 +556,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
           local && socketPath !== null
             ? Option.some({
                 serverSocketDir: socketPath.slice(0, socketPath.lastIndexOf("/")) || "/",
-                bundle: Option.none(),
+                bundle,
               })
             : Option.none(),
       }),
@@ -744,5 +782,10 @@ export const make = Effect.fn("DockerComputeDriver.make")(function* (config: Doc
   const installId = yield* (yield* ServerEnvironmentIdentity).getEnvironmentId;
   const env = yield* HostProcess.Environment;
   const host = parseDockerHost(config.dockerHost, env, yield* HostProcess.HomeDirectory);
-  return yield* makeWithEngine(config, installId, yield* resolveEngine(host));
+  const endpoint = yield* RunnerEndpoint;
+  const bundle = yield* RunnerBundle;
+  return yield* makeWithEngine(config, installId, yield* resolveEngine(host), {
+    route: endpoint.planFor(config),
+    bundle: bundle.current,
+  });
 });

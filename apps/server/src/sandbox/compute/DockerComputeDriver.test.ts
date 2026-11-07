@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { RunnerBundleUnavailableError } from "../runnerHub/RunnerBundle.ts";
 import { type ComputeDriverError, sandboxBackendName, sandboxTags } from "./ComputeDriver.ts";
 import {
   containerCreateBody,
@@ -52,7 +53,7 @@ describe("containerCreateBody", () => {
       "runsc",
     );
     assert.deepStrictEqual(local.HostConfig.Mounts.slice(1), [
-      { Type: "bind", Source: "/srv/t3/runner", Target: "/run/pair-server" },
+      { Type: "bind", Source: "/srv/t3/runner", Target: "/run/pair-host", ReadOnly: true },
       { Type: "bind", Source: "/srv/t3/bundles/b1", Target: "/opt/pair-runner/b1", ReadOnly: true },
     ]);
     for (const config of [remote, local]) {
@@ -288,11 +289,15 @@ const withDriver = <A, E>(
   ) => Effect.Effect<A, E>,
 ) => {
   const fake = fakeEngine(containers);
-  return makeWithEngine({ kind: "docker", id: driverId, label: "Local" }, installId, {
-    _tag: "Ready",
-    engine: fake.engine,
-    local: true,
-  }).pipe(
+  return makeWithEngine(
+    { kind: "docker", id: driverId, label: "Local" },
+    installId,
+    { _tag: "Ready", engine: fake.engine, local: true },
+    {
+      route: Effect.succeed({ serverUrl: "unix:/srv/t3/runner/runner.sock" }),
+      bundle: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
+    },
+  ).pipe(
     Effect.flatMap((driver) => use(driver, fake)),
     Effect.provide(ServerSettingsService.layerTest()),
   );
@@ -367,7 +372,7 @@ describe("DockerComputeDriver", () => {
           `POST /containers/${name}/start`,
         ]);
         const env = new TextDecoder().decode(readFirstTarFile(fake.archives[0]!)!);
-        assert.include(env, "PAIR_RUNNER_URL='unix:/run/pair-server/runner.sock'\n");
+        assert.include(env, "PAIR_RUNNER_URL='unix:/run/pair-host/runner.sock'\n");
         assert.include(env, "PAIR_RUNNER_ENROLL='enroll'\n");
       }),
     );

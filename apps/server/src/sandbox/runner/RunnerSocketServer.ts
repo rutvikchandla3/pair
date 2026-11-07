@@ -76,10 +76,10 @@ export const layerCredential = Layer.effect(
           Effect.map((token) => token.trim()),
           Effect.filterOrFail(
             (token) => token.length > 0,
-            () => new RunnerConfigError({ missing: "PAIR_RUNNER_ENROLL or a sandbox token" }),
+            () => new RunnerConfigError({ missing: "an enrollment secret or a sandbox token" }),
           ),
           Effect.mapError(
-            () => new RunnerConfigError({ missing: "PAIR_RUNNER_ENROLL or a sandbox token" }),
+            () => new RunnerConfigError({ missing: "an enrollment secret or a sandbox token" }),
           ),
           Effect.map((token) => `Bearer ${token}`),
         );

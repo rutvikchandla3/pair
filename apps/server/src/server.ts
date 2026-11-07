@@ -127,8 +127,10 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
+import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
@@ -694,6 +696,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // ProjectService reads it optionally, so it must sit above the orchestration layers.
   Layer.provideMerge(CheckpointMirror.layer),
   Layer.provideMerge(ComputeDriverRegistry.layer({ docker: DockerComputeDriver.make })),
+  Layer.provideMerge(SandboxBootstrapSource.layer),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(SecretResolver.layer),
@@ -753,7 +756,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(GitHubSignIn.layer),
   Layer.provideMerge(MemberGitHub.layer),
   // Above layerAuth, which provides their database.
-  Layer.provideMerge(RunnerHub.layer),
+  // The endpoint opens the runner-only Unix socket on first use; never part of layerMakeRoutes.
+  Layer.provideMerge(RunnerEndpoint.layer.pipe(Layer.provideMerge(RunnerHub.layer))),
   Layer.provideMerge(Layer.mergeAll(RunnerGrants.layer, RunnerBundle.layer)),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),
