@@ -611,14 +611,6 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - For 1.39: "new-thread-on-branch" in `useThreadActionMenu.ts` and `Sidebar.tsx` passes a cloud thread's `/t3-sandbox` `worktreePath` into a local worktree draft; map it to `envMode: "cloud"`. `useHandleNewThread`'s `envMode` already accepts `"cloud"` for `chat.newCloud`. Web bindings for `createSandboxEnvironmentAtoms` are not added yet.
 - Owed in the integrated pass: the spec's `test-t3-app` steps 1–4 and captures (browser tests cannot launch here).
 
-## 1.39 web header + menus (landed)
-
-- `components/sandbox/useSandboxThreadStatus.tsx`: one shell-derived atom (`useSandboxThreadMachine` / `readSandboxThreadMachine`) that header badge, status line, banners, both thread menus (the sidebar's too) and the palette read; `useSandboxActionRunner` confirms Discard and toasts server errors. Labels in `sandboxActionLabels.ts`.
-- The shell `sandbox` summary has no `ownerMemberId`, so the owner-or-admin check uses the owner thread's `ownerId` (kept in sync by 1.17's adopt and reassign); the server refusal is the backstop. Read-only connections see no machine actions.
-- `chat.newCloud` (no default binding) in contracts keybindings, chatRouteCommands, and the palette ("New cloud thread in <project>", hidden when Cloud is unavailable). New-thread-on-branch from a cloud thread opens a cloud draft (menu and Sidebar).
-- "Starting machine: cloning" can't show as the spec's step 1 caption: cloning runs after `ready`. Mobile (1.41) can mirror the atom's shape.
-- For 1.45: `docs/user/keybindings.md` needs `chat.newCloud`. Owed in the integrated pass: `test-t3-app` steps 1–6 and captures.
-
 ## Open follow-ups and risks
 
 - Web browser tests can't launch in this container (Playwright browser version mismatch); environment only.
