@@ -10,27 +10,24 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (52 of 57):**
+**Landed on `feat/pair` (53 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (41): 1.1–1.17, 1.19–1.28, 1.28a, 1.29–1.38, 1.42–1.44. Plus two follow-ups: `perf-pty` (runner
-  output coalescing) and the runner revoke fix.
+- M1 (42): 1.1–1.17, 1.19–1.39, 1.42–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
+  coalescing), the runner revoke fix, and `fix-flaky-kill`.
 
-**In flight (2026-11-07, second session):** 1.18, 1.39, `fix-cloud-delegate`, each in `../pair-wt/<id>` on
-`wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
-and relaunch those PRs.
+**In flight (2026-11-07, second session):** 1.18 and `fix-cloud-delegate` (see 1.42's note), each in
+`../pair-wt/<id>` on `wt/<id>`. Worktrees live in the container only: after a restart, recreate them
+from `feat/pair` and relaunch those PRs.
 
 **Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
-| Start when | PRs                                                                                             |
-| ---------- | ----------------------------------------------------------------------------------------------- |
-| in flight  | 1.17 shared sandboxes (critical), 1.38 web Cloud mode, 1.42 MCP + CLI, 1.43 machine-failed push |
-| after 1.17 | 1.18 admission                                                                                  |
-| after 1.38 | 1.39 web header + menus                                                                         |
-| after 1.18 | 1.40 Settings → Cloud (also 1.16, 1.23, 1.25, 1.30 — landed)                                    |
-| after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                            |
-| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes                        |
+| Start when | PRs                                                                      |
+| ---------- | ------------------------------------------------------------------------ |
+| after 1.18 | 1.40 Settings → Cloud                                                    |
+| after 1.40 | 1.41 mobile                                                              |
+| last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes |
 
 Before the integrated pass: rebuild `t3-sandbox:dev` if the container restarted (built 2026-11-07 after 1.28), re-run
 `vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
@@ -637,7 +634,18 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Deviations: delete destroy enqueues only `sandbox.destroy` (it stops); commands on a deleted owner during a hand-over are accepted, not refused (effects queue behind the hand-over, generation-guarded), so an attached thread's wake isn't lost.
 - Open: non-owner prompts on a `destroyed` sandbox are refused (they'd need their own run); delegated children skip `gateCloudMessage` (`fix-cloud-delegate`); a hand-over that exhausts its retries does not fail parked runs.
 
+## 1.39 web header + menus (landed)
+
+- First landing (54dcab85) was squashed onto a newer `feat/pair` with its old tree and reverted 1.17, 1.42 and 1.43; reverted and relanded from its real diff. `land.sh` now refuses a branch whose diff touches progress.md.
+- `components/sandbox/useSandboxThreadStatus.tsx`: one shell-derived atom (`useSandboxThreadMachine` / `readSandboxThreadMachine`) that header badge, status line, banners, both thread menus (the sidebar's too) and the palette read; `useSandboxActionRunner` confirms Discard and toasts server errors. Labels in `sandboxActionLabels.ts`.
+- The shell `sandbox` summary has no `ownerMemberId`, so the owner-or-admin check uses the owner thread's `ownerId` (kept in sync by 1.17's adopt and reassign); the server refusal is the backstop. Read-only connections see no machine actions.
+- `chat.newCloud` (no default binding) in contracts keybindings, chatRouteCommands, and the palette ("New cloud thread in <project>", hidden when Cloud is unavailable). New-thread-on-branch from a cloud thread opens a cloud draft (menu and Sidebar).
+- "Starting machine: cloning" can't show as the spec's step 1 caption: cloning runs after `ready`. Mobile (1.41) can mirror the atom's shape.
+- For 1.45: `docs/user/keybindings.md` needs `chat.newCloud`. Owed in the integrated pass: `test-t3-app` steps 1–6 and captures.
+
 ## Open follow-ups and risks
+
+- Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
 
 - Web browser tests can't launch in this container (Playwright browser version mismatch); environment only.
 
