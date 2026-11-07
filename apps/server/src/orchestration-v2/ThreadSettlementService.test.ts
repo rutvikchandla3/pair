@@ -39,6 +39,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -728,19 +729,23 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
-    FileSystem.layerNoop({
-      exists: (path) =>
-        options.unreadablePaths?.includes(path)
-          ? Effect.fail(
-              PlatformError.systemError({
-                _tag: "PermissionDenied",
-                module: "FileSystem",
-                method: "exists",
-                pathOrDescriptor: path,
-              }),
-            )
-          : Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),
-    }),
+    WorkspaceHostTesting.layerFromContext.pipe(
+      Layer.provideMerge(
+        FileSystem.layerNoop({
+          exists: (path) =>
+            options.unreadablePaths?.includes(path)
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),
+        }),
+      ),
+    ),
     Path.layer,
   );
 

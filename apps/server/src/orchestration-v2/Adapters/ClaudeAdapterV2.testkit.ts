@@ -1004,6 +1004,7 @@ const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles"
     path,
     null,
     yield* HostProcess.Platform,
+    yield* HostProcess.UserId,
   );
   for (const frame of frames) {
     if (frame.type !== "system" || frame.subtype !== "task_started") continue;

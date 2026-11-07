@@ -1661,7 +1661,8 @@ export type CodexAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | Path.Path
-  | ServerConfig;
+  | ServerConfig
+  | WorkspaceHosts.WorkspaceHosts;
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
@@ -1672,8 +1673,8 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const digest = yield* Digest.Digest;
   // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments, MCP app snapshots and the shadow home
   const fileSystem = yield* FileSystem.FileSystem;
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.7): base environment
-  const hostEnvironment = yield* HostProcess.Environment;
+  // Instance env is the local host's; 1.12 rebuilds it per session on a sandbox host.
+  const hostEnvironment = (yield* (yield* WorkspaceHosts.WorkspaceHosts).local.info).environment;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
   const homeLayout = yield* resolveCodexHomeLayout(config);

@@ -143,6 +143,7 @@ await Effect.runPromise(
     Effect.provide(
       Layer.mergeAll(
         ProcessRunner.layer,
+        WorkspaceHostTesting.layerFromContext,
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(SourceControlBuiltInDrivers.layer),
           Layer.provide(ServerSettings.layerTest()),

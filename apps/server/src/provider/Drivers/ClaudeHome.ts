@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,6 +17,7 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
   const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
   if (homePath.length > 0) {
@@ -33,14 +33,13 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
-  baseEnv?: NodeJS.ProcessEnv,
+  baseEnv: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
-  const resolvedBaseEnv = baseEnv ?? process.env;
   const homePath = config.homePath.trim();
-  if (homePath.length === 0) return resolvedBaseEnv;
+  if (homePath.length === 0) return baseEnv;
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
-    ...resolvedBaseEnv,
+    ...baseEnv,
     // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
@@ -90,7 +89,9 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
   const fileSystem = yield* FileSystem.FileSystem;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.9): host facts
   const platform = yield* HostProcess.Platform;
   const managedMcpConfigPath =
     platform === "darwin"

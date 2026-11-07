@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M1 (1.12): Claude transcripts and workflow scripts, read from the server's Claude home */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";

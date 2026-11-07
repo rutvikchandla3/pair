@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -6,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcess } from "effect/process";
 
 import {
   type CodexSettings,
@@ -27,7 +26,8 @@ import {
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -59,11 +59,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Scope.Scope
   >,
 ) {
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments and the schema and output temp files; staging them is 1.12's
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const serverConfig = yield* Effect.service(ServerConfig.ServerConfig);
-  const resolvedEnvironment = environment ?? process.env;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -155,6 +155,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const listEnabledMcpServers = Effect.fn("listEnabledMcpServers")(
     function* (input: {
+      readonly spawner: WorkspaceHost["spawner"];
       readonly binary: string;
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
@@ -165,7 +166,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         [...input.launchArgs, ...CODEX_NO_PLUGIN_ARGS, "mcp", "list", "--json"],
         { env: input.env },
       );
-      const child = yield* commandSpawner.spawn(
+      const child = yield* input.spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           env: input.env,
           cwd: input.cwd,
@@ -235,6 +236,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      // Titles stay on the server; every other operation runs where `cwd` lives.
+      const host =
+        operation === "generateThreadTitle"
+          ? hosts.local
+          : yield* hosts
+              .forPath(cwd)
+              .pipe(
+                Effect.mapError((cause) =>
+                  normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
+                ),
+              );
+      const hostInfo = yield* host.info;
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
             Effect.mapError(
@@ -243,7 +256,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           )
         : undefined;
       const effectiveConfig = resolved?.config ?? codexConfig;
-      const effectiveEnvironment = resolved?.environment ?? resolvedEnvironment;
+      const effectiveEnvironment = resolved?.environment ?? environment ?? hostInfo.environment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
       const model =
@@ -262,15 +275,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ...effectiveEnvironment,
         ...(effectiveConfig.homePath
           ? {
-              CODEX_HOME: expandHomePath(
-                effectiveConfig.homePath,
-                yield* HostProcess.HomeDirectory,
-              ),
+              CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
             }
           : {}),
       };
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const mcpServersOff = yield* listEnabledMcpServers({
+        spawner: host.spawner,
         binary,
         cwd,
         env,
@@ -313,7 +324,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         forceKillAfter: "1 second",
       });
 
-      const child = yield* commandSpawner
+      const child = yield* host.spawner
         .spawn(command)
         .pipe(
           Effect.mapError((cause) =>

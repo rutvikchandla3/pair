@@ -45,6 +45,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";
@@ -140,20 +141,24 @@ function startWithMissingWorktree(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        Layer.succeed(FileSystem.FileSystem, {
-          exists: () => Effect.succeed(false),
-          realPath: (target: string) =>
-            normalize(target) in realPaths
-              ? Effect.succeed(realPaths[normalize(target)])
-              : Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "FileSystem",
-                    method: "realPath",
-                    pathOrDescriptor: target,
-                  }),
-                ),
-        } as never),
+        WorkspaceHostTesting.layerFromContext.pipe(
+          Layer.provideMerge(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: () => Effect.succeed(false),
+              realPath: (target: string) =>
+                normalize(target) in realPaths
+                  ? Effect.succeed(realPaths[normalize(target)])
+                  : Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "NotFound",
+                        module: "FileSystem",
+                        method: "realPath",
+                        pathOrDescriptor: target,
+                      }),
+                    ),
+            } as never),
+          ),
+        ),
         layerWorktreeLocation(),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
@@ -962,9 +967,13 @@ function makeLocalCommandHarness(input: {
         }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
-        input.fileSystem === undefined
-          ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
-          : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
+        WorkspaceHostTesting.layerFromContext.pipe(
+          Layer.provideMerge(
+            input.fileSystem === undefined
+              ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
+              : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
+          ),
+        ),
         input.gitWorkflow === undefined
           ? Layer.mock(GitWorkflow.GitWorkflowService)({
               pruneWorktrees: () => Effect.void,

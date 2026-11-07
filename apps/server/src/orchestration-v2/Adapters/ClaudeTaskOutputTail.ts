@@ -1,7 +1,6 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
@@ -20,8 +19,8 @@ export function claudeTaskOutputRoot(
   path: Path.Path,
   cwd: string | null,
   platform: NodeJS.Platform,
+  uid: number | undefined,
 ): string | undefined {
-  const uid = process.getuid?.();
   if (uid === undefined) return undefined;
   // Claude Code's macOS build falls back to /tmp and ignores the TMPDIR that
   // launchd always sets. Its other builds use `os.tmpdir()`, which reads these
@@ -36,11 +35,12 @@ export function claudeTaskOutputRoot(
 }
 
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
   readonly root: string;
   readonly sessionId: string;
   readonly taskId: string;
 }) {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const { fileSystem } = input;
   const path = yield* Path.Path;
   const projects = yield* fileSystem.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));
   for (const project of projects) {
@@ -60,13 +60,15 @@ const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
 
 /** Complete stop on tool result or turn end, then await the effect; it performs a final read before returning. */
 export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(function* (input: {
+  /** The file system of the machine the CLI runs on. */
+  readonly fileSystem: FileSystem.FileSystem;
   readonly root: string;
   readonly sessionId: string;
   readonly taskId: string;
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const { fileSystem } = input;
   const pause = Deferred.await(input.stop).pipe(
     Effect.as(true),
     Effect.timeoutOrElse({

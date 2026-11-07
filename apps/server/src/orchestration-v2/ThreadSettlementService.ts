@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import {
   backgroundWorkHoldsCompletion,
   turnItemUpdateCanEndBackgroundWork,
@@ -19,7 +18,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
-import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
@@ -36,6 +34,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -301,7 +300,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   // A shell merge or close sends no event, and the branch lookup caches an open pull request for
   // a minute, so these threads' next lookup reads the host fresh.
@@ -405,13 +404,15 @@ export const make = Effect.gen(function* () {
           if (project === undefined || thread.branch === null) return;
           // A worktree folder can outlive its .git, and git there fails with not_a_repository.
           // An unreadable .git keeps the worktree, so git fails there and the thread is skipped.
+          const worktreePath = thread.worktreePath;
           lookupCwdByThreadId.set(
             thread.id,
-            thread.worktreePath !== null &&
-              (yield* fileSystem
-                .exists(path.join(thread.worktreePath, ".git"))
-                .pipe(Effect.orElseSucceed(() => true)))
-              ? thread.worktreePath
+            worktreePath !== null &&
+              (yield* hosts.forPath(worktreePath).pipe(
+                Effect.flatMap((host) => host.fileSystem.exists(path.join(worktreePath, ".git"))),
+                Effect.orElseSucceed(() => true),
+              ))
+              ? worktreePath
               : project.workspaceRoot,
           );
         }),
@@ -601,7 +602,12 @@ export const make = Effect.gen(function* () {
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeIdle({ threadId });
       const worktreePath = settled.worktreePath;
-      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      if (worktreePath === null) return;
+      const worktreeExists = yield* hosts.forPath(worktreePath).pipe(
+        Effect.flatMap((host) => host.fileSystem.exists(worktreePath)),
+        Effect.catchTags({ WorkspaceHostUnavailableError: () => Effect.succeed(false) }),
+      );
+      if (!worktreeExists) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;

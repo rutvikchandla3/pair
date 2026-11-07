@@ -1,10 +1,8 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcess } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -34,6 +32,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -84,11 +83,10 @@ function claudeErrorResult(stdout: string): string | undefined {
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
 ) {
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -189,9 +187,25 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
+      // Titles run in a temp dir on the server; every other operation runs where `cwd` lives.
+      const host =
+        operation === "generateThreadTitle"
+          ? hosts.local
+          : yield* hosts
+              .forPath(cwd)
+              .pipe(
+                Effect.mapError((cause) =>
+                  normalizeCliError(
+                    "claude",
+                    operation,
+                    cause,
+                    "Failed to spawn Claude CLI process",
+                  ),
+                ),
+              );
       const workingDirectory =
         operation === "generateThreadTitle"
-          ? yield* fileSystem
+          ? yield* host.fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
                 Effect.mapError((cause) =>
@@ -242,7 +256,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         forceKillAfter: "1 second",
       });
 
-      const child = yield* commandSpawner
+      const child = yield* host.spawner
         .spawn(command)
         .pipe(
           Effect.mapError((cause) =>

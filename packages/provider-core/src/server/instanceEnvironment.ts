@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): provider base environment and thread cwd reads */
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -7,13 +6,15 @@ import { expandHomePath } from "./pathExpansion.ts";
 
 export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
-  baseEnv: NodeJS.ProcessEnv = process.env,
+  baseEnv: NodeJS.ProcessEnv,
 ) {
   if (!environment || environment.length === 0) {
     return baseEnv;
   }
 
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M1 (1.12): facts of the machine the base came from, the server's for every caller today
   const home = yield* HostProcess.HomeDirectory;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- routed in M1 (1.12): as above
   const windows = (yield* HostProcess.Platform) === "win32";
   const next: NodeJS.ProcessEnv = { ...baseEnv };
   for (const variable of environment) {

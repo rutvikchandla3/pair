@@ -53,7 +53,13 @@ export const layer = Layer.effect(
       ),
       sessionProcesses: Effect.fn("ProviderHost.sessionProcesses")(function (cwd) {
         return workspaceHosts.forPath(cwd).pipe(
-          Effect.map((host) => ({ spawner: host.spawner, agentScope: host.agentScope })),
+          Effect.flatMap((host) =>
+            Effect.map(host.info, (info) => ({
+              spawner: host.spawner,
+              agentScope: host.agentScope,
+              environment: info.environment,
+            })),
+          ),
           Effect.mapError(
             (error) => new ProviderSessionHostUnavailableError({ sandboxId: error.sandboxId }),
           ),

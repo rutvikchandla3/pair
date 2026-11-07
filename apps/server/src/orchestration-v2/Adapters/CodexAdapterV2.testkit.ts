@@ -20,6 +20,7 @@ import {
 } from "../testkit/ProviderReplayHarness.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 
@@ -139,7 +140,7 @@ export function layer(input: {
       Layer.mergeAll(
         layerReplayClientFactory,
         layerServerConfig,
-        NodeServices.layer,
+        WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
         NodeCrypto.layer,
         IdAllocator.layer,
       ),

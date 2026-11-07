@@ -8,6 +8,7 @@ import {
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -141,7 +142,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         }
         const binaryPath = entry.config.binaryPath.trim();
         const resolved = yield* resolveCommandPath(binaryPath, {
-          env: yield* mergeProviderInstanceEnvironment(entry.environment),
+          env: yield* mergeProviderInstanceEnvironment(
+            entry.environment,
+            yield* HostProcess.Environment,
+          ),
         });
         return resolved === null ? [binaryPath] : [binaryPath, resolved];
       }),

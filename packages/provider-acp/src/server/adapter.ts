@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -1735,7 +1736,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const sessionScope = yield* Effect.scope;
         const sessionProcesses =
           host.sessionProcesses === undefined
-            ? { spawner: childProcessSpawner, agentScope }
+            ? {
+                spawner: childProcessSpawner,
+                agentScope,
+                // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: the fallback when ProviderHost has no sessionProcesses
+                environment: yield* HostProcess.Environment,
+              }
             : yield* host.sessionProcesses(input.runtimePolicy.cwd ?? process.cwd());
         const readMcpContext = mcpContextReader(input.runtimePolicy);
         let itemIdentityVersion: 2 | undefined =
@@ -6889,6 +6895,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 sessionProcesses.spawner,
               ),
               Effect.provideService(AgentScope, sessionProcesses.agentScope),
+              // oxlint-disable-next-line t3code/workspace-host-boundary -- the session host's base environment
+              Effect.provideService(HostProcess.Environment, sessionProcesses.environment),
               Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
         });
@@ -6974,6 +6982,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   sessionProcesses.spawner,
                 ),
                 Effect.provideService(AgentScope, sessionProcesses.agentScope),
+                // oxlint-disable-next-line t3code/workspace-host-boundary -- the session host's base environment
+                Effect.provideService(HostProcess.Environment, sessionProcesses.environment),
                 Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
               );
             yield* replacementRuntime.handleSessionUpdate((notification) =>

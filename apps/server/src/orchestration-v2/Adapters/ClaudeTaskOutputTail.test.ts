@@ -29,6 +29,7 @@ describe("tailClaudeTaskOutput", () => {
         const { root, tasks, file } = yield* makeTaskFile;
         const chunks = yield* Queue.unbounded<string>();
         yield* tailClaudeTaskOutput({
+          fileSystem,
           root,
           sessionId: SESSION_ID,
           taskId: TASK_ID,
@@ -59,6 +60,7 @@ describe("tailClaudeTaskOutput", () => {
         const chunks = yield* Queue.unbounded<string>();
         const stop = yield* Deferred.make<void>();
         yield* tailClaudeTaskOutput({
+          fileSystem,
           root,
           sessionId: SESSION_ID,
           taskId: TASK_ID,
@@ -83,6 +85,7 @@ describe("tailClaudeTaskOutput", () => {
         yield* fileSystem.writeFileString(file, "start\n");
         const chunks = yield* Queue.unbounded<string>();
         yield* tailClaudeTaskOutput({
+          fileSystem,
           root,
           sessionId: SESSION_ID,
           taskId: TASK_ID,
@@ -111,6 +114,7 @@ describe("tailClaudeTaskOutput", () => {
         const stop = yield* Deferred.make<void>();
         const first = yield* Deferred.make<void>();
         const fiber = yield* tailClaudeTaskOutput({
+          fileSystem,
           root,
           sessionId: SESSION_ID,
           taskId: TASK_ID,
@@ -141,7 +145,7 @@ describe("claudeTaskOutputRoot", () => {
           environment: Record<string, string>,
           platform: NodeJS.Platform,
           cwd: string | null = null,
-        ) => claudeTaskOutputRoot(environment, path, cwd, platform);
+        ) => claudeTaskOutputRoot(environment, path, cwd, platform, process.getuid?.());
         assert.equal(root({ TMPDIR: "/var/folders/x/T/" }, "linux"), `/var/folders/x/T/${user}`);
         assert.equal(root({ TMP: "/tmp/user/1000" }, "linux"), `/tmp/user/1000/${user}`);
         assert.equal(root({}, "linux"), `/tmp/${user}`);

@@ -272,7 +272,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerProjectedProjects,
         layerExternalServices,
-        NodeServices.layer,
+        WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     ),
   );

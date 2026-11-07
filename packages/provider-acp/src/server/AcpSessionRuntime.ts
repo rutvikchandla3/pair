@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- spawns with the spawner and agent scope the adapter takes from the session host; not routed yet (0.7): base environment; not routed yet (0.9): host facts; routed in M3: the Grok cgroup lease */
+/* oxlint-disable t3code/workspace-host-boundary -- spawns with the spawner, agent scope and base environment the adapter takes from the session host; not routed yet (0.9): host facts; routed in M3: the Grok cgroup lease */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -1274,6 +1274,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
   const stderrTailRef = yield* Ref.make("");
   const homeDirectory = yield* HostProcess.HomeDirectory;
+  const baseEnvironment = yield* HostProcess.Environment;
   const stderrDrained = yield* Deferred.make<void>();
   const runtimeClosed = yield* Deferred.make<void>();
   const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -1407,7 +1408,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const resolved = resolveLinuxCgroupTargetCommand(
             spawnCommand.command,
             options.spawn.cwd ?? options.cwd,
-            { ...process.env, ...options.spawn.env },
+            { ...baseEnvironment, ...options.spawn.env },
           );
           if (resolved !== undefined) return resolved;
           return yield* new EffectAcpErrors.AcpSpawnError({
@@ -1424,7 +1425,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           args: spawnCommand.args,
           name: "acp",
           threadId: yield* AgentScopeThreadId,
-          env: { ...process.env, ...options.spawn.env },
+          env: { ...baseEnvironment, ...options.spawn.env },
         });
   const scopedSpawnCommand =
     scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };

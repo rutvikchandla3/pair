@@ -24,6 +24,7 @@ import { expect } from "vite-plus/test";
 
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -38,7 +39,10 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
 
 const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 interface FakeCodexInput {
   output: string;

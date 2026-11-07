@@ -20,7 +20,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
-import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
+import type { WorkspaceHost, WorkspaceHostInfo } from "../workspaceHost/WorkspaceHost.ts";
 
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -201,7 +201,7 @@ export const make = Effect.gen(function* () {
     input: VcsProcessInput,
     baseError: VcsProcessErrorContext,
     host: WorkspaceHost,
-    hostPlatform: NodeJS.Platform,
+    hostInfo: WorkspaceHostInfo,
   ) {
     let failedExit = false;
     const execution = processRunner
@@ -215,8 +215,10 @@ export const make = Effect.gen(function* () {
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
           ...input.env,
-          // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.7): the host's base environment
-          ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
+          ...explicitBareRepositoryEnv(
+            { ...hostInfo.environment, ...input.env },
+            hostInfo.platform,
+          ),
         },
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
@@ -286,11 +288,11 @@ export const make = Effect.gen(function* () {
     const host = yield* hosts
       .forPath(input.cwd)
       .pipe(Effect.mapError((cause) => new VcsProcessSpawnError({ ...baseError, cause })));
-    const { platform: hostPlatform } = yield* host.info;
-    let result = yield* spawn(input, baseError, host, hostPlatform);
+    const hostInfo = yield* host.info;
+    let result = yield* spawn(input, baseError, host, hostInfo);
 
     if (
-      hostPlatform === "darwin" &&
+      hostInfo.platform === "darwin" &&
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&
       !input.allowNonZeroExit &&
       result.code !== null &&
@@ -308,7 +310,7 @@ export const make = Effect.gen(function* () {
         },
         baseError,
         host,
-        hostPlatform,
+        hostInfo,
       );
     }
 

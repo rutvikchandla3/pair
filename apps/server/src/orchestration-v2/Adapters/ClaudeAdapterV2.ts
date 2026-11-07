@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.7): base environment and the task output tail; not routed yet (0.9): host facts; routed in M1 (1.12): in-process history and transcripts; server-scoped: attachments, MCP app snapshots and extracted text */
+/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.9): host facts; routed in M1 (1.12): in-process history and transcripts; server-scoped: attachments, MCP app snapshots, extracted text, and the CLAUDE_CONFIG_DIR the in-process SDK reads */
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
   compactDynamicToolOutput,
@@ -1121,7 +1121,6 @@ export const layerQueryRunner: Layer.Layer<
     const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
-    const hostEnvironment = yield* HostProcess.Environment;
     const portDiscovery = yield* PortScanner.PortDiscovery;
     const hostForPath = (dir: string | undefined, method: string) =>
       dir === undefined
@@ -1154,7 +1153,7 @@ export const layerQueryRunner: Layer.Layer<
           const queryOptions = {
             ...sdkOptions,
             env: {
-              ...(sdkOptions.env ?? hostEnvironment),
+              ...(sdkOptions.env ?? (yield* host.info).environment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
           };
@@ -4395,6 +4394,7 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  readonly taskOutputFileSystem: FileSystem.FileSystem;
 }
 
 interface ActiveClaudeToolCall {
@@ -4834,6 +4834,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   ).pipe(Effect.provideService(Path.Path, path));
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
+  const hostUserId = yield* HostProcess.UserId;
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
@@ -9388,6 +9389,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
                 const stop = yield* Deferred.make<void>();
                 const fiber = yield* tailClaudeTaskOutput({
+                  fileSystem: liveQuery.taskOutputFileSystem,
                   root: liveQuery.taskOutputRoot,
                   sessionId: message.session_id,
                   taskId: message.task_id,
@@ -10938,7 +10940,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               path,
               resolvedTurnCwd,
               hostPlatform,
+              hostUserId,
             ),
+            taskOutputFileSystem: cwdFileSystem,
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -12271,7 +12275,8 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
     const hosts = yield* WorkspaceHosts.WorkspaceHosts;
-    const hostEnvironment = yield* HostProcess.Environment;
+    // Instance env is the local host's; 1.12 rebuilds it per session on a sandbox host.
+    const hostEnvironment = (yield* hosts.local.info).environment;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;

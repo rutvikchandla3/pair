@@ -95,7 +95,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   ),
 );
 const layerTest = ProviderHostLive.layer.pipe(
-  Layer.provide(WorkspaceHostTesting.layerFromContext),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(layerDeps),
 );
 

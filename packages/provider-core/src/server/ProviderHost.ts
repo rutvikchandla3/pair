@@ -34,6 +34,8 @@ export interface ProviderCredentials {
 export interface ProviderSessionProcesses {
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly agentScope: AgentScopeShape;
+  /** Base env of every process the session starts. */
+  readonly environment: NodeJS.ProcessEnv;
 }
 
 export class ProviderHost extends Context.Service<
