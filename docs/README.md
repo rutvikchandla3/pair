@@ -20,6 +20,7 @@
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
 - [Team](./user/team.md)
+- [Cloud threads](./user/cloud.md)
 - [Guest links](./user/guest-links.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Agents and automation (MCP, API tokens, scripts)](./user/outside-agents.md)

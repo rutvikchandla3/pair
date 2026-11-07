@@ -27,7 +27,8 @@ To step a new thread to the next machine instead of opening the menu, bind
 **Composer: Cycle Host** in Keybindings. It has no default shortcut.
 Use `mod+shift+e` for effort, `mod+shift+a` for permissions, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
-current checkout, a new worktree, and the previous worktree when available.
+current checkout, a new worktree, the previous worktree when available, and
+[Cloud](./cloud.md) once Cloud is set up.
 Use `mod+shift+l` to reuse the previous worktree directly.
 
 To change effort one step without opening the picker, bind
@@ -166,7 +167,8 @@ through the pages you have visited, like a browser's back and forward buttons.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
-[new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
+[new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newCloud` starts a
+[cloud thread](./cloud.md) in the current project and has no default shortcut. `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved shortcuts

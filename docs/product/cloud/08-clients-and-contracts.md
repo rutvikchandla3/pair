@@ -12,38 +12,38 @@ the last section names the conflict and picks a side.
 
 Every new or changed contract file, the doc that owns its behavior, and its milestone.
 
-| File in `packages/contracts/src` | Change | Behavior owner | Milestone |
-| --- | --- | --- | --- |
-| [environment.ts](../../../packages/contracts/src/environment.ts) | Nothing. `ThreadEnvMode` is unchanged, and no capability is added (section 2, rule 3) | README decision 7, this doc | n/a |
-| [orchestrationV2.ts](../../../packages/contracts/src/orchestrationV2.ts) | Launch strategy `cloud`; run preparation split; thread `sandboxId`; detail `sandbox`; shell `sandbox` summary; client and internal `sandbox.*` commands, including `sandbox.runner.attached` and `sandbox.runner.lost`; `sandbox.updated` | 03, 04 | M0 (split), M1 |
-| `sandbox.ts` (new) | `SandboxId`, `SandboxState`, `SandboxSize`, `ComputeDriverId`, failure codes, `SandboxAsleep` error | 04, 07 | M1 |
-| [orchestrationProject.ts](../../../packages/contracts/src/orchestrationProject.ts), [project.ts](../../../packages/contracts/src/project.ts) | None. Their `defaultThreadEnvMode` is legacy: the server folds it into project overrides once (`projectSettingsFolded`), and clients read the overrides (section 2) | this doc | n/a |
-| [settings.ts](../../../packages/contracts/src/settings.ts) | `ServerSettings.sandbox` (an array of driver instances, a tagged union per kind; caps; env layers; `baseImage`), project override keys `sandboxAllowed`, `defaultsToCloud` (the project's sibling flag) | 04, 06, 09, D6 | M1, M2 (member env), M5 (`aws-ec2`) |
-| `runner.ts` (new, subpath `./runner`) | Runner protocol. Never imported by client bundles | 03 | M1 |
-| [package.json](../../../packages/contracts/package.json) | Export `./runner` next to `./settings` and `./relay` | 03 | M1 |
-| [clientRpcPermissions.ts](../../../packages/contracts/src/clientRpcPermissions.ts) | Scopes for new RPCs; `sandbox.*` dispatch rule | this doc | M1 |
-| [scheduledTask.ts](../../../packages/contracts/src/scheduledTask.ts) | Takes the cloud strategy through the shared union | 01, 04 | M2 |
-| [terminal.ts](../../../packages/contracts/src/terminal.ts) | Optional `stoppedBy` on the session snapshot | 07 | M2 |
-| [team.ts](../../../packages/contracts/src/team.ts) | `TeamMemberGitHub.source` (D1); `TeamUsageResult.sandboxRows` (section 2) | 06, 04 | M1, M2 |
-| [server.ts](../../../packages/contracts/src/server.ts) | Nothing: `ServerConfig.settings` already carries `ServerSettings.sandbox` (proposed) | this doc | n/a |
-| `sandboxImage.ts` (new) | `TeamImageRecipe`, `TeamImageBuild`, `teamImage.*` RPCs | 05 | M3 |
-| [editor.ts](../../../packages/contracts/src/editor.ts) | `RemoteOpenTargetKind` gains `sandbox` | 07 | M4 |
-| [managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts) | `limits.cloud` in `ManagedPolicyLimits` and the summary | 01, 09 | M4 (cloud-only), M5 (drivers) |
-| [keybindings.ts](../../../packages/contracts/src/keybindings.ts) | `chat.newCloud` command | 01 | M1 |
-| [rpc.ts](../../../packages/contracts/src/rpc.ts) | `team.githubTokenSet`, `team.githubTokenClear` (D1); team images, bundle read | 06, 05, 07 | M1, M3, M4 |
+| File in `packages/contracts/src`                                                                                                             | Change                                                                                                                                                                                                                                    | Behavior owner              | Milestone                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ----------------------------------- |
+| [environment.ts](../../../packages/contracts/src/environment.ts)                                                                             | Nothing. `ThreadEnvMode` is unchanged, and no capability is added (section 2, rule 3)                                                                                                                                                     | README decision 7, this doc | n/a                                 |
+| [orchestrationV2.ts](../../../packages/contracts/src/orchestrationV2.ts)                                                                     | Launch strategy `cloud`; run preparation split; thread `sandboxId`; detail `sandbox`; shell `sandbox` summary; client and internal `sandbox.*` commands, including `sandbox.runner.attached` and `sandbox.runner.lost`; `sandbox.updated` | 03, 04                      | M0 (split), M1                      |
+| `sandbox.ts` (new)                                                                                                                           | `SandboxId`, `SandboxState`, `SandboxSize`, `ComputeDriverId`, failure codes, `SandboxAsleep` error                                                                                                                                       | 04, 07                      | M1                                  |
+| [orchestrationProject.ts](../../../packages/contracts/src/orchestrationProject.ts), [project.ts](../../../packages/contracts/src/project.ts) | None. Their `defaultThreadEnvMode` is legacy: the server folds it into project overrides once (`projectSettingsFolded`), and clients read the overrides (section 2)                                                                       | this doc                    | n/a                                 |
+| [settings.ts](../../../packages/contracts/src/settings.ts)                                                                                   | `ServerSettings.sandbox` (an array of driver instances, a tagged union per kind; caps; env layers; `baseImage`), project override keys `sandboxAllowed`, `defaultsToCloud` (the project's sibling flag)                                   | 04, 06, 09, D6              | M1, M2 (member env), M5 (`aws-ec2`) |
+| `runner.ts` (new, subpath `./runner`)                                                                                                        | Runner protocol. Never imported by client bundles                                                                                                                                                                                         | 03                          | M1                                  |
+| [package.json](../../../packages/contracts/package.json)                                                                                     | Export `./runner` next to `./settings` and `./relay`                                                                                                                                                                                      | 03                          | M1                                  |
+| [clientRpcPermissions.ts](../../../packages/contracts/src/clientRpcPermissions.ts)                                                           | Scopes for new RPCs; `sandbox.*` dispatch rule                                                                                                                                                                                            | this doc                    | M1                                  |
+| [scheduledTask.ts](../../../packages/contracts/src/scheduledTask.ts)                                                                         | Takes the cloud strategy through the shared union                                                                                                                                                                                         | 01, 04                      | M2                                  |
+| [terminal.ts](../../../packages/contracts/src/terminal.ts)                                                                                   | Optional `stoppedBy` on the session snapshot                                                                                                                                                                                              | 07                          | M2                                  |
+| [team.ts](../../../packages/contracts/src/team.ts)                                                                                           | `TeamMemberGitHub.source` (D1); `TeamUsageResult.sandboxRows` (section 2)                                                                                                                                                                 | 06, 04                      | M1, M2                              |
+| [server.ts](../../../packages/contracts/src/server.ts)                                                                                       | Nothing: `ServerConfig.settings` already carries `ServerSettings.sandbox` (proposed)                                                                                                                                                      | this doc                    | n/a                                 |
+| `sandboxImage.ts` (new)                                                                                                                      | `TeamImageRecipe`, `TeamImageBuild`, `teamImage.*` RPCs                                                                                                                                                                                   | 05                          | M3                                  |
+| [editor.ts](../../../packages/contracts/src/editor.ts)                                                                                       | `RemoteOpenTargetKind` gains `sandbox`                                                                                                                                                                                                    | 07                          | M4                                  |
+| [managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts)                                                                         | `limits.cloud` in `ManagedPolicyLimits` and the summary                                                                                                                                                                                   | 01, 09                      | M4 (cloud-only), M5 (drivers)       |
+| [keybindings.ts](../../../packages/contracts/src/keybindings.ts)                                                                             | `chat.newCloud` command                                                                                                                                                                                                                   | 01                          | M1                                  |
+| [rpc.ts](../../../packages/contracts/src/rpc.ts)                                                                                             | `team.githubTokenSet`, `team.githubTokenClear` (D1); team images, bundle read                                                                                                                                                             | 06, 05, 07                  | M1, M3, M4                          |
 
 Naming resolutions, applied in every row above:
 
-| Concept | Code name | UI name | Rejected |
-| --- | --- | --- | --- |
-| Thread mode | launch strategy `{type: "cloud"}`; client-local composer modes | Cloud | `remote`, `hosted`; a new `ThreadEnvMode` literal |
-| Compute unit | `sandbox`, `SandboxId` | machine | `environment`, `vm`, `workspace` |
-| Image the team builds | `TeamImageBuild` in `sandboxImage.ts` | team image, "build 14" | `snapshot` (a driver strategy) |
-| Runner bundle version | `runnerBuildId` | not shown | bare `buildId`, `runnerBuildHash` |
-| Image build on a sandbox | `imageBuildId` | build 14 | bare `buildId` |
-| Cloud thread | a thread with a `sandboxId` | cloud thread | a `ThreadEnvMode` value |
-| Driver instance | `ComputeDriverId`, several per server, one default per project | the driver's label | `provider` (taken by agent runtimes) |
-| Availability gate | `ServerSettings.sandbox` present | none | a `capabilities` flag, which is fixed at startup |
+| Concept                  | Code name                                                      | UI name                | Rejected                                          |
+| ------------------------ | -------------------------------------------------------------- | ---------------------- | ------------------------------------------------- |
+| Thread mode              | launch strategy `{type: "cloud"}`; client-local composer modes | Cloud                  | `remote`, `hosted`; a new `ThreadEnvMode` literal |
+| Compute unit             | `sandbox`, `SandboxId`                                         | machine                | `environment`, `vm`, `workspace`                  |
+| Image the team builds    | `TeamImageBuild` in `sandboxImage.ts`                          | team image, "build 14" | `snapshot` (a driver strategy)                    |
+| Runner bundle version    | `runnerBuildId`                                                | not shown              | bare `buildId`, `runnerBuildHash`                 |
+| Image build on a sandbox | `imageBuildId`                                                 | build 14               | bare `buildId`                                    |
+| Cloud thread             | a thread with a `sandboxId`                                    | cloud thread           | a `ThreadEnvMode` value                           |
+| Driver instance          | `ComputeDriverId`, several per server, one default per project | the driver's label     | `provider` (taken by agent runtimes)              |
+| Availability gate        | `ServerSettings.sandbox` present                               | none                   | a `capabilities` flag, which is fixed at startup  |
 
 Paths and route names follow the same rule. [apps/server/src/cloud/](../../../apps/server/src/cloud/)
 and [apps/mobile/src/features/cloud/](../../../apps/mobile/src/features/cloud/) are T3 Connect. New
@@ -84,19 +84,19 @@ fails the stream.
 These are why `ThreadEnvMode` keeps its two values and `cloud` lives only in the launch input
 (README decision 7).
 
-| Wire site | Today | What a `cloud` value would do to an old client | Fix |
-| --- | --- | --- | --- |
-| `OrchestrationProjectShell.defaultThreadEnvMode` | strict, inside `projects: Schema.Array(...)` of the shell snapshot and in `project.updated` items | Fails the whole shell snapshot. No threads load | Never send `cloud` here. The field is legacy (`resolveProjectOverrides` in [projectSettings.ts](../../../packages/shared/src/projectSettings.ts) reads it only before `projectSettingsFolded`), so it gets no sibling |
-| `Project`, `ProjectUpdatePayload` in [project.ts](../../../packages/contracts/src/project.ts) | strict | Fails project reads and updates | Same: never `cloud`, no new key |
-| `ProjectSettingsOverrides.defaultThreadEnvMode` in [settings.ts](../../../packages/contracts/src/settings.ts) | `optionalKey(ThreadEnvMode)`, strict. `keepUnknownOverrideKeys` keeps unknown keys, not unknown values | Fails `ServerSettings`, so the server config | Sibling key `defaultsToCloud`. Old clients keep it through `keepUnknownOverrideKeys` when they edit (tested in `settings.test.ts`) |
-| `ServerSettings.defaultThreadEnvMode` | `OmittedWhenNull` | Decodes to null: "no default" | Safe as is |
-| [t3ProjectFile.ts](../../../packages/contracts/src/t3ProjectFile.ts) `defaultThreadEnvMode` | strict, in a file committed to the repo | Every older Pair and upstream T3 Code install reading the repo fails on it | Never offered |
-| `OrchestrationV2Run.workspacePreparation` | strict union, inside every run in thread detail and `run.*` events | Cloud threads fail to open on old clients | Split the union (below) |
-| `ScheduledTaskListResult.tasks` | `ForwardCompatibleArray` | The task disappears from old clients | Acceptable: they can't edit what they can't run |
-| `TerminalSessionStatus` | strict literals | A new status fails terminal snapshots | 07's choice holds: `stoppedBy` is a new optional key, not a status |
-| `RemoteOpenTarget` | `ForwardCompatibleArray` in `ServerConfig.remoteOpenTargets` | Dropped | Safe |
-| `ResolvedKeybindingsConfig` | `ForwardCompatibleArray` in [keybindings.ts](../../../packages/contracts/src/keybindings.ts) | `chat.newCloud` dropped | Safe |
-| `ManagedPolicyDocument` | rejects excess keys (`onExcessProperty: "error"` in [managedPolicyFile.ts](../../../packages/shared/src/managedPolicyFile.ts)) | An older server refuses a policy file with `limits.cloud` | Intended. Policy docs say which release reads it |
+| Wire site                                                                                                     | Today                                                                                                                          | What a `cloud` value would do to an old client                             | Fix                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OrchestrationProjectShell.defaultThreadEnvMode`                                                              | strict, inside `projects: Schema.Array(...)` of the shell snapshot and in `project.updated` items                              | Fails the whole shell snapshot. No threads load                            | Never send `cloud` here. The field is legacy (`resolveProjectOverrides` in [projectSettings.ts](../../../packages/shared/src/projectSettings.ts) reads it only before `projectSettingsFolded`), so it gets no sibling |
+| `Project`, `ProjectUpdatePayload` in [project.ts](../../../packages/contracts/src/project.ts)                 | strict                                                                                                                         | Fails project reads and updates                                            | Same: never `cloud`, no new key                                                                                                                                                                                       |
+| `ProjectSettingsOverrides.defaultThreadEnvMode` in [settings.ts](../../../packages/contracts/src/settings.ts) | `optionalKey(ThreadEnvMode)`, strict. `keepUnknownOverrideKeys` keeps unknown keys, not unknown values                         | Fails `ServerSettings`, so the server config                               | Sibling key `defaultsToCloud`. Old clients keep it through `keepUnknownOverrideKeys` when they edit (tested in `settings.test.ts`)                                                                                    |
+| `ServerSettings.defaultThreadEnvMode`                                                                         | `OmittedWhenNull`                                                                                                              | Decodes to null: "no default"                                              | Safe as is                                                                                                                                                                                                            |
+| [t3ProjectFile.ts](../../../packages/contracts/src/t3ProjectFile.ts) `defaultThreadEnvMode`                   | strict, in a file committed to the repo                                                                                        | Every older Pair and upstream T3 Code install reading the repo fails on it | Never offered                                                                                                                                                                                                         |
+| `OrchestrationV2Run.workspacePreparation`                                                                     | strict union, inside every run in thread detail and `run.*` events                                                             | Cloud threads fail to open on old clients                                  | Split the union (below)                                                                                                                                                                                               |
+| `ScheduledTaskListResult.tasks`                                                                               | `ForwardCompatibleArray`                                                                                                       | The task disappears from old clients                                       | Acceptable: they can't edit what they can't run                                                                                                                                                                       |
+| `TerminalSessionStatus`                                                                                       | strict literals                                                                                                                | A new status fails terminal snapshots                                      | 07's choice holds: `stoppedBy` is a new optional key, not a status                                                                                                                                                    |
+| `RemoteOpenTarget`                                                                                            | `ForwardCompatibleArray` in `ServerConfig.remoteOpenTargets`                                                                   | Dropped                                                                    | Safe                                                                                                                                                                                                                  |
+| `ResolvedKeybindingsConfig`                                                                                   | `ForwardCompatibleArray` in [keybindings.ts](../../../packages/contracts/src/keybindings.ts)                                   | `chat.newCloud` dropped                                                    | Safe                                                                                                                                                                                                                  |
+| `ManagedPolicyDocument`                                                                                       | rejects excess keys (`onExcessProperty: "error"` in [managedPolicyFile.ts](../../../packages/shared/src/managedPolicyFile.ts)) | An older server refuses a policy file with `limits.cloud`                  | Intended. Policy docs say which release reads it                                                                                                                                                                      |
 
 ### The launch strategy split (M0)
 
@@ -111,7 +111,11 @@ old scope vocabulary: freeze today's union, and in M1 decode a cloud launch's ru
 
 ```ts
 // orchestrationV2.ts, M0: today's three members under a new name, used by runs
-export const OrchestrationV2RunWorkspacePreparation = Schema.Union([Root, ExistingWorktree, Worktree]);
+export const OrchestrationV2RunWorkspacePreparation = Schema.Union([
+  Root,
+  ExistingWorktree,
+  Worktree,
+]);
 
 // M1: the launch input gains cloud
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
@@ -121,8 +125,8 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
-    size: Schema.optional(SandboxSize),                 // M2
-    discardOnSettle: Schema.optional(Schema.Boolean),   // M2, 01 J7
+    size: Schema.optional(SandboxSize), // M2
+    discardOnSettle: Schema.optional(Schema.Boolean), // M2, 01 J7
   }),
 ]);
 ```
@@ -141,15 +145,22 @@ the accepted cost, and it is why section 4 hides local-only actions on new clien
 ```ts
 // sandbox.ts
 export const SandboxState = Schema.Literals([
-  "provisioning", "ready", "sleeping", "waking", "failed", "destroyed",
+  "provisioning",
+  "ready",
+  "sleeping",
+  "waking",
+  "failed",
+  "destroyed",
 ]);
 
 // orchestrationV2.ts
 OrchestrationV2AppThread.fields.sandboxId = Schema.optionalKey(SandboxId);
 
 export const OrchestrationV2ThreadShellSandbox = Schema.Struct({
-  state: ForwardCompatibleNullable(SandboxState),  // a later state shows as "Machine status unknown"
-  admission: Schema.optionalKey(Schema.Struct({ reason: SandboxAdmissionReason, since: IsoDateTime })),
+  state: ForwardCompatibleNullable(SandboxState), // a later state shows as "Machine status unknown"
+  admission: Schema.optionalKey(
+    Schema.Struct({ reason: SandboxAdmissionReason, since: IsoDateTime }),
+  ),
   runnerConnected: Schema.optionalKey(Schema.Boolean), // changes only, debounced 2 s (03)
   failureCode: Schema.optionalKey(Schema.String),
   retryable: Schema.optionalKey(Schema.Boolean),
@@ -170,12 +181,12 @@ stream must also re-emit the shells of side chats and forks sharing the sandbox 
 
 ### Older clients, surface by surface
 
-| Client | Sees a cloud thread as | Can do | Can't do |
-| --- | --- | --- | --- |
-| Desktop or mobile before M0 | A worktree thread | Read, prompt (sending wakes it, 04), review diffs, approve | Wake, retry, discard; see why it waits |
-| Desktop or mobile after M0, server without a driver | Nothing new | Everything as today | n/a |
-| Any client, older server | Nothing new | Everything as today | Cloud, which is hidden |
-| app.t3.codes | Always the latest build | Everything | n/a |
+| Client                                              | Sees a cloud thread as  | Can do                                                     | Can't do                               |
+| --------------------------------------------------- | ----------------------- | ---------------------------------------------------------- | -------------------------------------- |
+| Desktop or mobile before M0                         | A worktree thread       | Read, prompt (sending wakes it, 04), review diffs, approve | Wake, retry, discard; see why it waits |
+| Desktop or mobile after M0, server without a driver | Nothing new             | Everything as today                                        | n/a                                    |
+| Any client, older server                            | Nothing new             | Everything as today                                        | Cloud, which is hidden                 |
+| app.t3.codes                                        | Always the latest build | Everything                                                 | n/a                                    |
 
 Prompting from an old client works because a message to a sleeping sandbox wakes it on the server
 (04). A failed sandbox fails the run, which old clients already show.
@@ -186,9 +197,15 @@ Usage rows are keyed by member and provider instance, and machine time belongs t
 it is a separate optional array (04):
 
 ```ts
-TeamUsageResult.fields.sandboxRows = Schema.optionalKey(Schema.Array(Schema.Struct({
-  memberId: MemberId, sandboxSeconds: NonNegativeInt, size: SandboxSize,
-})));
+TeamUsageResult.fields.sandboxRows = Schema.optionalKey(
+  Schema.Array(
+    Schema.Struct({
+      memberId: MemberId,
+      sandboxSeconds: NonNegativeInt,
+      size: SandboxSize,
+    }),
+  ),
+);
 ```
 
 ### A member's own GitHub token (D1, M1)
@@ -223,16 +240,16 @@ fails with code `github-credential-missing`, which clients render as "Connect Gi
 
 ## 3. Performance on the client wire
 
-| Data | How it travels | Rule |
-| --- | --- | --- |
-| Shell summary | `thread.updated` shell items | Five small fields. Only on state change. Never progress ticks |
-| Runner connection | Shell `runnerConnected` | Only on change, debounced 2 s (03). A blip under 2 s sends nothing |
-| Full sandbox record | Thread detail, `sandbox.updated` | Only to subscribers of that thread |
-| Provision progress | `prepared-run.progress`, as worktree setup today: its `phase` sets the title of the run's "Preparing workspace" `command_execution` item, so new phases change no client schema | Steps, not percentages. Four labels (04) |
-| Setup and build logs | `teamImage.subscribeBuildLog`, existing setup output | Streamed only while the page or panel is open |
-| Viewer lease | One call every 5 minutes per open cloud thread (04) | Piggybacks on presence reporting in [presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts) |
-| Usage | `team.usage` reads | On demand when the page opens. No stream |
-| Asleep file reads | From the mirror (07) | Same RPCs and paging as today |
+| Data                 | How it travels                                                                                                                                                                  | Rule                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Shell summary        | `thread.updated` shell items                                                                                                                                                    | Five small fields. Only on state change. Never progress ticks                                                         |
+| Runner connection    | Shell `runnerConnected`                                                                                                                                                         | Only on change, debounced 2 s (03). A blip under 2 s sends nothing                                                    |
+| Full sandbox record  | Thread detail, `sandbox.updated`                                                                                                                                                | Only to subscribers of that thread                                                                                    |
+| Provision progress   | `prepared-run.progress`, as worktree setup today: its `phase` sets the title of the run's "Preparing workspace" `command_execution` item, so new phases change no client schema | Steps, not percentages. Four labels (04)                                                                              |
+| Setup and build logs | `teamImage.subscribeBuildLog`, existing setup output                                                                                                                            | Streamed only while the page or panel is open                                                                         |
+| Viewer lease         | One call every 5 minutes per open cloud thread (04)                                                                                                                             | Piggybacks on presence reporting in [presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts) |
+| Usage                | `team.usage` reads                                                                                                                                                              | On demand when the page opens. No stream                                                                              |
+| Asleep file reads    | From the mirror (07)                                                                                                                                                            | Same RPCs and paging as today                                                                                         |
 
 UI rules:
 
@@ -248,30 +265,30 @@ Desktop wraps the web app. Everything here applies to both unless marked.
 
 ### Where cloud appears
 
-| Surface | Path | Change | Milestone |
-| --- | --- | --- | --- |
-| Mode picker | [BranchToolbarEnvModeSelector.tsx](../../../apps/web/src/components/BranchToolbarEnvModeSelector.tsx) | A **Cloud** item after New worktree, when available. The locked view shows a cloud icon from `sandboxId`, not from `activeWorktreePath` | M1 |
-| Mode logic | [BranchToolbar.logic.ts](../../../apps/web/src/components/BranchToolbar.logic.ts) | The client-local `EnvMode` (line 26) gains `cloud`. `resolveEffectiveEnvMode` returns `cloud` when the thread has a `sandboxId` | M1 |
-| Drafts | [composerDraftStore.ts](../../../apps/web/src/composerDraftStore.ts) | Draft mode can be `cloud`: its own persisted `DraftThreadEnvModeSchema` and `normalizeDraftThreadEnvMode` gain it. The default stays New worktree unless the project has `defaultsToCloud` (D4). Falls back when Cloud becomes unavailable | M1 |
-| Send | [useComposerSend.ts](../../../apps/web/src/components/chat/useComposerSend.ts), [useHandleNewThread.ts](../../../apps/web/src/hooks/useHandleNewThread.ts) | Map `cloud` to the cloud launch strategy | M1 |
-| Header and status | [ChatHeader.tsx](../../../apps/web/src/components/chat/ChatHeader.tsx), [ThreadStatusLine.tsx](../../../apps/web/src/components/chat/ThreadStatusLine.tsx) | State text and actions from section 7 | M1 |
-| Failure and asleep notices | [ComposerBanner.tsx](../../../apps/web/src/components/chat/ComposerBanner.tsx) slots via [useSystemComposerBanners.tsx](../../../apps/web/src/components/chat/useSystemComposerBanners.tsx) | Per [Web UI](../../internals/web-ui.md): composer notices use the banner slots | M1 |
-| Thread details | [ThreadDetailsPanel.tsx](../../../apps/web/src/components/chat/ThreadDetailsPanel.tsx) | Machine section: driver, size, image build, uptime | M1, image M3 |
-| Sidebar | [SidebarThreadRow.tsx](../../../apps/web/src/components/sidebar/SidebarThreadRow.tsx) | Cloud icon. "Asleep", "Waiting" or "Failed" word | M1 |
-| Thread menu | [useThreadActionMenu.ts](../../../apps/web/src/hooks/useThreadActionMenu.ts), [chatThreadActions.ts](../../../apps/web/src/lib/chatThreadActions.ts) | Wake, Sleep now, Retry, Discard machine; Continue locally, Continue in cloud | M1, M4 |
-| Command palette | [CommandPalette.tsx](../../../apps/web/src/components/CommandPalette.tsx), [CommandPaletteThreadItems.tsx](../../../apps/web/src/components/CommandPaletteThreadItems.tsx) | "New cloud thread", and the thread menu's actions for the active thread | M1, M4 |
-| Keybinding | [chatRouteCommands.ts](../../../apps/web/src/shortcuts/chatRouteCommands.ts) | `chat.newCloud` in `STATIC_KEYBINDING_COMMANDS`, next to `chat.newLocal`. No default binding in [keybindings.ts](../../../packages/shared/src/keybindings.ts) | M1 |
-| Terminal | [ThreadTerminalDrawer.tsx](../../../apps/web/src/components/ThreadTerminalDrawer.tsx) | Stopped Docker machine: terminals show exited (M1). Asleep: read-only with **Wake**; typing wakes, viewing doesn't (M2) | M1, M2 |
-| Preview | [preview/](../../../apps/web/src/components/preview/) | "Stopped while asleep" with **Restart** (01 J6) | M2 |
-| Diffs | [DiffPanel.tsx](../../../apps/web/src/components/DiffPanel.tsx) | Unchanged. While stopped, reads fall back to the mirror's latest checkpoint (M1). Snapshot browsing is M2 | M1, M2 |
-| Worktree setup | [useWorktreeSetup.ts](../../../apps/web/src/components/chat/useWorktreeSetup.ts) | Skips local worktree prompts when the thread has a `sandboxId` | M1 |
-| Open in editor | [OpenInPicker.tsx](../../../apps/web/src/components/chat/OpenInPicker.tsx); [remoteOpen.ts](../../../apps/web/src/remoteOpen.ts) resolves per environment, not per thread | Local path actions hidden for cloud threads until M4. Then the `sandbox` target over SSH | M1 hide, M4 |
-| Usage | [MemberUsage.tsx](../../../apps/web/src/components/team/MemberUsage.tsx), where team usage shows today ([_chat.usage.tsx](../../../apps/web/src/routes/_chat.usage.tsx) is provider usage limits) | Machine hours per member from `sandboxRows` | M2 |
-| Projects | [ProjectDefaultsSettings.tsx](../../../apps/web/src/components/settings/ProjectDefaultsSettings.tsx) | "Allow cloud threads" and Cloud as a project default | M1 |
-| Scheduled tasks | [ScheduledTasksSettings.tsx](../../../apps/web/src/components/settings/ScheduledTasksSettings.tsx) | **Cloud** in the task's placement choice; "Discard machine when the run settles" | M2 |
-| GitHub App key | [SourceControlSettings.tsx](../../../apps/web/src/components/settings/SourceControlSettings.tsx) | App ID and private key (06) | M1 |
-| Member GitHub | [MemberGitHub.tsx](../../../apps/web/src/components/team/MemberGitHub.tsx) | On the member's own row in Settings → Team: **Use a token instead** next to Connect GitHub, **Remove token**, and the warning that agents can read it until M3's git proxy (D1) | M1 |
-| Push notice | ComposerBanner slots | "Connect GitHub to push", linking the owner to their row; others see "Ask <owner> to connect GitHub" | M1 |
+| Surface                    | Path                                                                                                                                                                                              | Change                                                                                                                                                                                                                                     | Milestone    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------ |
+| Mode picker                | [BranchToolbarEnvModeSelector.tsx](../../../apps/web/src/components/BranchToolbarEnvModeSelector.tsx)                                                                                             | A **Cloud** item after New worktree, when available. The locked view shows a cloud icon from `sandboxId`, not from `activeWorktreePath`                                                                                                    | M1           |
+| Mode logic                 | [BranchToolbar.logic.ts](../../../apps/web/src/components/BranchToolbar.logic.ts)                                                                                                                 | The client-local `EnvMode` (line 26) gains `cloud`. `resolveEffectiveEnvMode` returns `cloud` when the thread has a `sandboxId`                                                                                                            | M1           |
+| Drafts                     | [composerDraftStore.ts](../../../apps/web/src/composerDraftStore.ts)                                                                                                                              | Draft mode can be `cloud`: its own persisted `DraftThreadEnvModeSchema` and `normalizeDraftThreadEnvMode` gain it. The default stays New worktree unless the project has `defaultsToCloud` (D4). Falls back when Cloud becomes unavailable | M1           |
+| Send                       | [useComposerSend.ts](../../../apps/web/src/components/chat/useComposerSend.ts), [useHandleNewThread.ts](../../../apps/web/src/hooks/useHandleNewThread.ts)                                        | Map `cloud` to the cloud launch strategy                                                                                                                                                                                                   | M1           |
+| Header and status          | [ChatHeader.tsx](../../../apps/web/src/components/chat/ChatHeader.tsx), [ThreadStatusLine.tsx](../../../apps/web/src/components/chat/ThreadStatusLine.tsx)                                        | State text and actions from section 7                                                                                                                                                                                                      | M1           |
+| Failure and asleep notices | [ComposerBanner.tsx](../../../apps/web/src/components/chat/ComposerBanner.tsx) slots via [useSystemComposerBanners.tsx](../../../apps/web/src/components/chat/useSystemComposerBanners.tsx)       | Per [Web UI](../../internals/web-ui.md): composer notices use the banner slots                                                                                                                                                             | M1           |
+| Thread details             | [ThreadDetailsPanel.tsx](../../../apps/web/src/components/chat/ThreadDetailsPanel.tsx)                                                                                                            | Machine section: driver, size, image build, uptime                                                                                                                                                                                         | M1, image M3 |
+| Sidebar                    | [SidebarThreadRow.tsx](../../../apps/web/src/components/sidebar/SidebarThreadRow.tsx)                                                                                                             | Cloud icon. "Asleep", "Waiting" or "Failed" word                                                                                                                                                                                           | M1           |
+| Thread menu                | [useThreadActionMenu.ts](../../../apps/web/src/hooks/useThreadActionMenu.ts), [chatThreadActions.ts](../../../apps/web/src/lib/chatThreadActions.ts)                                              | Wake, Sleep now, Retry, Discard machine; Continue locally, Continue in cloud                                                                                                                                                               | M1, M4       |
+| Command palette            | [CommandPalette.tsx](../../../apps/web/src/components/CommandPalette.tsx), [CommandPaletteThreadItems.tsx](../../../apps/web/src/components/CommandPaletteThreadItems.tsx)                        | "New cloud thread", and the thread menu's actions for the active thread                                                                                                                                                                    | M1, M4       |
+| Keybinding                 | [chatRouteCommands.ts](../../../apps/web/src/shortcuts/chatRouteCommands.ts)                                                                                                                      | `chat.newCloud` in `STATIC_KEYBINDING_COMMANDS`, next to `chat.newLocal`. No default binding in [keybindings.ts](../../../packages/shared/src/keybindings.ts)                                                                              | M1           |
+| Terminal                   | [ThreadTerminalDrawer.tsx](../../../apps/web/src/components/ThreadTerminalDrawer.tsx)                                                                                                             | Stopped Docker machine: terminals show exited (M1). Asleep: read-only with **Wake**; typing wakes, viewing doesn't (M2)                                                                                                                    | M1, M2       |
+| Preview                    | [preview/](../../../apps/web/src/components/preview/)                                                                                                                                             | "Stopped while asleep" with **Restart** (01 J6)                                                                                                                                                                                            | M2           |
+| Diffs                      | [DiffPanel.tsx](../../../apps/web/src/components/DiffPanel.tsx)                                                                                                                                   | Unchanged. While stopped, reads fall back to the mirror's latest checkpoint (M1). Snapshot browsing is M2                                                                                                                                  | M1, M2       |
+| Worktree setup             | [useWorktreeSetup.ts](../../../apps/web/src/components/chat/useWorktreeSetup.ts)                                                                                                                  | Skips local worktree prompts when the thread has a `sandboxId`                                                                                                                                                                             | M1           |
+| Open in editor             | [OpenInPicker.tsx](../../../apps/web/src/components/chat/OpenInPicker.tsx); [remoteOpen.ts](../../../apps/web/src/remoteOpen.ts) resolves per environment, not per thread                         | Local path actions hidden for cloud threads until M4. Then the `sandbox` target over SSH                                                                                                                                                   | M1 hide, M4  |
+| Usage                      | [MemberUsage.tsx](../../../apps/web/src/components/team/MemberUsage.tsx), where team usage shows today ([_chat.usage.tsx](../../../apps/web/src/routes/_chat.usage.tsx) is provider usage limits) | Machine hours per member from `sandboxRows`                                                                                                                                                                                                | M2           |
+| Projects                   | [ProjectDefaultsSettings.tsx](../../../apps/web/src/components/settings/ProjectDefaultsSettings.tsx)                                                                                              | "Allow cloud threads" and Cloud as a project default                                                                                                                                                                                       | M1           |
+| Scheduled tasks            | [ScheduledTasksSettings.tsx](../../../apps/web/src/components/settings/ScheduledTasksSettings.tsx)                                                                                                | **Cloud** in the task's placement choice; "Discard machine when the run settles"                                                                                                                                                           | M2           |
+| GitHub App key             | [SourceControlSettings.tsx](../../../apps/web/src/components/settings/SourceControlSettings.tsx)                                                                                                  | App ID and private key (06)                                                                                                                                                                                                                | M1           |
+| Member GitHub              | [MemberGitHub.tsx](../../../apps/web/src/components/team/MemberGitHub.tsx)                                                                                                                        | On the member's own row in Settings → Team: **Use a token instead** next to Connect GitHub, **Remove token**, and the warning that agents can read it until M3's git proxy (D1)                                                            | M1           |
+| Push notice                | ComposerBanner slots                                                                                                                                                                              | "Connect GitHub to push", linking the owner to their row; others see "Ask <owner> to connect GitHub"                                                                                                                                       | M1           |
 
 ### Settings → Cloud
 
@@ -282,15 +299,15 @@ after Team and shows on solo servers too, unlike Team, which `useTeamSettingsVis
 [team.ts](../../../apps/web/src/state/team.ts) hides. Each sub-page is a section on one route, as
 other settings pages are, so search can reach them.
 
-| Section | Holds | Who edits | Milestone |
-| --- | --- | --- | --- |
-| Overview | Driver health, running machines, base image in use, mirror size, the Docker isolation warning, the desktop-server warning (07, 01) | Admins; members read | M1 |
-| Compute | Driver instances, machine size and the `sandbox.baseImage` override (M1, D6); read-only caps in M1: team cap and starts per minute, no member cap (D5); caps editable, member cap optional in M2; idle period and retention from 04 (M2) | Admins | M1, M2 |
-| Environment variables | Team layer, reserved names (06) | Admins | M1 |
-| Team image | Recipe, builds, history, activate (05) | Admins | M3 |
-| Usage | Machine hours per member | Admins | M2 |
-| Access | SSH keys and "Allow SSH into machines" (07) | Each member; the switch is admin | M4 |
-| Policy | Cloud-only mode, read-only rows from managed policy | Admins | M4, M5 |
+| Section               | Holds                                                                                                                                                                                                                                    | Who edits                        | Milestone |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | --------- |
+| Overview              | Driver health, running machines, base image in use, mirror size, the Docker isolation warning, the desktop-server warning (07, 01)                                                                                                       | Admins; members read             | M1        |
+| Compute               | Driver instances, machine size and the `sandbox.baseImage` override (M1, D6); read-only caps in M1: team cap and starts per minute, no member cap (D5); caps editable, member cap optional in M2; idle period and retention from 04 (M2) | Admins                           | M1, M2    |
+| Environment variables | Team layer, reserved names (06)                                                                                                                                                                                                          | Admins                           | M1        |
+| Team image            | Recipe, builds, history, activate (05)                                                                                                                                                                                                   | Admins                           | M3        |
+| Usage                 | Machine hours per member                                                                                                                                                                                                                 | Admins                           | M2        |
+| Access                | SSH keys and "Allow SSH into machines" (07)                                                                                                                                                                                              | Each member; the switch is admin | M4        |
+| Policy                | Cloud-only mode, read-only rows from managed policy                                                                                                                                                                                      | Admins                           | M4, M5    |
 
 Settings → Access already exists ([_chat.settings.access.tsx](../../../apps/web/src/routes/_chat.settings.access.tsx)).
 The SSH section is titled "Machine access" so search doesn't mix the two. Project env vars sit in
@@ -299,17 +316,17 @@ the project's settings (06). Member env vars sit in Settings → Cloud → Envir
 
 ### Every entry point per action
 
-| Action | Composer | Thread menu | Command palette | Keybinding | Header or banner | Settings | MCP and CLI | Milestone |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Start in cloud | Mode picker **Cloud** | n/a | "New cloud thread" | `chat.newCloud` | n/a | Project `defaultsToCloud` (admin) | `t3_thread_launch`, `create_threads`, `delegate_task`, `t3 thread start --cloud` | M1 |
-| Wake machine | Sending wakes | **Wake** | "Wake machine" | none | **Wake** in the asleep notice | n/a | Any thread tool that needs the machine (04) | M1 manual, M2 triggers |
-| Sleep now | n/a | **Sleep now** | "Sleep machine" | none | n/a | Idle period | none | M1 |
-| Retry | n/a | **Retry** | "Retry machine" | none | **Retry** in the failure notice | n/a | none | M1 |
-| Discard machine | n/a | **Discard machine** | "Discard machine" | none | **Discard** in the failure notice | Retention | none | M1 |
-| Bring it local | n/a | **Continue locally** | "Continue locally" | none | n/a | n/a | `t3_thread_move` (section 6) | M4 |
-| Send to cloud | n/a | **Continue in cloud** | "Continue in cloud" | none | n/a | n/a | `t3_thread_move` | M4 |
-| Connect GitHub to push | n/a | n/a | n/a | none | Push notice links to the row | Team → own row: Connect GitHub or **Use a token instead** | none | M1 |
-| Remove own token | n/a | n/a | n/a | none | n/a | Team → own row: **Remove token** | none | M1 |
+| Action                 | Composer              | Thread menu           | Command palette     | Keybinding      | Header or banner                  | Settings                                                  | MCP and CLI                                                    | Milestone              |
+| ---------------------- | --------------------- | --------------------- | ------------------- | --------------- | --------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
+| Start in cloud         | Mode picker **Cloud** | n/a                   | "New cloud thread"  | `chat.newCloud` | n/a                               | Project `defaultsToCloud` (admin)                         | `t3_thread_launch`, `delegate_task`, `t3 thread start --cloud` | M1                     |
+| Wake machine           | Sending wakes         | **Wake**              | "Wake machine"      | none            | **Wake** in the asleep notice     | n/a                                                       | Any thread tool that needs the machine (04)                    | M1 manual, M2 triggers |
+| Sleep now              | n/a                   | **Sleep now**         | "Sleep machine"     | none            | n/a                               | Idle period                                               | none                                                           | M1                     |
+| Retry                  | n/a                   | **Retry**             | "Retry machine"     | none            | **Retry** in the failure notice   | n/a                                                       | none                                                           | M1                     |
+| Discard machine        | n/a                   | **Discard machine**   | "Discard machine"   | none            | **Discard** in the failure notice | Retention                                                 | none                                                           | M1                     |
+| Bring it local         | n/a                   | **Continue locally**  | "Continue locally"  | none            | n/a                               | n/a                                                       | `t3_thread_move` (section 6)                                   | M4                     |
+| Send to cloud          | n/a                   | **Continue in cloud** | "Continue in cloud" | none            | n/a                               | n/a                                                       | `t3_thread_move`                                               | M4                     |
+| Connect GitHub to push | n/a                   | n/a                   | n/a                 | none            | Push notice links to the row      | Team → own row: Connect GitHub or **Use a token instead** | none                                                           | M1                     |
+| Remove own token       | n/a                   | n/a                   | n/a                 | none            | n/a                               | Team → own row: **Remove token**                          | none                                                           | M1                     |
 
 Each action is a `createEnvironmentRpcCommand` in client-runtime (section 8). Web, desktop and
 mobile call the same command. The menu, palette and banner read the same permission atom, so they
@@ -335,20 +352,20 @@ is a select, through
 [workspace-detail-selection.ts](../../../apps/mobile/src/features/workspace/workspace-detail-selection.ts).
 Settings pages share one native screen.
 
-| Screen or flow | Path | Change | Milestone |
-| --- | --- | --- | --- |
-| New task mode | [NewTaskContextPickerScreens.tsx](../../../apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx); `WorkspaceMode` in [new-task-flow-provider.tsx](../../../apps/mobile/src/features/threads/new-task-flow-provider.tsx) and [new-task-context-presentation.ts](../../../apps/mobile/src/features/threads/new-task-context-presentation.ts), and inline `"local" \| "worktree"` in `NewTaskDraftScreen.tsx`, `checkout-new-task-branch.ts`, `projectThreadCreationValidation.ts` | The client-local mode gains `cloud`. **Cloud** row when available. Base branch picker as for worktree | M1 |
-| Thread header | [ThreadHeader.tsx](../../../apps/mobile/src/features/threads/ThreadHeader.tsx) | State text, as on web | M1 |
-| Thread actions | [ThreadSettingsSheet.tsx](../../../apps/mobile/src/features/threads/ThreadSettingsSheet.tsx) | Wake, Retry, Sleep now, Discard machine | M1 |
-| Thread list | [thread-list-v2-items.tsx](../../../apps/mobile/src/features/threads/thread-list-v2-items.tsx) | Cloud icon and state word | M1 |
-| Work log | [thread-work-log.tsx](../../../apps/mobile/src/features/threads/thread-work-log.tsx) | Provision steps from `prepared-run.progress` | M1 |
-| Terminal | [ThreadTerminalRouteScreen.tsx](../../../apps/mobile/src/features/terminal/ThreadTerminalRouteScreen.tsx) | Exited while stopped (M1). Read-only asleep state with **Wake** (M2) | M1, M2 |
-| Scheduled tasks | [SettingsScheduledTasksRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsScheduledTasksRouteScreen.tsx), [scheduledTaskDraft.ts](../../../apps/mobile/src/features/settings/scheduledTaskDraft.ts) | Cloud as a placement choice | M2 |
-| Usage | [UsageRouteScreen.tsx](../../../apps/mobile/src/features/usage/UsageRouteScreen.tsx) | Machine hours. It shows provider usage only today; mobile has no team usage yet | M2 |
-| Cloud status page | New `SettingsMachinesRouteScreen.tsx` beside [SettingsTeamRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsTeamRouteScreen.tsx). A page is registered in [Stack.tsx](../../../apps/mobile/src/Stack.tsx), listed in [SettingsRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsRouteScreen.tsx), and named in `settings-page-targets.ts` and `settings-search.ts`; [settings-navigation.ts](../../../apps/mobile/src/features/settings/settings-navigation.ts) derives routes from the `Settings*` names | Read-only: driver health, running machines, active image build | M1, M3 |
-| Member GitHub | [SettingsTeamRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsTeamRouteScreen.tsx) | Own row, which shows no GitHub today: GitHub source, **Use a token instead** (secure paste field), **Remove token** | M1 |
-| Push notice | [ThreadDetailScreen.tsx](../../../apps/mobile/src/features/threads/ThreadDetailScreen.tsx) | "Connect GitHub to push", opening the Team screen | M1 |
-| Open in editor | Thread sheet | "Open on a computer" explains SSH (07) | M4 |
+| Screen or flow    | Path                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Change                                                                                                              | Milestone |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------- |
+| New task mode     | [NewTaskContextPickerScreens.tsx](../../../apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx); `WorkspaceMode` in [new-task-flow-provider.tsx](../../../apps/mobile/src/features/threads/new-task-flow-provider.tsx) and [new-task-context-presentation.ts](../../../apps/mobile/src/features/threads/new-task-context-presentation.ts), and inline `"local" \| "worktree"` in `NewTaskDraftScreen.tsx`, `checkout-new-task-branch.ts`, `projectThreadCreationValidation.ts`                                                   | The client-local mode gains `cloud`. **Cloud** row when available. Base branch picker as for worktree               | M1        |
+| Thread header     | [ThreadHeader.tsx](../../../apps/mobile/src/features/threads/ThreadHeader.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                                | State text, as on web                                                                                               | M1        |
+| Thread actions    | [ThreadSettingsSheet.tsx](../../../apps/mobile/src/features/threads/ThreadSettingsSheet.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Wake, Retry, Sleep now, Discard machine                                                                             | M1        |
+| Thread list       | [thread-list-v2-items.tsx](../../../apps/mobile/src/features/threads/thread-list-v2-items.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                | Cloud icon and state word                                                                                           | M1        |
+| Work log          | [thread-work-log.tsx](../../../apps/mobile/src/features/threads/thread-work-log.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Provision steps from `prepared-run.progress`                                                                        | M1        |
+| Terminal          | [ThreadTerminalRouteScreen.tsx](../../../apps/mobile/src/features/terminal/ThreadTerminalRouteScreen.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                     | Exited while stopped (M1). Read-only asleep state with **Wake** (M2)                                                | M1, M2    |
+| Scheduled tasks   | [SettingsScheduledTasksRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsScheduledTasksRouteScreen.tsx), [scheduledTaskDraft.ts](../../../apps/mobile/src/features/settings/scheduledTaskDraft.ts)                                                                                                                                                                                                                                                                                                                          | Cloud as a placement choice                                                                                         | M2        |
+| Usage             | [UsageRouteScreen.tsx](../../../apps/mobile/src/features/usage/UsageRouteScreen.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Machine hours. It shows provider usage only today; mobile has no team usage yet                                     | M2        |
+| Cloud status page | New `SettingsMachinesRouteScreen.tsx` beside [SettingsTeamRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsTeamRouteScreen.tsx). A page is registered in [Stack.tsx](../../../apps/mobile/src/Stack.tsx), listed in [SettingsRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsRouteScreen.tsx), and named in `settings-page-targets.ts` and `settings-search.ts`; [settings-navigation.ts](../../../apps/mobile/src/features/settings/settings-navigation.ts) derives routes from the `Settings*` names | Read-only: driver health, running machines, active image build                                                      | M1, M3    |
+| Member GitHub     | [SettingsTeamRouteScreen.tsx](../../../apps/mobile/src/features/settings/SettingsTeamRouteScreen.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                         | Own row, which shows no GitHub today: GitHub source, **Use a token instead** (secure paste field), **Remove token** | M1        |
+| Push notice       | [ThreadDetailScreen.tsx](../../../apps/mobile/src/features/threads/ThreadDetailScreen.tsx)                                                                                                                                                                                                                                                                                                                                                                                                                                                    | "Connect GitHub to push", opening the Team screen                                                                   | M1        |
+| Open in editor    | Thread sheet                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | "Open on a computer" explains SSH (07)                                                                              | M4        |
 
 The new mobile code goes under `features/threads` and `features/settings`, never
 `features/cloud`, which is T3 Connect.
@@ -374,15 +391,15 @@ who prompted the image thread (01).
 
 Agents reach cloud through the same tools users' agents use today.
 
-| Tool | File | Change |
-| --- | --- | --- |
-| `t3_thread_launch` | [project/tools.ts](../../../apps/server/src/mcp/toolkits/project/tools.ts) | `workspaceStrategy` takes `{type:"cloud", baseRef}`; the description gains one clause |
-| `delegate_task` | [orchestrator/tools.ts](../../../apps/server/src/mcp/toolkits/orchestrator/tools.ts), `OrchestratorMcpDelegateTaskInput` in [orchestratorMcp.ts](../../../packages/contracts/src/orchestratorMcp.ts) | `isolation` gains `"cloud"` beside `shared` and `worktree` |
-| `create_threads` | same | Has no `isolation` today: its threads inherit the caller's checkout. Cloud needs a new optional key |
-| `orchestrator_capabilities` | same | Reports whether cloud is available here (a `features` key), so an agent asks before it launches |
-| `t3_thread_read` | same | Returns the shell `sandbox` summary |
-| `t3_thread_move` (new) | [thread/tools.ts](../../../apps/server/src/mcp/toolkits/thread/tools.ts) | Continue locally and Continue in cloud (M4). Not `t3_thread_transfer`, which forks and merges context between threads (open question 2) |
-| `t3_team_image_*` | `apps/server/src/mcp/toolkits/sandboxImage/` (new) | 05's six tools (M3) |
+| Tool                        | File                                                                                                                                                                                                 | Change                                                                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `t3_thread_launch`          | [project/tools.ts](../../../apps/server/src/mcp/toolkits/project/tools.ts)                                                                                                                           | `workspaceStrategy` takes `{type:"cloud", baseRef}`; the description gains one clause                                                     |
+| `delegate_task`             | [orchestrator/tools.ts](../../../apps/server/src/mcp/toolkits/orchestrator/tools.ts), `OrchestratorMcpDelegateTaskInput` in [orchestratorMcp.ts](../../../packages/contracts/src/orchestratorMcp.ts) | `isolation` gains `"cloud"` beside `shared` and `worktree`                                                                                |
+| `create_threads`            | same                                                                                                                                                                                                 | No change: it has no `isolation`, and its threads inherit the caller's checkout. Cloud fan-out uses `delegate_task` or `t3_thread_launch` |
+| `orchestrator_capabilities` | same                                                                                                                                                                                                 | Reports whether cloud is available here (a `features` key), so an agent asks before it launches                                           |
+| `t3_thread_read`            | same                                                                                                                                                                                                 | Returns the shell `sandbox` summary                                                                                                       |
+| `t3_thread_move` (new)      | [thread/tools.ts](../../../apps/server/src/mcp/toolkits/thread/tools.ts)                                                                                                                             | Continue locally and Continue in cloud (M4). Not `t3_thread_transfer`, which forks and merges context between threads (open question 2)   |
+| `t3_team_image_*`           | `apps/server/src/mcp/toolkits/sandboxImage/` (new)                                                                                                                                                   | 05's six tools (M3)                                                                                                                       |
 
 These descriptions are model-facing text. Changing them means running the evals named in
 [evals/README.md](../../../evals/README.md), and adding a case where a model must pick cloud for
@@ -438,50 +455,50 @@ target decides placement with its own drivers, caps and policy. Rules:
 
 Every way in has a way out and a way to see it.
 
-| Way in | Way out | Where you see it | Web, desktop | Mobile | MCP, CLI |
-| --- | --- | --- | --- | --- | --- |
-| Start in cloud | Discard machine, or Continue locally (M4) | Cloud icon, header state | yes | yes | Launch only |
-| Sleep (idle, manual, or Docker once all threads settle in M1) | Wake, send, open thread | "Asleep" | yes | yes | Thread tools wake |
-| Failed | Retry, or Discard | Failure notice with reason | yes | yes | `t3_thread_read` shows it |
-| Waiting at a cap | Admission, or Discard a machine | "Waiting for a machine" | yes | yes | Launch result and read |
-| Discarded | **Start a new machine** focuses the composer; sending provisions | "Machine discarded" | yes | yes | Launch or send |
-| Project defaults to Cloud | An admin clears `defaultsToCloud` | Settings → Projects | yes | read-only | n/a |
-| Own GitHub token set (D1) | **Remove token**; the thread then shows "Connect GitHub to push" | Own row in Settings → Team | yes | yes | n/a |
-| "Connect GitHub to push" | Connect GitHub, or **Use a token instead** | Push notice on the thread | yes | yes | Push error `github-credential-missing` |
-| Base image override | Clear `sandbox.baseImage`; the version-matched image returns | Settings → Cloud → Compute | yes | read-only | n/a |
-| Project allows cloud | Turn it off. Existing cloud threads keep running, new ones can't start | Projects settings | yes | read-only | Launch refused with reason |
-| Driver configured | Remove it. Threads with machines go to `failed` with code `driver-removed` | Settings → Cloud | yes | read-only | n/a |
-| Cloud-only mode (M4) | Turn it off (06) | Settings → Cloud → Policy | yes | read-only | n/a |
-| Continue in cloud (M4) | Continue locally | Timeline row "Continued in cloud" | yes | not in M4 | `t3_thread_move` |
-| Activate image build (M3) | Activate an older build | History list | yes | Active build shown | `t3_team_image_*` |
-| SSH key added (M4) | Remove key | Settings → Cloud → Access | yes | no | n/a |
-| Terminal stopped by sleep | Wake restarts the shell, not the old process | `stoppedBy: "sleep"` row | yes | yes | n/a |
+| Way in                                                        | Way out                                                                    | Where you see it                  | Web, desktop | Mobile             | MCP, CLI                               |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------- | ------------ | ------------------ | -------------------------------------- |
+| Start in cloud                                                | Discard machine, or Continue locally (M4)                                  | Cloud icon, header state          | yes          | yes                | Launch only                            |
+| Sleep (idle, manual, or Docker once all threads settle in M1) | Wake, send, open thread                                                    | "Asleep"                          | yes          | yes                | Thread tools wake                      |
+| Failed                                                        | Retry, or Discard                                                          | Failure notice with reason        | yes          | yes                | `t3_thread_read` shows it              |
+| Waiting at a cap                                              | Admission, or Discard a machine                                            | "Waiting for a machine"           | yes          | yes                | Launch result and read                 |
+| Discarded                                                     | **Start a new machine** focuses the composer; sending provisions           | "Machine discarded"               | yes          | yes                | Launch or send                         |
+| Project defaults to Cloud                                     | An admin clears `defaultsToCloud`                                          | Settings → Projects               | yes          | read-only          | n/a                                    |
+| Own GitHub token set (D1)                                     | **Remove token**; the thread then shows "Connect GitHub to push"           | Own row in Settings → Team        | yes          | yes                | n/a                                    |
+| "Connect GitHub to push"                                      | Connect GitHub, or **Use a token instead**                                 | Push notice on the thread         | yes          | yes                | Push error `github-credential-missing` |
+| Base image override                                           | Clear `sandbox.baseImage`; the version-matched image returns               | Settings → Cloud → Compute        | yes          | read-only          | n/a                                    |
+| Project allows cloud                                          | Turn it off. Existing cloud threads keep running, new ones can't start     | Projects settings                 | yes          | read-only          | Launch refused with reason             |
+| Driver configured                                             | Remove it. Threads with machines go to `failed` with code `driver-removed` | Settings → Cloud                  | yes          | read-only          | n/a                                    |
+| Cloud-only mode (M4)                                          | Turn it off (06)                                                           | Settings → Cloud → Policy         | yes          | read-only          | n/a                                    |
+| Continue in cloud (M4)                                        | Continue locally                                                           | Timeline row "Continued in cloud" | yes          | not in M4          | `t3_thread_move`                       |
+| Activate image build (M3)                                     | Activate an older build                                                    | History list                      | yes          | Active build shown | `t3_team_image_*`                      |
+| SSH key added (M4)                                            | Remove key                                                                 | Settings → Cloud → Access         | yes          | no                 | n/a                                    |
+| Terminal stopped by sleep                                     | Wake restarts the shell, not the old process                               | `stoppedBy: "sleep"` row          | yes          | yes                | n/a                                    |
 
 Who can press what, from 01. The client hides what the server would refuse:
 
-| Action | Owner | Admin | Other member |
-| --- | --- | --- | --- |
-| Wake, Retry | yes | yes | yes |
-| Sleep now, Discard machine | yes | yes | no, shown disabled with "Only the owner or an admin" |
-| Continue locally, Continue in cloud | yes | yes | no |
+| Action                              | Owner | Admin | Other member                                         |
+| ----------------------------------- | ----- | ----- | ---------------------------------------------------- |
+| Wake, Retry                         | yes   | yes   | yes                                                  |
+| Sleep now, Discard machine          | yes   | yes   | no, shown disabled with "Only the owner or an admin" |
+| Continue locally, Continue in cloud | yes   | yes   | no                                                   |
 
 ## 8. Shared client logic in packages/client-runtime
 
 One copy of each rule, used by web and mobile.
 
-| Module | Path | Adds |
-| --- | --- | --- |
-| Availability | new `state/sandbox.ts` | `cloudAvailability(settings, projectId, policy)`: a configured driver, project allows, policy allows. One answer and one reason string for every picker |
-| Project defaults | `resolveNewThreadEnvMode` in [projectSettings.ts](../../../packages/shared/src/projectSettings.ts) (packages/shared; web's `useHandleNewThread.ts` and mobile's `use-new-task-project-defaults.ts` call it) | Folds the `defaultsToCloud` override into the client-local mode |
-| Shell rows | [threadShell.ts](../../../packages/client-runtime/src/state/threadShell.ts), [shellReducer.ts](../../../packages/client-runtime/src/state/shellReducer.ts) | Carry `sandbox` through; `sandboxStatePresentation(summary)` returns the label, tone and allowed actions |
-| Detail | [threadDetail.ts](../../../packages/client-runtime/src/state/threadDetail.ts) | Apply `sandbox.updated` to the detail record |
-| Commands | [runtime.ts](../../../packages/client-runtime/src/state/runtime.ts) `createEnvironmentRpcCommand` with `tag: dispatchCommand` and an `execute` that builds the command. Today's thread commands use `createEnvironmentCommand` in [threadCommands.ts](../../../packages/client-runtime/src/state/threadCommands.ts), which installs no permission guard | `wakeSandbox`, `sleepSandbox`, `retrySandbox`, `discardSandbox` over `orchestration.dispatchCommand` |
-| Permissions | [commandPermissions.ts](../../../packages/client-runtime/src/state/commandPermissions.ts) | Atoms combining scope with owner or admin |
-| Work log | [turnItemPresentation.ts](../../../packages/client-runtime/src/state/turnItemPresentation.ts) | Provision steps; the timeline rows "Machine started from build 14", "Machine failed", "Machine discarded", "Continued locally", "Continued in cloud" as one new turn item type, which old clients skip through `ForwardCompatibleUnion` |
-| Terminal | [terminalSession.ts](../../../packages/client-runtime/src/state/terminalSession.ts) | Asleep and `stoppedBy` states |
-| Usage | `teamUsageAtom` in [team.ts](../../../packages/client-runtime/src/state/team.ts) ([usage.ts](../../../packages/client-runtime/src/state/usage.ts) is provider usage limits) | `sandboxRows` |
-| Push credential | [team.ts](../../../packages/client-runtime/src/state/team.ts) | `cloudPushCredential(thread, owner, settings)`: `app`, `owner` or `none`; token set and clear commands |
-| Viewer lease | [presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts) | Renew every 5 minutes while a cloud thread is visible |
+| Module           | Path                                                                                                                                                                                                                                                                                                                                                    | Adds                                                                                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Availability     | new `state/sandbox.ts`                                                                                                                                                                                                                                                                                                                                  | `cloudAvailability(settings, projectId, policy)`: a configured driver, project allows, policy allows. One answer and one reason string for every picker                                                                                 |
+| Project defaults | `resolveNewThreadEnvMode` in [projectSettings.ts](../../../packages/shared/src/projectSettings.ts) (packages/shared; web's `useHandleNewThread.ts` and mobile's `use-new-task-project-defaults.ts` call it)                                                                                                                                             | Folds the `defaultsToCloud` override into the client-local mode                                                                                                                                                                         |
+| Shell rows       | [threadShell.ts](../../../packages/client-runtime/src/state/threadShell.ts), [shellReducer.ts](../../../packages/client-runtime/src/state/shellReducer.ts)                                                                                                                                                                                              | Carry `sandbox` through; `sandboxStatePresentation(summary)` returns the label, tone and allowed actions                                                                                                                                |
+| Detail           | [threadDetail.ts](../../../packages/client-runtime/src/state/threadDetail.ts)                                                                                                                                                                                                                                                                           | Apply `sandbox.updated` to the detail record                                                                                                                                                                                            |
+| Commands         | [runtime.ts](../../../packages/client-runtime/src/state/runtime.ts) `createEnvironmentRpcCommand` with `tag: dispatchCommand` and an `execute` that builds the command. Today's thread commands use `createEnvironmentCommand` in [threadCommands.ts](../../../packages/client-runtime/src/state/threadCommands.ts), which installs no permission guard | `wakeSandbox`, `sleepSandbox`, `retrySandbox`, `discardSandbox` over `orchestration.dispatchCommand`                                                                                                                                    |
+| Permissions      | [commandPermissions.ts](../../../packages/client-runtime/src/state/commandPermissions.ts)                                                                                                                                                                                                                                                               | Atoms combining scope with owner or admin                                                                                                                                                                                               |
+| Work log         | [turnItemPresentation.ts](../../../packages/client-runtime/src/state/turnItemPresentation.ts)                                                                                                                                                                                                                                                           | Provision steps; the timeline rows "Machine started from build 14", "Machine failed", "Machine discarded", "Continued locally", "Continued in cloud" as one new turn item type, which old clients skip through `ForwardCompatibleUnion` |
+| Terminal         | [terminalSession.ts](../../../packages/client-runtime/src/state/terminalSession.ts)                                                                                                                                                                                                                                                                     | Asleep and `stoppedBy` states                                                                                                                                                                                                           |
+| Usage            | `teamUsageAtom` in [team.ts](../../../packages/client-runtime/src/state/team.ts) ([usage.ts](../../../packages/client-runtime/src/state/usage.ts) is provider usage limits)                                                                                                                                                                             | `sandboxRows`                                                                                                                                                                                                                           |
+| Push credential  | [team.ts](../../../packages/client-runtime/src/state/team.ts)                                                                                                                                                                                                                                                                                           | `cloudPushCredential(thread, owner, settings)`: `app`, `owner` or `none`; token set and clear commands                                                                                                                                  |
+| Viewer lease     | [presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts)                                                                                                                                                                                                                                                                       | Renew every 5 minutes while a cloud thread is visible                                                                                                                                                                                   |
 
 The permission atom for `sandbox.*`: the commands travel through `orchestration.dispatchCommand`,
 which has no entry in `CLIENT_GUARDED_RPC_SCOPES` (the server requires
@@ -508,73 +525,73 @@ PR-sized. "Parallel" means it can start when its milestone's first PR lands. Num
 
 ### M0, the seam
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 0.1 | Split `OrchestrationV2RunWorkspacePreparation` from the launch strategy. No new literal | first |
-| 0.2 | Moved to M1 1.7 and 1.10: a literal no code reads would be dead until then | n/a |
-| 0.3 | Dropped: settings gate Cloud (section 2, rule 3) | n/a |
-| 0.4 | Moved to M1 1.6: an export with no importer fails knip | n/a |
+| #   | PR                                                                                      | Parallel |
+| --- | --------------------------------------------------------------------------------------- | -------- |
+| 0.1 | Split `OrchestrationV2RunWorkspacePreparation` from the launch strategy. No new literal | first    |
+| 0.2 | Moved to M1 1.7 and 1.10: a literal no code reads would be dead until then              | n/a      |
+| 0.3 | Dropped: settings gate Cloud (section 2, rule 3)                                        | n/a      |
+| 0.4 | Moved to M1 1.6: an export with no importer fails knip                                  | n/a      |
 
 ### M1, Docker cloud threads
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 1.1 | `sandbox.ts`, thread `sandboxId`, shell summary, detail record, `sandbox.updated`, commands (with 04's PR 1) | first |
-| 1.2 | `runner.ts` and the `./runner` subpath (03's PR 1) | yes |
-| 1.3 | `ServerSettings.sandbox` driver instances, project keys `sandboxAllowed`, `defaultsToCloud` | yes |
-| 1.4 | Cloud launch strategy member. MCP `t3_thread_launch`, `isolation: "cloud"`, `orchestrator_capabilities`, evals | after 1.1 |
-| 1.5 | `t3 thread start --cloud` | after 1.4 |
-| 1.6 | client-runtime presentation, commands, permission atoms | after 1.1 |
-| 1.7 | Web: mode picker, drafts, send, sidebar icon | after 1.6 |
-| 1.8 | Web: header, status line, banners, thread menu, palette, `chat.newCloud` | after 1.6, parallel with 1.7 |
-| 1.9 | Web: Settings → Cloud (Overview; Compute with driver, size and read-only caps; Environment variables), project settings, GitHub App key in Source Control | after 1.3 |
-| 1.10 | Mobile: new task, header, sheet actions, list, work log, read-only machines page | after 1.6, parallel with 1.7 to 1.9 |
-| 1.11 | `machine-failed` notification kind and routing | yes |
-| 1.12 | D1: `TeamMemberGitHub.source`, `team.githubTokenSet` and `team.githubTokenClear` with scope, the App key setting, `github-credential-missing` | yes |
-| 1.13 | D1 clients: web member row and push notice; mobile Team row and notice | after 1.12 and 1.6 |
-| 1.14 | D6: `sandbox.baseImage` setting, shown in Compute and Overview | after 1.3 |
-| 1.15 | D5: read-only caps show team cap and starts per minute, no member cap | after 1.9 |
+| #    | PR                                                                                                                                                        | Parallel                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 1.1  | `sandbox.ts`, thread `sandboxId`, shell summary, detail record, `sandbox.updated`, commands (with 04's PR 1)                                              | first                               |
+| 1.2  | `runner.ts` and the `./runner` subpath (03's PR 1)                                                                                                        | yes                                 |
+| 1.3  | `ServerSettings.sandbox` driver instances, project keys `sandboxAllowed`, `defaultsToCloud`                                                               | yes                                 |
+| 1.4  | Cloud launch strategy member. MCP `t3_thread_launch`, `isolation: "cloud"`, `orchestrator_capabilities`, evals                                            | after 1.1                           |
+| 1.5  | `t3 thread start --cloud`                                                                                                                                 | after 1.4                           |
+| 1.6  | client-runtime presentation, commands, permission atoms                                                                                                   | after 1.1                           |
+| 1.7  | Web: mode picker, drafts, send, sidebar icon                                                                                                              | after 1.6                           |
+| 1.8  | Web: header, status line, banners, thread menu, palette, `chat.newCloud`                                                                                  | after 1.6, parallel with 1.7        |
+| 1.9  | Web: Settings → Cloud (Overview; Compute with driver, size and read-only caps; Environment variables), project settings, GitHub App key in Source Control | after 1.3                           |
+| 1.10 | Mobile: new task, header, sheet actions, list, work log, read-only machines page                                                                          | after 1.6, parallel with 1.7 to 1.9 |
+| 1.11 | `machine-failed` notification kind and routing                                                                                                            | yes                                 |
+| 1.12 | D1: `TeamMemberGitHub.source`, `team.githubTokenSet` and `team.githubTokenClear` with scope, the App key setting, `github-credential-missing`             | yes                                 |
+| 1.13 | D1 clients: web member row and push notice; mobile Team row and notice                                                                                    | after 1.12 and 1.6                  |
+| 1.14 | D6: `sandbox.baseImage` setting, shown in Compute and Overview                                                                                            | after 1.3                           |
+| 1.15 | D5: read-only caps show team cap and starts per minute, no member cap                                                                                     | after 1.9                           |
 
 ### M2, lifecycle and the hosted driver
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 2.1 | Viewer lease from presence reporting | yes |
-| 2.2 | Terminal asleep state and `stoppedBy`, web and mobile | yes |
-| 2.3 | Preview "Stopped while asleep" | yes |
-| 2.4 | Scheduled tasks: cloud choice, `discardOnSettle`, waiting history, web and mobile | yes |
-| 2.5 | Usage `sandboxRows`, web and mobile pages | yes |
-| 2.6 | Member env vars and `[secret:NAME]` masking display | yes |
-| 2.7 | Editable caps; per-launch size in the strategy and the picker | yes |
+| #   | PR                                                                                | Parallel |
+| --- | --------------------------------------------------------------------------------- | -------- |
+| 2.1 | Viewer lease from presence reporting                                              | yes      |
+| 2.2 | Terminal asleep state and `stoppedBy`, web and mobile                             | yes      |
+| 2.3 | Preview "Stopped while asleep"                                                    | yes      |
+| 2.4 | Scheduled tasks: cloud choice, `discardOnSettle`, waiting history, web and mobile | yes      |
+| 2.5 | Usage `sandboxRows`, web and mobile pages                                         | yes      |
+| 2.6 | Member env vars and `[secret:NAME]` masking display                               | yes      |
+| 2.7 | Editable caps; per-launch size in the strategy and the picker                     | yes      |
 
 ### M3, team images
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 3.1 | `sandboxImage.ts` and `teamImage.*` RPCs with scopes | first |
-| 3.2 | Settings → Cloud → Team image page and build log | after 3.1 |
-| 3.3 | MCP `sandboxImage` toolkit and evals | after 3.1, parallel with 3.2 |
-| 3.4 | Build pushes and their routing rule | after 3.1 |
-| 3.5 | Mobile: active build on the machines page | after 3.1 |
-| 3.6 | Provider picker marks OpenCode, Grok and Kiro as cloud-ready | yes |
+| #   | PR                                                           | Parallel                     |
+| --- | ------------------------------------------------------------ | ---------------------------- |
+| 3.1 | `sandboxImage.ts` and `teamImage.*` RPCs with scopes         | first                        |
+| 3.2 | Settings → Cloud → Team image page and build log             | after 3.1                    |
+| 3.3 | MCP `sandboxImage` toolkit and evals                         | after 3.1, parallel with 3.2 |
+| 3.4 | Build pushes and their routing rule                          | after 3.1                    |
+| 3.5 | Mobile: active build on the machines page                    | after 3.1                    |
+| 3.6 | Provider picker marks OpenCode, Grok and Kiro as cloud-ready | yes                          |
 
 ### M4, access and moving threads
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 4.1 | `RemoteOpenTargetKind` `sandbox`; open in editor on web and desktop | first |
-| 4.2 | Settings → Cloud → Access: SSH keys and the team switch | parallel with 4.1 |
-| 4.3 | Continue in cloud and Continue locally (team server) on every web entry point and MCP | yes |
-| 4.4 | Desktop: Continue locally on this computer, bundle read RPC and IPC | after 4.3 |
-| 4.5 | Cloud-only mode in settings and `limits.cloud.cloudOnly` | yes |
+| #   | PR                                                                                    | Parallel          |
+| --- | ------------------------------------------------------------------------------------- | ----------------- |
+| 4.1 | `RemoteOpenTargetKind` `sandbox`; open in editor on web and desktop                   | first             |
+| 4.2 | Settings → Cloud → Access: SSH keys and the team switch                               | parallel with 4.1 |
+| 4.3 | Continue in cloud and Continue locally (team server) on every web entry point and MCP | yes               |
+| 4.4 | Desktop: Continue locally on this computer, bundle read RPC and IPC                   | after 4.3         |
+| 4.5 | Cloud-only mode in settings and `limits.cloud.cloudOnly`                              | yes               |
 
 ### M5, BYOC
 
-| # | PR | Parallel |
-| --- | --- | --- |
-| 5.1 | `aws-ec2`, then `gce` members of the driver settings union | yes |
-| 5.2 | `limits.cloud.allowedDrivers`; read-only policy rows on web and mobile | yes |
-| 5.3 | Driver health in Overview, including the network path check (09) | yes |
+| #   | PR                                                                     | Parallel |
+| --- | ---------------------------------------------------------------------- | -------- |
+| 5.1 | `aws-ec2`, then `gce` members of the driver settings union             | yes      |
+| 5.2 | `limits.cloud.allowedDrivers`; read-only policy rows on web and mobile | yes      |
+| 5.3 | Driver health in Overview, including the network path check (09)       | yes      |
 
 ## Open questions
 

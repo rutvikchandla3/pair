@@ -119,6 +119,25 @@ T3 Code throughout.
 - Checked end to end with mobile's own logic over the WebSocket. The phone screens still need a
   pass on real devices.
 
+### Cloud threads on Docker
+
+- **Off until an admin adds a driver.** **Settings → Cloud** adds a Docker driver on the server's
+  machine or another Docker host, tests it end to end, and warns on plain Docker and on a server
+  inside the desktop app. Solo servers get Cloud too. Projects can opt out or default to Cloud.
+- **A machine per thread.** **Cloud** in the workspace menu, **New cloud thread** in the command
+  palette, the phone's new thread screen, `t3 thread start --cloud`, `t3_thread_launch` and
+  `delegate_task` start one. Side chats and forks share it. The agent, terminals and setup script
+  run there; transcripts, diffs and approvals stay on the server.
+- **Lifecycle you can see.** Header, sidebar and status line show Starting, Waiting (team cap and
+  start rate), Asleep, Failed and Discarded, with Wake, Retry, Sleep now and Discard. A Docker
+  machine sleeps once its threads settle, and diffs stay readable from the server's mirror.
+- **Credentials per thread.** Claude runs on a setup token or API key, Codex on a managed ChatGPT
+  account or API key; other accounts show "Local only". Pushes use the team's GitHub App, else the
+  owner's own GitHub or pasted token, else "Connect GitHub to push". github.com only.
+- **"Machine failed"** notifies the prompter and the owner. The phone has a read-only
+  **Settings → Machines** page.
+- User guide: [Cloud threads](../user/cloud.md).
+
 ## Not planned
 
 - **Pooling or rotating teammates' personal subscriptions.** They are licensed per person, and

@@ -7,9 +7,11 @@ page says how it must behave. The decisions came from a product design review du
 
 ## Principles
 
-- **Solo stays T3 Code.** A server with one member looks and behaves exactly like T3 Code, down to
-  the wire. Team behavior turns on only with a second active member. Contract changes are additive,
-  and the server fills in "my" fields for whoever is looking, so older clients keep working.
+- **Solo stays T3 Code.** A server with one member and no compute driver looks and behaves exactly
+  like T3 Code, down to the wire. Team behavior turns on only with a second active member. Cloud is
+  not a team feature: it turns on when an admin adds a compute driver, on solo and team servers
+  alike, and changes nothing on the wire until then. Contract changes are additive, and the server
+  fills in "my" fields for whoever is looking, so older clients keep working.
 - **Membership is the trust boundary.** A member who can run agents or terminals has a shell as the
   server's user and can read every file, credentials and the database included. Roles prevent
   accidents, not malice. The invite dialog says so: "Invite only people you'd give SSH access to."
@@ -63,6 +65,9 @@ page says how it must behave. The decisions came from a product design review du
   owner, the owner when someone else messages or archives their thread, and you when a thread is
   assigned to you. Never for your own action, and never on a device that is showing the thread.
   Following gives unread state, not pings.
+- **Machine failed** (a cloud thread's machine fails to start or wake) is routed like a failed
+  turn: the prompter and the owner. Machines starting, sleeping, waking or waiting at a cap notify
+  nobody; the status line says it.
 - **Mobile push** goes through Expo with the team's own app build. T3 Connect push stays off on a
   team server because it can't route per member. A member viewing a thread anywhere gets no push
   for it. A push carries the thread's title and never message or agent text. A device belongs to
@@ -78,6 +83,11 @@ page says how it must behave. The decisions came from a product design review du
 - Members manage their own accounts on the web. Mobile only respects ownership.
 - Pair doesn't pool or rotate teammates' personal subscriptions: they are licensed per person.
   Point people at their own accounts, or API keys behind a proxy.
+- **In cloud,** a thread's machine gets only its own thread's account credential, in memory, from
+  an allowlisted environment when the provider process starts, never another member's. Pair writes
+  no credential to a machine's disk or image. Claude works there with a setup token or an API key,
+  Codex with a managed ChatGPT account or an API key; an account with neither is "Local only", and
+  other providers are not supported in cloud.
 - Usage shows every member's turns and tokens for the last 7 days, in team mode only, without
   dollars. The point is noticing whose account carries the team.
 
@@ -87,8 +97,14 @@ page says how it must behave. The decisions came from a product design review du
   from their next launch. The server stays the committer, and terminals carry no author.
 - Pull requests open as the connected member. Otherwise they open with the server's token and
   `Requested by <name> via Pair`, and the toast says why.
-- Agents' `gh` never gets the owner's GitHub token: anyone can prompt the thread. Merging,
-  reviewing and closing as the person aren't built yet; each needs an honest fallback first.
+- In local threads, agents' `gh` never gets the owner's GitHub token: anyone can prompt the thread.
+  Merging, reviewing and closing as the person aren't built yet; each needs an honest fallback
+  first.
+- **In cloud,** git and `gh` get a credential for the thread's own repository (or its fork) only:
+  an installation token from the team's GitHub App when an admin added its key, which stays the
+  recommended setup; else the owner's own GitHub, connected or pasted with **Use a token instead**,
+  so pushes go out as the owner whoever prompts, and Settings says the agent can read it; else
+  nothing, and the thread says "Connect GitHub to push".
 - Each team registers its own GitHub App. Pair never points at upstream's "T3 Code for GitHub" app.
 
 ## API tokens
@@ -135,5 +151,4 @@ page says how it must behave. The decisions came from a product design review du
   - An Assign in the event that first makes a server a team can be missed.
   - A connection opened before the second member joined sees push support only after reconnecting.
 - **From [market signals](./market-signals.md):** a keyboard shortcut for the Git actions, sidebar
-  groups you define, a Pair-branded Mac build, and a concurrency cap or spreading work across
-  servers.
+  groups you define, and a Pair-branded Mac build.

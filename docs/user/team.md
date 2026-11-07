@@ -233,4 +233,5 @@ warns first when that would discard someone else's turns.
 
 On a server with more than one member, new threads start in **New worktree** unless you or the
 project chose a workspace mode, so people don't overwrite each other's changes in the main
-checkout. Settings show this as **New worktree (team default)**.
+checkout. Settings show this as **New worktree (team default)**. A project can start new threads
+in Cloud instead; see [Cloud threads](./cloud.md).
