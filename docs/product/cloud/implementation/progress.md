@@ -10,22 +10,22 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (42 of 57):**
+**Landed on `feat/pair` (43 of 57):**
 
 - M0, complete: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11. 0.10 was folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
 - M1: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.13, 1.14, 1.15, 1.19, 1.20, 1.21,
-  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12.
+  1.22, 1.23, 1.25, 1.27, 1.30, 1.32, 1.36, 1.37, 1.44, 1.31, 1.28, 1.33, 1.28a, 1.12, 1.29.
 
 **In flight when this was written** (local worktrees `../pair-wt/<id>` on branches `wt/<id>`, not
 pushed — if the container is gone, restart these from their spec):
 
 - 1.16 cloud launch (critical path)
-- 1.29 revocation
 - 1.35 push and PR
+- 1.26 provider credentials
 - fix-flaky-kill
 
-**Not started (11), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
+**Not started (10), in dependency order** (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Next when  | PRs                                                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -553,6 +553,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Claude: sandbox/providers/ClaudeSandboxProcess.ts bridge on `spawner`; Claude home in the sandbox; fork/subagent lookup/settings via the bundle's history worker. Task output tail uses the sandbox file watch.
 - Provider processes start on `forProcess(host, threadId)`. Provider homes created by `mkdir` as the agent (no chown in the sandbox fs).
 - OPEN: `T3CODE_SANDBOX` not set for providers (1.24 sets it for scripts). ACP/Codex app-server processes lack T3CODE_THREAD_ID (git answers for the owner thread). workflowFileRead.ts + Claude transcript reads still server-side ("not routed yet").
+
+## 1.29 credential revocation (landed)
+
+- Contracts: `SandboxGitCredentialSource`, internal command `sandbox.git-credential.record`, event `sandbox.git-credential.issued` (projection/awareness no-op).
+- credentials/SandboxCredentialRevocation.ts: revokes runner grant + socket, MCP tokens (owner + attached threads), installation tokens. Runs after the driver accepts stop/destroy and when the status executor finds the backend stopped/missing/failed. OPEN: reconciler `ReportStopped`/`ReportLost` paths don't revoke yet.
+- GitHubAppInstallationTokens `revoke` (drops cache entries; DELETE /installation/token per token, 5 s, failures ignored); tokens carry `permissions`. GitCredentialService dispatches an audit record (id `sandbox-git-credential:<sbx>:<gen>:<thread>:<repo>:<expiresAt|source>`); `decideGitCredentialRecord` refuses threads not on that sandbox. `MemberGitHubCredential.source` (`app`|`token`).
+- server.ts: RunnerForwards/GitCredentialService moved into the top merge of `layerRuntimeCoreDependenciesBase`; one shared GitHubAppInstallationTokens.
+- Client: `sharesOtherOwnersMachine` (client-runtime), web `components/sandbox/sharedMachineBanner.tsx` in ChatView. Mobile banner → 1.41.
 
 ## Open follow-ups and risks
 
