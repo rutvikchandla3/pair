@@ -10,14 +10,14 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (51 of 57):**
+**Landed on `feat/pair` (52 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (40): 1.1–1.16, 1.19–1.28, 1.28a, 1.29–1.38, 1.42–1.44. Plus two follow-ups: `perf-pty` (runner
+- M1 (41): 1.1–1.17, 1.19–1.28, 1.28a, 1.29–1.38, 1.42–1.44. Plus two follow-ups: `perf-pty` (runner
   output coalescing) and the runner revoke fix.
 
-**In flight (2026-11-07, second session):** 1.17, 1.39, each in `../pair-wt/<id>` on
+**In flight (2026-11-07, second session):** 1.18, 1.39, `fix-cloud-delegate`, each in `../pair-wt/<id>` on
 `wt/<id>`. Worktrees live in the container only: after a restart, recreate them from `feat/pair`
 and relaunch those PRs.
 
@@ -32,10 +32,10 @@ and relaunch those PRs.
 | after 1.40 | 1.41 mobile (also 1.28a, 1.37, 1.38)                                                            |
 | last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes                        |
 
-Before the integrated pass: rebuild `t3-sandbox:dev` (1.28 changed the image), re-run
+Before the integrated pass: rebuild `t3-sandbox:dev` if the container restarted (built 2026-11-07 after 1.28), re-run
 `vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
 
-Critical path left: 1.17 → 1.18 → 1.40 → 1.41.
+Critical path left: 1.18 → 1.40 → 1.41.
 
 ## How to resume
 
@@ -624,6 +624,14 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - CLI: `--cloud`, the usage errors, `Machine: <label>` in `show` (local copy: the server cannot import client-runtime), one "Waiting for a machine" line while `sandbox.admission` is set.
 - Budget: `mcpToolListJsonBytes` 47498 → 47818; the PR needs the `agent-context-increase` label.
 - Owed: live evals (`threads-vs-tasks.ndjson` on old vs new text, Sonnet and Opus; no API key here, dry run passes) and the CLI runtime transcript. 08's `create_threads` rows (around lines 304 and 381) still list it under "Start in cloud": 1.45 drops them.
+
+## 1.17 shared sandboxes (landed)
+
+- Outbox: `sandbox.request-wake`, `sandbox.hand-over` (timeouts live in EffectWorker.ts's `EFFECT_TIMEOUTS`, 60 s). `planSandboxOnDelete` replaced 1.19's `planSandboxOnThreadDelete`; `sandboxOwnerMemberChange`; `sandbox.adopt` row. `decideCloudPrompt` gives a non-owner `Defer` + `RequestWake`.
+- `SandboxEffects.handOver` (adopt id `sandbox-adopt:<sbx>:<oldOwner>`, next candidate on a moved refusal, shared `destroy` when nobody is left); `driverFor`/`destroy` extracted.
+- Outside the spec: a fork or side chat's first prompt (context-transfer path) ignored `defer_start`; it now parks like the normal path.
+- Deviations: delete destroy enqueues only `sandbox.destroy` (it stops); commands on a deleted owner during a hand-over are accepted, not refused (effects queue behind the hand-over, generation-guarded), so an attached thread's wake isn't lost.
+- Open: non-owner prompts on a `destroyed` sandbox are refused (they'd need their own run); delegated children skip `gateCloudMessage` (`fix-cloud-delegate`); a hand-over that exhausts its retries does not fail parked runs.
 
 ## Open follow-ups and risks
 
