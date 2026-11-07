@@ -10,28 +10,27 @@ no specs yet ([README](./README.md): write them after M1 lands).
 
 ## Status
 
-**Landed on `feat/pair` (54 of 57):**
+**Landed on `feat/pair` (55 of 57):**
 
 - M0, complete (11): 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.11, and 0.10 folded into 1.11 (allowed
   by M0's plan: "0.10 may slip into 1.10").
-- M1 (43): 1.1–1.39, 1.42–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
+- M1 (44): 1.1–1.40, 1.42–1.44 (with 1.28a). Plus follow-ups: `perf-pty` (runner output
   coalescing), the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**In flight (2026-11-07, second session):** 1.40, in `../pair-wt/1.40` on `wt/1.40`. Worktrees live in the container only: after a restart, recreate them
+**In flight (2026-11-07, second session):** 1.41, in `../pair-wt/1.41` on `wt/1.41`. Worktrees live in the container only: after a restart, recreate them
 from `feat/pair` and relaunch those PRs.
 
 **Not started**, in dependency order (Needs from [M1's table](./m1-cloud-threads-docker.md#build-order)):
 
 | Start when | PRs                                                                      |
 | ---------- | ------------------------------------------------------------------------ |
-| in flight  | 1.40 Settings → Cloud                                                    |
-| after 1.40 | 1.41 mobile                                                              |
+| in flight  | 1.41 mobile                                                              |
 | last       | 1.45 cloud guide (after 1.38–1.42), then the M0 and M1 integrated passes |
 
 Before the integrated pass: rebuild `t3-sandbox:dev` if the container restarted (built 2026-11-07 after 1.28), re-run
 `vp run bench:runner` on an idle machine, and do the PR-level runtime checks the specs list.
 
-Critical path left: 1.40 → 1.41.
+Critical path left: 1.41.
 
 ## How to resume
 
@@ -658,7 +657,18 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Test harness defaults to an always-open admission stand-in; opt into the real one with the `sandboxAdmission` option.
 - Open: a waiting machine can't be discarded (discard refuses provisioning/waking); a cap change sends no event, so waiters re-check only on the next event or the 10 min `DueHint` max.
 
+## 1.40 Settings → Cloud (landed)
+
+- Contracts `sandbox.ts`: `SandboxDriverHealth`, `SandboxOverview`, `SandboxDriverCheckInput/Step/Result` and errors; RPCs `sandbox.overview` (read scope) and `sandbox.checkDriver` (`AuthSettingsWriteScope`, client and server).
+- `sandbox/lifecycle/SandboxOverview.ts`: per-driver health (10 s bound), counts via `ProjectionStoreV2.countSandboxStates`, base image label, mirror size (`CheckpointMirror.diskBytes`). Caps are per driver (`runningCap` on each health row) plus top-level `startsPerMinute` (now exported), not `caps.team`.
+- `sandbox/compute/ComputeDriverCheck.ts`: image → create → runner → git → discard, timed, 3 min bound; destroy + grant revoke run uninterruptibly (60 s) on every exit. No `RunnerHub.expectCheck`: uses `hub.connection` then `hub.revoke`.
+- client-runtime `state/sandbox.ts`: `overview` query (30 s stale, never polls — Docker health runs a privileged egress helper; the page has Refresh) and single-flight `checkDriver`.
+- Web: `/settings/cloud` (`CloudSettings.tsx` + logic), search rows (cloud project rows `sandboxOnly`), project rows in `ProjectDefaultsSettings.tsx`. Turning Cloud default off removes `defaultsToCloud` in the same override write.
+- Open: the settings stream still sends `dockerHost`/`runnerUrl` to every member (only the UI hides Compute). No real-Docker run of the check yet. Owed in the integrated pass: `test-t3-app` steps and captures.
+
 ## Open follow-ups and risks
+
+- The settings stream sends `sandbox` driver config (`dockerHost`, `runnerUrl`) to every member, not only admins (1.40).
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
 
