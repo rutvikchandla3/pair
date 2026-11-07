@@ -1,11 +1,9 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as NodeBuffer from "node:buffer";
 
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -16,6 +14,7 @@ import type * as Stream from "effect/Stream";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsProcessSpawnError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -39,7 +38,6 @@ import {
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -47,6 +45,7 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -569,11 +568,19 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
 );
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const random = yield* SecureRandom.SecureRandom;
-  const hostPlatform = yield* HostProcess.Platform;
+  // A machine that is not connected fails like a Git process that could not start.
+  const hostFor = (operation: string, cwd: string) =>
+    hosts
+      .forPath(cwd)
+      .pipe(
+        Effect.mapError(
+          (cause) => new VcsProcessSpawnError({ operation, command: "git", cwd, cause }),
+        ),
+      );
   const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
     gitCommand(
       vcsProcess,
@@ -840,7 +847,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     });
     const gitCommonDir = result.stdout.trim();
     if (path.isAbsolute(gitCommonDir)) return gitCommonDir;
-    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    const physicalCwd = yield* hosts.forPath(cwd).pipe(
+      Effect.flatMap((host) => host.fileSystem.realPath(cwd)),
+      Effect.orElseSucceed(() => cwd),
+    );
     return path.resolve(physicalCwd, gitCommonDir);
   });
 
@@ -887,19 +897,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
   // Batch fully flushes refs and equals fsync on macOS HFS+/APFS and Windows NTFS/ReFS.
   // Keep per-object fsync elsewhere; VcsProcess retries unsupported macOS full flushes with plain fsync.
-  const durableWrite = [
-    "-c",
-    "core.fsync=objects,reference",
-    "-c",
-    "core.fsyncMethod=fsync",
-    ...(hostPlatform === "darwin" || hostPlatform === "win32"
-      ? ["-c", "core.fsyncMethod=batch"]
-      : []),
-  ] as const;
+  const durableWriteFor = (hostPlatform: NodeJS.Platform) =>
+    [
+      "-c",
+      "core.fsync=objects,reference",
+      "-c",
+      "core.fsyncMethod=fsync",
+      ...(hostPlatform === "darwin" || hostPlatform === "win32"
+        ? ["-c", "core.fsyncMethod=batch"]
+        : []),
+    ] as const;
 
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
-  const longPaths = hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
+  const longPathsFor = (hostPlatform: NodeJS.Platform) =>
+    hostPlatform === "win32" ? ["-c", "core.longpaths=true"] : [];
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
@@ -915,10 +927,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
+      // The temp index sits on the machine whose git reads it.
+      const host = yield* hostFor(operation, input.cwd);
+      const { fileSystem } = host;
+      const { platform: hostPlatform, environment: hostEnv } = yield* host.info;
+      const durableWrite = durableWriteFor(hostPlatform);
+      const longPaths = longPathsFor(hostPlatform);
       const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
-      const hostEnv = yield* HostProcess.Environment;
       const commitEnv: NodeJS.ProcessEnv = {
         ...hostEnv,
         GIT_INDEX_FILE: tempIndexPath,
@@ -1302,6 +1319,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     restoreCheckpoint: Effect.fn("GitVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.restoreCheckpoint";
+      const host = yield* hostFor(operation, input.cwd);
+      const { fileSystem } = host;
+      const longPaths = longPathsFor((yield* host.info).platform);
 
       let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
 

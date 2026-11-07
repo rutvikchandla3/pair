@@ -21,6 +21,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 const CLONE_URLS = {
   nameWithOwner: "octocat/t3code",
@@ -226,6 +227,7 @@ it.effect.each(["--bare", "source.git"])(
               prefix: "t3-clone-options-config-",
             }),
           ),
+          Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
           Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),

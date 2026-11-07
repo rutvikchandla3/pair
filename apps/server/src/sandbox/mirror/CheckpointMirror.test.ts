@@ -13,6 +13,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./CheckpointMirror.ts";
+import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: "Test",
@@ -24,6 +25,7 @@ const GIT_IDENTITY = {
 const layerDependencies = Layer.mergeAll(GitVcsDriver.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "checkpoint-mirror-test-" })),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layerTest = CheckpointMirror.layer.pipe(Layer.provideMerge(layerDependencies));

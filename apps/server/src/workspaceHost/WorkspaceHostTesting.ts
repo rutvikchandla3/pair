@@ -29,29 +29,32 @@ const missingFileSystem = new Proxy(FileSystem.makeNoop({}), {
 
 /**
  * A WorkspaceHosts whose local host is built from the test's own services. A spawner, file system
- * or PTY adapter the test does not provide dies on use.
+ * or PTY adapter the test does not provide dies on use. Fresh, so each use captures the services
+ * where it is provided rather than reusing a host an outer layer already built.
  */
-export const layerFromContext: Layer.Layer<WorkspaceHosts.WorkspaceHosts> = Layer.effect(
-  WorkspaceHosts.WorkspaceHosts,
-  Effect.gen(function* () {
-    const spawner = yield* Effect.serviceOption(ChildProcessSpawner.ChildProcessSpawner);
-    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
-    const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
-    return yield* WorkspaceHosts.make.pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        Option.getOrElse(spawner, () => missingSpawner),
-      ),
-      Effect.provideService(
-        FileSystem.FileSystem,
-        Option.getOrElse(fileSystem, () => missingFileSystem),
-      ),
-      Effect.provideService(
-        PtyAdapter.PtyAdapter,
-        Option.getOrElse(pty, () => missingPty),
-      ),
-    );
-  }),
+export const layerFromContext: Layer.Layer<WorkspaceHosts.WorkspaceHosts> = Layer.fresh(
+  Layer.effect(
+    WorkspaceHosts.WorkspaceHosts,
+    Effect.gen(function* () {
+      const spawner = yield* Effect.serviceOption(ChildProcessSpawner.ChildProcessSpawner);
+      const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+      const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
+      return yield* WorkspaceHosts.make.pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          Option.getOrElse(spawner, () => missingSpawner),
+        ),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          Option.getOrElse(fileSystem, () => missingFileSystem),
+        ),
+        Effect.provideService(
+          PtyAdapter.PtyAdapter,
+          Option.getOrElse(pty, () => missingPty),
+        ),
+      );
+    }),
+  ),
 );
 
 /** Operations the recording host saw, in call order. */

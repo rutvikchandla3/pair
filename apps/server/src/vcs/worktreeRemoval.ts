@@ -1,11 +1,9 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import { GitCommandError } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
@@ -20,6 +18,8 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   E,
   R,
 >(input: {
+  /** The machine the worktree lives on. */
+  readonly host: WorkspaceHost;
   readonly operation: string;
   readonly cwd: string;
   readonly worktreePath: string;
@@ -27,7 +27,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
   readonly run: (args: ReadonlyArray<string>) => Effect.Effect<A, E, R>;
 }) {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const { fileSystem } = input.host;
   const path = yield* Path.Path;
   const worktreePath = input.worktreePath;
   const gitFile = path.join(worktreePath, ".git");
@@ -35,7 +35,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   // its check honors `status.showUntrackedFiles=no` and would delete them.
   const statusConfig = ["-c", "status.showUntrackedFiles=normal"];
   const linked =
-    (yield* HostProcess.isWindows) &&
+    (yield* input.host.info).platform === "win32" &&
     (yield* fileSystem.stat(gitFile).pipe(
       Effect.map((info) => info.type === "File"),
       Effect.orElseSucceed(() => false),

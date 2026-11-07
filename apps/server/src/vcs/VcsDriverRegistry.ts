@@ -1,10 +1,8 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
@@ -13,6 +11,7 @@ import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
 // Detection costs three git processes per cwd; cached hits still stat disk, so TTL bounds only undetectable changes.
@@ -59,7 +58,7 @@ function parseDetectionCacheKey(key: string): {
 }
 
 export const make = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
@@ -121,17 +120,22 @@ export const make = Effect.gen(function* () {
   };
 
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
-    Effect.all({
-      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
-        fileSystem.exists(path.join(folder, ".git")),
+    hosts.forPath(cwd).pipe(
+      Effect.flatMap(({ fileSystem }) =>
+        Effect.all({
+          gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
+            fileSystem.exists(path.join(folder, ".git")),
+          ),
+          repositoryOnDisk: Effect.forEach(
+            repository.metadataPath === null
+              ? [cwd]
+              : [cwd, path.resolve(cwd, repository.metadataPath)],
+            (target) => fileSystem.exists(target),
+          ).pipe(Effect.map((results) => results.every(Boolean))),
+        }),
       ),
-      repositoryOnDisk: Effect.forEach(
-        repository.metadataPath === null
-          ? [cwd]
-          : [cwd, path.resolve(cwd, repository.metadataPath)],
-        (target) => fileSystem.exists(target),
-      ).pipe(Effect.map((results) => results.every(Boolean))),
-    }).pipe(Effect.orElseSucceed(() => null));
+      Effect.orElseSucceed(() => null),
+    );
 
   const detectionCache = yield* Cache.makeWith<
     string,

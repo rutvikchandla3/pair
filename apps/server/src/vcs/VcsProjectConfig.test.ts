@@ -7,8 +7,10 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 const layerTest = VcsProjectConfig.layer.pipe(
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
   Layer.provide(NodeServices.layer),
   Layer.provideMerge(NodeServices.layer),
 );

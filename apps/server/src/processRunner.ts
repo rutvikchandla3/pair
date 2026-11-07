@@ -16,6 +16,8 @@ import {
   type CollectedUint8StreamText,
 } from "@t3tools/provider-core/server/collectStreamText";
 
+import type { WorkspaceHost } from "./workspaceHost/WorkspaceHost.ts";
+
 export interface ProcessRunInput {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -31,6 +33,8 @@ export interface ProcessRunInput {
   readonly truncatedMarker?: string | undefined;
   /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
+  /** Run on this workspace host's spawner; the server's when absent. */
+  readonly host?: WorkspaceHost | undefined;
 }
 
 export interface ProcessRunOutput {
@@ -391,7 +395,7 @@ export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const run: ProcessRunner["Service"]["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+    finalizeRunProcess(runProcessCore(input.host?.spawner ?? spawner, input), input);
 
   return ProcessRunner.of({
     run,

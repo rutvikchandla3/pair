@@ -791,6 +791,7 @@ const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(functi
 });
 
 const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
+  host: WorkspaceHost,
   psCommand: string,
   timeout: Duration.Input,
 ): Effect.fn.Return<
@@ -801,6 +802,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const result = yield* processRunner
     .run({
+      host,
       command: psCommand,
       args: ["-eo", "pid=,ppid=,comm="],
       timeout,
@@ -830,6 +832,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
 });
 
 const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(function* (
+  host: WorkspaceHost,
   timeout: Duration.Input,
 ): Effect.fn.Return<
   TerminalProcessTableSnapshot,
@@ -841,6 +844,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
     'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
+      host,
       command: "powershell.exe",
       args: ["-NoProfile", "-NonInteractive", "-Command", command],
       timeout,
@@ -1561,8 +1565,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const info = yield* host.info;
     const query =
       info.platform === "win32"
-        ? windowsProcessTableSnapshot(timeout)
-        : posixProcessTableSnapshot(yield* posixPsCommandFor(host), timeout);
+        ? windowsProcessTableSnapshot(host, timeout)
+        : posixProcessTableSnapshot(host, yield* posixPsCommandFor(host), timeout);
     return yield* query.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       Effect.result,

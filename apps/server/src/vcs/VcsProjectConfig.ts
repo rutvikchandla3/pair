@@ -1,7 +1,6 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -9,6 +8,8 @@ import * as Schema from "effect/Schema";
 
 import { VcsDriverKind, type VcsDriverKind as VcsDriverKindType } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const ProjectVcsConfig = Schema.Struct({
   vcs: Schema.optional(
@@ -67,10 +68,14 @@ const logVcsProjectConfigError = (error: VcsProjectConfigError) =>
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
 
-  const findConfigPath = Effect.fn("VcsProjectConfig.findConfigPath")(function* (cwd: string) {
+  // The walk stays on the starting cwd's host even where it climbs above that host's root.
+  const findConfigPath = Effect.fn("VcsProjectConfig.findConfigPath")(function* (
+    fileSystem: FileSystem.FileSystem,
+    cwd: string,
+  ) {
     let current = cwd;
     while (true) {
       const candidate = path.join(current, ".t3code", "vcs.json");
@@ -101,6 +106,7 @@ export const make = Effect.gen(function* () {
   });
 
   const readConfiguredKind = Effect.fn("VcsProjectConfig.readConfiguredKind")(function* (
+    fileSystem: FileSystem.FileSystem,
     cwd: string,
     configPath: string,
   ) {
@@ -136,16 +142,22 @@ export const make = Effect.gen(function* () {
       return input.requestedKind;
     }
 
-    return yield* findConfigPath(input.cwd).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeed("auto" as const),
-          onSome: (configPath) => readConfiguredKind(input.cwd, configPath),
-        }),
+    return yield* hosts.forPath(input.cwd).pipe(
+      Effect.flatMap(({ fileSystem }) =>
+        findConfigPath(fileSystem, input.cwd).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.succeed("auto" as const),
+              onSome: (configPath) => readConfiguredKind(fileSystem, input.cwd, configPath),
+            }),
+          ),
+        ),
       ),
       Effect.catchTags({
         VcsProjectConfigError: (error) =>
           logVcsProjectConfigError(error).pipe(Effect.as("auto" as const)),
+        // Detection then fails on the same unavailable host with a typed error.
+        WorkspaceHostUnavailableError: () => Effect.succeed("auto" as const),
       }),
     );
   });

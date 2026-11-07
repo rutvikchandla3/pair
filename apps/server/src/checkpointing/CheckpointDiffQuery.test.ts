@@ -24,6 +24,7 @@ import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import * as MirrorCheckpointReader from "../sandbox/mirror/MirrorCheckpointReader.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import { CheckpointRefUnavailableError, CheckpointTurnRangeUnavailableError } from "./Errors.ts";
@@ -208,13 +209,16 @@ it.effect.each([false, true])(
   },
 );
 
-const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerNodeServices = WorkspaceHostTesting.layerFromContext.pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
+const layerVcsProcess = VcsProcess.layer.pipe(Layer.provide(layerNodeServices));
 const layerStore = CheckpointStore.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcess))),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(layerNodeServices),
 );
 const layerTest = Layer.merge(layerStore, layerVcsProcess).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(layerNodeServices),
   Layer.provideMerge(NodeCrypto.layer),
 );
 
@@ -353,7 +357,7 @@ function layerMirrorPlacement(input: {
       ),
     ),
     Layer.provide(layerVcsProcess),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(layerNodeServices),
     Layer.provide(NodeCrypto.layer),
   );
 }

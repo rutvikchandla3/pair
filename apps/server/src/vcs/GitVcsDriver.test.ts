@@ -31,17 +31,20 @@ import * as VcsProcess from "./VcsProcess.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import { runVcsDriverContractSuite } from "./testing/VcsDriverContractHarness.ts";
 
+const layerNodeServices = WorkspaceHostTesting.layerFromContext.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-contract-",
 });
 const layerGitContract = Layer.mergeAll(GitVcsDriver.layerVcs, GitVcsDriver.layer).pipe(
   Layer.provide(layerServerConfig),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(layerNodeServices),
 );
 const layerGitCaptureContract = Layer.merge(
   layerGitContract,
-  ProcessRunner.layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ProcessRunner.layer.pipe(Layer.provide(layerNodeServices)),
 );
 
 const runGit = (cwd: string, args: ReadonlyArray<string>) =>
@@ -1196,10 +1199,7 @@ const vcsProcessSpawning = (command: string) =>
     Effect.map(VcsProcess.make, (vcsProcess) =>
       VcsProcess.VcsProcess.of({ run: (input) => vcsProcess.run({ ...input, command }) }),
     ),
-  ).pipe(
-    Layer.provide(ProcessRunner.layer),
-    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  );
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provideMerge(layerNodeServices));
 
 it.effect("GitVcsDriver treats a missing git executable as outside any repository", () =>
   Effect.gen(function* () {
@@ -1212,7 +1212,7 @@ it.effect("GitVcsDriver treats a missing git executable as outside any repositor
 
     assert.strictEqual(yield* driver.isInsideWorkTree(cwd), false);
     assert.strictEqual(yield* driver.detectRepository(cwd), null);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  }).pipe(Effect.scoped, Effect.provide(layerNodeServices)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -1248,7 +1248,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.strictEqual(error._tag, "VcsProcessSpawnError");
       const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
       assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    }).pipe(Effect.scoped, Effect.provide(layerNodeServices)),
 );
 
 const gitCommandCount = (operation: string, outcome: string) =>
@@ -1301,7 +1301,7 @@ it.effect("GitVcsDriver meters each git command once under its operation", () =>
     assert.strictEqual(timing.count, 2);
     assert.strictEqual(timing.sum, 500);
   }).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(layerNodeServices),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1325,7 +1325,7 @@ it.effect("GitVcsDriver counts an allowed non-zero exit as a success", () =>
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(layerNodeServices),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1346,7 +1346,7 @@ it.effect("GitVcsDriver counts a failed git command as a failure", () =>
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(layerNodeServices),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1415,7 +1415,7 @@ it.effect("git metrics finalize cancellation without exposing arbitrary operatio
     assert.strictEqual(timing.count, 1);
     assert.strictEqual(timing.sum, 250);
   }).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(layerNodeServices),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
@@ -1426,7 +1426,6 @@ it.effect("git metrics count fsync fallback and transient retry subprocesses sep
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
     let attempts = 0;
     const process = yield* VcsProcess.make.pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(ProcessRunner.ProcessRunner, {
         run: (input) =>
           Effect.gen(function* () {
@@ -1471,7 +1470,9 @@ it.effect("git metrics count fsync fallback and transient retry subprocesses sep
     assert.strictEqual(timing.count, 3);
     assert.strictEqual(timing.sum, 750);
   }).pipe(
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(layerNodeServices),
+    // VcsProcess reads the platform from the cwd's host at each run.
+    Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );

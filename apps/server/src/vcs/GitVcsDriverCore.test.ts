@@ -42,6 +42,7 @@ import {
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
@@ -53,6 +54,7 @@ const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
 });
 const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(layerServerConfig),
+  Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -123,6 +125,7 @@ const makeDriverReleasingLock = (
       }),
     );
     const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provide(layerServerConfig),
     );
@@ -136,6 +139,7 @@ describe("Git output collection", () => {
     Stream.fromIterable(Array.from(new TextEncoder().encode(text), (byte) => Uint8Array.of(byte)));
   const makeDriver = (output: { stdout?: string; stderr?: string }) =>
     makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() =>
@@ -388,6 +392,7 @@ it.effect.each([
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         const cwd = yield* makeTmpDir();
@@ -473,6 +478,7 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
           return delegate.spawn(command);
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         const cwd = yield* makeTmpDir();
@@ -542,6 +548,7 @@ it.effect.each(["bare", "unborn"] as const)(
           );
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         const path = yield* Path.Path;
@@ -586,6 +593,7 @@ it.effect.each(["on a branch", "detached", "unborn"] as const)(
           return delegate.spawn(command);
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         const discoveries = () => {
@@ -661,6 +669,7 @@ it.effect.each([
         ),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const path = yield* Path.Path;
@@ -777,6 +786,7 @@ it.effect(
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         yield* driver.listRefs({ cwd, refresh: true });
@@ -832,6 +842,7 @@ it.effect("invalidates cached metadata after interrupted worktree creation", () 
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       yield* driver.listRefs({ cwd, refresh: true });
@@ -905,6 +916,7 @@ describe("pullCurrentBranch", () => {
         }),
       );
       return yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, paddingSpawner),
       );
     });
@@ -1031,6 +1043,7 @@ describe("pullCurrentBranch", () => {
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
 
@@ -1132,6 +1145,7 @@ it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, coordinatingSpawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1177,6 +1191,7 @@ it.effect("invalidates a ref snapshot when a mutation fails after changing Git",
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, partiallyFailingSpawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1217,6 +1232,7 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, incompleteMetadataSpawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1259,6 +1275,7 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, staleWorktreeSpawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1309,6 +1326,7 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
         }),
       );
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, oldGitSpawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1466,6 +1484,7 @@ it.effect.each([
       }),
     );
     const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
@@ -1510,6 +1529,7 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
       }),
     );
     const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
@@ -1536,6 +1556,7 @@ it.effect("does not fetch for status when the branch tracks a local branch", () 
         return delegate.spawn(command);
       });
       const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const cwd = yield* makeTmpDir();
@@ -1583,6 +1604,7 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
       }),
     );
     const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const path = yield* Path.Path;
@@ -1635,6 +1657,7 @@ it.effect("cancels a slow submodule checkout without reporting best-effort succe
       return Effect.succeed(makeSuccessfulHandle(""));
     });
     const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provide(WorkspaceHostTesting.layerFromContext),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const cwd = yield* makeTmpDir();
@@ -1684,6 +1707,7 @@ describe("rejected git refs", () => {
     const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeFailedHandle(stderr)));
     const layer = GitVcsDriver.layer.pipe(
       Layer.provide(layerServerConfig),
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(
         Layer.merge(
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
@@ -1906,6 +1930,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             return delegate.spawn(command);
           });
           const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provide(WorkspaceHostTesting.layerFromContext),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provide(layerServerConfig),
           );
@@ -2385,6 +2410,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           return delegate.spawn(command);
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provide(layerServerConfig),
         );
@@ -2439,6 +2465,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             }),
           );
           const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provide(WorkspaceHostTesting.layerFromContext),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provide(layerServerConfig),
           );
@@ -2496,6 +2523,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             : delegate.spawn(command),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provide(layerServerConfig),
         );
@@ -2686,6 +2714,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             );
           });
           const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provide(WorkspaceHostTesting.layerFromContext),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingLsFilesSpawner),
             Effect.provide(layerServerConfig),
           );
@@ -3353,6 +3382,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provide(layerServerConfig),
         );
@@ -3753,6 +3783,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             return delegate.spawn(command);
           });
           const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provide(WorkspaceHostTesting.layerFromContext),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           );
           yield* git(cwd, ["branch", "-M", "main"]);
@@ -4603,6 +4634,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, countingSpawner),
           Effect.provide(layerServerConfig),
         );
@@ -4787,6 +4819,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provide(layerServerConfig),
         );
@@ -5112,6 +5145,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               : delegate.spawn(command),
           );
           const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provide(WorkspaceHostTesting.layerFromContext),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provide(layerServerConfig),
           );
@@ -5330,6 +5364,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           }),
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provide(layerServerConfig),
         );
@@ -6543,8 +6578,8 @@ describe("Windows long path configuration", () => {
   ) {
     const layer = GitVcsDriver.layer.pipe(
       Layer.provide(layerServerConfig),
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
     );
     return yield* Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -6564,7 +6599,11 @@ describe("Windows long path configuration", () => {
         },
       });
       return result.stdout.trim();
-    }).pipe(Effect.provide(layer), Effect.scoped);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, platform),
+    );
   });
 
   it.effect("enables long paths for every Git command on Windows", () =>

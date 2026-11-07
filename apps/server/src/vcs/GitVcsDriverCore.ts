@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
@@ -9,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -20,7 +19,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcess } from "effect/process";
 
 import {
   GitCommandError,
@@ -34,7 +33,6 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -45,6 +43,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -668,11 +667,9 @@ const decodeTrace2Record = decodeJsonResult(Trace2Record);
 const createTrace2Monitor = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: GitVcsDriver.ExecuteGitProgress | undefined,
-): Effect.fn.Return<
-  Trace2Monitor,
-  PlatformError.PlatformError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path
-> {
+  /** The file system of the machine whose git writes the trace. */
+  fs: FileSystem.FileSystem,
+): Effect.fn.Return<Trace2Monitor, PlatformError.PlatformError, Scope.Scope | Path.Path> {
   if (!progress?.onHookStarted && !progress?.onHookFinished) {
     return {
       env: {},
@@ -680,7 +677,6 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
     };
   }
 
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const traceFilePath = yield* fs.makeTempFileScoped({
     prefix: `t3code-git-trace2-${process.pid}-`,
@@ -942,13 +938,21 @@ export const windowsLongPathConfigEnv = (
   platform === "win32" ? gitConfigEnv(env, "core.longpaths", "true", platform) : {};
 
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
-  const hostPlatform = yield* HostProcess.Platform;
+  // A machine that is not connected fails like a Git process that could not start.
+  const hostFor = (operation: string, cwd: string) =>
+    hosts
+      .forPath(cwd)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({ operation, command: "git", cwd, detail: cause.message, cause }),
+        ),
+      );
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
   const statusFetchProcesses = yield* Semaphore.make(4);
@@ -964,9 +968,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const appendTruncationMarker = input.appendTruncationMarker ?? false;
 
       const runGitCommand = Effect.fn("runGitCommand")(function* () {
-        const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
+        const host = yield* hostFor(commandInput.operation, commandInput.cwd);
+        const { platform: hostPlatform, environment: hostEnvironment } = yield* host.info;
+        const trace2Monitor = yield* createTrace2Monitor(
+          commandInput,
+          input.progress,
+          host.fileSystem,
+        ).pipe(
           Effect.provideService(Path.Path, path),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.mapError(
             (cause) =>
               new GitCommandError({
@@ -977,7 +986,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
         );
         const baseEnv = {
-          ...(yield* HostProcess.Environment),
+          ...hostEnvironment,
           // Concurrent status polls must not take index.lock to save refreshed indexes.
           GIT_OPTIONAL_LOCKS: "0",
           ...input.env,
@@ -988,7 +997,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
         const executable = resolved.shell ? "git" : resolved.command;
-        const child = yield* commandSpawner
+        const child = yield* host.spawner
           .spawn(
             ChildProcess.make(executable, commandInput.args, {
               cwd: commandInput.cwd,
@@ -1433,6 +1442,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const commonDirOutput = commonDirResult.stdout.trim();
+    const { fileSystem } = yield* hostFor("GitVcsDriver.resolveRepositoryPaths.commonDir", cwd);
     const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
@@ -1485,7 +1495,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const isAtRepositoryRoot =
       worktreeRoot === null
         ? undefined
-        : yield* fileSystem.realPath(cwd).pipe(
+        : yield* hosts.forPath(cwd).pipe(
+            Effect.flatMap((host) => host.fileSystem.realPath(cwd)),
             Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
             Effect.orElseSucceed(() => undefined),
           );
@@ -2133,6 +2144,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: "Git index is locked. Status will resume when the index lock is removed.",
       });
       // Status can succeed while locked, repeatedly running LFS clean filters without caching.
+      const { fileSystem } = yield* hostFor("GitVcsDriver.statusDetails.indexPath", cwd);
       if (
         yield* fileSystem.exists(lockPath).pipe(
           Effect.mapError(
@@ -2453,6 +2465,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--git-path",
           "MERGE_HEAD",
         ]);
+        const { fileSystem } = yield* hostFor("GitVcsDriver.commit.mergeHead", cwd);
         const isMerging = yield* fileSystem.exists(path.resolve(cwd, mergeHeadPath.trim())).pipe(
           Effect.mapError(
             (cause) =>
@@ -2504,6 +2517,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ["rev-parse", "--git-path", "index"],
           );
           const indexPath = path.resolve(cwd, indexValue.trim());
+          // The temp index sits on the machine whose git reads it.
+          const { fileSystem } = yield* hostFor("GitVcsDriver.prepareCommitContext", cwd);
           const directory = yield* fileSystem.makeTempDirectoryScoped({
             prefix: "t3code-commit-index-",
           });
@@ -3059,6 +3074,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const indexPath = path.isAbsolute(indexValue.trim())
       ? indexValue.trim()
       : path.resolve(cwd, indexValue.trim());
+    // The temp index sits on the machine whose git reads it.
+    const { fileSystem } = yield* hostFor(
+      "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.indexPath",
+      cwd,
+    );
     const tempIndexPath = yield* fileSystem.makeTempFileScoped({
       prefix: `t3code-review-index-${process.pid}-`,
     });
@@ -3115,7 +3135,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "hash-object",
       "-t",
       "tree",
-      (yield* HostProcess.Platform) === "win32" ? "NUL" : "/dev/null",
+      (yield* (yield* hostFor("GitVcsDriver.review.emptyTree", cwd)).info).platform === "win32"
+        ? "NUL"
+        : "/dev/null",
     ]);
     return stdout.trim();
   });
@@ -3692,6 +3714,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
+    const { fileSystem } = yield* hostFor(
+      "GitVcsDriver.getReviewDiffFileContents.workingTree",
+      input.cwd,
+    );
     const [realRepositoryRoot, realTarget] = yield* Effect.all([
       fileSystem.realPath(repositoryRoot),
       fileSystem.realPath(requestedPath),
@@ -3974,6 +4000,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : [];
     // Without `core.worktree`, Git reports a separate git dir as the main checkout.
     const normalizedGitCommonDir = path.normalize(path.resolve(gitCommonDir));
+    const { fileSystem } = yield* hostFor("GitVcsDriver.listRefs.snapshotRefs", fetchCwd);
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
       ([, worktreePath]) =>
@@ -4229,7 +4256,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
-        yield* HostProcess.HomeDirectory,
+        (yield* (yield* hostFor("GitVcsDriver.createWorktree", input.cwd)).info).homeDirectory,
       );
       if (parentDir === null) {
         return yield* new GitCommandError({
@@ -4313,6 +4340,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     // worktree add leaves submodules empty, potentially omitting project skills, tools or source.
+    const { fileSystem } = yield* hostFor("GitVcsDriver.createWorktree", input.cwd);
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
@@ -4739,6 +4767,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    */
   // Recursive filesystem traversal can visit many entries; removeWorktree owns the operation span.
   const removeLeftoverLinks = Effect.fnUntraced(function* (
+    fileSystem: FileSystem.FileSystem,
     target: string,
   ): Effect.fn.Return<boolean, PlatformError.PlatformError | RemoveEmptyDirectoryError> {
     if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
@@ -4748,7 +4777,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
     let empty = true;
     for (const name of yield* fileSystem.readDirectory(target)) {
-      if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
+      if (!(yield* removeLeftoverLinks(fileSystem, path.join(target, name)))) empty = false;
     }
     // Only an empty directory goes, so files written since the listing stay.
     return empty && (yield* removeEmptyDirectory(target));
@@ -4761,7 +4790,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // folder than this path. Resolving it once keeps Git, the Windows deletion
     // in removeLinkedWorktree, and the leftover cleanup below on one directory.
     const target = path.resolve(input.cwd, input.path);
+    const host = yield* hostFor("GitVcsDriver.removeWorktree", input.cwd);
+    const { fileSystem } = host;
     const result = yield* removeLinkedWorktree({
+      host,
       operation: "GitVcsDriver.removeWorktree",
       cwd: input.cwd,
       worktreePath: target,
@@ -4772,15 +4804,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,
           allowNonZeroExit: true,
         }).pipe(Effect.map((result) => ({ ...result, args }))),
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    );
+    }).pipe(Effect.provideService(Path.Path, path));
     if (result.exitCode === 0) {
       // Git for Windows reports success without removing NTFS junctions or their parent directories.
       // Log leftover cleanup failures: Git already unregistered the worktree, so removal cannot be retried.
       if (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))) {
-        const removed = yield* removeLeftoverLinks(target).pipe(
+        const removed = yield* removeLeftoverLinks(fileSystem, target).pipe(
           Effect.catch((error) =>
             Effect.logWarning("GitVcsDriver.removeWorktree: failed to delete leftover links", {
               path: target,

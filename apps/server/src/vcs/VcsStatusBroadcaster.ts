@@ -1,11 +1,9 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -32,6 +30,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -229,19 +228,13 @@ function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
 
-const normalizeCwd = (cwd: string) =>
-  Effect.service(FileSystem.FileSystem).pipe(
-    Effect.flatMap((fs) => fs.realPath(cwd)),
-    Effect.orElseSucceed(() => cwd),
-  );
-
 /** @public */
 export const make = Effect.gen(function* () {
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-  const fs = yield* FileSystem.FileSystem;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
@@ -336,12 +329,16 @@ export const make = Effect.gen(function* () {
     return { local: yield* loadLocalStatus(cwd), remote: null };
   });
 
-  const withFileSystem = Effect.provideService(FileSystem.FileSystem, fs);
+  const normalizeCwd = (cwd: string) =>
+    hosts.forPath(cwd).pipe(
+      Effect.flatMap((host) => host.fileSystem.realPath(cwd)),
+      Effect.orElseSucceed(() => cwd),
+    );
 
   const getStatus: VcsStatusBroadcaster["Service"]["getStatus"] = Effect.fn(
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
-    const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    const cwd = yield* normalizeCwd(input.cwd);
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
@@ -390,7 +387,7 @@ export const make = Effect.gen(function* () {
   const refreshLocalStatus: VcsStatusBroadcaster["Service"]["refreshLocalStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshLocalStatus",
   )(function* (rawCwd) {
-    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const cwd = yield* normalizeCwd(rawCwd);
     return yield* refreshLocalStatusCore(cwd);
   });
 
@@ -494,7 +491,7 @@ export const make = Effect.gen(function* () {
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
-    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const cwd = yield* normalizeCwd(rawCwd);
     const previous = options?.localOnly ? yield* getCachedStatus(cwd) : null;
     const local = yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
@@ -535,7 +532,7 @@ export const make = Effect.gen(function* () {
 
   const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
     Effect.fn("VcsStatusBroadcaster.refreshPullRequestStatus")(function* (rawCwd) {
-      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      const cwd = yield* normalizeCwd(rawCwd);
       return yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
@@ -721,7 +718,7 @@ export const make = Effect.gen(function* () {
   const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+        const cwd = yield* normalizeCwd(input.cwd);
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);

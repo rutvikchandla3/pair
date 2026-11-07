@@ -25,6 +25,7 @@ import type {
 import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -81,6 +82,7 @@ function layerTestFor(state: {
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
 }) {
   return VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(
       state.fileSystem
         ? Layer.succeed(FileSystem.FileSystem, state.fileSystem)
@@ -331,6 +333,7 @@ describe("VcsStatusBroadcaster", () => {
         refName: "main",
       };
       const layerTest = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(WorkspaceHostTesting.layerFromContext),
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
@@ -431,6 +434,7 @@ describe("VcsStatusBroadcaster", () => {
     const firstPollStarted = Deferred.makeUnsafe<void>();
     let remoteReads = 0;
     const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
@@ -476,6 +480,7 @@ describe("VcsStatusBroadcaster", () => {
     const releaseFirstRead = Deferred.makeUnsafe<void>();
     let remoteReads = 0;
     const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
@@ -526,6 +531,7 @@ describe("VcsStatusBroadcaster", () => {
       failRemoteStatus: false,
     };
     const layerTest = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
@@ -609,6 +615,7 @@ describe("VcsStatusBroadcaster", () => {
         remoteInvalidationCalls: 0,
       };
       const layerTest = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(WorkspaceHostTesting.layerFromContext),
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
@@ -712,6 +719,7 @@ describe("VcsStatusBroadcaster", () => {
       let cachedLocal: VcsStatusLocalResult | undefined;
       const readLocalStatus = () => Effect.sync(() => (cachedLocal ??= local));
       const layerTest = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(WorkspaceHostTesting.layerFromContext),
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
@@ -1011,6 +1019,7 @@ describe("VcsStatusBroadcaster", () => {
     let remoteInterruptedDeferred: Deferred.Deferred<void, never> | null = null;
     let remoteStartedDeferred: Deferred.Deferred<void, never> | null = null;
     const layerTest = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(

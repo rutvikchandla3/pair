@@ -28,6 +28,7 @@ import * as VcsProjectConfig from "../../apps/server/src/vcs/VcsProjectConfig.ts
 import * as GitVcsDriver from "../../apps/server/src/vcs/GitVcsDriver.ts";
 import * as ProcessRunner from "../../apps/server/src/processRunner.ts";
 import * as ServerConfig from "../../apps/server/src/config.ts";
+import * as WorkspaceHostTesting from "../../apps/server/src/workspaceHost/WorkspaceHostTesting.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -148,6 +149,7 @@ await Effect.runPromise(
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),
           Layer.provide(VcsProcess.layer),
+          Layer.provide(WorkspaceHostTesting.layerFromContext),
           Layer.provide(FetchHttpClient.layer),
         ),
       ).pipe(

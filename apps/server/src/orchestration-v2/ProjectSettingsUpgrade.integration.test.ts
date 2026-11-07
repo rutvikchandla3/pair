@@ -32,6 +32,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ComputeDriverRegistry from "../sandbox/compute/ComputeDriverRegistry.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -120,7 +121,9 @@ const unusedEnrichment = {
 
 const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
-    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+    WorkspaceHostTesting.layerFromContext.pipe(
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),

@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
@@ -97,6 +96,7 @@ import * as MemberGitHub from "../team/MemberGitHub.ts";
 import * as TeamState from "../team/TeamState.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -707,6 +707,8 @@ export const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const random = yield* SecureRandom.SecureRandom;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: PR body for the server-side forge call
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // CLI and test runtimes have no team, so their commits and PRs keep the server identity.
@@ -860,17 +862,18 @@ export const make = Effect.gen(function* () {
 
   const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(
     function* (cwd: string, fileName: string) {
-      const root = yield* fileSystem.realPath(cwd);
-      const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
+      const { fileSystem: hostFileSystem } = yield* hosts.forPath(cwd);
+      const root = yield* hostFileSystem.realPath(cwd);
+      const instructionPath = yield* hostFileSystem.realPath(path.join(root, fileName));
       const relative = path.relative(root, instructionPath);
       if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
         return "";
       }
-      const info = yield* fileSystem.stat(instructionPath);
+      const info = yield* hostFileSystem.stat(instructionPath);
       if (info.type !== "File" || info.size > ByteSize.bytes(20_000)) {
         return "";
       }
-      return (yield* fileSystem.readFileString(instructionPath)).trim();
+      return (yield* hostFileSystem.readFileString(instructionPath)).trim();
     },
     Effect.orElseSucceed(() => ""),
   );
@@ -1192,7 +1195,10 @@ export const make = Effect.gen(function* () {
     Config.withDefault("/tmp"),
   );
   const canonicalizeExistingPath = (value: string) =>
-    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
+    hosts.forPath(value).pipe(
+      Effect.flatMap((host) => host.fileSystem.realPath(value)),
+      Effect.orElseSucceed(() => value),
+    );
   const normalizeStatusCacheKey = canonicalizeExistingPath;
   const nonRepositoryStatusDetails: GitVcsDriver.GitStatusDetails = {
     isRepo: false,

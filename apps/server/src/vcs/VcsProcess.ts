@@ -1,4 +1,3 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,11 +19,12 @@ import {
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -184,7 +184,7 @@ const canRetryFullFsync = (stderr: string) =>
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const hostPlatform = yield* HostProcess.Platform;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
@@ -200,10 +200,13 @@ export const make = Effect.gen(function* () {
   const spawn = Effect.fn("VcsProcess.spawn")(function* (
     input: VcsProcessInput,
     baseError: VcsProcessErrorContext,
+    host: WorkspaceHost,
+    hostPlatform: NodeJS.Platform,
   ) {
     let failedExit = false;
     const execution = processRunner
       .run({
+        host,
         command: input.command,
         args: input.args,
         cwd: input.cwd,
@@ -212,6 +215,7 @@ export const make = Effect.gen(function* () {
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
           ...input.env,
+          // oxlint-disable-next-line t3code/workspace-host-boundary -- not routed yet (0.7): the host's base environment
           ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
         },
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -278,7 +282,12 @@ export const make = Effect.gen(function* () {
       argumentCount: input.args.length,
     };
 
-    let result = yield* spawn(input, baseError);
+    // A machine that is not connected fails like a process that could not start.
+    const host = yield* hosts
+      .forPath(input.cwd)
+      .pipe(Effect.mapError((cause) => new VcsProcessSpawnError({ ...baseError, cause })));
+    const { platform: hostPlatform } = yield* host.info;
+    let result = yield* spawn(input, baseError, host, hostPlatform);
 
     if (
       hostPlatform === "darwin" &&
@@ -298,6 +307,8 @@ export const make = Effect.gen(function* () {
           ),
         },
         baseError,
+        host,
+        hostPlatform,
       );
     }
 

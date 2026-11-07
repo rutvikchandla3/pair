@@ -19,6 +19,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 
 const encodeExitError = Schema.encodeEffect(Schema.fromJsonString(VcsProcessExitError));
 
@@ -28,7 +29,10 @@ const run = (input: VcsProcess.VcsProcessInput) =>
     return yield* process.run(input);
   });
 
-const layerLive = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const layerLive = VcsProcess.layer.pipe(
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
+  Layer.provide(NodeServices.layer),
+);
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
   effect.pipe(Effect.provide(layerLive));
@@ -44,6 +48,7 @@ const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
 ) =>
   VcsProcess.make.pipe(
+    Effect.provide(WorkspaceHostTesting.layerFromContext),
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
@@ -195,10 +200,7 @@ describe("VcsProcess.run", () => {
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
         const service = yield* VcsProcess.make.pipe(
-          Effect.provideService(
-            HostProcess.Platform,
-            "platform" in scenario ? scenario.platform : "darwin",
-          ),
+          Effect.provide(WorkspaceHostTesting.layerFromContext),
           Effect.provideService(ProcessRunner.ProcessRunner, {
             run: (input) =>
               Effect.sync(() => {
@@ -257,7 +259,13 @@ describe("VcsProcess.run", () => {
             value: { _tag: "VcsProcessExitError", exitCode: 128 },
           });
         }
-      }),
+      }).pipe(
+        // VcsProcess reads the platform from the cwd's host at each run.
+        Effect.provideService(
+          HostProcess.Platform,
+          "platform" in scenario ? scenario.platform : "darwin",
+        ),
+      ),
   );
 
   it.effect("bounds a burst of processes that share a concurrency key", () =>
@@ -268,6 +276,7 @@ describe("VcsProcess.run", () => {
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
       const service = yield* VcsProcess.make.pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
@@ -322,6 +331,7 @@ describe("VcsProcess.run", () => {
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
       const service = yield* VcsProcess.make.pipe(
+        Effect.provide(WorkspaceHostTesting.layerFromContext),
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({

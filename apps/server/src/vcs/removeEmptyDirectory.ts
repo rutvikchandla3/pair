@@ -1,4 +1,4 @@
-/* oxlint-disable t3code/workspace-host-boundary -- not routed yet (0.3): git and worktree I/O on the thread's machine */
+/* oxlint-disable t3code/workspace-host-boundary -- routed in M1 (1.11): needs a host rmdir; its one caller is local-only in M0 */
 // @effect-diagnostics nodeBuiltinImport:off - Effect's FileSystem has no rmdir.
 import * as NodeFSP from "node:fs/promises";
 
