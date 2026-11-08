@@ -4,6 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthSettingsWriteScope,
+  ComputeDriverId,
   MemberId,
   EnvironmentId,
   ProjectId,
@@ -809,18 +811,30 @@ const layerConfigSources = Layer.mergeAll(
 );
 
 it.effect.each([
-  "pending",
-  "cached",
-  "direct-pending",
-  "direct-cached",
-  "direct-failed",
-  "direct-interrupted",
+  { discovery: "pending", role: "member" },
+  { discovery: "cached", role: "member" },
+  { discovery: "cached", role: "admin" },
+  { discovery: "direct-pending", role: "member" },
+  { discovery: "direct-cached", role: "member" },
+  { discovery: "direct-failed", role: "member" },
+  { discovery: "direct-interrupted", role: "member" },
 ] as const)(
-  "%s endpoint discovery preserves initial config and updates through discovery and ACK",
-  (discovery) =>
+  "$discovery endpoint discovery preserves a $role's initial config and updates through discovery and ACK",
+  ({ discovery, role }) =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
       const settings = yield* ServerSettings.ServerSettingsService;
+      const settingsWriter = role === "admin";
+      const settingsClient = { secretReferences: true, settingsWriter };
+      const driverId = ComputeDriverId.make("remote");
+      const driver = { kind: "docker", id: driverId, label: "Remote", size: "large" } as const;
+      const fullDriver = {
+        ...driver,
+        dockerHost: "tcp://10.0.0.5:2376",
+        runnerUrl: "http://10.0.0.1:3773",
+      };
+      yield* settings.updateSettings({ sandbox: { drivers: { [driverId]: fullDriver } } });
+      const expectedDrivers = [settingsWriter ? fullDriver : driver];
       const keybindingsSubscribed = yield* Deferred.make<void>();
       const settingsSubscribed = yield* Deferred.make<void>();
       const keybindingsChanges = keybindings.subscribeChanges.pipe(
@@ -943,7 +957,7 @@ it.effect.each([
               subject: "config-test",
               memberId: MemberId.make("member-test"),
               method: "browser-session-cookie",
-              scopes: [],
+              scopes: settingsWriter ? [AuthSettingsWriteScope] : [],
             },
             {},
             yield* ServerBrowser.ServerBrowser,
@@ -978,6 +992,7 @@ it.effect.each([
         discovery === "direct-cached" ? endpoints : bound,
       );
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
+      assert.deepStrictEqual<unknown>(snapshot.config.settings.sandbox?.drivers, expectedDrivers);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+y",
@@ -994,13 +1009,14 @@ it.effect.each([
         command: "terminal.split",
       });
       const expectedSettings = [duringDiscovery, latestSettings].map((value) =>
-        ServerSettings.redactServerSettingsForClient(value, { secretReferences: true }),
+        ServerSettings.redactServerSettingsForClient(value, settingsClient),
       );
       const expectedKeybindings = [duringAck.keybindings, latestKeybindings.keybindings];
       // The two sources can interleave, but each must retain its own publication order.
       for (let i = 0; i < 4; i++) {
         const event = yield* Queue.take(responses);
         if (event.type === "settingsUpdated") {
+          assert.deepStrictEqual<unknown>(event.payload.settings.sandbox?.drivers, expectedDrivers);
           assert.deepEqual(event.payload.settings, expectedSettings.shift());
         } else {
           assert.equal(event.type, "keybindingsUpdated");
@@ -1022,7 +1038,7 @@ it.effect.each([
         assert.deepEqual(resolved.config.remoteOpenTargets, targets);
         assert.deepEqual(
           resolved.config.settings,
-          ServerSettings.redactServerSettingsForClient(latestSettings, { secretReferences: true }),
+          ServerSettings.redactServerSettingsForClient(latestSettings, settingsClient),
         );
         assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
         yield* acknowledge;
@@ -1037,9 +1053,7 @@ it.effect.each([
           assert.deepEqual(resolved.config.directEndpoints, endpoints);
           assert.deepEqual(
             resolved.config.settings,
-            ServerSettings.redactServerSettingsForClient(latestSettings, {
-              secretReferences: true,
-            }),
+            ServerSettings.redactServerSettingsForClient(latestSettings, settingsClient),
           );
           assert.deepEqual(resolved.config.keybindings, latestKeybindings.keybindings);
           yield* acknowledge;

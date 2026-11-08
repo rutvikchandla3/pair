@@ -31,6 +31,7 @@ import {
   type AuthAccessStreamEvent,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   type MemberId,
   type ScheduledTaskListResult,
@@ -1410,6 +1411,10 @@ export const layerWsRpc = (
   Layer.effectContext(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const client = {
+        ...settingsClient,
+        settingsWriter: currentSession.scopes.includes(AuthSettingsWriteScope),
+      };
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1937,7 +1942,7 @@ export const layerWsRpc = (
           : commandProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
-          settingsClient,
+          client,
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
@@ -2830,7 +2835,7 @@ export const layerWsRpc = (
                   nextPatch,
                   ownership,
                 );
-            return ServerSettings.redactServerSettingsForClient(settings, settingsClient);
+            return ServerSettings.redactServerSettingsForClient(settings, client);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
@@ -3494,7 +3499,7 @@ export const layerWsRpc = (
                   : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
-                  ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+                  ServerSettings.redactServerSettingsForClient(settings, client),
                 ),
                 Stream.map((settings) => ({
                   version: 1 as const,

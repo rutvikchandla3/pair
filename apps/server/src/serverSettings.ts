@@ -22,6 +22,7 @@ import {
   isSecretReference,
   type MemberId,
   type ProviderInstanceEnvironment,
+  type SandboxDriverInstance,
   type SecretReference,
   withIdleCompaction,
 } from "@t3tools/contracts";
@@ -143,7 +144,7 @@ const normalizeServerSettings = (
 
 export function redactServerSettingsForClient(
   settings: ServerSettings,
-  client: { readonly secretReferences: boolean },
+  client: { readonly secretReferences: boolean; readonly settingsWriter: boolean },
 ): ServerSettings {
   const redacted = mapSettingsSecrets(settings, (secret) =>
     secret.sensitive
@@ -156,8 +157,22 @@ export function redactServerSettingsForClient(
     : mapSettingsSecretValues(redacted, (value) =>
         isSecretReference(value) ? SECRET_REDACTED : value,
       );
-  return { ...shaped, secretProviders: withoutUnknownSecretProviderConfigs(shaped) };
+  return {
+    ...shaped,
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+    ...(shaped.sandbox === undefined || client.settingsWriter
+      ? {}
+      : { sandbox: { ...shaped.sandbox, drivers: shaped.sandbox.drivers.map(memberDriverView) } }),
+  };
 }
+
+// An allowlist, so a driver field added later (a host, a token) never reaches a member by default.
+const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance => ({
+  kind: driver.kind,
+  id: driver.id,
+  label: driver.label,
+  ...(driver.size === undefined ? {} : { size: driver.size }),
+});
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
 function withEchoedSecretReferences(current: ServerSettings, next: ServerSettings): ServerSettings {

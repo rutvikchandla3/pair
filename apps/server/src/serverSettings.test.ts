@@ -312,13 +312,58 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       });
       assert.deepStrictEqual<unknown>(
-        ServerSettingsModule.redactServerSettingsForClient(settings, { secretReferences: true })
-          .secretProviders,
+        ServerSettingsModule.redactServerSettingsForClient(settings, {
+          secretReferences: true,
+          settingsWriter: true,
+        }).secretProviders,
         {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
           vault: { kind: "openbao", label: "Vault" },
         },
       );
+    }),
+  );
+
+  it.effect("sends members each driver's kind, id, label and size, and admins the rest", () =>
+    Effect.gen(function* () {
+      const driver = {
+        kind: "docker",
+        id: "remote",
+        label: "Remote",
+        dockerHost: "tcp://10.0.0.5:2376",
+        runnerUrl: "http://10.0.0.1:3773",
+        size: "large",
+      } as const;
+      const settings = yield* decodeServerSettings({
+        sandbox: {
+          drivers: [driver, { kind: "docker", id: "local", label: "This machine" }],
+          defaultDriverId: "remote",
+          baseImage: "ghcr.io/example/sandbox:1",
+          env: [{ name: "TEAM_TOKEN", value: "team-secret", sensitive: true }],
+        },
+      });
+      const redact = (settingsWriter: boolean) =>
+        ServerSettingsModule.redactServerSettingsForClient(settings, {
+          secretReferences: true,
+          settingsWriter,
+        }).sandbox;
+      const admin = redact(true);
+      const member = redact(false);
+      assert.deepStrictEqual<unknown>(member?.drivers, [
+        { kind: "docker", id: "remote", label: "Remote", size: "large" },
+        { kind: "docker", id: "local", label: "This machine" },
+      ]);
+      assert.deepStrictEqual<unknown>(admin?.drivers, [
+        driver,
+        { kind: "docker", id: "local", label: "This machine" },
+      ]);
+      for (const view of [admin, member]) {
+        assert.equal(view?.defaultDriverId, "remote");
+        assert.equal(view?.baseImage, "ghcr.io/example/sandbox:1");
+        assert.deepStrictEqual<unknown>(view?.env, [
+          { name: "TEAM_TOKEN", value: "", sensitive: true, valueRedacted: true },
+        ]);
+      }
     }),
   );
 
@@ -1455,6 +1500,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         ];
         const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
           secretReferences: true,
+          settingsWriter: true,
         });
         const disk = yield* fs.readFileString(config.settingsPath);
         for (const value of values) {
@@ -1493,6 +1539,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           assert.propertyVal(changed.providerInstances[instanceId]?.config, "apiKey", apiKey);
           const redacted = ServerSettingsModule.redactServerSettingsForClient(changed, {
             secretReferences: true,
+            settingsWriter: true,
           });
           assert.propertyVal(
             redacted.providerInstances[instanceId]?.config,
@@ -1545,8 +1592,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.isTrue(Option.isNone(yield* store.get(secretNames[1]!)));
         assert.deepEqual(
-          ServerSettingsModule.redactServerSettingsForClient(referenced, { secretReferences: true })
-            .providerInstances[instanceId]?.environment,
+          ServerSettingsModule.redactServerSettingsForClient(referenced, {
+            secretReferences: true,
+            settingsWriter: true,
+          }).providerInstances[instanceId]?.environment,
           [{ name: "API_TOKEN", value: secret, sensitive: true }],
         );
         yield* service.updateSettings({
@@ -1643,6 +1692,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
       const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
         secretReferences: true,
+        settingsWriter: true,
       });
       for (const value of ["legacy-api-key", "legacy-password"]) {
         assert.notInclude(yield* fs.readFileString(config.settingsPath), value);
@@ -1689,6 +1739,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
         const forClient = ServerSettingsModule.redactServerSettingsForClient(saved, {
           secretReferences: true,
+          settingsWriter: true,
         }).sourceControlHosts;
         assert.equal(forClient.bitbucket?.email, "me@example.com");
         assert.notInclude(String(forClient.bitbucket?.accessToken), "bb-access");
@@ -1753,6 +1804,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
         const redacted = ServerSettingsModule.redactServerSettingsForClient(referenced, {
           secretReferences: true,
+          settingsWriter: true,
         }).sourceControlHosts;
         assert.deepEqual(redacted.bitbucket?.accessToken, reference);
         const tokens = redacted.github?.tokens as Record<string, unknown>;
@@ -1792,6 +1844,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         const legacy = ServerSettingsModule.redactServerSettingsForClient(withUsage, {
           secretReferences: false,
+          settingsWriter: true,
         });
         assert.notInclude(JSON.stringify(legacy), "op://");
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);

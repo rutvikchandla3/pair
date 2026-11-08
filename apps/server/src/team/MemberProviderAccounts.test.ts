@@ -119,6 +119,7 @@ it.effect(
       for (const secretReferences of [true, false]) {
         const client = ServerSettings.redactServerSettingsForClient(yield* settings.getSettings, {
           secretReferences,
+          settingsWriter: true,
         });
         assert.notInclude(JSON.stringify(client), token);
       }

@@ -285,14 +285,13 @@ Prompting from an old client works because a message to a sleeping sandbox wakes
 
 ### Member redaction of driver settings (M2)
 
-Today `redactServerSettingsForClient` in
-[serverSettings.ts](../../../apps/server/src/serverSettings.ts) hides secret values and nothing
-else, so every member's settings stream carries each driver's `dockerHost` and `runnerUrl`, and
-only the UI hides them. M2 passes the caller's role in. Members get each driver's `kind`, `id`,
-`label` and `size`, enough for `cloudAvailability` and Overview's read-only rows. Admins get the
-rest. Every other key of a driver kind stays optional so the member view decodes, and M5's
-`aws-ec2` member follows that rule. `settings:write` is admin only, so a member never patches
-`sandbox` from the redacted copy.
+`redactServerSettingsForClient` in [serverSettings.ts](../../../apps/server/src/serverSettings.ts)
+takes whether the session holds `settings:write`, the scope that can patch `sandbox` (so API tokens
+follow it too, not the role name). Without it, each driver is rebuilt from an allowlist: `kind`,
+`id`, `label` and `size`, enough for `cloudAvailability` and Overview's read-only rows. With it,
+the session gets the rest. Every other key of a driver kind stays optional so the member view
+decodes, and M5's `aws-ec2` member follows that rule. Only a writer can patch `sandbox`, so nobody
+patches it from the redacted copy.
 
 ### Usage (Later)
 

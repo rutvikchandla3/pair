@@ -601,9 +601,9 @@ The runner is one way to drive a machine; a member's client is another.
   internal union ([04](./04-sandbox-lifecycle.md#the-launch-gate-m2)). The server's launch gate then
   picks driver and size for every launch, and `rpc.test.ts` keeps internal commands out of
   `dispatchCommand`, so a later contract change can't reopen it.
-- **Driver config.** The settings stream sends the `sandbox` driver config (`dockerHost`,
-  `runnerUrl`) to every member, and only the UI hides it. M2 redacts it for non-admins; members get
-  member-safe capability flags instead ([08](./08-clients-and-contracts.md)).
+- **Driver config.** A session without `settings:write` gets each driver's `kind`, `id`, `label`
+  and `size` only, so `dockerHost` and `runnerUrl` reach admins alone
+  ([08](./08-clients-and-contracts.md#member-redaction-of-driver-settings-m2)).
 
 ### Revocation
 
