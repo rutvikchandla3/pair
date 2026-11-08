@@ -41,18 +41,18 @@ flowchart TB
 
 ## Documents
 
-| Doc | Question it answers |
-| --- | ------------------- |
-| [01 Product](./01-product.md) | Who is this for, what can they do at each milestone, and how does it compare? |
-| [02 Workspace host](./02-workspace-host.md) | How does the server stop assuming a thread's files and processes are local? |
-| [03 Runner](./03-runner.md) | What runs inside a machine, and what does it say to Pair Cloud? |
-| [04 Sandbox lifecycle](./04-sandbox-lifecycle.md) | How are machines launched, slept, woken, capped and recovered, and on which drivers? |
-| [05 Team images](./05-team-images.md) | How does a team define and build the machine its cloud sessions boot from? |
-| [06 Credentials and security](./06-credentials-and-security.md) | How do provider and git credentials reach a machine, and what can a machine reach? |
-| [07 Access and data](./07-access-and-data.md) | How do projects, checkpoints, diffs, terminals and moving sessions work? |
-| [08 Clients and contracts](./08-clients-and-contracts.md) | What changes on the wire, how clients route between servers, and what web, desktop, mobile, MCP and the CLI get? |
-| [09 BYOC](./09-byoc.md) | How does a customer run Pair Cloud and its machines in their own cloud? |
-| [10 Delivery plan](./10-delivery-plan.md) | In what order do we build it, in which pull requests, and how do we know it works? |
+| Doc                                                             | Question it answers                                                                                              |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [01 Product](./01-product.md)                                   | Who is this for, what can they do at each milestone, and how does it compare?                                    |
+| [02 Workspace host](./02-workspace-host.md)                     | How does the server stop assuming a thread's files and processes are local?                                      |
+| [03 Runner](./03-runner.md)                                     | What runs inside a machine, and what does it say to Pair Cloud?                                                  |
+| [04 Sandbox lifecycle](./04-sandbox-lifecycle.md)               | How are machines launched, slept, woken, capped and recovered, and on which drivers?                             |
+| [05 Team images](./05-team-images.md)                           | How does a team define and build the machine its cloud sessions boot from?                                       |
+| [06 Credentials and security](./06-credentials-and-security.md) | How do provider and git credentials reach a machine, and what can a machine reach?                               |
+| [07 Access and data](./07-access-and-data.md)                   | How do projects, checkpoints, diffs, terminals and moving sessions work?                                         |
+| [08 Clients and contracts](./08-clients-and-contracts.md)       | What changes on the wire, how clients route between servers, and what web, desktop, mobile, MCP and the CLI get? |
+| [09 BYOC](./09-byoc.md)                                         | How does a customer run Pair Cloud and its machines in their own cloud?                                          |
+| [10 Delivery plan](./10-delivery-plan.md)                       | In what order do we build it, in which pull requests, and how do we know it works?                               |
 
 ## Decisions everything else builds on
 
@@ -138,6 +138,7 @@ flowchart TB
    optional `buildImage` covers backends that can't snapshot a running machine. Drivers declare
    capabilities (persistent disk, snapshots, egress rules, maximum lifetime, image build strategy).
    Caps on running machines are policy, enforced by the server before it calls a driver.
+
 9. **The team image is Pair's Cloud Computer.** An admin-owned recipe, in Pair's own format,
    produces numbered builds with an active build, history, rollback and logs. A build an admin
    starts activates when it succeeds; a build an agent starts waits for an admin to activate it.
@@ -216,15 +217,15 @@ app on a member's Mac, through Pair Cloud on a real cloud VM, to a real machine.
 milestone's PRs merge only after the gate passes
 ([10 §4](./10-delivery-plan.md#milestone-gates)). G1 runs M1's gate before any M2 PR merges.
 
-| Milestone | What a user can do when it lands |
-| --------- | -------------------------------- |
-| M0 Seam (landed) | Nothing new. Every machine access goes through `LocalWorkspaceHost`, including platform reads and disk checks, with no behavior or performance change. |
-| M1 Cloud threads on Docker (landed) | Built on a team server: the Docker driver, the runner, the sandbox lifecycle, the mirror, credentials, and Claude and Codex in machines. This machinery carries over into Pair Cloud unchanged. |
+| Milestone                               | What a user can do when it lands                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0 Seam (landed)                        | Nothing new. Every machine access goes through `LocalWorkspaceHost`, including platform reads and disk checks, with no behavior or performance change.                                                                                                                                                                                                                                                                            |
+| M1 Cloud threads on Docker (landed)     | Built on a team server: the Docker driver, the runner, the sandbox lifecycle, the mirror, credentials, and Claude and Codex in machines. This machinery carries over into Pair Cloud unchanged.                                                                                                                                                                                                                                   |
 | M2 Pair Cloud on Docker (first release) | A team installs one always-on Pair Cloud server with Docker machines. Members keep working locally in the Mac app, connect it to Pair Cloud, and start a cloud session from a pushed branch on a local project. Teammates join and prompt from web, desktop and mobile, and the phone keeps driving local work through the Mac. Machines sleep when idle and wake on demand. Scheduled tasks on Pair Cloud launch cloud sessions. |
-| M3 Continue in cloud | Move a local session (unpushed commits, uncommitted files, the conversation) to Pair Cloud, bring a cloud session back to a member's Mac, and let local agents start or delegate cloud sessions through a member-scoped link. |
-| M4 Team images | Admins build, version and roll back the machine image, and an admin agent can help. |
-| M5 BYOC on AWS | The EC2 driver and an AWS deployment kit run Pair Cloud and its machines in the customer's own account. GCP follows. |
-| Later, by demand | A hosted vendor driver, previews, SSH and open in editor, the model proxy for company API keys, other git hosts, egress allowlists, OpenCode, Grok and Kiro in cloud. [10 §2](./10-delivery-plan.md#2-pull-request-plan) lists them all. |
+| M3 Continue in cloud                    | Move a local session (unpushed commits, uncommitted files, the conversation) to Pair Cloud, bring a cloud session back to a member's Mac, and let local agents start or delegate cloud sessions through a member-scoped link.                                                                                                                                                                                                     |
+| M4 Team images                          | Admins build, version and roll back the machine image, and an admin agent can help.                                                                                                                                                                                                                                                                                                                                               |
+| M5 BYOC on AWS                          | The EC2 driver and an AWS deployment kit run Pair Cloud and its machines in the customer's own account. GCP follows.                                                                                                                                                                                                                                                                                                              |
+| Later, by demand                        | A hosted vendor driver, previews, SSH and open in editor, the model proxy for company API keys, other git hosts, egress allowlists, OpenCode, Grok and Kiro in cloud. [10 §2](./10-delivery-plan.md#2-pull-request-plan) lists them all.                                                                                                                                                                                          |
 
 ## Decided
 
@@ -233,33 +234,33 @@ milestone's PRs merge only after the gate passes
 Settled on 2026-11-06 by following Conductor Cloud, and Claude Code or Codex cloud where Conductor
 is silent:
 
-| # | Decision | Precedent |
-| - | -------- | --------- |
-| D1 | Cloud threads push without the App key: the thread owner's connected GitHub or their own token ("Use a token instead" in Settings → Team). An installation token wins when the App key is set. No server-login fallback. | Claude Code's `/web-setup` and GitHub proxy; Conductor offers no own token |
-| D2 | Claude setup tokens are allowed in machines, with a warning that the agent can read them. | Conductor's copyable `claude setup-token` |
-| D3 | The runner runs as root; agents run as `t3` with passwordless `sudo`. | Conductor gives users `sudo`; Claude Code's setup scripts run as root |
-| D4 | New threads in the Mac app stay local by default. Cloud is an explicit pick. Amended 2026-11-08: `defaultsToCloud` has no reader once only cloud-only servers offer Cloud, so M2 stops offering it, and defaulting a local project to Cloud is Later. | Claude's Local or Cloud selector and `--cloud`; Codex's per-thread picker |
-| D5 | No member cap by default. The team cap (Docker `floor(vCPUs / 4)`) and 10 starts a minute stay as capacity and spend guards. Amended 2026-11-08: from M2 an admin can set the team cap in the driver's settings, beside its size, since 30 machines would otherwise need a 120-vCPU host. | None of the three publish a per-user cap |
-| D6 | Pair's release CI publishes `t3-sandbox:<version>` to the GHCR of the repo that runs it, so forks publish their own. `sandbox.baseImage` overrides it. | Conductor and Anthropic each maintain their base image |
+| #   | Decision                                                                                                                                                                                                                                                                                  | Precedent                                                                  |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| D1  | Cloud threads push without the App key: the thread owner's connected GitHub or their own token ("Use a token instead" in Settings → Team). An installation token wins when the App key is set. No server-login fallback.                                                                  | Claude Code's `/web-setup` and GitHub proxy; Conductor offers no own token |
+| D2  | Claude setup tokens are allowed in machines, with a warning that the agent can read them.                                                                                                                                                                                                 | Conductor's copyable `claude setup-token`                                  |
+| D3  | The runner runs as root; agents run as `t3` with passwordless `sudo`.                                                                                                                                                                                                                     | Conductor gives users `sudo`; Claude Code's setup scripts run as root      |
+| D4  | New threads in the Mac app stay local by default. Cloud is an explicit pick. Amended 2026-11-08: `defaultsToCloud` has no reader once only cloud-only servers offer Cloud, so M2 stops offering it, and defaulting a local project to Cloud is Later.                                     | Claude's Local or Cloud selector and `--cloud`; Codex's per-thread picker  |
+| D5  | No member cap by default. The team cap (Docker `floor(vCPUs / 4)`) and 10 starts a minute stay as capacity and spend guards. Amended 2026-11-08: from M2 an admin can set the team cap in the driver's settings, beside its size, since 30 machines would otherwise need a 120-vCPU host. | None of the three publish a per-user cap                                   |
+| D6  | Pair's release CI publishes `t3-sandbox:<version>` to the GHCR of the repo that runs it, so forks publish their own. `sandbox.baseImage` overrides it.                                                                                                                                    | Conductor and Anthropic each maintain their base image                     |
 
 ### For local-first Pair Cloud
 
 Settled on 2026-11-08 by the maintainers:
 
-| # | Decision |
-| - | -------- |
-| D7 | The first release starts cloud sessions from a branch already pushed to GitHub. Continue in cloud is M3. |
-| D8 | A cloud session runs on its owner's own Claude or Codex subscription by default, with company accounts as an option. |
-| D9 | GitHub and pull requests work as M1 ships them (D1, decision 10). |
-| D10 | BYOC members reach Pair Cloud over VPN or Tailscale by default, or an optional public listener that serves only client routes. T3 Connect is off for BYOC. |
-| D11 | Hourly snapshots and the reconciler's restore mode. Continuous replication waits for a customer who asks. |
-| D12 | Laptops and other servers that aren't cloud-only no longer offer Cloud. |
-| D13 | EC2 machine images are built in the customer's account when the driver is set up. Pair CI runs `provision.sh` on every release. |
-| D14 | Local agents reach Pair Cloud through one member-scoped link, from the laptop to Pair Cloud only (M3). |
-| D15 | Pair Cloud invites the team, at today's trust level, not the whole engineering org. |
-| D16 | One Pair app build receives notifications from any Pair Cloud server. |
-| D17 | The phone keeps its connection to the member's Mac and also pairs with Pair Cloud. Anyone can start a cloud session from it in M2. |
-| D18 | Each Pair Cloud server targets 30 concurrent machines, proven by a load test before M2 ships. |
+| #   | Decision                                                                                                                                                          |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D7  | The first release starts cloud sessions from a branch already pushed to GitHub. Continue in cloud is M3.                                                          |
+| D8  | A cloud session runs on its owner's own Claude or Codex subscription by default, with company accounts as an option.                                              |
+| D9  | GitHub and pull requests work as M1 ships them (D1, decision 10).                                                                                                 |
+| D10 | BYOC members reach Pair Cloud over VPN or Tailscale by default, or an optional public listener that serves only client routes. T3 Connect is off for BYOC.        |
+| D11 | Hourly snapshots and the reconciler's restore mode. Continuous replication waits for a customer who asks.                                                         |
+| D12 | Laptops and other servers that aren't cloud-only no longer offer Cloud.                                                                                           |
+| D13 | EC2 machine images are built in the customer's account when the driver is set up. Pair CI runs `provision.sh` on every release.                                   |
+| D14 | Local agents reach Pair Cloud through one member-scoped link, from the laptop to Pair Cloud only (M3).                                                            |
+| D15 | Pair Cloud invites the team, at today's trust level, not the whole engineering org.                                                                               |
+| D16 | One Pair app build receives notifications from any Pair Cloud server.                                                                                             |
+| D17 | The phone keeps its connection to the member's Mac and also pairs with Pair Cloud. Anyone can start a cloud session from it in M2.                                |
+| D18 | Each Pair Cloud server targets 30 concurrent machines, proven by a load test before M2 ships.                                                                     |
 | D19 | M2 Pair Cloud on Docker, M3 continue in cloud, M4 team images, M5 BYOC. A non-owner who brings a session back (M3) gets a copy, and the cloud session stays live. |
 
 Questions still open are in [10 §7](./10-delivery-plan.md#7-decisions-maintainers-must-make).
@@ -269,16 +270,16 @@ Questions still open are in [10 §7](./10-delivery-plan.md#7-decisions-maintaine
 The first draft's deep-dive changes are folded into the decisions above. This table lists what the
 local-first requirement changed.
 
-| Before | Now |
-| ------ | --- |
-| Members share a team server. Agents run on its machine, and Cloud is one more mode there. | Members work locally in the Mac app; Pair Cloud runs only cloud sessions. |
-| Any server, a laptop included, could enable Docker and offer Cloud. | Only a cloud-only Pair Cloud server offers Cloud. |
-| Cloud-only server mode in M4. | Cloud-only from M2, the first release. |
-| Moving threads between local and cloud on one server (M4). | Moving sessions between a member's Mac and Pair Cloud through a seed and a context export (M3). |
-| M2 is lifecycle plus a hosted vendor driver. | Lifecycle is in M2; hosted vendors come later, by demand. |
-| Team images in M3, then BYOC. | Team images in M4, then BYOC in M5. |
-| The model proxy in M2. | A later opt-in for company API keys. |
-| A delegated task may name its own sandbox driver and size. | The server picks them at one launch gate. |
+| Before                                                                                    | Now                                                                                             |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Members share a team server. Agents run on its machine, and Cloud is one more mode there. | Members work locally in the Mac app; Pair Cloud runs only cloud sessions.                       |
+| Any server, a laptop included, could enable Docker and offer Cloud.                       | Only a cloud-only Pair Cloud server offers Cloud.                                               |
+| Cloud-only server mode in M4.                                                             | Cloud-only from M2, the first release.                                                          |
+| Moving threads between local and cloud on one server (M4).                                | Moving sessions between a member's Mac and Pair Cloud through a seed and a context export (M3). |
+| M2 is lifecycle plus a hosted vendor driver.                                              | Lifecycle is in M2; hosted vendors come later, by demand.                                       |
+| Team images in M3, then BYOC.                                                             | Team images in M4, then BYOC in M5.                                                             |
+| The model proxy in M2.                                                                    | A later opt-in for company API keys.                                                            |
+| A delegated task may name its own sandbox driver and size.                                | The server picks them at one launch gate.                                                       |
 
 ## Words
 

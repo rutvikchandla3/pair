@@ -10,11 +10,11 @@ the customer's account), and for maintainers reviewing the recipe format.
 
 Three layers decide what a sandbox holds, and each changes at a different speed.
 
-| Layer | Owner | Changes | Contents | Milestone |
-| ----- | ----- | ------- | -------- | --------- |
-| Base image | Pair | Each Pair release | OS, git, gh, runtimes, provider CLIs, a cached runner bundle, the `t3` user | M1 (landed) |
-| Team image build | The team's admins | When an admin builds | System packages, toolchains, pre-cloned repos, warm package stores | M4 |
-| Setup script | Each project (`t3.json` or Settings) | Every new cloud session | Dependency install, generated files, seed data | Exists today |
+| Layer            | Owner                                | Changes                 | Contents                                                                    | Milestone    |
+| ---------------- | ------------------------------------ | ----------------------- | --------------------------------------------------------------------------- | ------------ |
+| Base image       | Pair                                 | Each Pair release       | OS, git, gh, runtimes, provider CLIs, a cached runner bundle, the `t3` user | M1 (landed)  |
+| Team image build | The team's admins                    | When an admin builds    | System packages, toolchains, pre-cloned repos, warm package stores          | M4           |
+| Setup script     | Each project (`t3.json` or Settings) | Every new cloud session | Dependency install, generated files, seed data                              | Exists today |
 
 Until M4 every sandbox boots from the base image, and the project's setup script does the rest.
 
@@ -22,11 +22,11 @@ Until M4 every sandbox boots from the base image, and the project's setup script
 
 ### Distro: Ubuntu 24.04 LTS
 
-| Option | For | Against |
-| ------ | --- | ------- |
-| **Ubuntu 24.04** | glibc, so npm native prebuilds and the Claude native binary work. Canonical publishes the stock AMI the EC2 driver starts from ([09](./09-byoc.md)). Pair's CI and dev container already use it ([devcontainer.json](../../../.devcontainer/devcontainer.json)). Most install scripts assume `apt`. | Larger than Alpine. |
-| Amazon Linux 2023 | Conductor's base, so Conductor scripts using `dnf` run unchanged. | Rare outside AWS. No upside after the migration. |
-| Alpine | Small. | musl breaks many native npm prebuilds. |
+| Option            | For                                                                                                                                                                                                                                                                                                 | Against                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| **Ubuntu 24.04**  | glibc, so npm native prebuilds and the Claude native binary work. Canonical publishes the stock AMI the EC2 driver starts from ([09](./09-byoc.md)). Pair's CI and dev container already use it ([devcontainer.json](../../../.devcontainer/devcontainer.json)). Most install scripts assume `apt`. | Larger than Alpine.                              |
+| Amazon Linux 2023 | Conductor's base, so Conductor scripts using `dnf` run unchanged.                                                                                                                                                                                                                                   | Rare outside AWS. No upside after the migration. |
+| Alpine            | Small.                                                                                                                                                                                                                                                                                              | musl breaks many native npm prebuilds.           |
 
 The cost of Ubuntu is a one-time port of Conductor install scripts from `dnf` to `apt` (section 2).
 The image is published for `linux/amd64` and `linux/arm64`, so Pair Cloud's Docker host and the
@@ -35,16 +35,16 @@ targets ([CodexInstallation.ts](../../../apps/server/src/provider/CodexInstallat
 
 ### Contents
 
-| Group | Contents | Why |
-| ----- | -------- | --- |
-| System | `ca-certificates`, `curl`, `openssh-client`, `openssh-server` (bound to loopback), `sudo`, `tini`, `locales`, `procps`, `less`, `unzip`, `tmux`, `vim` | `tini` is PID 1, so the many processes agents spawn get reaped. sshd is for SSH and open in editor, which are Later ([07](./07-access-and-data.md)). |
-| Source control | `git`, `git-lfs`, `gh` | Checkpoints need git. Agents call `gh` for pull requests; a shim in front of it gets the token git would get for the repo's origin, per call, never on disk ([gh-shim.sh](../../../infra/sandbox-image/gh-shim.sh)). |
-| Search | `ripgrep`, `fd-find`, `jq` | Agents use them constantly. |
-| Build tools | `build-essential`, `pkg-config`, `python3`, `python3-venv`, `python3-pip` | node-gyp fallbacks and common Python work. |
-| Node | Node 24 LTS with `corepack` (pnpm, yarn) | The runner runs on the image's Node, which must satisfy the server's `engines.node`, `^22.16 \|\| ^23.11 \|\| >=24.10` ([package.json](../../../apps/server/package.json)). |
-| Provider CLIs | Claude Code and Codex. OpenCode, Grok and Kiro are Later. Cursor and Muse run inside the server process and are "not supported in cloud" (README decision 2). | README decision 12. |
-| Runner | The runner bundle of the release's own build, cached under its `runnerBuildId` | A cache only. Pair Cloud serves the bundle by `runnerBuildId`, and fetching it at boot is the normal path after any upgrade ([03](./03-runner.md)). Nothing comes from npm, whose `t3` is upstream T3 Code. |
-| User | `t3`, uid 1000, home `/home/t3`, passwordless `sudo` | See below. |
+| Group          | Contents                                                                                                                                                      | Why                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System         | `ca-certificates`, `curl`, `openssh-client`, `openssh-server` (bound to loopback), `sudo`, `tini`, `locales`, `procps`, `less`, `unzip`, `tmux`, `vim`        | `tini` is PID 1, so the many processes agents spawn get reaped. sshd is for SSH and open in editor, which are Later ([07](./07-access-and-data.md)).                                                                 |
+| Source control | `git`, `git-lfs`, `gh`                                                                                                                                        | Checkpoints need git. Agents call `gh` for pull requests; a shim in front of it gets the token git would get for the repo's origin, per call, never on disk ([gh-shim.sh](../../../infra/sandbox-image/gh-shim.sh)). |
+| Search         | `ripgrep`, `fd-find`, `jq`                                                                                                                                    | Agents use them constantly.                                                                                                                                                                                          |
+| Build tools    | `build-essential`, `pkg-config`, `python3`, `python3-venv`, `python3-pip`                                                                                     | node-gyp fallbacks and common Python work.                                                                                                                                                                           |
+| Node           | Node 24 LTS with `corepack` (pnpm, yarn)                                                                                                                      | The runner runs on the image's Node, which must satisfy the server's `engines.node`, `^22.16 \|\| ^23.11 \|\| >=24.10` ([package.json](../../../apps/server/package.json)).                                          |
+| Provider CLIs  | Claude Code and Codex. OpenCode, Grok and Kiro are Later. Cursor and Muse run inside the server process and are "not supported in cloud" (README decision 2). | README decision 12.                                                                                                                                                                                                  |
+| Runner         | The runner bundle of the release's own build, cached under its `runnerBuildId`                                                                                | A cache only. Pair Cloud serves the bundle by `runnerBuildId`, and fetching it at boot is the normal path after any upgrade ([03](./03-runner.md)). Nothing comes from npm, whose `t3` is upstream T3 Code.          |
+| User           | `t3`, uid 1000, home `/home/t3`, passwordless `sudo`                                                                                                          | See below.                                                                                                                                                                                                           |
 
 Left out on purpose: Chrome, Docker inside the sandbox, Go, Rust and Java. Teams add them in recipes.
 
@@ -117,14 +117,14 @@ container never reaches a customer. The release carries `provision.sh` and the f
 
 ## 2. The recipe format
 
-| | Pair recipe | Dev Container (`devcontainer.json` + features) | Dockerfile |
-| --- | --- | --- | --- |
-| Teams have it today | Conductor teams have an install script in this exact shape. | Many repos, including Pair's. Codespaces, Ona and Coder read it. | Often for production, rarely for development. |
-| Scope | One per team, across repos, like the team image. | One per repo. Ten repos, ten files, and nothing says which wins. | One per image. |
-| Docker | Boot, run, commit. | Needs the devcontainer CLI and an OCI client for features. | Native. |
-| EC2 and GCE VMs | Boot, run, `CreateImage`. | No daemon to run features in. | A VM image is not built from a Dockerfile. |
-| A hosted vendor (Later) | Boot, run, snapshot; or a generated Dockerfile for E2B. | Features run `install.sh` as root in an image build. With no Docker daemon we would reimplement the installer. | E2B converts single-stage Dockerfiles. Vercel takes OCI images through its registry. |
-| Cost of partial support | None; we own the format. | High. People expect `mounts`, `runArgs`, Compose, five lifecycle hooks and `customizations`. Even Ona documents known limitations, and Coder's daemonless builder, envbuilder, is in maintenance mode. | Medium. No multi-stage on E2B, BuildKit syntax for secrets. |
+|                         | Pair recipe                                                 | Dev Container (`devcontainer.json` + features)                                                                                                                                                         | Dockerfile                                                                           |
+| ----------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Teams have it today     | Conductor teams have an install script in this exact shape. | Many repos, including Pair's. Codespaces, Ona and Coder read it.                                                                                                                                       | Often for production, rarely for development.                                        |
+| Scope                   | One per team, across repos, like the team image.            | One per repo. Ten repos, ten files, and nothing says which wins.                                                                                                                                       | One per image.                                                                       |
+| Docker                  | Boot, run, commit.                                          | Needs the devcontainer CLI and an OCI client for features.                                                                                                                                             | Native.                                                                              |
+| EC2 and GCE VMs         | Boot, run, `CreateImage`.                                   | No daemon to run features in.                                                                                                                                                                          | A VM image is not built from a Dockerfile.                                           |
+| A hosted vendor (Later) | Boot, run, snapshot; or a generated Dockerfile for E2B.     | Features run `install.sh` as root in an image build. With no Docker daemon we would reimplement the installer.                                                                                         | E2B converts single-stage Dockerfiles. Vercel takes OCI images through its registry. |
+| Cost of partial support | None; we own the format.                                    | High. People expect `mounts`, `runArgs`, Compose, five lifecycle hooks and `customizations`. Even Ona documents known limitations, and Coder's daemonless builder, envbuilder, is in maintenance mode. | Medium. No multi-stage on E2B, BuildKit syntax for secrets.                          |
 
 ### Decision: a Pair recipe
 
@@ -177,10 +177,10 @@ Every build runs the same generated program, `t3-build.sh`, in a machine started
 the capture differs. Drivers declare which one they use, as the image build strategy capability in
 README decision 8.
 
-| Strategy | Drivers | How | Output |
-| -------- | ------- | --- | ------ |
+| Strategy             | Drivers                                                                             | How                                                                                                                                                                                                          | Output                                                                                                                                                                                                              |
+| -------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `snapshot` (default) | Docker (M4), EC2 then GCE (M5); Vercel Sandbox and boat if a hosted vendor is added | The build effect asks the driver to create a build machine from the base. The runner connects, the server runs the program through the workspace host, then the driver captures the machine and destroys it. | Docker: an image committed with `docker commit` on the Docker host (local or `DOCKER_HOST`), tagged `t3-team-image:<n>`. EC2: an AMI from `CreateImage`. GCE: an image in a family per team. Vercel: a snapshot id. |
-| `buildImage` (Later) | E2B, Kubernetes | Pair generates a single-stage Dockerfile, `FROM <base>` plus one `RUN` of the program, and calls the driver's optional `buildImage`. | E2B: a template from `Template.fromDockerfile`. Kubernetes: a digest in the customer's registry, built in-cluster by BuildKit or Kaniko. |
+| `buildImage` (Later) | E2B, Kubernetes                                                                     | Pair generates a single-stage Dockerfile, `FROM <base>` plus one `RUN` of the program, and calls the driver's optional `buildImage`.                                                                         | E2B: a template from `Template.fromDockerfile`. Kubernetes: a digest in the customer's registry, built in-cluster by BuildKit or Kaniko.                                                                            |
 
 `snapshot` covers every driver on the M4 and M5 path with one code path, and runs the M4 build on
 Docker exactly as M5 runs it on EC2. Builds always go through the driver, never as a `docker build`
@@ -191,7 +191,10 @@ owns the interface; this doc needs:
 interface ComputeDriver {
   readonly capabilities: { readonly imageBuild: "snapshot" | "buildImage" /* ...04 §6 */ };
   // M4. "snapshot" drivers use create, snapshot and destroy.
-  readonly snapshot: (driverRef: string, name: string) => Effect.Effect<{ readonly imageRef: string }, ComputeDriverError>;
+  readonly snapshot: (
+    driverRef: string,
+    name: string,
+  ) => Effect.Effect<{ readonly imageRef: string }, ComputeDriverError>;
   // Later. Only "buildImage" drivers implement this.
   readonly buildImage?: (input: {
     readonly imageBuildId: TeamImageBuildId;
@@ -206,17 +209,17 @@ interface ComputeDriver {
 
 ### What the build program does
 
-| Step | Work | Fails the build when |
-| ---- | ---- | -------------------- |
-| 0. Provision | VM drivers only (M5): run `provision.sh` on stock Ubuntu. Container drivers start from the OCI base, which already ran it. | Provisioning fails. |
-| 1. Preflight | Check user, `bash`, `git`, `sudo`, free disk. | The base breaks the contract. |
-| 2. Clone | `git clone` each project from github.com into the image's repo root (section 5). A one-shot credential helper reads the token from the environment, in D1's order: a one-hour, single-repo installation token, else the GitHub credential (connected account or own token) of the admin who started the build, or whose run started it for an agent build. Other hosts wait for the git proxy (Later). Remotes stay token-free. | A clone fails, or no credential exists: "Connect GitHub to clone private repos". |
-| 3. Install | `bash -euo pipefail install.sh` as `t3` from `$HOME`, with build env and secrets. | Non-zero exit. |
-| 4. Capture env | Diff `bash -lc 'env -0'` against the base's. Save additions, such as `PATH` appended in `~/.profile`, as `imageEnv`. | Never. |
-| 5. Verify | Each cloud-supported provider CLI's `--version`, repo heads, and `t3 runner prefetch` of Pair Cloud's current bundle. | A cloud-supported CLI is missing or broken. |
-| 6. Clean | Clear shell history, run the leak check (section 6). | A build secret's value is on disk. |
-| 7. Manifest | Write `/etc/t3/build.json`; the server reads it back. | Never. |
-| 8. Capture | Commit, `CreateImage` or snapshot; or finish `buildImage`. | The driver fails. |
+| Step           | Work                                                                                                                                                                                                                                                                                                                                                                                                                            | Fails the build when                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 0. Provision   | VM drivers only (M5): run `provision.sh` on stock Ubuntu. Container drivers start from the OCI base, which already ran it.                                                                                                                                                                                                                                                                                                      | Provisioning fails.                                                              |
+| 1. Preflight   | Check user, `bash`, `git`, `sudo`, free disk.                                                                                                                                                                                                                                                                                                                                                                                   | The base breaks the contract.                                                    |
+| 2. Clone       | `git clone` each project from github.com into the image's repo root (section 5). A one-shot credential helper reads the token from the environment, in D1's order: a one-hour, single-repo installation token, else the GitHub credential (connected account or own token) of the admin who started the build, or whose run started it for an agent build. Other hosts wait for the git proxy (Later). Remotes stay token-free. | A clone fails, or no credential exists: "Connect GitHub to clone private repos". |
+| 3. Install     | `bash -euo pipefail install.sh` as `t3` from `$HOME`, with build env and secrets.                                                                                                                                                                                                                                                                                                                                               | Non-zero exit.                                                                   |
+| 4. Capture env | Diff `bash -lc 'env -0'` against the base's. Save additions, such as `PATH` appended in `~/.profile`, as `imageEnv`.                                                                                                                                                                                                                                                                                                            | Never.                                                                           |
+| 5. Verify      | Each cloud-supported provider CLI's `--version`, repo heads, and `t3 runner prefetch` of Pair Cloud's current bundle.                                                                                                                                                                                                                                                                                                           | A cloud-supported CLI is missing or broken.                                      |
+| 6. Clean       | Clear shell history, run the leak check (section 6).                                                                                                                                                                                                                                                                                                                                                                            | A build secret's value is on disk.                                               |
+| 7. Manifest    | Write `/etc/t3/build.json`; the server reads it back.                                                                                                                                                                                                                                                                                                                                                                           | Never.                                                                           |
+| 8. Capture     | Commit, `CreateImage` or snapshot; or finish `buildImage`.                                                                                                                                                                                                                                                                                                                                                                      | The driver fails.                                                                |
 
 The workspace host applies `imageEnv` to every process in a sandbox from that build, login shell or not.
 
@@ -253,15 +256,32 @@ comes from the scheduler worker, not a delayed effect.
 type TeamImageCommand =
   | { type: "team-image.recipe.save"; recipe: TeamImageRecipe; actorId: MemberId }
   | { type: "team-image.build.request"; activateOnSuccess: boolean; requestedBy: BuildRequester }
-  | { type: "team-image.build.cancel" | "team-image.build.activate"; imageBuildId: TeamImageBuildId; actorId: MemberId }
+  | {
+      type: "team-image.build.cancel" | "team-image.build.activate";
+      imageBuildId: TeamImageBuildId;
+      actorId: MemberId;
+    }
   | { type: "team-image.proposal.file" | "team-image.proposal.dismiss" /* section 7 */ }
   // From the effect worker, the runner channel and the scheduler worker:
   | { type: "team-image.build.machine-accepted"; imageBuildId: TeamImageBuildId; handle: string }
-  | { type: "team-image.build.runner-attached" | "team-image.build.timed-out"; imageBuildId: TeamImageBuildId }
+  | {
+      type: "team-image.build.runner-attached" | "team-image.build.timed-out";
+      imageBuildId: TeamImageBuildId;
+    }
   | { type: "team-image.build.phase"; imageBuildId: TeamImageBuildId; phase: BuildPhase }
   | { type: "team-image.build.program-exited"; imageBuildId: TeamImageBuildId; exitCode: number }
-  | { type: "team-image.build.succeed"; imageBuildId: TeamImageBuildId; imageRef: string; manifest: BuildManifest }
-  | { type: "team-image.build.fail"; imageBuildId: TeamImageBuildId; phase: BuildPhase; detail: string }
+  | {
+      type: "team-image.build.succeed";
+      imageBuildId: TeamImageBuildId;
+      imageRef: string;
+      manifest: BuildManifest;
+    }
+  | {
+      type: "team-image.build.fail";
+      imageBuildId: TeamImageBuildId;
+      phase: BuildPhase;
+      detail: string;
+    }
   | { type: "team-image.build.delete"; imageBuildId: TeamImageBuildId };
 
 type BuildRequester =
@@ -269,7 +289,10 @@ type BuildRequester =
   | { kind: "agent"; threadId: ThreadId; runId: RunId; promptedBy: ReadonlyArray<MemberId> };
 
 type TeamImageEffect =
-  | { type: "team-image.build.launch" | "team-image.build.run-program"; imageBuildId: TeamImageBuildId }
+  | {
+      type: "team-image.build.launch" | "team-image.build.run-program";
+      imageBuildId: TeamImageBuildId;
+    }
   | { type: "team-image.build.capture" | "team-image.build.cancel"; imageBuildId: TeamImageBuildId }
   | { type: "team-image.build.delete-image"; imageBuildId: TeamImageBuildId; imageRef: string };
 ```
@@ -313,19 +336,37 @@ streamed only to someone with the log open. Phase changes are events, so the pag
 export const TeamImageBuild = Schema.Struct({
   id: TeamImageBuildId,
   number: PositiveInt, // per team
-  status: Schema.Literals(["queued", "launching", "running", "capturing", "succeeded", "failed", "cancelled"]),
+  status: Schema.Literals([
+    "queued",
+    "launching",
+    "running",
+    "capturing",
+    "succeeded",
+    "failed",
+    "cancelled",
+  ]),
   recipeRevision: PositiveInt,
   recipe: TeamImageRecipe, // a copy; secrets as references
   requestedBy: BuildRequester,
   imageRef: Schema.optional(Schema.String), // image id, AMI id, snapshot id, template id or digest
-  manifest: Schema.optional(Schema.Struct({
-    base: Schema.Struct({ ref: Schema.String, digest: Schema.NullOr(Schema.String), pairVersion: Schema.String }),
-    providers: Schema.Array(Schema.Struct({ driver: ProviderDriverKind, version: Schema.NullOr(Schema.String) })),
-    repos: Schema.Array(Schema.Struct({ projectId: ProjectId, path: Schema.String, headSha: Schema.String })),
-    runnerBuildId: Schema.String, // the bundle cached at build time
-    imageEnv: Schema.Record(Schema.String, Schema.String),
-    sizeBytes: Schema.NullOr(NonNegativeInt),
-  })),
+  manifest: Schema.optional(
+    Schema.Struct({
+      base: Schema.Struct({
+        ref: Schema.String,
+        digest: Schema.NullOr(Schema.String),
+        pairVersion: Schema.String,
+      }),
+      providers: Schema.Array(
+        Schema.Struct({ driver: ProviderDriverKind, version: Schema.NullOr(Schema.String) }),
+      ),
+      repos: Schema.Array(
+        Schema.Struct({ projectId: ProjectId, path: Schema.String, headSha: Schema.String }),
+      ),
+      runnerBuildId: Schema.String, // the bundle cached at build time
+      imageEnv: Schema.Record(Schema.String, Schema.String),
+      sizeBytes: Schema.NullOr(NonNegativeInt),
+    }),
+  ),
   failure: Schema.optional(Schema.Struct({ phase: BuildPhase, detail: Schema.String })),
 });
 ```
@@ -350,13 +391,13 @@ build a non-destroyed sandbox references, and the newest 5 succeeded builds (a s
 deletes the rest through `deleteImage`. Failed and cancelled builds have no image; their logs go after
 30 days. A build holds the team's code, so it is treated like a sandbox disk (decision 10).
 
-| Driver | Cost of keeping a build | Watch out for |
-| ------ | ----------------------- | ------------- |
-| Docker | Disk on the Docker host. Builds share base layers, so each costs its own layer, likely 2 to 10 GB with repos and stores (inferred). | The page shows total image size. Docker refuses to remove an image a container uses, which GC's rules respect anyway. |
-| EC2, GCE | An AMI or image plus its EBS snapshot, encrypted with the customer's KMS key ([09](./09-byoc.md)). | Deregistering an AMI leaves its snapshot; `deleteImage` removes both. GC keeps the base AMI as it keeps the active build. |
-| Vercel Sandbox (Later) | Snapshot storage, billed daily. | Snapshots expire 30 days after last use by default, so a rollback target could vanish: Pair would set `expiration: 0` and delete through GC. Snapshots are per region, so builds run where sandboxes run. |
-| E2B (Later) | Templates; pricing not covered. | We found no documented way to pass a build secret to `Template.fromDockerfile` without baking it. Verify before adding E2B, or use `snapshot` with its snapshots. |
-| Kubernetes (Later) | The customer's registry. | Registry retention must not delete referenced tags. |
+| Driver                 | Cost of keeping a build                                                                                                             | Watch out for                                                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker                 | Disk on the Docker host. Builds share base layers, so each costs its own layer, likely 2 to 10 GB with repos and stores (inferred). | The page shows total image size. Docker refuses to remove an image a container uses, which GC's rules respect anyway.                                                                                     |
+| EC2, GCE               | An AMI or image plus its EBS snapshot, encrypted with the customer's KMS key ([09](./09-byoc.md)).                                  | Deregistering an AMI leaves its snapshot; `deleteImage` removes both. GC keeps the base AMI as it keeps the active build.                                                                                 |
+| Vercel Sandbox (Later) | Snapshot storage, billed daily.                                                                                                     | Snapshots expire 30 days after last use by default, so a rollback target could vanish: Pair would set `expiration: 0` and delete through GC. Snapshots are per region, so builds run where sandboxes run. |
+| E2B (Later)            | Templates; pricing not covered.                                                                                                     | We found no documented way to pass a build secret to `Template.fromDockerfile` without baking it. Verify before adding E2B, or use `snapshot` with its snapshots.                                         |
+| Kubernetes (Later)     | The customer's registry.                                                                                                            | Registry retention must not delete referenced tags.                                                                                                                                                       |
 
 ## 5. Repos and caches
 
@@ -396,11 +437,11 @@ sets `T3CODE_SANDBOX=1` and replaces the project root with the clone the worktre
 parent of `git rev-parse --path-format=absolute --git-common-dir`, asked of git in the sandbox,
 falling back to `T3CODE_WORKTREE_PATH`.
 
-| Variable | Local worktree thread | Cloud session |
-| -------- | --------------------- | ------------- |
-| `T3CODE_PROJECT_ROOT` | `project.workspaceRoot`, e.g. `/Users/alice/code/web` | The clone, e.g. `/t3-sandbox/sbx_8f2c/repos/github.com/acme/web`, whether it came from the build or from session start |
-| `T3CODE_WORKTREE_PATH` | The thread's worktree on the member's Mac | The session's worktree, e.g. `/t3-sandbox/sbx_8f2c/worktrees/<branch>` |
-| `T3CODE_SANDBOX` | unset | `1` |
+| Variable               | Local worktree thread                                 | Cloud session                                                                                                          |
+| ---------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `T3CODE_PROJECT_ROOT`  | `project.workspaceRoot`, e.g. `/Users/alice/code/web` | The clone, e.g. `/t3-sandbox/sbx_8f2c/repos/github.com/acme/web`, whether it came from the build or from session start |
+| `T3CODE_WORKTREE_PATH` | The thread's worktree on the member's Mac             | The session's worktree, e.g. `/t3-sandbox/sbx_8f2c/worktrees/<branch>`                                                 |
+| `T3CODE_SANDBOX`       | unset                                                 | `1`                                                                                                                    |
 
 Scripts that read the main checkout, like Pair's own
 [setup-worktree.ts](../../../scripts/setup-worktree.ts) linking `.env` files, then find the clone.
@@ -409,13 +450,13 @@ Gitignored files are still missing there: those values belong in project cloud e
 
 ### What goes where
 
-| In the build | In the setup script |
-| ------------ | ------------------- |
-| System packages (`apt-get install postgresql-client`) | `pnpm install --frozen-lockfile --prefer-offline` |
-| Runtimes and toolchains (Go, Rust, a Python version) | Code generation such as `prisma generate` |
-| Repo clones | Copying `.env.example` to `.env` |
-| Package stores: `pnpm fetch`, `cargo fetch`, `go mod download`, `uv` caches | Migrations and seed data |
-| Team CLIs (`turbo`, `terraform`), newer provider CLIs | Dev servers (scripts with `previewUrl`) |
+| In the build                                                                | In the setup script                               |
+| --------------------------------------------------------------------------- | ------------------------------------------------- |
+| System packages (`apt-get install postgresql-client`)                       | `pnpm install --frozen-lockfile --prefer-offline` |
+| Runtimes and toolchains (Go, Rust, a Python version)                        | Code generation such as `prisma generate`         |
+| Repo clones                                                                 | Copying `.env.example` to `.env`                  |
+| Package stores: `pnpm fetch`, `cargo fetch`, `go mod download`, `uv` caches | Migrations and seed data                          |
+| Team CLIs (`turbo`, `terraform`), newer provider CLIs                       | Dev servers (scripts with `previewUrl`)           |
 
 Warm stores, not `node_modules`: the session's checkout is a separate worktree, so a `node_modules`
 built in the image clone never reaches it, while a warm pnpm store on the same disk makes the setup
@@ -424,11 +465,11 @@ in the build.
 
 ## 6. Secrets and env in builds
 
-| | Build secrets | Runtime secrets |
-| --- | --- | --- |
+|         | Build secrets                                                           | Runtime secrets                                                           |
+| ------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Example | A token for a private npm registry or apt repo the install script reads | `DATABASE_URL`, or a registry token `pnpm install` needs at session start |
-| Set in | Recipe → **Build secrets**, as `SecretReference`s | Team or project cloud env ([06](./06-credentials-and-security.md)) |
-| Seen by | The install script, during one build | Processes in one sandbox, injected at start |
+| Set in  | Recipe → **Build secrets**, as `SecretReference`s                       | Team or project cloud env ([06](./06-credentials-and-security.md))        |
+| Seen by | The install script, during one build                                    | Processes in one sandbox, injected at start                               |
 
 How a build keeps secrets out of what it captures (README decision 10):
 
@@ -485,14 +526,14 @@ A new toolkit in `apps/server/src/mcp/toolkits/sandboxImage/`, using the `t3_<ar
 of [project tools](../../../apps/server/src/mcp/toolkits/project/tools.ts) and declared through
 [McpToolAccess.ts](../../../apps/server/src/mcp/McpToolAccess.ts).
 
-| Tool | Who may call it | What it does |
-| ---- | --------------- | ------------ |
-| `t3_team_image_read` | Image threads | Recipe (secret names only), active build, last 10 builds with manifests. |
-| `t3_team_image_build_log` | Image threads | A tail or range of a build's redacted log. |
+| Tool                          | Who may call it           | What it does                                                                                        |
+| ----------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `t3_team_image_read`          | Image threads             | Recipe (secret names only), active build, last 10 builds with manifests.                            |
+| `t3_team_image_build_log`     | Image threads             | A tail or range of a build's redacted log.                                                          |
 | `t3_team_image_recipe_update` | Runs with admin authority | Replaces the install script (and optionally the base). Cannot touch projects, build env or secrets. |
-| `t3_team_image_build_start` | Runs with admin authority | Builds the saved recipe. The result is Ready, not active. |
-| `t3_team_image_build_cancel` | Runs with admin authority | Cancels the running build. |
-| `t3_team_image_propose` | Any cloud session | Files a proposed install script with a short reason. Changes nothing. |
+| `t3_team_image_build_start`   | Runs with admin authority | Builds the saved recipe. The result is Ready, not active.                                           |
+| `t3_team_image_build_cancel`  | Runs with admin authority | Cancels the running build.                                                                          |
+| `t3_team_image_propose`       | Any cloud session         | Files a proposed install script with a short reason. Changes nothing.                               |
 
 No tool activates or deletes a build, or reads a secret value. An agent that read a hostile file
 could be talked into adding a line to the install script, and every new cloud session boots from the
@@ -500,7 +541,7 @@ active build; one admin click on **Activate**, after seeing the diff, is the ins
 
 **Which threads get the tools.** Every tool description costs context in every session, and
 [agentContextBudget.json](../../../apps/server/src/provider/agentContextBudget.json) is enforced in
-CI. The full toolkit goes only to *image threads*: cloud sessions started from the page's **Edit with
+CI. The full toolkit goes only to _image threads_: cloud sessions started from the page's **Edit with
 an agent** button, on a project the admin picks, booted from the active build. The agent can run the
 install script in its own terminal before saving, which is what Conductor's admin workspace is for.
 Ordinary cloud sessions get only `t3_team_image_propose`. The toolkit ships with
@@ -543,13 +584,13 @@ through Pair's one app build (D16). Each history row diffs its recipe.
 the phase, the exit code and the last 30 log lines, with **Retry** and **Fix with an agent**, which
 starts an image thread whose first message carries the failure.
 
-| Phase | Message |
-| ----- | ------- |
-| clone | "Could not clone acme/api. Check that the GitHub App can read it." |
-| install | "The install script exited with 100 at line 12." |
-| verify | "Claude is not runnable in this build: `claude --version` failed." |
-| clean | "NPM_TOKEN's value was found in /home/t3/.npmrc. Use `${NPM_TOKEN}` instead." |
-| interrupted | "The server restarted during this build." |
+| Phase       | Message                                                                       |
+| ----------- | ----------------------------------------------------------------------------- |
+| clone       | "Could not clone acme/api. Check that the GitHub App can read it."            |
+| install     | "The install script exited with 100 at line 12."                              |
+| verify      | "Claude is not runnable in this build: `claude --version` failed."            |
+| clean       | "NPM_TOKEN's value was found in /home/t3/.npmrc. Use `${NPM_TOKEN}` instead." |
+| interrupted | "The server restarted during this build."                                     |
 
 **Members** see the page read only, and nobody is pinged when the active build changes. A cloud
 session's machine details show "Build 14", plus "New sessions use build 15" when that is true.
@@ -571,31 +612,31 @@ One row, one pull request. Server code goes in `apps/server/src/sandbox/image/` 
 
 ### M1: the base image and the default recipe on Docker (landed)
 
-| # | Pull request | Proof |
-| - | ------------ | ----- |
+| #   | Pull request                                                                                                                       | Proof                                                         |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | 1.1 | `infra/sandbox-image/`: `provision.sh`, Dockerfile, npm provider lockfile, Codex from `RELEASES`. PR CI builds both architectures. | CI log; `claude --version` and `codex --version` run as `t3`. |
-| 1.2 | `sandbox-image.yml`: on Pair release tags, cache the runner bundle and push `t3-sandbox:<version>` to GHCR. | Dry run on a fork. |
-| 1.3 | CI check that pinned CLIs are `supported` in the bundled manifest. | A test that fails on an old pin. |
-| 1.4 | The Docker driver resolves the base tag and records its digest; a sandbox with no team build shows as "Pair base" (with 04). | Test on the derived label. |
-| 1.5 | Cloud setup script paths: project root from the worktree's clone, `T3CODE_SANDBOX=1`, base env at spawn. | Test in `projectScripts` for the cloud case. |
-| 1.6 | A user docs section on cloud machines and setup scripts in cloud. | Review. |
+| 1.2 | `sandbox-image.yml`: on Pair release tags, cache the runner bundle and push `t3-sandbox:<version>` to GHCR.                        | Dry run on a fork.                                            |
+| 1.3 | CI check that pinned CLIs are `supported` in the bundled manifest.                                                                 | A test that fails on an old pin.                              |
+| 1.4 | The Docker driver resolves the base tag and records its digest; a sandbox with no team build shows as "Pair base" (with 04).       | Test on the derived label.                                    |
+| 1.5 | Cloud setup script paths: project root from the worktree's clone, `T3CODE_SANDBOX=1`, base env at spawn.                           | Test in `projectScripts` for the cloud case.                  |
+| 1.6 | A user docs section on cloud machines and setup scripts in cloud.                                                                  | Review.                                                       |
 
 ### M4: team builds, history, rollback and the admin agent
 
-| # | Pull request | Proof |
-| - | ------------ | ----- |
-| 4.1 | Outbox keyed by aggregate: a table rebuild adding aggregate kind and id (existing rows are threads), per-key claiming, a `team-image` receipt and stream kind, an effect-writing commit path and its lock, bounds for `team-image.build.*` effects. Lands before 4.3. | Existing thread effect tests pass unchanged; a test that a non-thread effect claims and runs. |
-| 4.2 | Contracts: recipe, build, manifest, RPC methods, guarded scopes, the sandbox record's `imageBuildId`. | Typecheck. |
-| 4.3 | `team-image` aggregate: decider, events, projection, revisions, one-build rule, timeout from the scheduler worker. | Decider tests per transition and refusal. |
-| 4.4 | `snapshot` build flow on Docker (`docker commit`): launch, runner attach, program, `imageEnv`, manifest, capture, cancel, restart recovery, log file and subscription. | Effect-worker drain tests; a real build transcript. |
-| 4.5 | Leak check and log redaction. | Tests for a leaked `~/.npmrc` and masked output. |
-| 4.6 | Activate, re-activate, GC and retention through `deleteImage`. | GC keeps active, referenced and newest-N. |
-| 4.7 | Sandboxes boot from the active build; `.image` rename or copy, then the existing fetch and worktree at session start; "not in the image" hint (with 02, 03, 04). | Integration test with a fake driver. |
-| 4.8 | Web Team image page: editor, build, log, history, activate, restore, failures. | Captures; one `test-t3-app` pass. |
-| 4.9 | MCP toolkit, run-authority check, image-thread flag, context budget, eval cases. | Permission tests incl. steer and queued runs; eval run. |
-| 4.10 | Proposals: tool, events, admin review. | Decider tests. |
-| 4.11 | Mobile read-only status and the build push. | `test-t3-mobile` pass. |
-| 4.12 | "Rebuild to update" when a build's base is older than the server. | Test on derived state. |
+| #    | Pull request                                                                                                                                                                                                                                                          | Proof                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 4.1  | Outbox keyed by aggregate: a table rebuild adding aggregate kind and id (existing rows are threads), per-key claiming, a `team-image` receipt and stream kind, an effect-writing commit path and its lock, bounds for `team-image.build.*` effects. Lands before 4.3. | Existing thread effect tests pass unchanged; a test that a non-thread effect claims and runs. |
+| 4.2  | Contracts: recipe, build, manifest, RPC methods, guarded scopes, the sandbox record's `imageBuildId`.                                                                                                                                                                 | Typecheck.                                                                                    |
+| 4.3  | `team-image` aggregate: decider, events, projection, revisions, one-build rule, timeout from the scheduler worker.                                                                                                                                                    | Decider tests per transition and refusal.                                                     |
+| 4.4  | `snapshot` build flow on Docker (`docker commit`): launch, runner attach, program, `imageEnv`, manifest, capture, cancel, restart recovery, log file and subscription.                                                                                                | Effect-worker drain tests; a real build transcript.                                           |
+| 4.5  | Leak check and log redaction.                                                                                                                                                                                                                                         | Tests for a leaked `~/.npmrc` and masked output.                                              |
+| 4.6  | Activate, re-activate, GC and retention through `deleteImage`.                                                                                                                                                                                                        | GC keeps active, referenced and newest-N.                                                     |
+| 4.7  | Sandboxes boot from the active build; `.image` rename or copy, then the existing fetch and worktree at session start; "not in the image" hint (with 02, 03, 04).                                                                                                      | Integration test with a fake driver.                                                          |
+| 4.8  | Web Team image page: editor, build, log, history, activate, restore, failures.                                                                                                                                                                                        | Captures; one `test-t3-app` pass.                                                             |
+| 4.9  | MCP toolkit, run-authority check, image-thread flag, context budget, eval cases.                                                                                                                                                                                      | Permission tests incl. steer and queued runs; eval run.                                       |
+| 4.10 | Proposals: tool, events, admin review.                                                                                                                                                                                                                                | Decider tests.                                                                                |
+| 4.11 | Mobile read-only status and the build push.                                                                                                                                                                                                                           | `test-t3-mobile` pass.                                                                        |
+| 4.12 | "Rebuild to update" when a build's base is older than the server.                                                                                                                                                                                                     | Test on derived state.                                                                        |
 
 ### M5 and later
 

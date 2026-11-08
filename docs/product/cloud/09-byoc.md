@@ -44,12 +44,12 @@ so does the code those Macs already hold. A team that wants its laptops locked d
 
 ### Offerings
 
-| Offering | Pair Cloud server | Machines | Model it copies | Milestone |
-| -------- | ----------------- | -------- | --------------- | --------- |
-| **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST` | Coder, E2B Embed | M2 |
-| **B. BYOC** | The customer's AWS VPC, installed by the kit; GCP later | EC2 instances in private subnets of that VPC; GCE on GCP | Coder, self-managed Buildkite | M5 |
-| **C. Hosted machines** | A VM the team runs | A sandbox vendor's cloud | Conductor on Vercel | Later, by demand |
-| Pair-hosted control plane | Pair | The customer's account; runners dial out to Pair | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
+| Offering                       | Pair Cloud server                                                                    | Machines                                                  | Model it copies                                                             | Milestone            |
+| ------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------- |
+| **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST` | Coder, E2B Embed                                                            | M2                   |
+| **B. BYOC**                    | The customer's AWS VPC, installed by the kit; GCP later                              | EC2 instances in private subnets of that VPC; GCE on GCP  | Coder, self-managed Buildkite                                               | M5                   |
+| **C. Hosted machines**         | A VM the team runs                                                                   | A sandbox vendor's cloud                                  | Conductor on Vercel                                                         | Later, by demand     |
+| Pair-hosted control plane      | Pair                                                                                 | The customer's account; runners dial out to Pair          | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
 
 A and B run the same cloud-only server, launch gate and lifecycle. They differ in where machines
 run and how much of the network the kit sets up. A server holds several configured driver instances
@@ -59,33 +59,33 @@ run and how much of the network the kit sets up. A server holds several configur
 
 This replaces the BYOC tiers table in [conductor-cloud.md](../conductor-cloud.md#byoc-deployment-tiers).
 
-| Tier | Pair Cloud server | Machines | Isolation between cloud sessions | For | Milestone |
-| ---- | ----------------- | -------- | -------------------------------- | --- | --------- |
-| 0 | None | Members' own Macs, through their local servers | Each member's own machine | Local work, today and after | Shipped |
-| 1 | A team VM | Docker driver on that VM | Container | Teams that want shared cloud sessions with no new vendor | M2 (M1 built the machinery on a team server) |
-| 2a | Customer AWS account | EC2 driver (offering B) | Full VM | Teams whose code and credentials must stay in their account | M5 |
-| 2b | Customer GCP project | GCE driver | Full VM | The same, on GCP | M5, after AWS |
-| 3 | Customer cloud | Kubernetes driver | gVisor or Kata | Enterprises with a platform team | Later, by demand |
-| Hosted | A team VM | Hosted vendor (offering C) | Vendor VM | Fastest Conductor-like setup | Later, by demand |
-| Embed | Customer cloud | E2B Embed node, through an E2B driver | Firecracker microVM | Small teams that want fast boots in their account | Later, only with an E2B driver |
+| Tier   | Pair Cloud server    | Machines                                       | Isolation between cloud sessions | For                                                         | Milestone                                    |
+| ------ | -------------------- | ---------------------------------------------- | -------------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
+| 0      | None                 | Members' own Macs, through their local servers | Each member's own machine        | Local work, today and after                                 | Shipped                                      |
+| 1      | A team VM            | Docker driver on that VM                       | Container                        | Teams that want shared cloud sessions with no new vendor    | M2 (M1 built the machinery on a team server) |
+| 2a     | Customer AWS account | EC2 driver (offering B)                        | Full VM                          | Teams whose code and credentials must stay in their account | M5                                           |
+| 2b     | Customer GCP project | GCE driver                                     | Full VM                          | The same, on GCP                                            | M5, after AWS                                |
+| 3      | Customer cloud       | Kubernetes driver                              | gVisor or Kata                   | Enterprises with a platform team                            | Later, by demand                             |
+| Hosted | A team VM            | Hosted vendor (offering C)                     | Vendor VM                        | Fastest Conductor-like setup                                | Later, by demand                             |
+| Embed  | Customer cloud       | E2B Embed node, through an E2B driver          | Firecracker microVM              | Small teams that want fast boots in their account           | Later, only with an E2B driver               |
 
 ### What leaves the customer's account
 
 "Leaves" means it is stored or readable outside the customer's cloud account.
 
-| Data | B. BYOC | C. Hosted machines (Later) |
-| ---- | ------- | -------------------------- |
-| Transcripts, event store, projections | Stays, on the server's data volume | Stays on the server; passes through the vendor VM while a turn runs |
-| Project checkouts, mirror, checkpoints and diffs | Stays: machine disks and the server's data volume (decisions 11, 16) | **On the vendor's disk**; the mirror stays |
-| Provider credentials | Stays: the server's secret store or Secrets Manager, and machine memory while a process runs (decision 10) | **In the vendor VM's memory** |
-| Git tokens | Stays: one-hour GitHub App tokens, or the owner's GitHub credential, in machine memory | **In the vendor VM's memory** |
-| Terminal, file and stdio traffic | Stays inside the VPC | **Crosses** between vendor and server |
-| Machine images | Stays: AMIs in the account | **Stored by the vendor** |
-| Client traffic | Stays on the customer's network over VPN or Tailscale. With the opt-in public listener it crosses the internet to the customer's load balancer, over TLS | Depends on the server's ingress |
-| Code to and from GitHub | **github.com:** clones, fetches, pushes and pull requests | Same |
-| Model traffic | **Machine to the provider**, through NAT, for subscriptions and API keys alike | **Vendor VM to the provider** |
-| Push notifications | **Thread titles and a deep link to Expo's push service**, then Apple or Google ([MemberPushNotifier.ts](../../../apps/server/src/notifications/MemberPushNotifier.ts)) | Same |
-| Product usage events | Off in the kit; otherwise **sent to `ingest.t3.codes`** ([telemetry](../../user/telemetry.md)) | **Sent unless disabled** |
+| Data                                             | B. BYOC                                                                                                                                                                | C. Hosted machines (Later)                                          |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Transcripts, event store, projections            | Stays, on the server's data volume                                                                                                                                     | Stays on the server; passes through the vendor VM while a turn runs |
+| Project checkouts, mirror, checkpoints and diffs | Stays: machine disks and the server's data volume (decisions 11, 16)                                                                                                   | **On the vendor's disk**; the mirror stays                          |
+| Provider credentials                             | Stays: the server's secret store or Secrets Manager, and machine memory while a process runs (decision 10)                                                             | **In the vendor VM's memory**                                       |
+| Git tokens                                       | Stays: one-hour GitHub App tokens, or the owner's GitHub credential, in machine memory                                                                                 | **In the vendor VM's memory**                                       |
+| Terminal, file and stdio traffic                 | Stays inside the VPC                                                                                                                                                   | **Crosses** between vendor and server                               |
+| Machine images                                   | Stays: AMIs in the account                                                                                                                                             | **Stored by the vendor**                                            |
+| Client traffic                                   | Stays on the customer's network over VPN or Tailscale. With the opt-in public listener it crosses the internet to the customer's load balancer, over TLS               | Depends on the server's ingress                                     |
+| Code to and from GitHub                          | **github.com:** clones, fetches, pushes and pull requests                                                                                                              | Same                                                                |
+| Model traffic                                    | **Machine to the provider**, through NAT, for subscriptions and API keys alike                                                                                         | **Vendor VM to the provider**                                       |
+| Push notifications                               | **Thread titles and a deep link to Expo's push service**, then Apple or Google ([MemberPushNotifier.ts](../../../apps/server/src/notifications/MemberPushNotifier.ts)) | Same                                                                |
+| Product usage events                             | Off in the kit; otherwise **sent to `ingest.t3.codes`** ([telemetry](../../user/telemetry.md))                                                                         | **Sent unless disabled**                                            |
 
 Three rows are easy to miss. First, a Pair server sends product usage events to T3 Code by default.
 The events carry no prompts or file contents, but a "nothing leaves" promise must turn them off, so
@@ -99,15 +99,15 @@ client traffic through the managed Cloudflare tunnel that T3's relay allocates
 
 Research date 2026-11-06. Sources at the end.
 
-| Product | Who dials whom | Install | Cloud permissions | Upgrades | License |
-| ------- | -------------- | ------- | ----------------- | -------- | ------- |
-| **Ona (formerly Gitpod) AWS runner** | The runner, in the customer VPC, reports to Ona's management plane; PrivateLink to the management plane is an option | CloudFormation link generated in the Ona dashboard with a runner id and exchange token; 20–25 minutes | Runner is a Fargate service; dev environments are EC2 in the customer VPC; a long list of VPC endpoints when there is no NAT | Not documented on the pages read | Proprietary |
-| **Coder** | Workspace agent connects to the control plane's access URL over HTTPS and WebSocket; peer connections over WireGuard, relayed through DERP when direct UDP fails | Customer runs the control plane (Postgres plus `coder server`); templates are Terraform | Whatever the template's Terraform needs, held by the provisioner | Customer upgrades the control plane; agents come from it | AGPL-3.0 core, paid Premium |
-| **E2B BYOC** | E2B's control plane reaches orchestrators through an edge controller's gRPC proxy; sandbox traffic goes client to customer VPC directly | E2B provisions with Terraform and machine images into a dedicated account or project | AWS: an IAM role shared with E2B. GCP and Azure: an E2B Terraform module grants E2B scoped access | Managed by E2B (not documented) | Runtime Apache-2.0; BYOC is Enterprise only |
-| **E2B Embed** | Clients call the node's API directly; nothing calls home | One node: Docker Compose, Terraform for AWS, GCP or Azure, or a Kubernetes manifest | AWS module creates a VPC, an instance role, an S3 bucket and an Auto Scaling group of one `m8i.xlarge` with nested virtualization | Change the module's pinned `ref` and apply | Apache-2.0 |
-| **Daytona** | n/a | n/a | n/a | Core development moved to a private codebase in June 2026; the public repo was archived on 2026-10-03 | Last public code (v0.190.0) is AGPL-3.0, unmaintained |
-| **GitHub Actions self-hosted runners and ARC** | Runner, or ARC's listener pod, holds an outbound HTTPS connection to GitHub; no inbound | ARC: two Helm charts (controller and scale set) | Kubernetes service account to scale runner pods | Runners auto-update; a runner more than 30 days behind stops getting jobs | Runner and ARC Apache-2.0 |
-| **Buildkite agents** | Agents poll Buildkite's API over HTTPS; no inbound ports | Elastic CI Stack for AWS as CloudFormation or Terraform; an agent stack for Kubernetes | Auto Scaling group, a Lambda scaler, an S3 secrets bucket, SSM for the agent token | Stack updates roll instances; agent release channel is selectable | Agent MIT (inferred, not checked) |
+| Product                                        | Who dials whom                                                                                                                                                   | Install                                                                                               | Cloud permissions                                                                                                                 | Upgrades                                                                                              | License                                               |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Ona (formerly Gitpod) AWS runner**           | The runner, in the customer VPC, reports to Ona's management plane; PrivateLink to the management plane is an option                                             | CloudFormation link generated in the Ona dashboard with a runner id and exchange token; 20–25 minutes | Runner is a Fargate service; dev environments are EC2 in the customer VPC; a long list of VPC endpoints when there is no NAT      | Not documented on the pages read                                                                      | Proprietary                                           |
+| **Coder**                                      | Workspace agent connects to the control plane's access URL over HTTPS and WebSocket; peer connections over WireGuard, relayed through DERP when direct UDP fails | Customer runs the control plane (Postgres plus `coder server`); templates are Terraform               | Whatever the template's Terraform needs, held by the provisioner                                                                  | Customer upgrades the control plane; agents come from it                                              | AGPL-3.0 core, paid Premium                           |
+| **E2B BYOC**                                   | E2B's control plane reaches orchestrators through an edge controller's gRPC proxy; sandbox traffic goes client to customer VPC directly                          | E2B provisions with Terraform and machine images into a dedicated account or project                  | AWS: an IAM role shared with E2B. GCP and Azure: an E2B Terraform module grants E2B scoped access                                 | Managed by E2B (not documented)                                                                       | Runtime Apache-2.0; BYOC is Enterprise only           |
+| **E2B Embed**                                  | Clients call the node's API directly; nothing calls home                                                                                                         | One node: Docker Compose, Terraform for AWS, GCP or Azure, or a Kubernetes manifest                   | AWS module creates a VPC, an instance role, an S3 bucket and an Auto Scaling group of one `m8i.xlarge` with nested virtualization | Change the module's pinned `ref` and apply                                                            | Apache-2.0                                            |
+| **Daytona**                                    | n/a                                                                                                                                                              | n/a                                                                                                   | n/a                                                                                                                               | Core development moved to a private codebase in June 2026; the public repo was archived on 2026-10-03 | Last public code (v0.190.0) is AGPL-3.0, unmaintained |
+| **GitHub Actions self-hosted runners and ARC** | Runner, or ARC's listener pod, holds an outbound HTTPS connection to GitHub; no inbound                                                                          | ARC: two Helm charts (controller and scale set)                                                       | Kubernetes service account to scale runner pods                                                                                   | Runners auto-update; a runner more than 30 days behind stops getting jobs                             | Runner and ARC Apache-2.0                             |
+| **Buildkite agents**                           | Agents poll Buildkite's API over HTTPS; no inbound ports                                                                                                         | Elastic CI Stack for AWS as CloudFormation or Terraform; an agent stack for Kubernetes                | Auto Scaling group, a Lambda scaler, an S3 secrets bucket, SSM for the agent token                                                | Stack updates roll instances; agent release channel is selectable                                     | Agent MIT (inferred, not checked)                     |
 
 ### Lessons for Pair
 
@@ -139,18 +139,18 @@ Research date 2026-11-06. Sources at the end.
 Three ways to run machines in the customer's account. Numbers marked (inferred) are estimates to
 replace with M5 measurements.
 
-| | (i) Kubernetes (EKS or GKE) | (ii) Plain VM (EC2 or GCE) | (iii) E2B Firecracker in the account |
-| --- | --- | --- | --- |
-| Unit | One pod per machine with a PersistentVolumeClaim | One VM per machine with its own boot disk | One microVM per machine on an E2B node |
-| Isolation | gVisor: a userspace kernel, no privileged containers, so no Docker inside. Kata (GKE's `microvm` RuntimeClass): a VM per pod, needs nested virtualization | Hardware VM. The agent has root and can run Docker | Firecracker microVM with a per-sandbox egress firewall |
-| Cold start | Seconds on a warm node; minutes when the autoscaler adds one (inferred) | Tens of seconds to boot from an image (inferred). Blocks load lazily from the snapshot behind the image, so first reads are slow unless Fast Snapshot Restore is on | Sub-second: a sandbox is a resumed snapshot |
-| Sleep | Delete the pod, keep the PVC | Stop the instance, keep the disk | E2B's pause saves memory too, which decision 10 forbids; a Pair driver needs a disk-only sleep (doc 04) |
-| Wake | Schedule a pod and attach the volume, which is pinned to one zone | Start the instance, in the same zone | Resume from the saved disk |
-| Sleeping cost | Volume storage | Disk storage only | Object storage for the diffs |
-| Processes across sleep | Lost (decision 10: sleep never keeps memory) | Lost | Lost |
-| Customer runs | A cluster, node pools, a CSI driver, RuntimeClasses, an autoscaler | Nothing beyond the Pair Cloud server VM | One node (Embed), or an E2B-managed cluster (BYOC, Enterprise) |
-| Pair builds | A driver against the Kubernetes API, plus a Helm chart | A driver against EC2 or Compute Engine | An E2B driver (Later), then nothing new |
-| Fit | Enterprises that already run clusters and want bin-packing | Teams of any size; the simplest true VM | Small teams on one node; large teams only through an E2B contract |
+|                        | (i) Kubernetes (EKS or GKE)                                                                                                                               | (ii) Plain VM (EC2 or GCE)                                                                                                                                          | (iii) E2B Firecracker in the account                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Unit                   | One pod per machine with a PersistentVolumeClaim                                                                                                          | One VM per machine with its own boot disk                                                                                                                           | One microVM per machine on an E2B node                                                                  |
+| Isolation              | gVisor: a userspace kernel, no privileged containers, so no Docker inside. Kata (GKE's `microvm` RuntimeClass): a VM per pod, needs nested virtualization | Hardware VM. The agent has root and can run Docker                                                                                                                  | Firecracker microVM with a per-sandbox egress firewall                                                  |
+| Cold start             | Seconds on a warm node; minutes when the autoscaler adds one (inferred)                                                                                   | Tens of seconds to boot from an image (inferred). Blocks load lazily from the snapshot behind the image, so first reads are slow unless Fast Snapshot Restore is on | Sub-second: a sandbox is a resumed snapshot                                                             |
+| Sleep                  | Delete the pod, keep the PVC                                                                                                                              | Stop the instance, keep the disk                                                                                                                                    | E2B's pause saves memory too, which decision 10 forbids; a Pair driver needs a disk-only sleep (doc 04) |
+| Wake                   | Schedule a pod and attach the volume, which is pinned to one zone                                                                                         | Start the instance, in the same zone                                                                                                                                | Resume from the saved disk                                                                              |
+| Sleeping cost          | Volume storage                                                                                                                                            | Disk storage only                                                                                                                                                   | Object storage for the diffs                                                                            |
+| Processes across sleep | Lost (decision 10: sleep never keeps memory)                                                                                                              | Lost                                                                                                                                                                | Lost                                                                                                    |
+| Customer runs          | A cluster, node pools, a CSI driver, RuntimeClasses, an autoscaler                                                                                        | Nothing beyond the Pair Cloud server VM                                                                                                                             | One node (Embed), or an E2B-managed cluster (BYOC, Enterprise)                                          |
+| Pair builds            | A driver against the Kubernetes API, plus a Helm chart                                                                                                    | A driver against EC2 or Compute Engine                                                                                                                              | An E2B driver (Later), then nothing new                                                                 |
+| Fit                    | Enterprises that already run clusters and want bin-packing                                                                                                | Teams of any size; the simplest true VM                                                                                                                             | Small teams on one node; large teams only through an E2B contract                                       |
 
 ### Notes on each
 
@@ -249,19 +249,19 @@ flowchart TB
   DLM -.-> PC
 ```
 
-| Piece | Choice | Why |
-| ----- | ------ | --- |
-| VPC | A dedicated VPC, or an existing one by id. Two private subnets for the server, two for machines (a /20 each), and public subnets for NAT and, when enabled, the public listener | Server and machines get separate security groups, route tables and NACLs |
-| NACLs | On the machine subnets: inside the VPC, allow only the runner listener's port on the server subnets, deny the rest of the VPC's range, and allow the internet through NAT. NACLs are stateless, so the rules also admit return traffic on ephemeral ports | A second layer under security groups, so a mistaken security group change still can't open the server, the VPN or the rest of the VPC to an agent. NACLs don't filter traffic inside one subnet; machines' security groups have no inbound rules, so machines can't reach each other |
-| Pair Cloud server | One EC2 instance in an Auto Scaling group of one, in cloud-only mode, IMDSv2 with hop limit 1, and a separate gp3 data volume holding T3 home: the event store, secrets, project checkouts and mirrors. Sized for the M2 target of 30 concurrent machines (decision 18) | The event store is SQLite on local disk (`statev2.sqlite`), so one writer and no shared filesystem. The ASG only replaces a dead instance; the data volume reattaches |
-| Server backups | Data Lifecycle Manager snapshots of the data volume, hourly, encrypted with the KMS key | Up to an hour of session history at risk (D11). See [backups and restore](#backups-and-restore) |
-| TLS | Internal ALB with an ACM certificate for the team's own name in a private hosted zone | The server has no native TLS listener (no `https.createServer` in [apps/server/src](../../../apps/server/src)), so TLS ends at a proxy |
-| Machines | EC2 from the active team image AMI, no instance profile, IMDSv2 with hop limit 1, a security group with no inbound rules | A machine needs no AWS permissions. The agent can read anything in the VM, so nothing cloud-privileged goes there |
-| Images | AMIs built in the account (section 6) | No container registry needed for VMs. ECR only arrives with a Kubernetes driver |
-| Secrets | A new `aws_secrets_manager` secret provider kind, read by the server's instance role | Fits the existing [secret provider driver](../../../packages/secret-provider-core/src/server/driver.ts): references like `awssm://pair/github-app#private_key` resolve on the server. The GitHub App key never leaves it; machines get only one-hour tokens, in memory (decision 10) |
-| Egress | NAT gateway; optional AWS Network Firewall with a domain allowlist (github.com, package registries, model providers) | Security groups filter by IP only. A domain allowlist needs a firewall or a proxy |
-| Encryption | One customer-managed KMS key; EBS encryption by default in the region | Machine disks, the data volume, every snapshot and every AMI inherit it |
-| Audit | CloudTrail in the account | Every driver call is attributed to the server's role session |
+| Piece             | Choice                                                                                                                                                                                                                                                                  | Why                                                                                                                                                                                                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| VPC               | A dedicated VPC, or an existing one by id. Two private subnets for the server, two for machines (a /20 each), and public subnets for NAT and, when enabled, the public listener                                                                                         | Server and machines get separate security groups, route tables and NACLs                                                                                                                                                                                                             |
+| NACLs             | On the machine subnets: inside the VPC, allow only the runner listener's port on the server subnets, deny the rest of the VPC's range, and allow the internet through NAT. NACLs are stateless, so the rules also admit return traffic on ephemeral ports               | A second layer under security groups, so a mistaken security group change still can't open the server, the VPN or the rest of the VPC to an agent. NACLs don't filter traffic inside one subnet; machines' security groups have no inbound rules, so machines can't reach each other |
+| Pair Cloud server | One EC2 instance in an Auto Scaling group of one, in cloud-only mode, IMDSv2 with hop limit 1, and a separate gp3 data volume holding T3 home: the event store, secrets, project checkouts and mirrors. Sized for the M2 target of 30 concurrent machines (decision 18) | The event store is SQLite on local disk (`statev2.sqlite`), so one writer and no shared filesystem. The ASG only replaces a dead instance; the data volume reattaches                                                                                                                |
+| Server backups    | Data Lifecycle Manager snapshots of the data volume, hourly, encrypted with the KMS key                                                                                                                                                                                 | Up to an hour of session history at risk (D11). See [backups and restore](#backups-and-restore)                                                                                                                                                                                      |
+| TLS               | Internal ALB with an ACM certificate for the team's own name in a private hosted zone                                                                                                                                                                                   | The server has no native TLS listener (no `https.createServer` in [apps/server/src](../../../apps/server/src)), so TLS ends at a proxy                                                                                                                                               |
+| Machines          | EC2 from the active team image AMI, no instance profile, IMDSv2 with hop limit 1, a security group with no inbound rules                                                                                                                                                | A machine needs no AWS permissions. The agent can read anything in the VM, so nothing cloud-privileged goes there                                                                                                                                                                    |
+| Images            | AMIs built in the account (section 6)                                                                                                                                                                                                                                   | No container registry needed for VMs. ECR only arrives with a Kubernetes driver                                                                                                                                                                                                      |
+| Secrets           | A new `aws_secrets_manager` secret provider kind, read by the server's instance role                                                                                                                                                                                    | Fits the existing [secret provider driver](../../../packages/secret-provider-core/src/server/driver.ts): references like `awssm://pair/github-app#private_key` resolve on the server. The GitHub App key never leaves it; machines get only one-hour tokens, in memory (decision 10) |
+| Egress            | NAT gateway; optional AWS Network Firewall with a domain allowlist (github.com, package registries, model providers)                                                                                                                                                    | Security groups filter by IP only. A domain allowlist needs a firewall or a proxy                                                                                                                                                                                                    |
+| Encryption        | One customer-managed KMS key; EBS encryption by default in the region                                                                                                                                                                                                   | Machine disks, the data volume, every snapshot and every AMI inherit it                                                                                                                                                                                                              |
+| Audit             | CloudTrail in the account                                                                                                                                                                                                                                               | Every driver call is attributed to the server's role session                                                                                                                                                                                                                         |
 
 #### Backups and restore
 
@@ -311,35 +311,90 @@ IAM policy simulator in M5; some EC2 actions need extra resource ARNs.
 {
   "Version": "2012-10-17",
   "Statement": [
-    { "Sid": "Read", "Effect": "Allow", "Resource": "*",
-      "Action": ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeImages",
-                 "ec2:DescribeSnapshots", "ec2:DescribeVolumes"] },
-    { "Sid": "LaunchTagged", "Effect": "Allow", "Action": "ec2:RunInstances",
-      "Resource": ["arn:aws:ec2:REGION:ACCOUNT:instance/*", "arn:aws:ec2:REGION:ACCOUNT:volume/*",
-                   "arn:aws:ec2:REGION:ACCOUNT:network-interface/*"],
-      "Condition": { "StringEquals": { "aws:RequestTag/pair.install": "INSTALL_ID" } } },
-    { "Sid": "LaunchInto", "Effect": "Allow", "Action": "ec2:RunInstances",
-      "Resource": ["arn:aws:ec2:REGION:ACCOUNT:subnet/SANDBOX_SUBNET_A",
-                   "arn:aws:ec2:REGION:ACCOUNT:subnet/SANDBOX_SUBNET_B",
-                   "arn:aws:ec2:REGION:ACCOUNT:security-group/SANDBOX_SG",
-                   "arn:aws:ec2:REGION:ACCOUNT:launch-template/SANDBOX_LT"] },
-    { "Sid": "LaunchFromImage", "Effect": "Allow", "Action": "ec2:RunInstances",
+    {
+      "Sid": "Read",
+      "Effect": "Allow",
+      "Resource": "*",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeImages",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeVolumes"
+      ]
+    },
+    {
+      "Sid": "LaunchTagged",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:REGION:ACCOUNT:instance/*",
+        "arn:aws:ec2:REGION:ACCOUNT:volume/*",
+        "arn:aws:ec2:REGION:ACCOUNT:network-interface/*"
+      ],
+      "Condition": { "StringEquals": { "aws:RequestTag/pair.install": "INSTALL_ID" } }
+    },
+    {
+      "Sid": "LaunchInto",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:REGION:ACCOUNT:subnet/SANDBOX_SUBNET_A",
+        "arn:aws:ec2:REGION:ACCOUNT:subnet/SANDBOX_SUBNET_B",
+        "arn:aws:ec2:REGION:ACCOUNT:security-group/SANDBOX_SG",
+        "arn:aws:ec2:REGION:ACCOUNT:launch-template/SANDBOX_LT"
+      ]
+    },
+    {
+      "Sid": "LaunchFromImage",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
       "Resource": "arn:aws:ec2:REGION::image/*",
-      "Condition": { "StringEquals": { "ec2:Owner": ["ACCOUNT", "099720109477"] } } },
-    { "Sid": "TagOnCreate", "Effect": "Allow", "Action": "ec2:CreateTags", "Resource": "*",
-      "Condition": { "StringEquals": { "ec2:CreateAction":
-        ["RunInstances", "CreateImage", "CreateSnapshot"] } } },
-    { "Sid": "ManageOwn", "Effect": "Allow", "Resource": "*",
-      "Action": ["ec2:StartInstances", "ec2:StopInstances", "ec2:TerminateInstances",
-                 "ec2:CreateImage", "ec2:CreateSnapshot", "ec2:DeregisterImage",
-                 "ec2:DeleteSnapshot", "ec2:ModifyInstanceMetadataOptions"],
-      "Condition": { "StringEquals": { "aws:ResourceTag/pair.install": "INSTALL_ID" } } },
-    { "Sid": "EbsKms", "Effect": "Allow", "Resource": "KMS_KEY_ARN",
-      "Action": ["kms:CreateGrant", "kms:GenerateDataKeyWithoutPlaintext", "kms:Decrypt",
-                 "kms:DescribeKey"],
-      "Condition": { "Bool": { "kms:GrantIsForAWSResource": "true" } } },
-    { "Sid": "Secrets", "Effect": "Allow", "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:pair/*" }
+      "Condition": { "StringEquals": { "ec2:Owner": ["ACCOUNT", "099720109477"] } }
+    },
+    {
+      "Sid": "TagOnCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "ec2:CreateAction": ["RunInstances", "CreateImage", "CreateSnapshot"] }
+      }
+    },
+    {
+      "Sid": "ManageOwn",
+      "Effect": "Allow",
+      "Resource": "*",
+      "Action": [
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateImage",
+        "ec2:CreateSnapshot",
+        "ec2:DeregisterImage",
+        "ec2:DeleteSnapshot",
+        "ec2:ModifyInstanceMetadataOptions"
+      ],
+      "Condition": { "StringEquals": { "aws:ResourceTag/pair.install": "INSTALL_ID" } }
+    },
+    {
+      "Sid": "EbsKms",
+      "Effect": "Allow",
+      "Resource": "KMS_KEY_ARN",
+      "Action": [
+        "kms:CreateGrant",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Condition": { "Bool": { "kms:GrantIsForAWSResource": "true" } }
+    },
+    {
+      "Sid": "Secrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:pair/*"
+    }
   ]
 }
 ```
@@ -352,19 +407,19 @@ its own service role, which the kit creates.
 
 ### GCP, briefly
 
-| AWS piece | GCP equivalent |
-| --------- | -------------- |
-| Dedicated account | Dedicated project; the project is the IAM boundary, because IAM conditions on labels are weaker than EC2 tag conditions (inferred; verify in M5) |
-| NACLs on the machine subnets | VPC firewall rules by network tag or service account; GCP has no subnet-level ACLs |
-| NAT gateway | Cloud NAT on a Cloud Router |
-| Internal ALB with ACM | Internal Application Load Balancer with a Google-managed or self-managed certificate |
-| DLM hourly snapshots | A snapshot schedule attached to the data disk |
-| Machine EC2 with no instance profile | GCE instance with no service account attached |
-| AMI | Custom image in an image family per team image |
-| EBS encryption with KMS | CMEK on disks, snapshots and images |
-| Driver IAM policy | A custom role with `compute.instances.{create,start,stop,delete,get,list,setMetadata,setLabels}`, `compute.disks.{create,createSnapshot,use}`, `compute.images.{create,useReadOnly}`, `compute.subnetworks.use`, bound to the Pair Cloud server's service account on the machine project |
-| Secrets Manager | Secret Manager, through a `gcp_secret_manager` secret provider |
-| CloudTrail | Cloud Audit Logs (Admin Activity is always on) |
+| AWS piece                            | GCP equivalent                                                                                                                                                                                                                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dedicated account                    | Dedicated project; the project is the IAM boundary, because IAM conditions on labels are weaker than EC2 tag conditions (inferred; verify in M5)                                                                                                                                         |
+| NACLs on the machine subnets         | VPC firewall rules by network tag or service account; GCP has no subnet-level ACLs                                                                                                                                                                                                       |
+| NAT gateway                          | Cloud NAT on a Cloud Router                                                                                                                                                                                                                                                              |
+| Internal ALB with ACM                | Internal Application Load Balancer with a Google-managed or self-managed certificate                                                                                                                                                                                                     |
+| DLM hourly snapshots                 | A snapshot schedule attached to the data disk                                                                                                                                                                                                                                            |
+| Machine EC2 with no instance profile | GCE instance with no service account attached                                                                                                                                                                                                                                            |
+| AMI                                  | Custom image in an image family per team image                                                                                                                                                                                                                                           |
+| EBS encryption with KMS              | CMEK on disks, snapshots and images                                                                                                                                                                                                                                                      |
+| Driver IAM policy                    | A custom role with `compute.instances.{create,start,stop,delete,get,list,setMetadata,setLabels}`, `compute.disks.{create,createSnapshot,use}`, `compute.images.{create,useReadOnly}`, `compute.subnetworks.use`, bound to the Pair Cloud server's service account on the machine project |
+| Secrets Manager                      | Secret Manager, through a `gcp_secret_manager` secret provider                                                                                                                                                                                                                           |
+| CloudTrail                           | Cloud Audit Logs (Admin Activity is always on)                                                                                                                                                                                                                                           |
 
 ## 5. Networking and member ingress
 
@@ -373,11 +428,11 @@ separate listeners, and neither side can reach the other's.
 
 ### Members
 
-| Route | In the kit | Serves | Notes |
-| ----- | ---------- | ------ | ----- |
-| **N1. Private: VPN or Tailscale** | Default | Every route except `/runner/*`, on the internal load balancer at the team's own name (for example `https://pair.internal.example`) | Members' Mac apps, browsers and phones need the VPN or the tailnet. Tailscale reaches the VPC through one subnet router that advertises the server subnets. Never Tailscale inside a machine: an auth key there is a credential the agent can read |
-| **N2. Public HTTPS listener** | Off; an admin opts in with a kit variable | Client routes only. `/runner/*` is never routed there | An internet-facing ALB in the public subnets with the team's certificate. Its listener rules forward client paths to the server and answer `/runner/*` with 404. Pair's own sign-in (pairing links, member sessions) is then the gate, so the kit also takes an optional source IP allowlist |
-| **T3 Connect** | Off | Nothing | The kit writes `"connect": false` into the server's [managed policy](../../user/managed-policy.md) (`/etc/t3code/policy.json` on Linux), which turns T3 Connect off and unlinks the machine ([managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts)). Through T3 Connect every byte of client traffic would leave the customer's network through a tunnel under T3's account, with TLS ending at Cloudflare's edge |
+| Route                             | In the kit                                | Serves                                                                                                                             | Notes                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **N1. Private: VPN or Tailscale** | Default                                   | Every route except `/runner/*`, on the internal load balancer at the team's own name (for example `https://pair.internal.example`) | Members' Mac apps, browsers and phones need the VPN or the tailnet. Tailscale reaches the VPC through one subnet router that advertises the server subnets. Never Tailscale inside a machine: an auth key there is a credential the agent can read                                                                                                                                                                               |
+| **N2. Public HTTPS listener**     | Off; an admin opts in with a kit variable | Client routes only. `/runner/*` is never routed there                                                                              | An internet-facing ALB in the public subnets with the team's certificate. Its listener rules forward client paths to the server and answer `/runner/*` with 404. Pair's own sign-in (pairing links, member sessions) is then the gate, so the kit also takes an optional source IP allowlist                                                                                                                                     |
+| **T3 Connect**                    | Off                                       | Nothing                                                                                                                            | The kit writes `"connect": false` into the server's [managed policy](../../user/managed-policy.md) (`/etc/t3code/policy.json` on Linux), which turns T3 Connect off and unlinks the machine ([managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts)). Through T3 Connect every byte of client traffic would leave the customer's network through a tunnel under T3's account, with TLS ending at Cloudflare's edge |
 
 Pair Cloud's web surface is its own origin on the team's domain, served by the server itself, not
 app.t3.codes. The Mac app and the phone add it as an environment beside the Mac's local server.
@@ -412,16 +467,16 @@ guesses. Runner traffic never leaves the VPC.
 
 ### Ports, TLS and proxies
 
-| Flow | Port | Notes |
-| ---- | ---- | ----- |
-| Runner to the internal load balancer | 8443/tcp, TLS (example) | The only flow machines open toward the server |
-| Load balancer to the server | 3773/tcp (the default `DEFAULT_PORT` in [config.ts](../../../apps/server/src/config.ts)); the runner port from 5.19 | Plain HTTP inside the server subnet; the server's security group admits only the load balancer |
-| Members to the internal load balancer | 443/tcp, over VPN or Tailscale | N1 |
-| Members to the public listener | 443/tcp | N2, opt-in, client routes only |
-| Server to cloud APIs | 443/tcp | Through VPC endpoints or NAT |
-| Server to the internet | 443/tcp | Through NAT: GitHub (installation tokens, clones into the project store, PR calls), Expo push, provider token refreshes |
-| Machine to the internet | 443/tcp | Through NAT and the optional firewall: github.com over HTTPS, package registries, model providers |
-| Into a machine | None | The security group has no inbound rules. Previews and SSH, when they come (Later), ride the runner socket |
+| Flow                                  | Port                                                                                                                | Notes                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Runner to the internal load balancer  | 8443/tcp, TLS (example)                                                                                             | The only flow machines open toward the server                                                                           |
+| Load balancer to the server           | 3773/tcp (the default `DEFAULT_PORT` in [config.ts](../../../apps/server/src/config.ts)); the runner port from 5.19 | Plain HTTP inside the server subnet; the server's security group admits only the load balancer                          |
+| Members to the internal load balancer | 443/tcp, over VPN or Tailscale                                                                                      | N1                                                                                                                      |
+| Members to the public listener        | 443/tcp                                                                                                             | N2, opt-in, client routes only                                                                                          |
+| Server to cloud APIs                  | 443/tcp                                                                                                             | Through VPC endpoints or NAT                                                                                            |
+| Server to the internet                | 443/tcp                                                                                                             | Through NAT: GitHub (installation tokens, clones into the project store, PR calls), Expo push, provider token refreshes |
+| Machine to the internet               | 443/tcp                                                                                                             | Through NAT and the optional firewall: github.com over HTTPS, package registries, model providers                       |
+| Into a machine                        | None                                                                                                                | The security group has no inbound rules. Previews and SSH, when they come (Later), ride the runner socket               |
 
 - **The service must be told to listen beyond loopback.** `t3 service install` writes
   `T3CODE_LAN=false`, so a new service answers only on its own machine. With `T3CODE_LAN=true`
@@ -450,14 +505,14 @@ What Pair ships for M5. It lives in a new `infra/sandbox/` folder (decision 14),
 
 ### Contents
 
-| Artifact | What it does | Milestone |
-| -------- | ------------ | --------- |
-| `infra/sandbox/aws` Terraform module | A dedicated VPC (or an existing one by id), machine subnets with their NACLs, the Pair Cloud server's ASG of one with its data volume and the hourly DLM policy, the internal ALB with its member and runner listeners, the public client listener (off by default), security groups, the KMS key, the server's IAM role, the machine launch template, an optional Network Firewall. Hands the server the driver settings it created and outputs the server's URL | M5 |
-| `infra/sandbox/gcp` Terraform module | The same on GCP | M5, after AWS |
-| Server bootstrap | Cloud-init that installs the pinned Pair Cloud release (decision 15), writes `service.env` (host, port, OTLP endpoints, `T3CODE_RELEASE_BASE_URL`), turns on cloud-only mode, writes `/etc/t3code/policy.json` with `connect: false`, `telemetry: false` and, once 4.9 lands, `cloudOnly`, and runs `t3 service install` | M5 |
-| Base AMI | Built in the customer's account at driver setup (next section). No machine boots from stock Ubuntu | M5 |
-| Image build pipeline | No separate pipeline: a build is a machine the driver launches, runs the recipe in, and saves with `CreateImage` (doc 05 owns the recipe) | M4 pipeline, M5 for AMIs |
-| Helm chart; CloudFormation | Helm ships with a Kubernetes driver. A one-click CloudFormation link like Ona's is worth adding once the Terraform settles | Later |
+| Artifact                             | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Milestone                |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `infra/sandbox/aws` Terraform module | A dedicated VPC (or an existing one by id), machine subnets with their NACLs, the Pair Cloud server's ASG of one with its data volume and the hourly DLM policy, the internal ALB with its member and runner listeners, the public client listener (off by default), security groups, the KMS key, the server's IAM role, the machine launch template, an optional Network Firewall. Hands the server the driver settings it created and outputs the server's URL | M5                       |
+| `infra/sandbox/gcp` Terraform module | The same on GCP                                                                                                                                                                                                                                                                                                                                                                                                                                                   | M5, after AWS            |
+| Server bootstrap                     | Cloud-init that installs the pinned Pair Cloud release (decision 15), writes `service.env` (host, port, OTLP endpoints, `T3CODE_RELEASE_BASE_URL`), turns on cloud-only mode, writes `/etc/t3code/policy.json` with `connect: false`, `telemetry: false` and, once 4.9 lands, `cloudOnly`, and runs `t3 service install`                                                                                                                                          | M5                       |
+| Base AMI                             | Built in the customer's account at driver setup (next section). No machine boots from stock Ubuntu                                                                                                                                                                                                                                                                                                                                                                | M5                       |
+| Image build pipeline                 | No separate pipeline: a build is a machine the driver launches, runs the recipe in, and saves with `CreateImage` (doc 05 owns the recipe)                                                                                                                                                                                                                                                                                                                         | M4 pipeline, M5 for AMIs |
+| Helm chart; CloudFormation           | Helm ships with a Kubernetes driver. A one-click CloudFormation link like Ona's is worth adding once the Terraform settles                                                                                                                                                                                                                                                                                                                                        | Later                    |
 
 Terraform first, because one tool covers AWS and GCP and BYOC buyers already run it.
 
@@ -504,22 +559,22 @@ Terraform first, because one tool covers AWS and GCP and BYOC buyers already run
 
 ### Observability the customer sees
 
-| Signal | Where |
-| ------ | ----- |
+| Signal                       | Where                                                                                                                                                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Server traces, logs, metrics | The server's existing OTLP export ([observability](../../operations/observability.md), [telemetry](../../user/telemetry.md)), pointed at the customer's collector. The kit can deploy an ADOT collector to CloudWatch |
-| Driver metrics | New, in [Metrics.ts](../../../apps/server/src/observability/Metrics.ts): machines by state, create and wake latency, driver call errors by cloud error code, orphans found by `list` |
-| Driver health | The network path check from lesson 6, shown on Settings → Cloud → Compute |
-| Runner logs | Over the runner socket into the server's trace (doc 03). The EC2 console output covers a runner that never connects |
-| Cloud audit | CloudTrail or Cloud Audit Logs, joined to Pair's sandbox events by the `pair.sandbox` tag (`pair-sandbox` on GCE) |
+| Driver metrics               | New, in [Metrics.ts](../../../apps/server/src/observability/Metrics.ts): machines by state, create and wake latency, driver call errors by cloud error code, orphans found by `list`                                  |
+| Driver health                | The network path check from lesson 6, shown on Settings → Cloud → Compute                                                                                                                                             |
+| Runner logs                  | Over the runner socket into the server's trace (doc 03). The EC2 console output covers a runner that never connects                                                                                                   |
+| Cloud audit                  | CloudTrail or Cloud Audit Logs, joined to Pair's sandbox events by the `pair.sandbox` tag (`pair-sandbox` on GCE)                                                                                                     |
 
 ### Support boundary
 
-| Pair (the open-source project) owns | The customer owns |
-| ----------------------------------- | ----------------- |
-| Server, runner, drivers, the Terraform modules, their docs | The account, VPC, IAM, quotas, KMS key policy, egress rules, the VPN or tailnet |
-| A tested path: the modules' defaults, in the regions CI tests | Changes to the modules, custom networks, proxies |
-| Bugs filed as GitHub issues | Backups beyond the hourly DLM default, restore drills, disaster recovery, cost |
-| | Model provider contracts and their data terms |
+| Pair (the open-source project) owns                           | The customer owns                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Server, runner, drivers, the Terraform modules, their docs    | The account, VPC, IAM, quotas, KMS key policy, egress rules, the VPN or tailnet |
+| A tested path: the modules' defaults, in the regions CI tests | Changes to the modules, custom networks, proxies                                |
+| Bugs filed as GitHub issues                                   | Backups beyond the hourly DLM default, restore drills, disaster recovery, cost  |
+|                                                               | Model provider contracts and their data terms                                   |
 
 Pair has no support organization: "support" means the documented path is tested in CI against a
 real account. A company selling Pair would add an SLA.
@@ -590,47 +645,47 @@ customer's VPC to them. It is rejected: Pair Cloud runs in an account the team c
 
 Ids are those of [m2-m5.md](./implementation/m2-m5.md). AWS first:
 
-| # | Id | Pull request | Depends on |
-| - | -- | ------------ | ---------- |
-| 1 | 5.2 | `aws_secrets_manager` secret provider kind (new `packages/secret-provider-aws`), with tests for reference parsing and batch reads | Nothing; can land any time |
-| 2 | 5.4 | `aws-ec2` compute driver: create, start, stop, snapshot, destroy, status, list, delete an image, against doc 04's interface; `imageBuild: "snapshot"`; tag scoping on `pair.install`; IMDSv2 hop limit 1 and no instance profile; zone fallback on wake. Refuses to run on a server that isn't cloud-only | M1's driver interface; cloud-only mode (M2) |
-| 3 | 5.5 | Driver settings for `aws-ec2` in contracts: region, subnets, security group, launch template, instance types, KMS key, CA bundle; credentials from the instance role only; redacted for members like every driver's config (M2) | 5.4 |
-| 4 | 5.6 | Driver health check: EC2 API, KMS, the runner route; shown on Settings → Cloud → Compute | 5.4 |
-| 5 | 5.7 | AMIs built in the customer's account: the base AMI at driver setup (stock Ubuntu, `provision.sh`, `CreateImage`) and team image builds captured as AMIs tagged with the `imageBuildId`. Plus the CI job that runs `provision.sh` on a stock Ubuntu VM for every release | M4's build pipeline, 5.4 |
-| 6 | 5.8 | The runner trusts private CAs (`NODE_EXTRA_CA_CERTS` from the boot configuration) and opens its WebSocket through `HTTPS_PROXY` with an explicit proxy agent | M1's runner |
-| 7 | 5.19 (was 4.8) | `/runner/*`, and the forwards on the runner socket, on an internal-only listener; the member listener stops serving them | Cloud-only mode (M2) |
-| 8 | 5.20 (was 4.9) | `limits.cloud` and `cloudOnly` in managed policy (`ManagedPolicyLimits` in [managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts)), so the kit locks cloud-only mode | Cloud-only mode (M2) |
-| 9 | 5.9 | `infra/sandbox/aws` Terraform module (section 6): dedicated VPC, NACLs, the server with its data volume, the internal ALB, the optional public client listener, hourly DLM snapshots, KMS. With a README and an example | The Pair Cloud release (M2), 5.5, 5.7, 4.8, 4.9 |
-| 10 | 5.10 | CI job that applies the kit in a test account, starts a cloud session, runs a terminal command and one turn on the cheapest model with a CI key (Replay exists only on dev servers), sleeps, wakes and destroys it, and starts a server from the latest data-volume snapshot in restore mode | 5.9 |
-| 11 | 5.13 | Driver metrics in `Metrics.ts` | 5.4 |
-| 12 | 5.14 | Measure mirror sync and disk rebuild between the server and machines across the kit's zones; tunes the bundle size cap, no new mechanism | 5.10 |
-| 13 | 5.17 | `limits.cloud.allowedDrivers` | 5.20 |
-| 14 | 5.18 | User guide: "Run Pair Cloud in your own AWS account": the ingress choices, restore and upgrades | 5.10 |
+| #   | Id             | Pull request                                                                                                                                                                                                                                                                                              | Depends on                                      |
+| --- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| 1   | 5.2            | `aws_secrets_manager` secret provider kind (new `packages/secret-provider-aws`), with tests for reference parsing and batch reads                                                                                                                                                                         | Nothing; can land any time                      |
+| 2   | 5.4            | `aws-ec2` compute driver: create, start, stop, snapshot, destroy, status, list, delete an image, against doc 04's interface; `imageBuild: "snapshot"`; tag scoping on `pair.install`; IMDSv2 hop limit 1 and no instance profile; zone fallback on wake. Refuses to run on a server that isn't cloud-only | M1's driver interface; cloud-only mode (M2)     |
+| 3   | 5.5            | Driver settings for `aws-ec2` in contracts: region, subnets, security group, launch template, instance types, KMS key, CA bundle; credentials from the instance role only; redacted for members like every driver's config (M2)                                                                           | 5.4                                             |
+| 4   | 5.6            | Driver health check: EC2 API, KMS, the runner route; shown on Settings → Cloud → Compute                                                                                                                                                                                                                  | 5.4                                             |
+| 5   | 5.7            | AMIs built in the customer's account: the base AMI at driver setup (stock Ubuntu, `provision.sh`, `CreateImage`) and team image builds captured as AMIs tagged with the `imageBuildId`. Plus the CI job that runs `provision.sh` on a stock Ubuntu VM for every release                                   | M4's build pipeline, 5.4                        |
+| 6   | 5.8            | The runner trusts private CAs (`NODE_EXTRA_CA_CERTS` from the boot configuration) and opens its WebSocket through `HTTPS_PROXY` with an explicit proxy agent                                                                                                                                              | M1's runner                                     |
+| 7   | 5.19 (was 4.8) | `/runner/*`, and the forwards on the runner socket, on an internal-only listener; the member listener stops serving them                                                                                                                                                                                  | Cloud-only mode (M2)                            |
+| 8   | 5.20 (was 4.9) | `limits.cloud` and `cloudOnly` in managed policy (`ManagedPolicyLimits` in [managedPolicy.ts](../../../packages/contracts/src/managedPolicy.ts)), so the kit locks cloud-only mode                                                                                                                        | Cloud-only mode (M2)                            |
+| 9   | 5.9            | `infra/sandbox/aws` Terraform module (section 6): dedicated VPC, NACLs, the server with its data volume, the internal ALB, the optional public client listener, hourly DLM snapshots, KMS. With a README and an example                                                                                   | The Pair Cloud release (M2), 5.5, 5.7, 4.8, 4.9 |
+| 10  | 5.10           | CI job that applies the kit in a test account, starts a cloud session, runs a terminal command and one turn on the cheapest model with a CI key (Replay exists only on dev servers), sleeps, wakes and destroys it, and starts a server from the latest data-volume snapshot in restore mode              | 5.9                                             |
+| 11  | 5.13           | Driver metrics in `Metrics.ts`                                                                                                                                                                                                                                                                            | 5.4                                             |
+| 12  | 5.14           | Measure mirror sync and disk rebuild between the server and machines across the kit's zones; tunes the bundle size cap, no new mechanism                                                                                                                                                                  | 5.10                                            |
+| 13  | 5.17           | `limits.cloud.allowedDrivers`                                                                                                                                                                                                                                                                             | 5.20                                            |
+| 14  | 5.18           | User guide: "Run Pair Cloud in your own AWS account": the ingress choices, restore and upgrades                                                                                                                                                                                                           | 5.10                                            |
 
 Then GCP:
 
-| # | Id | Pull request | Depends on |
-| - | -- | ------------ | ---------- |
-| 15 | 5.3 | `gcp_secret_manager` secret provider kind | Nothing |
-| 16 | 5.11 | `gce` compute driver and its settings (`pair-install` label) | 5.4 (shared helpers) |
-| 17 | 5.12 | `infra/sandbox/gcp` Terraform module and its CI job; the user guide gains GCP | 5.11 |
+| #   | Id   | Pull request                                                                  | Depends on           |
+| --- | ---- | ----------------------------------------------------------------------------- | -------------------- |
+| 15  | 5.3  | `gcp_secret_manager` secret provider kind                                     | Nothing              |
+| 16  | 5.11 | `gce` compute driver and its settings (`pair-install` label)                  | 5.4 (shared helpers) |
+| 17  | 5.12 | `infra/sandbox/gcp` Terraform module and its CI job; the user guide gains GCP | 5.11                 |
 
 Claude through Bedrock (5.15) and the E2B Embed recipe (5.16) are Later, by demand. The Pair Cloud
 release (5.1) moved to M2.
 
 ### What earlier milestones must not break
 
-| Milestone | Keep BYOC possible by |
-| --------- | --------------------- |
-| M1 (landed) | The runner dials the URL in its bootstrap (`serverUrl` in [ComputeDriver.ts](../../../apps/server/src/sandbox/compute/ComputeDriver.ts)), never the Docker bridge by assumption, and fetches its bundle over that route by `runnerBuildId` (decision 5), with no second host to reach. The bootstrap's enrollment secret is single-use and lasts 15 minutes |
-| M1 (landed) | The sandbox record keeps the driver's handle as an opaque `driverRef`, and backends carry `pair.install` and `pair.sandbox` tags. No Docker-shaped fields in contracts. Caps and usage count machines, not threads, since side chats and forks share one |
-| M1 (landed) | Driver settings are a `ForwardCompatibleArray` of tagged instances ([settings.ts](../../../packages/contracts/src/settings.ts)), so `aws-ec2` joins the union and old clients drop it. The GitHub App private key can be a secret reference ([GitHubAppInstallationTokens.ts](../../../apps/server/src/sandbox/credentials/GitHubAppInstallationTokens.ts)), so Secrets Manager can hold it |
-| M2 | Cloud-only mode and the one launch gate, which the EC2 driver requires. Cloud-only mode works on a small VM with no provider CLIs installed, because that is the server in the reference architecture |
-| M2 | The versioned Pair Cloud release carries the runner tree, installs by exact version from a configurable host, and drains before an upgrade |
-| M2 | Idle sleep and retention (2.1, 2.12): an idle EC2 machine costs money, unlike a container on a VM the team already pays for. Settle-sleep is gated by a driver capability, not the `docker` kind check it uses today ([SandboxLifecycleWorker.ts](../../../apps/server/src/sandbox/lifecycle/SandboxLifecycleWorker.ts)). `retryAfterMs` (2.4), because the effect worker's fast retries would turn an EC2 capacity or rate-limit error into a failed machine. Sleep and wake tolerate minutes, and a wake that fails for capacity |
-| M2 | The reconciler's restore mode, which a DLM restore needs. Member ingress on the team's own origin, without T3 Connect or app.t3.codes. Driver config redacted for members, since EC2's holds subnet and security group ids |
-| M3 | Seeds upload over an authenticated client route on Pair Cloud and reach machines through the mirror and the runner, never straight from a laptop. The agent link is member-scoped, from the laptop to Pair Cloud. Both work over private ingress with no extra route |
-| M4 | A team image build's output is a driver-specific reference (AMI id, image name, OCI digest). Builds run through the driver, not as `docker build` on the server, and the build program's provision step for VM drivers (doc 05 §3) is there from the start |
+| Milestone   | Keep BYOC possible by                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1 (landed) | The runner dials the URL in its bootstrap (`serverUrl` in [ComputeDriver.ts](../../../apps/server/src/sandbox/compute/ComputeDriver.ts)), never the Docker bridge by assumption, and fetches its bundle over that route by `runnerBuildId` (decision 5), with no second host to reach. The bootstrap's enrollment secret is single-use and lasts 15 minutes                                                                                                                                                                        |
+| M1 (landed) | The sandbox record keeps the driver's handle as an opaque `driverRef`, and backends carry `pair.install` and `pair.sandbox` tags. No Docker-shaped fields in contracts. Caps and usage count machines, not threads, since side chats and forks share one                                                                                                                                                                                                                                                                           |
+| M1 (landed) | Driver settings are a `ForwardCompatibleArray` of tagged instances ([settings.ts](../../../packages/contracts/src/settings.ts)), so `aws-ec2` joins the union and old clients drop it. The GitHub App private key can be a secret reference ([GitHubAppInstallationTokens.ts](../../../apps/server/src/sandbox/credentials/GitHubAppInstallationTokens.ts)), so Secrets Manager can hold it                                                                                                                                        |
+| M2          | Cloud-only mode and the one launch gate, which the EC2 driver requires. Cloud-only mode works on a small VM with no provider CLIs installed, because that is the server in the reference architecture                                                                                                                                                                                                                                                                                                                              |
+| M2          | The versioned Pair Cloud release carries the runner tree, installs by exact version from a configurable host, and drains before an upgrade                                                                                                                                                                                                                                                                                                                                                                                         |
+| M2          | Idle sleep and retention (2.1, 2.12): an idle EC2 machine costs money, unlike a container on a VM the team already pays for. Settle-sleep is gated by a driver capability, not the `docker` kind check it uses today ([SandboxLifecycleWorker.ts](../../../apps/server/src/sandbox/lifecycle/SandboxLifecycleWorker.ts)). `retryAfterMs` (2.4), because the effect worker's fast retries would turn an EC2 capacity or rate-limit error into a failed machine. Sleep and wake tolerate minutes, and a wake that fails for capacity |
+| M2          | The reconciler's restore mode, which a DLM restore needs. Member ingress on the team's own origin, without T3 Connect or app.t3.codes. Driver config redacted for members, since EC2's holds subnet and security group ids                                                                                                                                                                                                                                                                                                         |
+| M3          | Seeds upload over an authenticated client route on Pair Cloud and reach machines through the mirror and the runner, never straight from a laptop. The agent link is member-scoped, from the laptop to Pair Cloud. Both work over private ingress with no extra route                                                                                                                                                                                                                                                               |
+| M4          | A team image build's output is a driver-specific reference (AMI id, image name, OCI digest). Builds run through the driver, not as `docker build` on the server, and the build program's provision step for VM drivers (doc 05 §3) is there from the start                                                                                                                                                                                                                                                                         |
 
 ## Open questions
 

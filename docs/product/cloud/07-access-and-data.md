@@ -69,10 +69,10 @@ The mirror lives in the userdata folder that holds `attachments` and the databas
 ([config.ts](../../../apps/server/src/config.ts)). Pair Cloud clones checkouts onto the same data
 volume, so its hourly snapshots cover both.
 
-| Part | What it is | Serves |
-| ---- | ---------- | ------ |
-| Checkout (`project.workspaceRoot`) | A normal clone of the repo. No agent, terminal or project script runs in it. | PR views, the review guide and repository identity, which run git in the project root ([PullRequestService.ts](../../../apps/server/src/pullRequest/PullRequestService.ts), [PullRequestReviewGuideService.ts](../../../apps/server/src/pullRequest/PullRequestReviewGuideService.ts)); the origin URL a machine clones from; parsing `t3.json`; seeding the mirror |
-| Mirror (`<stateDir>/sandbox/mirrors/<base64url(projectId)>.git`) | A bare repo that is never checked out ([CheckpointMirror.ts](../../../apps/server/src/sandbox/mirror/CheckpointMirror.ts)) | Checkpoints, each thread's branch and snapshot, and from M3 staged seeds |
+| Part                                                             | What it is                                                                                                                 | Serves                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Checkout (`project.workspaceRoot`)                               | A normal clone of the repo. No agent, terminal or project script runs in it.                                               | PR views, the review guide and repository identity, which run git in the project root ([PullRequestService.ts](../../../apps/server/src/pullRequest/PullRequestService.ts), [PullRequestReviewGuideService.ts](../../../apps/server/src/pullRequest/PullRequestReviewGuideService.ts)); the origin URL a machine clones from; parsing `t3.json`; seeding the mirror |
+| Mirror (`<stateDir>/sandbox/mirrors/<base64url(projectId)>.git`) | A bare repo that is never checked out ([CheckpointMirror.ts](../../../apps/server/src/sandbox/mirror/CheckpointMirror.ts)) | Checkpoints, each thread's branch and snapshot, and from M3 staged seeds                                                                                                                                                                                                                                                                                            |
 
 **Adding a project (M2).** In Settings → Projects, or through `t3_project_clone` and
 `t3_project_create` ([06](./06-credentials-and-security.md) section 10):
@@ -100,13 +100,13 @@ which is also how the sidebar groups projects across servers.
 Making the mirror serve the checkout's reads instead is possible but touches every PR code path, so
 the checkout stays.
 
-| Ref in the mirror | Written when | Used by |
-| ----------------- | ------------ | ------- |
-| `refs/t3/seed/origin/*` | At every sync, fetched from the checkout's `refs/remotes/origin/*` (M1) | Bundle prerequisites, so a machine's first sync sends only what it added |
-| `refs/t3/orchestration-v2/checkpoints/...` | After each capture, under its original name (M1) | Diffs, restore previews, reads while the machine is stopped |
-| `refs/t3/sandbox/<thread>/branch` | After each capture and at the flush before stop (M1); with the sleep snapshot (M2) | Rebuilding a machine (M2), Continue locally (M3), PR head context |
-| `refs/t3/sandbox/<thread>/snapshot` | Before sleep (M2), and at Continue locally (M3) | The read-only file browser, Continue locally, rebuild |
-| `refs/t3/staged/<command>/branch` and `/snapshot` | When a seed upload passes its checks (M3) | The cloud launch that names it (section 8) |
+| Ref in the mirror                                 | Written when                                                                       | Used by                                                                  |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `refs/t3/seed/origin/*`                           | At every sync, fetched from the checkout's `refs/remotes/origin/*` (M1)            | Bundle prerequisites, so a machine's first sync sends only what it added |
+| `refs/t3/orchestration-v2/checkpoints/...`        | After each capture, under its original name (M1)                                   | Diffs, restore previews, reads while the machine is stopped              |
+| `refs/t3/sandbox/<thread>/branch`                 | After each capture and at the flush before stop (M1); with the sleep snapshot (M2) | Rebuilding a machine (M2), Continue locally (M3), PR head context        |
+| `refs/t3/sandbox/<thread>/snapshot`               | Before sleep (M2), and at Continue locally (M3)                                    | The read-only file browser, Continue locally, rebuild                    |
+| `refs/t3/staged/<command>/branch` and `/snapshot` | When a seed upload passes its checks (M3)                                          | The cloud launch that names it (section 8)                               |
 
 `<thread>` is the base64url thread id (`sandboxThreadRefPrefix`). Checkpoint refs keep their original
 names. Scope ids embed the thread id, and a fork gets its own scope, so threads can't collide, and
@@ -122,13 +122,13 @@ agent-controlled machine, and Git 2.43 skips `transfer.fsckObjects` when fetchin
 
 ### Push from the machine, or pull by the server?
 
-| | Machine pushes | Server pulls a bundle (chosen, built) |
-| --- | --- | --- |
-| Trigger | The server must tell the runner when to push. The server already knows, because it ran the capture. | The server runs the sync right after the capture. |
-| Server surface | A receive-pack endpoint, auth by sandbox token, and a hook that keeps each machine in its own ref namespace. | None. The runner's existing channels carry the bundle. |
-| Trust | An agent-controlled machine writes refs into server storage. | The server picks which refs to take. The machine only produces bytes. |
-| Negotiation | Native have/want. | The server passes the mirror's tips as prerequisites (`^<oid>`). It knows them because it owns the mirror. |
-| Runner work | A git transport on the runner socket, or a git URL on the server for the machine to push to. | None: `process.run` streams the bundle after the capture coarse operation (decision 2). |
+|                | Machine pushes                                                                                               | Server pulls a bundle (chosen, built)                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Trigger        | The server must tell the runner when to push. The server already knows, because it ran the capture.          | The server runs the sync right after the capture.                                                          |
+| Server surface | A receive-pack endpoint, auth by sandbox token, and a hook that keeps each machine in its own ref namespace. | None. The runner's existing channels carry the bundle.                                                     |
+| Trust          | An agent-controlled machine writes refs into server storage.                                                 | The server picks which refs to take. The machine only produces bytes.                                      |
+| Negotiation    | Native have/want.                                                                                            | The server passes the mirror's tips as prerequisites (`^<oid>`). It knows them because it owns the mirror. |
+| Runner work    | A git transport on the runner socket, or a git URL on the server for the machine to push to.                 | None: `process.run` streams the bundle after the capture coarse operation (decision 2).                    |
 
 Pull wins on every row except negotiation. Negotiation is easy here: the server knows exactly what
 the mirror has for this thread.
@@ -205,18 +205,18 @@ driver's `diffCheckpoints`, `listAuthoredPaths` and `hasCheckpointRef` only comp
 calls them directly with `--git-dir` prepended, skipping the registry. `CheckpointDiffPlacement`
 picks the reader per thread.
 
-| Read | Source today | Cloud, awake | Cloud, asleep |
-| ---- | ------------ | ------------ | ------------- |
-| Turn and full-thread diff ([CheckpointDiffQuery.ts](../../../apps/server/src/checkpointing/CheckpointDiffQuery.ts)) | Worktree git | Mirror | Mirror |
-| Timeline file list per turn | The event payload | Same | Same |
-| Restore preview (files a restore would change) | Worktree git | Mirror: target vs latest checkpoint | Mirror: target vs sleep snapshot |
-| Uncommitted changes and branch status ([VcsStatusBroadcaster.ts](../../../apps/server/src/vcs/VcsStatusBroadcaster.ts)) | Live git and a remote poller | Machine | The last status before sleep, labeled. No polling. |
-| Changes panel ([ReviewService.ts](../../../apps/server/src/review/ReviewService.ts) `getDiffPreview`) | Worktree git | Machine | Fails in M1. M2 diffs the sleep snapshot against the branch. |
-| PR list, PR file views, viewed-file marks ([PullRequestService.ts](../../../apps/server/src/pullRequest/PullRequestService.ts), [pullRequestViewedFiles.ts](../../../apps/server/src/pullRequest/pullRequestViewedFiles.ts)) | Forge API, with the project root as `cwd` | The Pair Cloud checkout | Same |
-| Review guide ([PullRequestReviewGuideService.ts](../../../apps/server/src/pullRequest/PullRequestReviewGuideService.ts)) | Fetches into the project root | The Pair Cloud checkout | Same |
-| PR discovery for the thread's branch | Git state in the worktree, plus the forge | Machine, plus the forge | Skipped in M1. M2: the head context saved with the sleep snapshot, plus the forge. |
-| File browser and search | Disk | Machine | M1: the mirror's latest checkpoint. M2: the sleep snapshot. Read-only. |
-| Terminal scrollback | Server history | Server history | Server history, read-only |
+| Read                                                                                                                                                                                                                         | Source today                              | Cloud, awake                        | Cloud, asleep                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
+| Turn and full-thread diff ([CheckpointDiffQuery.ts](../../../apps/server/src/checkpointing/CheckpointDiffQuery.ts))                                                                                                          | Worktree git                              | Mirror                              | Mirror                                                                             |
+| Timeline file list per turn                                                                                                                                                                                                  | The event payload                         | Same                                | Same                                                                               |
+| Restore preview (files a restore would change)                                                                                                                                                                               | Worktree git                              | Mirror: target vs latest checkpoint | Mirror: target vs sleep snapshot                                                   |
+| Uncommitted changes and branch status ([VcsStatusBroadcaster.ts](../../../apps/server/src/vcs/VcsStatusBroadcaster.ts))                                                                                                      | Live git and a remote poller              | Machine                             | The last status before sleep, labeled. No polling.                                 |
+| Changes panel ([ReviewService.ts](../../../apps/server/src/review/ReviewService.ts) `getDiffPreview`)                                                                                                                        | Worktree git                              | Machine                             | Fails in M1. M2 diffs the sleep snapshot against the branch.                       |
+| PR list, PR file views, viewed-file marks ([PullRequestService.ts](../../../apps/server/src/pullRequest/PullRequestService.ts), [pullRequestViewedFiles.ts](../../../apps/server/src/pullRequest/pullRequestViewedFiles.ts)) | Forge API, with the project root as `cwd` | The Pair Cloud checkout             | Same                                                                               |
+| Review guide ([PullRequestReviewGuideService.ts](../../../apps/server/src/pullRequest/PullRequestReviewGuideService.ts))                                                                                                     | Fetches into the project root             | The Pair Cloud checkout             | Same                                                                               |
+| PR discovery for the thread's branch                                                                                                                                                                                         | Git state in the worktree, plus the forge | Machine, plus the forge             | Skipped in M1. M2: the head context saved with the sleep snapshot, plus the forge. |
+| File browser and search                                                                                                                                                                                                      | Disk                                      | Machine                             | M1: the mirror's latest checkpoint. M2: the sleep snapshot. Read-only.             |
+| Terminal scrollback                                                                                                                                                                                                          | Server history                            | Server history                      | Server history, read-only                                                          |
 
 Opening a thread wakes its machine ([04](./04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers)),
 so the asleep column matters while it wakes, on surfaces that don't wake it (the sidebar, diffs,
@@ -260,11 +260,11 @@ its test asserts `targetThread.worktreePath === sourceThread.worktreePath`). A s
 precisely to share the parent's worktree (the `orchestrationV2WorktreePending` guard in
 [Orchestrator.ts](../../../apps/server/src/orchestration-v2/Orchestrator.ts)).
 
-| Fork kind | Cloud behavior | Milestone |
-| --------- | -------------- | --------- |
-| Side chat | Shares the source's machine. Its turns wake it through the owning thread's stream. | M1, landed |
-| Fork from a run | Shares the source's machine, matching local semantics. | M1, landed |
-| "Fork to a new machine" | A new machine starts from the mirror at the source run's checkpoint, on a new branch. | Later |
+| Fork kind               | Cloud behavior                                                                        | Milestone  |
+| ----------------------- | ------------------------------------------------------------------------------------- | ---------- |
+| Side chat               | Shares the source's machine. Its turns wake it through the owning thread's stream.    | M1, landed |
+| Fork from a run         | Shares the source's machine, matching local semantics.                                | M1, landed |
+| "Fork to a new machine" | A new machine starts from the mirror at the source run's checkpoint, on a new branch. | Later      |
 
 Sharing follows decision 6. The fork or side chat references its source's machine. Wake, sleep and
 discard go to the owning thread's stream, and the machine is destroyed only when no thread uses it.
@@ -277,14 +277,14 @@ deleted while others still use the machine. Restore safety treats two threads on
 Where each step runs today, and in a cloud thread. GitHub and pull requests stay as M1 ships them
 (D9):
 
-| Step | Code | Cloud thread |
-| ---- | ---- | ------------ |
-| Commit (UI "Commit") | `GitManager.runStackedAction` with git in `cwd` ([GitManager.ts](../../../apps/server/src/git/GitManager.ts)) | Machine, through the workspace host. Authorship follows [decisions](../decisions.md#git-and-github). |
-| Push | `pushCurrentBranch` with `git push` in `cwd` | Machine. The credential helper asks Pair Cloud for a one-hour GitHub App installation token, or the owner's own GitHub credential (D1, [06](./06-credentials-and-security.md)). **GitHub only**: [GitCredentialService.ts](../../../apps/server/src/sandbox/credentials/GitCredentialService.ts) answers only for https on github.com, and [SandboxGitHooks.ts](../../../apps/server/src/sandbox/credentials/SandboxGitHooks.ts) refuses other hosts before git runs (`cloud-push-unsupported-host`). The git proxy for other hosts is Later. |
-| PR text | `readRangeContext`, the template, then text generation | Git reads in the machine. Generation on Pair Cloud. |
-| Create the PR (Pair's PR button) | `createChangeRequest` is a REST POST from the server ([GitHubSourceControlProvider.ts](../../../packages/source-control-github/src/server/GitHubSourceControlProvider.ts)). The body file is in the server's temp dir. | The POST runs on Pair Cloud as the clicking member, through their GitHub connection. Without one, or when GitHub refuses it, the server's own account opens it and the body ends "Requested by `<name>` via Pair" ([GitManager.ts](../../../apps/server/src/git/GitManager.ts)). Its `resolveRepository` reads `git remote -v` in `cwd`, so in the machine. |
-| Agent runs `gh pr create` | In the agent's shell | Machine, through the `gh` shim with the thread's git credential. With an installation token the App's bot is the author; with the owner's own GitHub (D1), the owner is. |
-| Discovery and linking ([ThreadPullRequestService.ts](../../../apps/server/src/orchestration-v2/ThreadPullRequestService.ts)) | `branchPullRequest` reads `for-each-ref`, remotes and config in `cwd`, then asks the forge | Awake: unchanged. Stopped: see below. |
+| Step                                                                                                                         | Code                                                                                                                                                                                                                   | Cloud thread                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commit (UI "Commit")                                                                                                         | `GitManager.runStackedAction` with git in `cwd` ([GitManager.ts](../../../apps/server/src/git/GitManager.ts))                                                                                                          | Machine, through the workspace host. Authorship follows [decisions](../decisions.md#git-and-github).                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Push                                                                                                                         | `pushCurrentBranch` with `git push` in `cwd`                                                                                                                                                                           | Machine. The credential helper asks Pair Cloud for a one-hour GitHub App installation token, or the owner's own GitHub credential (D1, [06](./06-credentials-and-security.md)). **GitHub only**: [GitCredentialService.ts](../../../apps/server/src/sandbox/credentials/GitCredentialService.ts) answers only for https on github.com, and [SandboxGitHooks.ts](../../../apps/server/src/sandbox/credentials/SandboxGitHooks.ts) refuses other hosts before git runs (`cloud-push-unsupported-host`). The git proxy for other hosts is Later. |
+| PR text                                                                                                                      | `readRangeContext`, the template, then text generation                                                                                                                                                                 | Git reads in the machine. Generation on Pair Cloud.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Create the PR (Pair's PR button)                                                                                             | `createChangeRequest` is a REST POST from the server ([GitHubSourceControlProvider.ts](../../../packages/source-control-github/src/server/GitHubSourceControlProvider.ts)). The body file is in the server's temp dir. | The POST runs on Pair Cloud as the clicking member, through their GitHub connection. Without one, or when GitHub refuses it, the server's own account opens it and the body ends "Requested by `<name>` via Pair" ([GitManager.ts](../../../apps/server/src/git/GitManager.ts)). Its `resolveRepository` reads `git remote -v` in `cwd`, so in the machine.                                                                                                                                                                                   |
+| Agent runs `gh pr create`                                                                                                    | In the agent's shell                                                                                                                                                                                                   | Machine, through the `gh` shim with the thread's git credential. With an installation token the App's bot is the author; with the owner's own GitHub (D1), the owner is.                                                                                                                                                                                                                                                                                                                                                                      |
+| Discovery and linking ([ThreadPullRequestService.ts](../../../apps/server/src/orchestration-v2/ThreadPullRequestService.ts)) | `branchPullRequest` reads `for-each-ref`, remotes and config in `cwd`, then asks the forge                                                                                                                             | Awake: unchanged. Stopped: see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 **Discovery must never wake a machine.** The service sweeps unsettled threads every minute. Since
 M1 it skips threads whose machine is stopped and keeps their last link, because a stopped machine's
@@ -405,13 +405,13 @@ each `cwd` through the seam.
 ([StoppedSandboxReads.ts](../../../apps/server/src/sandbox/mirror/StoppedSandboxReads.ts)). From M2
 they read the sleep snapshot, `refs/t3/sandbox/<thread>/snapshot`, the same way:
 
-| Operation | Asleep implementation |
-| --------- | --------------------- |
-| List and name search | `git ls-tree -z` of the tree, filtered in memory, capped at 25,000 like today |
-| Read a file | `git cat-file blob`, with the existing byte cap and binary check |
-| Content search | `git grep` on the tree within the existing 250 ms time budget |
-| Ignored files (`.env`, `node_modules`) | Not available. The tree follows `.gitignore`. |
-| Write | Refused with `SandboxAsleep`. The editor says "This machine is asleep" and shows **Wake**. |
+| Operation                              | Asleep implementation                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| List and name search                   | `git ls-tree -z` of the tree, filtered in memory, capped at 25,000 like today              |
+| Read a file                            | `git cat-file blob`, with the existing byte cap and binary check                           |
+| Content search                         | `git grep` on the tree within the existing 250 ms time budget                              |
+| Ignored files (`.env`, `node_modules`) | Not available. The tree follows `.gitignore`.                                              |
+| Write                                  | Refused with `SandboxAsleep`. The editor says "This machine is asleep" and shows **Wake**. |
 
 The header says "As of 14:02, when the machine slept". If no snapshot exists, because sleep came
 from a crash or a driver timeout, it uses the latest checkpoint and says "As of turn 7".
@@ -498,13 +498,13 @@ adds no new reach. Admins get one team switch, "Allow SSH into machines", on by 
 guest links, API tokens and the sandbox token can never open a tunnel. An open SSH session shows in
 presence as viewing the thread. It gets no timeline row.
 
-| | Conductor | Codespaces | Pair |
-| --- | --- | --- | --- |
-| Path | Through Conductor. The mechanism isn't documented. Port 22 is reserved. | `gh codespace ssh` through GitHub. `--config` writes SSH config for editors and `scp`. | `t3 ssh proxy` through Pair Cloud and a runner tunnel |
-| sshd | Provided | Must run in the container (the default image or the `sshd` feature) | In the team image |
-| Keys | Not documented | `gh` creates a key in `~/.ssh` | Member keys registered with Pair Cloud, checked live |
-| Inbound port on the machine | Not documented | None (inferred) | None |
-| Self-hostable | No | No | Yes, including BYOC |
+|                             | Conductor                                                               | Codespaces                                                                             | Pair                                                  |
+| --------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Path                        | Through Conductor. The mechanism isn't documented. Port 22 is reserved. | `gh codespace ssh` through GitHub. `--config` writes SSH config for editors and `scp`. | `t3 ssh proxy` through Pair Cloud and a runner tunnel |
+| sshd                        | Provided                                                                | Must run in the container (the default image or the `sshd` feature)                    | In the team image                                     |
+| Keys                        | Not documented                                                          | `gh` creates a key in `~/.ssh`                                                         | Member keys registered with Pair Cloud, checked live  |
+| Inbound port on the machine | Not documented                                                          | None (inferred)                                                                        | None                                                  |
+| Self-hostable               | No                                                                      | No                                                                                     | Yes, including BYOC                                   |
 
 ## 8. Moving sessions between a member's Mac and Pair Cloud (M3)
 
@@ -515,17 +515,17 @@ active, and the menu says why. The Mac app offers them only when Pair Cloud repo
 `capabilities.cloudImport` ([08](./08-clients-and-contracts.md)). Nothing goes through GitHub, so
 both directions work for branches that were never pushed.
 
-| Item | Moves? | How |
-| ---- | ------ | --- |
-| Branch and commits, pushed or not | Yes | A git bundle against the branch's merge-base with `origin/<base>` |
-| Uncommitted and untracked files | Yes | A snapshot commit made with the checkpoint capture code, then `restoreCheckpoint` on the other side |
-| Ignored files (`.env`, `node_modules`, build output) | No | The project setup script recreates them, as it does for any new worktree or machine |
-| Earlier checkpoints | No | The new thread starts its own. The old thread keeps its diffs. |
-| Conversation | Context and history | A context export: a [portable handoff](../../user/portable-handoffs.md) starts a fresh provider session, and the transcript, size-capped, comes along as read-only history |
-| Owner and provider account | New | Whoever moved it owns the new thread, on their own account on the destination |
-| Approvals and PR links | No | They stay on the old thread. Discovery links the new thread to the branch's PR once the branch is pushed. |
-| Terminals, running processes, previews | No | They stay with the old thread. Rerun them on the destination. |
-| Native provider session | No | Native sessions are files keyed by machine and absolute `cwd` (inferred). Mirroring them is Later. |
+| Item                                                 | Moves?              | How                                                                                                                                                                        |
+| ---------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch and commits, pushed or not                    | Yes                 | A git bundle against the branch's merge-base with `origin/<base>`                                                                                                          |
+| Uncommitted and untracked files                      | Yes                 | A snapshot commit made with the checkpoint capture code, then `restoreCheckpoint` on the other side                                                                        |
+| Ignored files (`.env`, `node_modules`, build output) | No                  | The project setup script recreates them, as it does for any new worktree or machine                                                                                        |
+| Earlier checkpoints                                  | No                  | The new thread starts its own. The old thread keeps its diffs.                                                                                                             |
+| Conversation                                         | Context and history | A context export: a [portable handoff](../../user/portable-handoffs.md) starts a fresh provider session, and the transcript, size-capped, comes along as read-only history |
+| Owner and provider account                           | New                 | Whoever moved it owns the new thread, on their own account on the destination                                                                                              |
+| Approvals and PR links                               | No                  | They stay on the old thread. Discovery links the new thread to the branch's PR once the branch is pushed.                                                                  |
+| Terminals, running processes, previews               | No                  | They stay with the old thread. Rerun them on the destination.                                                                                                              |
+| Native provider session                              | No                  | Native sessions are files keyed by machine and absolute `cwd` (inferred). Mirroring them is Later.                                                                         |
 
 ### The seed
 
@@ -634,17 +634,17 @@ branch and snapshot refs. A machine shared by forks and side chats is destroyed 
 uses it; until then, events on one thread change only that thread's use of it
 ([04](./04-sandbox-lifecycle.md) owns the record).
 
-| Event | Running machine | Disk and driver snapshots | Mirror refs | Terminal history and attachments |
-| ----- | --------------- | ------------------------- | ----------- | -------------------------------- |
-| Archive | Sleeps now, unless another thread sharing it is running a turn | Kept, then discarded after 04's retention period | Kept | Kept |
-| Unarchive | Stays asleep until something wakes it | If discarded, rebuilt from the mirror on wake | Kept | Kept |
-| Settle | Sleeps now ([04](./04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers)) | Discarded after the settled period, or on merge if that rule is on | Kept | Kept |
-| Continued locally by its owner (M3) | Sleeps now | Normal retention | Kept | Kept |
-| Delete (owner or admin) | Destroyed only when no thread uses it | Destroyed with the machine | Deleted now (`sandbox.mirror.forget-thread`). Pruned by the next maintenance run. | Deleted as today ([ThreadDeletion.ts](../../../apps/server/src/orchestration-v2/ThreadDeletion.ts)) |
-| Assign to someone else | Unchanged. Caps and usage go to the new owner from now on. | Unchanged | Unchanged | Unchanged |
-| Owner removed | Sleeps now. The thread's account may be disabled, so no new turn runs on it. | Normal retention | Kept, so a reassigned thread resumes | Kept |
-| Project removed | Destroyed | Destroyed | The project's mirror and checkout are deleted | As today |
-| Machine failed | Stays failed. **Retry** or **Discard**. | Discard destroys it | Kept. Retry can rebuild from it. | Kept |
+| Event                               | Running machine                                                              | Disk and driver snapshots                                          | Mirror refs                                                                       | Terminal history and attachments                                                                    |
+| ----------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Archive                             | Sleeps now, unless another thread sharing it is running a turn               | Kept, then discarded after 04's retention period                   | Kept                                                                              | Kept                                                                                                |
+| Unarchive                           | Stays asleep until something wakes it                                        | If discarded, rebuilt from the mirror on wake                      | Kept                                                                              | Kept                                                                                                |
+| Settle                              | Sleeps now ([04](./04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers)) | Discarded after the settled period, or on merge if that rule is on | Kept                                                                              | Kept                                                                                                |
+| Continued locally by its owner (M3) | Sleeps now                                                                   | Normal retention                                                   | Kept                                                                              | Kept                                                                                                |
+| Delete (owner or admin)             | Destroyed only when no thread uses it                                        | Destroyed with the machine                                         | Deleted now (`sandbox.mirror.forget-thread`). Pruned by the next maintenance run. | Deleted as today ([ThreadDeletion.ts](../../../apps/server/src/orchestration-v2/ThreadDeletion.ts)) |
+| Assign to someone else              | Unchanged. Caps and usage go to the new owner from now on.                   | Unchanged                                                          | Unchanged                                                                         | Unchanged                                                                                           |
+| Owner removed                       | Sleeps now. The thread's account may be disabled, so no new turn runs on it. | Normal retention                                                   | Kept, so a reassigned thread resumes                                              | Kept                                                                                                |
+| Project removed                     | Destroyed                                                                    | Destroyed                                                          | The project's mirror and checkout are deleted                                     | As today                                                                                            |
+| Machine failed                      | Stays failed. **Retry** or **Discard**.                                      | Discard destroys it                                                | Kept. Retry can rebuild from it.                                                  | Kept                                                                                                |
 
 **Rebuilding from the mirror (M2).** In M1, a thread whose disk is gone (`hasNoDisk` in
 [SandboxDecisions.ts](../../../apps/server/src/sandbox/lifecycle/SandboxDecisions.ts): destroyed, or
@@ -679,40 +679,40 @@ hourly snapshots cover both (decision 18). A Pair-hosted, multi-tenant control p
 
 Each row is about one pull request.
 
-| # | Milestone | Work |
-| - | --------- | ---- |
-| 1 | M0, landed | Route the direct local-disk checks behind the workspace host. That covers `realPath` in `CheckpointRestoreSafety`, `exists(worktreePath)` in rollback, and the `.git` existence check in `ThreadPullRequestService`. No behavior change. |
-| 2 | M1, landed | Mirror store: create and seed a bare repo per project, `index-pack --strict` on import, delete it with the project. |
-| 3 | M1, landed | Mirror sync: the bundle pull after capture, prerequisite tiers, the size cap, the retry worker with a flush before stop, and ref deletion after rollback. |
-| 4 | M1, landed | `MirrorCheckpointReader`, and diff queries that resolve the git dir by placement. |
-| 5 | M1, landed | Side chats and forks reference their source's machine in the rollback, restore-safety and file flows here, comparing by sandbox id. The shared record is [04](./04-sandbox-lifecycle.md)'s. |
-| 6 | M1, landed | Terminals over the runner PTY channel: spawn, flow control, and process-table inspection through the runner. |
-| 7 | M1, landed | Files: read and write through the file channel, and the search index as a runner operation. |
-| 8 | M1, landed | Attachment staging into the machine, and machine paths in the Claude and Codex adapters. |
-| 9 | M1, landed | Pull requests on GitHub: PR creation on the server with git reads from the machine; pushes to other hosts refused before git runs. |
-| 10 | M1, landed | Delete and project removal destroy machines and drop mirror refs. |
-| 11 | M1, landed | `ports.listeners` in the runner. A stopped Docker machine: file reads from the latest checkpoint in the mirror, writes refused, terminals exited. |
-| 12 | M2 | Sleep snapshot: a pre-sleep hook that captures and syncs the snapshot ref and the branch tip, with a timeout and a checkpoint fallback. |
-| 13 | M2 | Asleep reads from the sleep snapshot: the file browser, search and the Changes panel, labeled. |
-| 14 | M2 | Terminals asleep: `stoppedBy`, read-only errors, the wake divider, restart on attach. |
-| 15 | M2 | Restore, revert and rewind wake the machine and wait. Tests drain the effect worker through `waking` to `ready`. |
-| 16 | M2 | Status and PR discovery never wake: the head-context record stored at sleep, frozen VCS status, and a forge-only lookup from it. |
-| 17 | M2 | Retention: the worktree rules applied to disks with 04's defaults. |
-| 18 | M2 | Rebuild from the mirror when a disk is gone, in place of M1's fresh checkout. |
-| 19 | M2 | Pair Cloud projects: add by repo (https github.com only, the member's access checked), checkout and mirror cloned with the App token under hardened git config, fetched at launch, matched by origin key. Tests: a repo the member can't read and a non-GitHub URL are refused; the checkout runs no hooks. |
-| 20 | M3 | The seed upload route: authenticated as the member, staged per command id, size and refs checked, strict import into `refs/t3/staged/`, and a sweep of unclaimed seeds. |
-| 21 | M3 | The seed as `checkoutInSandbox`'s second source, and the optional `seedRef` on the cloud launch. Tests: an unpushed commit and an untracked file arrive; a retried upload doesn't duplicate. |
-| 22 | M3 | The context export: provenance, messages, read-only history import, and the handoff in `prepareLegacyImport`'s shape. |
-| 23 | M3 | Continue in cloud from the Mac: preview with exclusions, seed, export, launch, the "Continued in cloud" row. |
-| 24 | M3 | Continue locally: the bundle and export download, import into the matching local project, the owner's move and everyone else's copy. |
-| 25 | M5 | Measure sync, seed and rebuild times on the AWS kit's network, and tune the bundle size cap. No new mechanism. |
-| 26 | Later | Stopping listed servers through the runner, and preview tabs from `ports.listeners`. |
-| 27 | Later | The loopback preview proxy, per-machine browser contexts, and desktop cloud tabs streamed. Spike first: `<-loopback>` through Playwright's context proxy, and seeding storage state. |
-| 28 | Later | Fork to a new machine. |
-| 29 | Later | Each newly supported provider (OpenCode, Grok, Kiro): an attachment-path decision and a check that its rollback works in a machine. |
-| 30 | Later | SSH keys on Pair Cloud, and the SSH-scoped device credential. |
-| 31 | Later | The tunnel endpoint, `t3 ssh proxy`, `t3 ssh setup`, and the runner's `authorized-keys` command. Tests: a removed member is refused, and tunnels close on sleep. |
-| 32 | Later | The `sandbox` open target in editor.ts for VS Code, Cursor, Zed and JetBrains. |
+| #   | Milestone  | Work                                                                                                                                                                                                                                                                                                        |
+| --- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | M0, landed | Route the direct local-disk checks behind the workspace host. That covers `realPath` in `CheckpointRestoreSafety`, `exists(worktreePath)` in rollback, and the `.git` existence check in `ThreadPullRequestService`. No behavior change.                                                                    |
+| 2   | M1, landed | Mirror store: create and seed a bare repo per project, `index-pack --strict` on import, delete it with the project.                                                                                                                                                                                         |
+| 3   | M1, landed | Mirror sync: the bundle pull after capture, prerequisite tiers, the size cap, the retry worker with a flush before stop, and ref deletion after rollback.                                                                                                                                                   |
+| 4   | M1, landed | `MirrorCheckpointReader`, and diff queries that resolve the git dir by placement.                                                                                                                                                                                                                           |
+| 5   | M1, landed | Side chats and forks reference their source's machine in the rollback, restore-safety and file flows here, comparing by sandbox id. The shared record is [04](./04-sandbox-lifecycle.md)'s.                                                                                                                 |
+| 6   | M1, landed | Terminals over the runner PTY channel: spawn, flow control, and process-table inspection through the runner.                                                                                                                                                                                                |
+| 7   | M1, landed | Files: read and write through the file channel, and the search index as a runner operation.                                                                                                                                                                                                                 |
+| 8   | M1, landed | Attachment staging into the machine, and machine paths in the Claude and Codex adapters.                                                                                                                                                                                                                    |
+| 9   | M1, landed | Pull requests on GitHub: PR creation on the server with git reads from the machine; pushes to other hosts refused before git runs.                                                                                                                                                                          |
+| 10  | M1, landed | Delete and project removal destroy machines and drop mirror refs.                                                                                                                                                                                                                                           |
+| 11  | M1, landed | `ports.listeners` in the runner. A stopped Docker machine: file reads from the latest checkpoint in the mirror, writes refused, terminals exited.                                                                                                                                                           |
+| 12  | M2         | Sleep snapshot: a pre-sleep hook that captures and syncs the snapshot ref and the branch tip, with a timeout and a checkpoint fallback.                                                                                                                                                                     |
+| 13  | M2         | Asleep reads from the sleep snapshot: the file browser, search and the Changes panel, labeled.                                                                                                                                                                                                              |
+| 14  | M2         | Terminals asleep: `stoppedBy`, read-only errors, the wake divider, restart on attach.                                                                                                                                                                                                                       |
+| 15  | M2         | Restore, revert and rewind wake the machine and wait. Tests drain the effect worker through `waking` to `ready`.                                                                                                                                                                                            |
+| 16  | M2         | Status and PR discovery never wake: the head-context record stored at sleep, frozen VCS status, and a forge-only lookup from it.                                                                                                                                                                            |
+| 17  | M2         | Retention: the worktree rules applied to disks with 04's defaults.                                                                                                                                                                                                                                          |
+| 18  | M2         | Rebuild from the mirror when a disk is gone, in place of M1's fresh checkout.                                                                                                                                                                                                                               |
+| 19  | M2         | Pair Cloud projects: add by repo (https github.com only, the member's access checked), checkout and mirror cloned with the App token under hardened git config, fetched at launch, matched by origin key. Tests: a repo the member can't read and a non-GitHub URL are refused; the checkout runs no hooks. |
+| 20  | M3         | The seed upload route: authenticated as the member, staged per command id, size and refs checked, strict import into `refs/t3/staged/`, and a sweep of unclaimed seeds.                                                                                                                                     |
+| 21  | M3         | The seed as `checkoutInSandbox`'s second source, and the optional `seedRef` on the cloud launch. Tests: an unpushed commit and an untracked file arrive; a retried upload doesn't duplicate.                                                                                                                |
+| 22  | M3         | The context export: provenance, messages, read-only history import, and the handoff in `prepareLegacyImport`'s shape.                                                                                                                                                                                       |
+| 23  | M3         | Continue in cloud from the Mac: preview with exclusions, seed, export, launch, the "Continued in cloud" row.                                                                                                                                                                                                |
+| 24  | M3         | Continue locally: the bundle and export download, import into the matching local project, the owner's move and everyone else's copy.                                                                                                                                                                        |
+| 25  | M5         | Measure sync, seed and rebuild times on the AWS kit's network, and tune the bundle size cap. No new mechanism.                                                                                                                                                                                              |
+| 26  | Later      | Stopping listed servers through the runner, and preview tabs from `ports.listeners`.                                                                                                                                                                                                                        |
+| 27  | Later      | The loopback preview proxy, per-machine browser contexts, and desktop cloud tabs streamed. Spike first: `<-loopback>` through Playwright's context proxy, and seeding storage state.                                                                                                                        |
+| 28  | Later      | Fork to a new machine.                                                                                                                                                                                                                                                                                      |
+| 29  | Later      | Each newly supported provider (OpenCode, Grok, Kiro): an attachment-path decision and a check that its rollback works in a machine.                                                                                                                                                                         |
+| 30  | Later      | SSH keys on Pair Cloud, and the SSH-scoped device credential.                                                                                                                                                                                                                                               |
+| 31  | Later      | The tunnel endpoint, `t3 ssh proxy`, `t3 ssh setup`, and the runner's `authorized-keys` command. Tests: a removed member is refused, and tunnels close on sleep.                                                                                                                                            |
+| 32  | Later      | The `sandbox` open target in editor.ts for VS Code, Cursor, Zed and JetBrains.                                                                                                                                                                                                                              |
 
 ## Open questions
 

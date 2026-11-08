@@ -17,12 +17,12 @@ reading, not something the code or a vendor documents.
 
 ### What the existing machinery forces
 
-| Fact in the code | Consequence |
-| ---------------- | ----------- |
-| The [orchestrator](../../../apps/server/src/orchestration-v2/Orchestrator.ts) decides events and effects for one thread under its lock, without provider or filesystem I/O. It reads projections, other threads' included, under no other lock. [EventSink](../../../apps/server/src/orchestration-v2/EventSink.ts) commits events, projections, the receipt and outbox effects in one transaction. | Sandbox decisions read the owning thread and the sandbox row. Rules across threads (caps, idle) need one more lock (section 4). A transition and its driver effect commit together. |
-| The outbox is keyed by `thread_id` ([Foundation.ts](../../../apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts)), and [EffectOutbox.ts](../../../apps/server/src/orchestration-v2/EffectOutbox.ts) runs one effect per thread at a time, in order (title generation has its own lane). A pending effect with a later `available_at` still blocks newer ones. | Driver effects serialize per sandbox on the owner's queue. Timers must not be delayed effects. |
-| The [effect worker](../../../apps/server/src/orchestration-v2/EffectWorker.ts) runs 4 effects at once and makes up to 5 attempts, with backoff from 100 ms doubling (capped at 30 s, but five attempts end within 2 s). `EFFECT_TIMEOUTS` bounds `delegated-tasks.stop` (30 s) and every sandbox effect (60 s), because a running effect's lease "is never reclaimed in-process". Runner-bound effects such as `checkpoint.capture` and `provider-turn.start` have no bound. After a crash, `reconcileAfterProcessLoss` requeues running effects of replay-safe types, cancels process-bound ones, and leaves any other type `running` for good. | Effects return on acceptance. Every sandbox effect is bounded, idempotent and on the replay-safe list. Runner-bound effects get lanes and bounds in M2 (section 4). |
-| Worktree preparation parks a run in `preparing`; `prepared-run.release` moves it to `starting` ([ThreadLaunchService.ts](../../../apps/server/src/orchestration-v2/ThreadLaunchService.ts)). Forks copy the source's `worktreePath` ([ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts)). [ProjectionMaintenance](../../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) prunes events after a day. | Waiting reuses `preparing`. Side chats and forks share the sandbox. Sandbox time needs its own ledger. |
+| Fact in the code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Consequence                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The [orchestrator](../../../apps/server/src/orchestration-v2/Orchestrator.ts) decides events and effects for one thread under its lock, without provider or filesystem I/O. It reads projections, other threads' included, under no other lock. [EventSink](../../../apps/server/src/orchestration-v2/EventSink.ts) commits events, projections, the receipt and outbox effects in one transaction.                                                                                                                                                                                                                                              | Sandbox decisions read the owning thread and the sandbox row. Rules across threads (caps, idle) need one more lock (section 4). A transition and its driver effect commit together. |
+| The outbox is keyed by `thread_id` ([Foundation.ts](../../../apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts)), and [EffectOutbox.ts](../../../apps/server/src/orchestration-v2/EffectOutbox.ts) runs one effect per thread at a time, in order (title generation has its own lane). A pending effect with a later `available_at` still blocks newer ones.                                                                                                                                                                                                                                                                  | Driver effects serialize per sandbox on the owner's queue. Timers must not be delayed effects.                                                                                      |
+| The [effect worker](../../../apps/server/src/orchestration-v2/EffectWorker.ts) runs 4 effects at once and makes up to 5 attempts, with backoff from 100 ms doubling (capped at 30 s, but five attempts end within 2 s). `EFFECT_TIMEOUTS` bounds `delegated-tasks.stop` (30 s) and every sandbox effect (60 s), because a running effect's lease "is never reclaimed in-process". Runner-bound effects such as `checkpoint.capture` and `provider-turn.start` have no bound. After a crash, `reconcileAfterProcessLoss` requeues running effects of replay-safe types, cancels process-bound ones, and leaves any other type `running` for good. | Effects return on acceptance. Every sandbox effect is bounded, idempotent and on the replay-safe list. Runner-bound effects get lanes and bounds in M2 (section 4).                 |
+| Worktree preparation parks a run in `preparing`; `prepared-run.release` moves it to `starting` ([ThreadLaunchService.ts](../../../apps/server/src/orchestration-v2/ThreadLaunchService.ts)). Forks copy the source's `worktreePath` ([ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts)). [ProjectionMaintenance](../../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) prunes events after a day.                                                                                                                                                                                             | Waiting reuses `preparing`. Side chats and forks share the sandbox. Sandbox time needs its own ledger.                                                                              |
 
 ### Record
 
@@ -33,17 +33,19 @@ as landed in M1:
 export const OrchestrationV2Sandbox = Schema.Struct({
   id: SandboxId,
   projectId: ProjectId,
-  ownerThreadId: ThreadId,              // stream and outbox key; changes only by sandbox.adopt
+  ownerThreadId: ThreadId, // stream and outbox key; changes only by sandbox.adopt
   ownerMemberId: Schema.NullOr(MemberId), // the owning thread's owner; null on solo servers
-  driverId: ComputeDriverId,            // a configured driver instance, e.g. "docker"
-  size: SandboxSize,                    // "small" | "default" | "large"; each driver maps it
-  state: SandboxState,                  // provisioning, ready, sleeping, waking, failed, destroyed
-  generation: NonNegativeInt,           // bumps on every create, start and replacement
+  driverId: ComputeDriverId, // a configured driver instance, e.g. "docker"
+  size: SandboxSize, // "small" | "default" | "large"; each driver maps it
+  state: SandboxState, // provisioning, ready, sleeping, waking, failed, destroyed
+  generation: NonNegativeInt, // bumps on every create, start and replacement
   driverRef: Schema.NullOr(Schema.String),
-  admission: Schema.NullOr(Schema.Struct({
-    reason: SandboxAdmissionReason,     // "team-cap" | "member-cap" | "rate-limit"
-    since: Schema.DateTimeUtc,
-  })),
+  admission: Schema.NullOr(
+    Schema.Struct({
+      reason: SandboxAdmissionReason, // "team-cap" | "member-cap" | "rate-limit"
+      since: Schema.DateTimeUtc,
+    }),
+  ),
   runnerLostAt: Schema.NullOr(Schema.DateTimeUtc),
   sleepReason: Schema.NullOr(SandboxSleepReason), // idle, manual, settled, archived, cap-pressure
   failure: Schema.NullOr(SandboxFailure), // { code, message, retryable }
@@ -82,12 +84,12 @@ from any thread using the sandbox; the server routes them to the owner's stream.
 (`assertTeamPermission` in
 [ThreadMessageIntake.ts](../../../apps/server/src/orchestration-v2/ThreadMessageIntake.ts)).
 
-| Command | Allowed from | Effect |
-| ------- | ------------ | ------ |
-| `sandbox.wake` | `sleeping`; `failed` and retryable; `destroyed` (creates a new machine on the record's driver) | `sandbox.start` or `sandbox.create` (none while waiting for admission) |
-| `sandbox.sleep` | `ready`, no active run in any attached thread; owner or admin | `sandbox.stop` |
-| `sandbox.retry` | `failed` | `sandbox.start` if `driverRef` exists, else `sandbox.create` |
-| `sandbox.discard` | `failed`, `sleeping`, or `ready` with no active run; owner or admin | `sandbox.destroy`, which stops a running machine too; the next prompt provisions anew |
+| Command           | Allowed from                                                                                   | Effect                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `sandbox.wake`    | `sleeping`; `failed` and retryable; `destroyed` (creates a new machine on the record's driver) | `sandbox.start` or `sandbox.create` (none while waiting for admission)                |
+| `sandbox.sleep`   | `ready`, no active run in any attached thread; owner or admin                                  | `sandbox.stop`                                                                        |
+| `sandbox.retry`   | `failed`                                                                                       | `sandbox.start` if `driverRef` exists, else `sandbox.create`                          |
+| `sandbox.discard` | `failed`, `sleeping`, or `ready` with no active run; owner or admin                            | `sandbox.destroy`, which stops a running machine too; the next prompt provisions anew |
 
 Internal commands live in `OrchestrationV2InternalCommand`, which `dispatchCommand` does not decode,
 so no client can send them. They use deterministic ids (`sandbox-created:<id>:<generation>`), so a
@@ -96,18 +98,18 @@ replayed effect's report is dropped by its receipt, as
 does with `limit-arm:<identity>`. A rejection keeps its receipt too, so a guarded command a worker
 may resend takes a fresh id, as `thread.auto-settle` does.
 
-| Command | Sent by | Result |
-| ------- | ------- | ------ |
-| `sandbox.provision` | a launch through the gate (below), or `delegated_task.request` | row created, `provisioning`, `sandbox.create` |
-| `sandbox.admit` | lifecycle worker when a slot frees | `admission` cleared, `sandbox.create` or `sandbox.start` |
-| `sandbox.created` | `sandbox.create` effect | `driverRef` set |
-| `sandbox.runner.attached` | runner hub | `ready`; owner's waiting run released; `sandbox.release-waiters` |
-| `sandbox.runner.lost` | runner hub | `runnerLostAt`, `sandbox.status` |
-| `sandbox.stopped`, `sandbox.destroyed` | driver effects | `sleeping`, `destroyed` |
-| `sandbox.failed` | an effect's terminal error, or a deadline | `failed`; `sandbox.release-waiters` with the failure |
-| `sandbox.auto-sleep` | lifecycle worker | rejected, like `thread.auto-settle`, if any idle input is live |
-| `sandbox.adopt` | `sandbox.hand-over` effect | the receiving thread becomes owner |
-| `sandbox.recycle` (Later) | lifecycle worker, for a hosted vendor's session limit | `waking`, new generation, `sandbox.stop` then `sandbox.start` |
+| Command                                | Sent by                                                        | Result                                                           |
+| -------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `sandbox.provision`                    | a launch through the gate (below), or `delegated_task.request` | row created, `provisioning`, `sandbox.create`                    |
+| `sandbox.admit`                        | lifecycle worker when a slot frees                             | `admission` cleared, `sandbox.create` or `sandbox.start`         |
+| `sandbox.created`                      | `sandbox.create` effect                                        | `driverRef` set                                                  |
+| `sandbox.runner.attached`              | runner hub                                                     | `ready`; owner's waiting run released; `sandbox.release-waiters` |
+| `sandbox.runner.lost`                  | runner hub                                                     | `runnerLostAt`, `sandbox.status`                                 |
+| `sandbox.stopped`, `sandbox.destroyed` | driver effects                                                 | `sleeping`, `destroyed`                                          |
+| `sandbox.failed`                       | an effect's terminal error, or a deadline                      | `failed`; `sandbox.release-waiters` with the failure             |
+| `sandbox.auto-sleep`                   | lifecycle worker                                               | rejected, like `thread.auto-settle`, if any idle input is live   |
+| `sandbox.adopt`                        | `sandbox.hand-over` effect                                     | the receiving thread becomes owner                               |
+| `sandbox.recycle` (Later)              | lifecycle worker, for a hosted vendor's session limit          | `waking`, new generation, `sandbox.stop` then `sandbox.start`    |
 
 One event, `sandbox.updated`, carries the whole record, as `run.updated` does. Effects carry
 `sandboxId` and `generation`, and the executor drops an older generation. `sandbox.create`,
@@ -117,14 +119,14 @@ One event, `sandbox.updated`, carries the whole record, as `run.updated` does. E
 
 ### States
 
-| State | Meaning | Counts toward caps | Clients show |
-| ----- | ------- | ------------------ | ------------ |
-| `provisioning` | Being created, or waiting for admission. | Once admitted | "Starting machine", or "Waiting for a machine: 3 of 3 running" |
-| `ready` | Runner connected for this generation. | Yes | Nothing; a quiet dot, then "Reconnecting to machine" after a 2 s debounce |
-| `sleeping` | Stopped, disk kept. | No | "Asleep". Diffs read the mirror. |
-| `waking` | Starting from the kept disk. | Once admitted | "Waking machine" |
-| `failed` | Terminal driver error or a missed deadline. | No | The failure, with Retry and Discard |
-| `destroyed` | Gone. History and mirrored checkpoints remain. | No | "Machine discarded" with **Start a new machine**, which focuses the composer; sending provisions |
+| State          | Meaning                                        | Counts toward caps | Clients show                                                                                     |
+| -------------- | ---------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
+| `provisioning` | Being created, or waiting for admission.       | Once admitted      | "Starting machine", or "Waiting for a machine: 3 of 3 running"                                   |
+| `ready`        | Runner connected for this generation.          | Yes                | Nothing; a quiet dot, then "Reconnecting to machine" after a 2 s debounce                        |
+| `sleeping`     | Stopped, disk kept.                            | No                 | "Asleep". Diffs read the mirror.                                                                 |
+| `waking`       | Starting from the kept disk.                   | Once admitted      | "Waking machine"                                                                                 |
+| `failed`       | Terminal driver error or a missed deadline.    | No                 | The failure, with Retry and Discard                                                              |
+| `destroyed`    | Gone. History and mirrored checkpoints remain. | No                 | "Machine discarded" with **Start a new machine**, which focuses the composer; sending provisions |
 
 ```mermaid
 stateDiagram-v2
@@ -274,14 +276,14 @@ and owning thread (others show "Shares the machine of <thread>"); tokens, to who
 Idle sleep and the wake triggers below are M2 (old 2.1 and 2.2). Idle inputs, evaluated across every
 thread using the sandbox:
 
-| Input | Source | Keeps awake |
-| ----- | ------ | ----------- |
-| Active run, background tasks, delegated children | thread projection | Always, the rule `thread.auto-settle` uses |
-| Pending approval or user input | `pendingRuntimeRequest` | Up to 2 hours, then sleep and interrupt with a clear message |
+| Input                                                                       | Source                                                                                  | Keeps awake                                                              |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Active run, background tasks, delegated children                            | thread projection                                                                       | Always, the rule `thread.auto-settle` uses                               |
+| Pending approval or user input                                              | `pendingRuntimeRequest`                                                                 | Up to 2 hours, then sleep and interrupt with a clear message             |
 | Terminal input or output (a sleeping terminal can be viewed without waking) | [terminal manager](../../../apps/server/src/terminal/Manager.ts) via the workspace host | Within the window (a logging dev server keeps it awake, as on Conductor) |
-| Viewer lease | new, in memory | Within the window |
-| Scheduled task due within the window | scheduled task rows | Yes |
-| Watched preview (Later, with previews) | [preview manager](../../../apps/server/src/preview/Manager.ts) | While a client streams it |
+| Viewer lease                                                                | new, in memory                                                                          | Within the window                                                        |
+| Scheduled task due within the window                                        | scheduled task rows                                                                     | Yes                                                                      |
+| Watched preview (Later, with previews)                                      | [preview manager](../../../apps/server/src/preview/Manager.ts)                          | While a client streams it                                                |
 
 Viewers cannot come from Presence: clients report it only while another member is connected
 ([presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts)), so a solo user
@@ -353,12 +355,12 @@ Mirroring provider session files would avoid that loss; it is Later.
 
 ## 4. Caps, quotas and usage
 
-| Setting | Default | Why |
-| ------- | ------- | --- |
+| Setting                                            | Default                                                                                            | Why                                                                        |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Team cap on running sandboxes, per driver instance | Docker: `max(1, floor(host vCPUs / 4))`, read once from the daemon; per-hour drivers (EC2, M5): 20 | Capacity on Docker, because the host is finite. Spend on per-hour drivers. |
-| Member cap | None (D5) | Conductor, Claude Code cloud and Codex cloud publish no per-user cap. |
-| Starts per minute per team | 10 | A guard against runaway agent fan-out, wake storms and API throttling. |
-| Size | The driver instance's `size`, else `default` (4 vCPU, 8 GB on Docker) | The server picks (section 1); Docker shares one box. |
+| Member cap                                         | None (D5)                                                                                          | Conductor, Claude Code cloud and Codex cloud publish no per-user cap.      |
+| Starts per minute per team                         | 10                                                                                                 | A guard against runaway agent fan-out, wake storms and API throttling.     |
+| Size                                               | The driver instance's `size`, else `default` (4 vCPU, 8 GB on Docker)                              | The server picks (section 1); Docker shares one box.                       |
 
 "Running" means `ready`, or `provisioning`/`waking` without `admission`. A create with an unknown
 outcome counts until the reconciler resolves it (the EAS host counts one until a listing finds it or
@@ -412,30 +414,30 @@ At startup, after `reconcileAfterProcessLoss` requeues sandbox effects, the
 driver's sandboxes tagged with this server's install id (its environment id) and plans with a pure
 `planReconciliation(record, backend, now)`:
 
-| Record | Backend | Action |
-| ------ | ------- | ------ |
-| `ready`, `waking`, `provisioning` | running | Keep. A runner that was attached gets the 120 s lease, then `sandbox.runner.lost`; one that never attached gets the boot deadline. |
-| `ready` | stopped | `sandbox.stopped` |
-| `ready`, `waking` | missing | `sandbox.failed` with `lost`, retryable |
-| `sleeping` | running | Stop it |
-| `sleeping` | missing | `sandbox.failed` with `missing`, not retryable |
-| `failed`, retryable | running | Stop it; the disk stays for Retry |
-| any, no `driverRef` | found by name | `sandbox.created` with the found ref |
-| `provisioning`, no `driverRef` | not found | Nothing; the requeued create is idempotent, and the boot deadline catches a dead backend |
-| `destroyed`, `failed` and not retryable, or none | exists, older than 5 minutes | Destroy, unless restore mode is on (below) |
-| `destroyed`, `failed` and not retryable, or none | younger than 5 minutes | Leave it; a create may be in flight |
+| Record                                           | Backend                      | Action                                                                                                                             |
+| ------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ready`, `waking`, `provisioning`                | running                      | Keep. A runner that was attached gets the 120 s lease, then `sandbox.runner.lost`; one that never attached gets the boot deadline. |
+| `ready`                                          | stopped                      | `sandbox.stopped`                                                                                                                  |
+| `ready`, `waking`                                | missing                      | `sandbox.failed` with `lost`, retryable                                                                                            |
+| `sleeping`                                       | running                      | Stop it                                                                                                                            |
+| `sleeping`                                       | missing                      | `sandbox.failed` with `missing`, not retryable                                                                                     |
+| `failed`, retryable                              | running                      | Stop it; the disk stays for Retry                                                                                                  |
+| any, no `driverRef`                              | found by name                | `sandbox.created` with the found ref                                                                                               |
+| `provisioning`, no `driverRef`                   | not found                    | Nothing; the requeued create is idempotent, and the boot deadline catches a dead backend                                           |
+| `destroyed`, `failed` and not retryable, or none | exists, older than 5 minutes | Destroy, unless restore mode is on (below)                                                                                         |
+| `destroyed`, `failed` and not retryable, or none | younger than 5 minutes       | Leave it; a create may be in flight                                                                                                |
 
 This follows the EAS host: record before asking the backend, find leftovers by our name, never touch
 anything we did not tag. It also runs every 10 minutes, because a leak costs money every hour.
 
-| Effect | Why running it twice is safe |
-| ------ | ---------------------------- |
-| `sandbox.create` | Name `pair-<installId8>-<sandboxId>-g<generation>` plus the backend's feature (Docker `--name`, EC2 `ClientToken`; for a hosted vendor, boat's `Idempotency-Key` or Vercel's unique `name`). Without one (E2B, unverified), look up by metadata first. |
-| `sandbox.start`, `sandbox.stop` | Target state: already there is success. |
-| `sandbox.destroy` | Not found is success. |
-| Working-tree snapshot before sleep (M2) | Overwrites one ref per thread in the mirror (07). |
-| `snapshot` for builds (M4) | Named `<sandboxId>-<purpose>-<generation>`; an existing one is success. |
-| `request-wake`, `release-waiters`, `hand-over` | Deterministic ids on the commands they send. |
+| Effect                                         | Why running it twice is safe                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sandbox.create`                               | Name `pair-<installId8>-<sandboxId>-g<generation>` plus the backend's feature (Docker `--name`, EC2 `ClientToken`; for a hosted vendor, boat's `Idempotency-Key` or Vercel's unique `name`). Without one (E2B, unverified), look up by metadata first. |
+| `sandbox.start`, `sandbox.stop`                | Target state: already there is success.                                                                                                                                                                                                                |
+| `sandbox.destroy`                              | Not found is success.                                                                                                                                                                                                                                  |
+| Working-tree snapshot before sleep (M2)        | Overwrites one ref per thread in the mirror (07).                                                                                                                                                                                                      |
+| `snapshot` for builds (M4)                     | Named `<sandboxId>-<purpose>-<generation>`; an existing one is success.                                                                                                                                                                                |
+| `request-wake`, `release-waiters`, `hand-over` | Deterministic ids on the commands they send.                                                                                                                                                                                                           |
 
 Inside an effect, transient errors retry 3 times, 2 s apart, like the EAS host's `TRANSIENT_RETRY`.
 Across attempts the outbox's backoff applies (under 2 s in all), so backend hints travel as
@@ -491,7 +493,7 @@ what a failed sandbox shows the user.
 ```ts
 export interface ComputeCapabilities {
   readonly persistentDisk: boolean;
-  readonly memoryOnStop: boolean;                 // can keep RAM; Pair leaves it off (decision 10)
+  readonly memoryOnStop: boolean; // can keep RAM; Pair leaves it off (decision 10)
   readonly snapshot: boolean;
   readonly imageBuild: "snapshot" | "buildImage"; // doc 05 section 3
   readonly maxSessionMs: number | null;
@@ -500,40 +502,57 @@ export interface ComputeCapabilities {
   readonly egressRules: "none" | "allowlist" | "allowlist-and-brokering";
   readonly regions: ReadonlyArray<string>;
   readonly nestedDocker: boolean;
-  readonly sizes: ReadonlyArray<{ readonly size: SandboxSize; readonly vcpus: number; readonly memoryGb: number }>;
-  readonly defaultRunningCap: number;             // section 4's team cap for this instance
+  readonly sizes: ReadonlyArray<{
+    readonly size: SandboxSize;
+    readonly vcpus: number;
+    readonly memoryGb: number;
+  }>;
+  readonly defaultRunningCap: number; // section 4's team cap for this instance
 }
 
 export interface SandboxBootstrap {
   readonly sandboxId: SandboxId;
   readonly generation: number;
-  readonly runnerBuildId: string;   // decision 5: the server serves this build's runner
-  readonly serverUrl: string;       // what the runner dials: http(s)://host or unix:/path
+  readonly runnerBuildId: string; // decision 5: the server serves this build's runner
+  readonly serverUrl: string; // what the runner dials: http(s)://host or unix:/path
   readonly enrollmentSecret: Redacted.Redacted<string>; // one use, 15 minutes, this generation
 }
 
-export class ComputeDriver extends Context.Service<ComputeDriver, {
-  readonly driverId: ComputeDriverId;
-  readonly kind: ComputeDriverKind;
-  readonly capabilities: ComputeCapabilities;
-  readonly create: (input: {
-    readonly name: string;          // sandboxBackendName: same name, same sandbox
-    readonly sandboxId: SandboxId;
-    readonly generation: number;
-    readonly image: { readonly type: "build"; readonly imageRef: string } | { readonly type: "base" };
-    readonly size: SandboxSize;
-    readonly tags: Readonly<Record<string, string>>; // pair.install, .sandbox, .generation, .driver
-    readonly bootstrap: SandboxBootstrap;
-  }) => Effect.Effect<{ readonly driverRef: string; readonly baseImage: BaseImageInfo | null }, ComputeDriverError>;
-  readonly start: (driverRef: string, bootstrap: SandboxBootstrap) => Effect.Effect<void, ComputeDriverError>;
-  readonly stop: (driverRef: string) => Effect.Effect<void, ComputeDriverError>; // disk kept
-  readonly destroy: (driverRef: string) => Effect.Effect<void, ComputeDriverError>;
-  readonly status: (driverRef: string) => Effect.Effect<BackendSandbox, ComputeDriverError>;
-  readonly list: (tags: Readonly<Record<string, string>>) => Effect.Effect<ReadonlyArray<BackendSandbox>, ComputeDriverError>;
-  readonly deleteImage: (imageRef: string) => Effect.Effect<void, ComputeDriverError>;
-  readonly health: Effect.Effect<ComputeDriverHealth, ComputeDriverError>; // Settings → Cloud's Test
-  // M4: snapshot (team builds, doc 05). Later: buildImage, for backends that can't snapshot.
-}>()("t3/sandbox/compute/ComputeDriver") {}
+export class ComputeDriver extends Context.Service<
+  ComputeDriver,
+  {
+    readonly driverId: ComputeDriverId;
+    readonly kind: ComputeDriverKind;
+    readonly capabilities: ComputeCapabilities;
+    readonly create: (input: {
+      readonly name: string; // sandboxBackendName: same name, same sandbox
+      readonly sandboxId: SandboxId;
+      readonly generation: number;
+      readonly image:
+        | { readonly type: "build"; readonly imageRef: string }
+        | { readonly type: "base" };
+      readonly size: SandboxSize;
+      readonly tags: Readonly<Record<string, string>>; // pair.install, .sandbox, .generation, .driver
+      readonly bootstrap: SandboxBootstrap;
+    }) => Effect.Effect<
+      { readonly driverRef: string; readonly baseImage: BaseImageInfo | null },
+      ComputeDriverError
+    >;
+    readonly start: (
+      driverRef: string,
+      bootstrap: SandboxBootstrap,
+    ) => Effect.Effect<void, ComputeDriverError>;
+    readonly stop: (driverRef: string) => Effect.Effect<void, ComputeDriverError>; // disk kept
+    readonly destroy: (driverRef: string) => Effect.Effect<void, ComputeDriverError>;
+    readonly status: (driverRef: string) => Effect.Effect<BackendSandbox, ComputeDriverError>;
+    readonly list: (
+      tags: Readonly<Record<string, string>>,
+    ) => Effect.Effect<ReadonlyArray<BackendSandbox>, ComputeDriverError>;
+    readonly deleteImage: (imageRef: string) => Effect.Effect<void, ComputeDriverError>;
+    readonly health: Effect.Effect<ComputeDriverHealth, ComputeDriverError>; // Settings → Cloud's Test
+    // M4: snapshot (team builds, doc 05). Later: buildImage, for backends that can't snapshot.
+  }
+>()("t3/sandbox/compute/ComputeDriver") {}
 ```
 
 `BackendSandbox` is `{ driverRef, name, sandboxId | null, status, createdAt }`, with `status` one of
@@ -666,17 +685,17 @@ public `/runner/*` origin or the T3 Connect tunnel (03 §3.2). BYOC keeps `/runn
 listeners and T3 Connect off (D10), so a hosted vendor fits only a Pair Cloud on a VM the team runs
 with a public origin. Within that:
 
-| | Docker | Vercel Sandbox | E2B | boat |
-| - | ------ | -------------- | --- | ---- |
-| Isolation | Container; rootless or gVisor | Firecracker microVM | Firecracker microVM | Full VM |
-| Resume | Seconds | Seconds (inferred) | About 1 s | A few seconds |
-| Persistence on stop | Volume | Disk, auto snapshot | Disk (memory possible, unused) | Disk, kept 14+ days |
-| Session lifetime | None | 24 h, reset on resume | 24 h, reset on pause | None |
-| Largest self-serve size | The host | 8 vCPU, 16 GB | 8 vCPU, 8 GiB | 16 vCPU, 32 GB |
-| Per hour at 8 vCPU | $0 marginal | $0.35 idle to $0.60 busy (16 GB) | $0.53 (8 GiB), idle or busy | $0.072 (16 GB) |
-| BYOC path | The customer's box | None | Embed (one node) or Enterprise BYOC | None stated |
-| Regions | Local | 19 | US; EU on request (unverified) | EU only |
-| Company risk | None | Low | Medium (inferred) | High (inferred) |
+|                         | Docker                        | Vercel Sandbox                   | E2B                                 | boat                |
+| ----------------------- | ----------------------------- | -------------------------------- | ----------------------------------- | ------------------- |
+| Isolation               | Container; rootless or gVisor | Firecracker microVM              | Firecracker microVM                 | Full VM             |
+| Resume                  | Seconds                       | Seconds (inferred)               | About 1 s                           | A few seconds       |
+| Persistence on stop     | Volume                        | Disk, auto snapshot              | Disk (memory possible, unused)      | Disk, kept 14+ days |
+| Session lifetime        | None                          | 24 h, reset on resume            | 24 h, reset on pause                | None                |
+| Largest self-serve size | The host                      | 8 vCPU, 16 GB                    | 8 vCPU, 8 GiB                       | 16 vCPU, 32 GB      |
+| Per hour at 8 vCPU      | $0 marginal                   | $0.35 idle to $0.60 busy (16 GB) | $0.53 (8 GiB), idle or busy         | $0.072 (16 GB)      |
+| BYOC path               | The customer's box            | None                             | Embed (one node) or Enterprise BYOC | None stated         |
+| Regions                 | Local                         | 19                               | US; EU on request (unverified)      | EU only             |
+| Company risk            | None                          | Low                              | Medium (inferred)                   | High (inferred)     |
 
 Vercel Pro is $0.128 per Active CPU hour and $0.0212 per GB-hour of memory in `iad1`: 16 GB costs
 $0.339 an hour while running, and CPU adds $0.01 at 1% use or $0.256 at 25%. E2B is $0.000014 per
@@ -697,12 +716,12 @@ worth a driver for EU teams once demand shows.
 Each thread is busy 1.5 hours a day and sits through three 20-minute idle tails (1 hour). Busy CPU
 averages 25%, idle 1%. Snapshot storage assumes 5 GB per sandbox and about 140 sandboxes alive.
 
-| Option | Busy thread-hour | Idle thread-hour | Month (660 busy h, 440 idle h) |
-| ------ | ---------------- | ---------------- | ------------------------------ |
-| Docker on one 48-core server | $0 marginal | $0 marginal | The server, roughly $250 to $400 rented (inferred) |
-| Vercel Sandbox (8 vCPU, 16 GB) | $0.60 | $0.35 | $393 + $154 + about $56 storage + $20 Pro = **about $620** |
-| E2B (8 vCPU, 8 GiB) | $0.53 | $0.53 | $587 + $150 Pro = **about $740** |
-| boat `large` (8 vCPU, 16 GB) | $0.072 | $0.072 | $79, inside the $100 plan credit: **about $100** |
+| Option                         | Busy thread-hour | Idle thread-hour | Month (660 busy h, 440 idle h)                             |
+| ------------------------------ | ---------------- | ---------------- | ---------------------------------------------------------- |
+| Docker on one 48-core server   | $0 marginal      | $0 marginal      | The server, roughly $250 to $400 rented (inferred)         |
+| Vercel Sandbox (8 vCPU, 16 GB) | $0.60            | $0.35            | $393 + $154 + about $56 storage + $20 Pro = **about $620** |
+| E2B (8 vCPU, 8 GiB)            | $0.53            | $0.53            | $587 + $150 Pro = **about $740**                           |
+| boat `large` (8 vCPU, 16 GB)   | $0.072           | $0.072           | $79, inside the $100 plan credit: **about $100**           |
 
 If every member runs 20 threads a day, multiply usage by 10: Vercel about $5,500, E2B about $6,000,
 boat about $800. The idle timeout (a quarter of the Vercel bill here) and the size (a 4 vCPU default
@@ -746,31 +765,31 @@ money, so from M5 they run nightly against a test account.
 
 ## 10. Work breakdown
 
-| # | Pull request | Milestone |
-| - | ------------ | --------- |
-| 1 | Contracts: `SandboxId`, `OrchestrationV2Sandbox`, sandbox commands, `sandbox.updated`, thread `sandboxId` and shell summary, guarded scopes. | M1 (landed) |
-| 2 | Projection tables (`sandboxes`, `sandbox_threads`), reducers, migration; `sandbox_usage_intervals` ledger. | M1 (landed) |
-| 3 | Orchestrator decisions, outbox effect types and the replay-safe list, executors, generation checks; tests with `FakeComputeDriver`. | M1 (landed) |
-| 4 | 60 s bound for every sandbox effect type in `EffectWorker`, so a stuck driver call fails into the normal retry path instead of blocking its thread's queue. | M1 (landed) |
-| 5 | `ComputeDriver` service, registry, error model, fake driver, contract suite. | M1 (landed) |
-| 6 | Docker driver: Engine API at `DOCKER_HOST`, volumes, limits, network, runner Unix socket bind mount, isolation detection and the Settings warning. | M1 (landed) |
-| 7 | Cloud launch: `cloud` launch-input value (runs keep `worktree`), preparation gate on `ready`, progress items, recovery re-arm. | M1 (landed) |
-| 8 | Shared sandboxes: forks and side chats attach; `request-wake`, `release-waiters`, `hand-over`, `adopt`. | M1 (landed) |
-| 9 | Caps and admission queue: team cap per driver instance, start rate. | M1 (landed) |
-| 10 | `SandboxReconciler` at startup and every 10 minutes; destroy or hand over on thread delete; the lifecycle worker's settle-and-archive stop, boot deadlines. | M1 (landed) |
-| 11 | `SandboxLifecycleWorker` in full: idle policy, viewer lease, approval hold, cap pressure, retention destroys, settle-sleep as a driver capability (old 2.1). The pre-sleep snapshot, retention rules on disks and rebuild from the mirror are 07's rows. | M2 |
-| 12 | Wake triggers on every surface: thread open, terminal, MCP, CLI, scheduled tasks, restore (old 2.2). | M2 |
-| 13 | Lifetime recycle and the interrupt-and-continue path (old 2.3), with a hosted vendor. | Later |
-| 14 | A hosted vendor driver (Vercel first) passing the contract suite, with nightly runs (old 2.5). | Later |
-| 15 | Editable caps, an optional member cap, and sandbox hours in Settings: `TeamUsageResult.sandboxRows`, per-driver rates (old 2.17). | Later |
-| 16 | `retryAfterMs` honored by the effect worker for driver errors (old 2.4). | M2 |
-| 17 | `snapshot` on the driver interface and `docker commit` builds; `deleteImage` in use (doc 05 owns the flow). | M4 |
-| 18 | EC2 plain-VM driver, refusing a server that isn't cloud-only, then GCE, passing the contract suite (doc 09 owns deployment). | M5 |
-| 19 | The E2B driver against an Embed node; Kubernetes, on demand. | Later |
-| 20 | The launch gate: the cloud-only check in `resolveCloudLaunch` and in decisions that create a machine; `delegated_task.request` into `OrchestrationV2InternalCommand`; `rpc.test.ts` rows. | M2 |
-| 21 | Restore mode in `SandboxReconciler`: the restore-steps setting, the automatic trigger, stop instead of destroy, and the admin list in Settings → Cloud. | M2 |
-| 22 | Drain before a planned restart, used by the install guide's upgrade steps. | M2 |
-| 23 | Effect-worker lanes and time bounds for runner-bound effects, set from 03's load test. | M2 |
+| #   | Pull request                                                                                                                                                                                                                                             | Milestone   |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| 1   | Contracts: `SandboxId`, `OrchestrationV2Sandbox`, sandbox commands, `sandbox.updated`, thread `sandboxId` and shell summary, guarded scopes.                                                                                                             | M1 (landed) |
+| 2   | Projection tables (`sandboxes`, `sandbox_threads`), reducers, migration; `sandbox_usage_intervals` ledger.                                                                                                                                               | M1 (landed) |
+| 3   | Orchestrator decisions, outbox effect types and the replay-safe list, executors, generation checks; tests with `FakeComputeDriver`.                                                                                                                      | M1 (landed) |
+| 4   | 60 s bound for every sandbox effect type in `EffectWorker`, so a stuck driver call fails into the normal retry path instead of blocking its thread's queue.                                                                                              | M1 (landed) |
+| 5   | `ComputeDriver` service, registry, error model, fake driver, contract suite.                                                                                                                                                                             | M1 (landed) |
+| 6   | Docker driver: Engine API at `DOCKER_HOST`, volumes, limits, network, runner Unix socket bind mount, isolation detection and the Settings warning.                                                                                                       | M1 (landed) |
+| 7   | Cloud launch: `cloud` launch-input value (runs keep `worktree`), preparation gate on `ready`, progress items, recovery re-arm.                                                                                                                           | M1 (landed) |
+| 8   | Shared sandboxes: forks and side chats attach; `request-wake`, `release-waiters`, `hand-over`, `adopt`.                                                                                                                                                  | M1 (landed) |
+| 9   | Caps and admission queue: team cap per driver instance, start rate.                                                                                                                                                                                      | M1 (landed) |
+| 10  | `SandboxReconciler` at startup and every 10 minutes; destroy or hand over on thread delete; the lifecycle worker's settle-and-archive stop, boot deadlines.                                                                                              | M1 (landed) |
+| 11  | `SandboxLifecycleWorker` in full: idle policy, viewer lease, approval hold, cap pressure, retention destroys, settle-sleep as a driver capability (old 2.1). The pre-sleep snapshot, retention rules on disks and rebuild from the mirror are 07's rows. | M2          |
+| 12  | Wake triggers on every surface: thread open, terminal, MCP, CLI, scheduled tasks, restore (old 2.2).                                                                                                                                                     | M2          |
+| 13  | Lifetime recycle and the interrupt-and-continue path (old 2.3), with a hosted vendor.                                                                                                                                                                    | Later       |
+| 14  | A hosted vendor driver (Vercel first) passing the contract suite, with nightly runs (old 2.5).                                                                                                                                                           | Later       |
+| 15  | Editable caps, an optional member cap, and sandbox hours in Settings: `TeamUsageResult.sandboxRows`, per-driver rates (old 2.17).                                                                                                                        | Later       |
+| 16  | `retryAfterMs` honored by the effect worker for driver errors (old 2.4).                                                                                                                                                                                 | M2          |
+| 17  | `snapshot` on the driver interface and `docker commit` builds; `deleteImage` in use (doc 05 owns the flow).                                                                                                                                              | M4          |
+| 18  | EC2 plain-VM driver, refusing a server that isn't cloud-only, then GCE, passing the contract suite (doc 09 owns deployment).                                                                                                                             | M5          |
+| 19  | The E2B driver against an Embed node; Kubernetes, on demand.                                                                                                                                                                                             | Later       |
+| 20  | The launch gate: the cloud-only check in `resolveCloudLaunch` and in decisions that create a machine; `delegated_task.request` into `OrchestrationV2InternalCommand`; `rpc.test.ts` rows.                                                                | M2          |
+| 21  | Restore mode in `SandboxReconciler`: the restore-steps setting, the automatic trigger, stop instead of destroy, and the admin list in Settings → Cloud.                                                                                                  | M2          |
+| 22  | Drain before a planned restart, used by the install guide's upgrade steps.                                                                                                                                                                               | M2          |
+| 23  | Effect-worker lanes and time bounds for runner-bound effects, set from 03's load test.                                                                                                                                                                   | M2          |
 
 ## Open questions
 

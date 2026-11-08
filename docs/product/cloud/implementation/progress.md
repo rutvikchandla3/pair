@@ -61,6 +61,11 @@ in flight and no worktrees exist; start from `feat/pair`.
    `runnerUrl`) to every member, and only the UI hides it. M2 fixes it (10 §2, row 2.25).
 4. **1.42 evals:** still open; they need a model API key in the repo root `.env`.
 
+5. **Open decisions (10 §7):** #1–#6, #9, #10 and #13 are accepted as recommended. The Mac and
+   phone reach the VM over Tailscale (`vp run dev --share`); the phone is the maintainer's iPhone,
+   since this Mac has no Xcode. Vite+ on the Mac: Node 26.12.1 through nvm, then
+   `npm i -g vite-plus@1.4.0 pnpm@12.14.0` and `vp i`.
+
 ### M1 server-side pass (2026-11-08, on `pair-cloud-pass`)
 
 **Passed:** Settings → Cloud **Test**; a CLI cloud thread (`t3 thread start --cloud master`) with
