@@ -1,12 +1,13 @@
 # Pair Cloud: implementation progress and handoff
 
 Status: in progress on `feat/pair`, updated by the lead agent after every landed PR. This file lets
-another session (or another account) resume the M0 + M1 build exactly where it stopped. Delete it
-when M1's integrated pass is done; the merged commits are the record.
+another session (or another account) resume the build exactly where it stopped, and records each
+milestone gate's runs.
 
 Scope of this run: M0 (11 PRs) and M1 (46 PRs) from [m0-seam.md](./m0-seam.md) and
-[m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md), then both integrated passes. M2–M5 have
-no specs yet ([README](./README.md): write them after M1 lands).
+[m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md), both integrated passes and G1, then M2
+(36 PRs) from [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md) and G2. M3–M5 have no full
+specs yet ([README](./README.md): each milestone's are written while the previous gate runs).
 
 ## Status
 
@@ -16,7 +17,11 @@ no specs yet ([README](./README.md): write them after M1 lands).
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**Left:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
+**M2:** full specs written on 2026-11-09 in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md),
+with four new rows (2.44–2.47) and seven waves. Nothing built yet. Its open maintainer questions
+are listed under that page's "What the code changed in 10 §2".
+
+**Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
 PR-level runtime evidence workers could not (each PR's note below says what it owes). Nothing is
 in flight and no worktrees exist; start from `feat/pair`.
@@ -42,9 +47,8 @@ in flight and no worktrees exist; start from `feat/pair`.
    (needs a model API key; the dry run passes). The PR needs the `agent-context-increase` label.
 4. **PR links:** `docs/product/pair-features.md`'s "Cloud threads on Docker" entry gets PR links
    once the M1 work has GitHub PR numbers.
-5. **Then:** delete this file (the merged commits are the record) and write M2's full specs. M2 is
-   now Pair Cloud on Docker, after the 2026-11-08 local-first rewrite; its PR list is in
-   [m2-m5.md](./m2-m5.md), and the hosted vendor moved to Later.
+5. **Then:** M2's full specs, written on 2026-11-09 in
+   [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
 
 ### Maintainer answers (2026-11-08)
 

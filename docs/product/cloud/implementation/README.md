@@ -1,6 +1,7 @@
 # Pair Cloud: implementation plan
 
-Status: M0 and M1 landed; the rest is a proposal, rewritten 2026-11-08 for local-first Pair Cloud.
+Status: M0 and M1 landed and G1 closed; M2 has full specs; the rest is a proposal, rewritten
+2026-11-08 for local-first Pair Cloud.
 The design is the [plan](../README.md) and its ten docs; this folder turns their PR list
 ([10 §2](../10-delivery-plan.md#2-pull-request-plan)) into specs an engineer or agent can implement
 without re-deriving the design. Before writing it, every code claim in the design docs was checked
@@ -8,12 +9,13 @@ against the repo; the [findings](#verification-findings) are at the end.
 
 ## How to use this set
 
-| File                                                       | What it holds                                                                                                     |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                   |
-| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                |
-| [m2-m5.md](./m2-m5.md)                                     | M2–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first. |
-| [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                          |
+| File                                                       | What it holds                                                                                                                                   |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                                                 |
+| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                                              |
+| [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md)       | M2's 36 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M2 integrated pass.                        |
+| [m2-m5.md](./m2-m5.md)                                     | M3–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first; M2's rows as first sharpened. |
+| [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                                                        |
 
 To implement a PR: read its spec, then the owner-doc sections its title row in 10 §2 names, then
 re-read every file and symbol the spec cites, since line numbers drift with upstream merges. Every
@@ -30,7 +32,7 @@ the spec names what else would change.
 Write each milestone's full specs the same way while the previous milestone's gate runs: M2's
 during G1, M3's during G2, and so on. Each milestone settles names and seams the next one depends
 on, so specs written earlier would be guesses. Until then, [m2-m5.md](./m2-m5.md) holds each row at
-PR level.
+PR level. M2's were written during G1, in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
 
 ## Build order
 
@@ -56,13 +58,12 @@ Inside each milestone:
   host, sessions and cloud launch. See [M1's build order](./m1-cloud-threads-docker.md#build-order).
 - **G1:** M1 end to end on the VM, then the passes progress still lists as open. See
   [G1](../10-delivery-plan.md#g1-m1-before-any-m2-pr-merges).
-- **M2:** six waves, from cloud-only mode (2.22), the release (2.36), redaction, drain, restore
-  mode, effect lanes and the M1 pass defects (wave 1) to the install and cloud guides (wave 6). The
-  critical path runs through cloud-only mode, Cloud only on cloud-only servers (2.24), the resolver
-  (2.27), web and desktop routing (2.28), account onboarding (2.30) and the docs (2.21). The release
-  and the 30-machine load test (2.40) must be in before G2. See
-  [M2's waves](../10-delivery-plan.md#m2-pair-cloud-on-docker-first-release) and
-  [M2's rows](./m2-m5.md#m2-pair-cloud-on-docker-first-release).
+- **M2:** seven waves, from cloud-only mode (2.22), idle sleep, the release (2.36), redaction,
+  restore mode, the G1 defects and the App's PR reads (wave 1) to the install and cloud guides
+  (wave 7). The critical path runs through cloud-only mode, the launch gate (2.23), Cloud only on
+  cloud-only servers (2.24), the resolver (2.27), web and desktop routing (2.28), account onboarding
+  (2.30) and the docs (2.21). The release and the 30-machine load test (2.40) must be in before G2.
+  See [M2's build order](./m2-pair-cloud-docker.md#build-order).
 - **M3:** five waves: the agent link (3.19) and the context export (3.22) first, then staged seeds
   and continue locally, the seed checkout, continue in cloud (3.23), and mobile and docs. See
   [M3's waves](../10-delivery-plan.md#m3-continue-in-cloud).
