@@ -41,6 +41,11 @@ import {
   WorkspaceHostUnavailableError,
 } from "../../workspaceHost/WorkspaceHost.ts";
 import { WorkspaceHosts } from "../../workspaceHost/WorkspaceHosts.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import {
+  FALLBACK_GIT_IDENTITY,
+  serverGitIdentity,
+} from "../credentials/SandboxProcessEnvironment.ts";
 import * as RunnerOpsClient from "./RunnerOpsClient.ts";
 import {
   type AwaitClient,
@@ -214,6 +219,13 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
     Effect.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: MAX_FRAME_BYTES })),
   );
   const serverBootId = yield* random.uuidV4();
+  // Optional like `sandboxEnvironmentFor`: hub tests run no git, so they get the fallback.
+  const processRunner = yield* Effect.serviceOption(ProcessRunner.ProcessRunner);
+  const gitIdentity = yield* Effect.cached(
+    Option.isSome(processRunner)
+      ? serverGitIdentity(processRunner.value)
+      : Effect.succeed(FALLBACK_GIT_IDENTITY),
+  );
   const hubScope = yield* Effect.scope;
   const facts = yield* Queue.unbounded<RunnerHubFact>();
   const boots = yield* PubSub.unbounded<RunnerBoot>();
@@ -358,12 +370,16 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       Effect.asVoid,
     );
     const connection = makeRunnerConnection(info, liveClient, ops, { scope, ended });
-    const host = yield* SandboxWorkspaceHost.make(slot.sandboxId, connection, (endpoint) =>
-      Effect.suspend(() =>
-        endpoints === undefined
-          ? Effect.fail(new WorkspaceHostUnavailableError({ sandboxId: slot.sandboxId }))
-          : endpoints(slot.sandboxId)(endpoint),
-      ),
+    const host = yield* SandboxWorkspaceHost.make(
+      slot.sandboxId,
+      connection,
+      (endpoint) =>
+        Effect.suspend(() =>
+          endpoints === undefined
+            ? Effect.fail(new WorkspaceHostUnavailableError({ sandboxId: slot.sandboxId }))
+            : endpoints(slot.sandboxId)(endpoint),
+        ),
+      yield* gitIdentity,
     ).pipe(Scope.provide(scope));
     yield* hosts.register(`${SANDBOX_ROOT}/${slot.sandboxId}`, host).pipe(Scope.provide(scope));
     return connection;

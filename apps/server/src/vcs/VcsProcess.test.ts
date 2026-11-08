@@ -506,7 +506,7 @@ describe("VcsProcess.run", () => {
   );
 
   it.effect(
-    "runs git -C from the sandbox's home with the server's identity, which that machine lacks",
+    "runs git -C from the sandbox's home, since the server's cwd is not on that machine",
     () =>
       Effect.gen(function* () {
         const hosts = yield* WorkspaceHosts.WorkspaceHosts;
@@ -518,36 +518,12 @@ describe("VcsProcess.run", () => {
           info: Effect.succeed({ ...local, homeDirectory: "/home/t3" }),
         });
         const spawnCwds: Array<string | undefined> = [];
-        const identities: Array<string> = [];
         const service = yield* VcsProcess.make.pipe(
           Effect.provideService(
             ProcessRunner.ProcessRunner,
             ProcessRunner.ProcessRunner.of({
               run: (input) => {
-                // The server's own global git config is empty here: the fallback identity.
-                if (input.args[0] === "config") {
-                  return Effect.succeed({
-                    stdout: "",
-                    stderr: "",
-                    code: ChildProcessSpawner.ExitCode(1),
-                    timedOut: false,
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                    stdoutInvalidUtf8: false,
-                    stderrInvalidUtf8: false,
-                  });
-                }
                 spawnCwds.push(input.spawnCwd);
-                const env = input.env ?? {};
-                identities.push(
-                  Array.from(
-                    { length: Number(env.GIT_CONFIG_COUNT ?? 0) },
-                    (_, index) =>
-                      `${env[`GIT_CONFIG_KEY_${index}`]}=${env[`GIT_CONFIG_VALUE_${index}`]}`,
-                  )
-                    .filter((entry) => entry.startsWith("user."))
-                    .join(","),
-                );
                 return Effect.succeed({
                   stdout: "",
                   stderr: "",
@@ -571,10 +547,6 @@ describe("VcsProcess.run", () => {
         yield* service.run({ ...baseInput, cwd: process.cwd(), spawnOutsideCwd: true });
 
         expect(spawnCwds).toEqual(["/home/t3", process.cwd()]);
-        expect(identities).toEqual([
-          "user.name=T3 Code,user.email=t3code@users.noreply.github.com",
-          "",
-        ]);
       }).pipe(Effect.scoped, Effect.provide(WorkspaceHostTesting.layerFromContext)),
   );
 

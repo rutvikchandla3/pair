@@ -27,7 +27,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 
 import type { RunnerConnection } from "../sandbox/runnerHub/RunnerConnection.ts";
-import { sandboxBaseEnvironment } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import {
+  type GitIdentity,
+  sandboxBaseEnvironment,
+} from "../sandbox/credentials/SandboxProcessEnvironment.ts";
 import {
   type WorkspaceHost,
   WorkspaceHostError,
@@ -178,6 +181,7 @@ export const make = Effect.fn("SandboxWorkspaceHost.make")(function* (
   connection: RunnerConnection,
   /** A named forward on this sandbox's runner (`RunnerForwards`), handed in by the hub. */
   exposeServerEndpoint: WorkspaceHost["exposeServerEndpoint"],
+  gitIdentity: GitIdentity,
 ): Effect.fn.Return<WorkspaceHost, never, Scope.Scope> {
   const hostScope = yield* Effect.scope;
   const runner = connection.info;
@@ -186,7 +190,7 @@ export const make = Effect.fn("SandboxWorkspaceHost.make")(function* (
     platform: "linux",
     architecture: runner.arch,
     homeDirectory: runner.agent.homeDirectory,
-    environment: sandboxBaseEnvironment(runner),
+    environment: sandboxBaseEnvironment(runner, gitIdentity),
     userId: runner.agent.uid ?? undefined,
     executablePath: `${runner.bundleDirectory}/t3`,
   };

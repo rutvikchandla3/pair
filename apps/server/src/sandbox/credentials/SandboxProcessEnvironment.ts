@@ -27,11 +27,20 @@ import { SettingsSecretUnresolvedError } from "../../secrets/settingsSecretValue
 import * as ServerSettings from "../../serverSettings.ts";
 import type { WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 
+export interface GitIdentity {
+  readonly name: string;
+  readonly email: string;
+}
+
 /**
  * The base environment of every process the server starts in a sandbox: an allowlist built from
- * the runner's facts and the image's `ENV`. Never anything from the server's environment.
+ * the runner's facts and the image's `ENV`, plus the server's git identity, since the machine has
+ * none. Never anything from the server's environment.
  */
-export const sandboxBaseEnvironment = (info: RunnerInfo): Record<string, string> => {
+export const sandboxBaseEnvironment = (
+  info: RunnerInfo,
+  gitIdentity: GitIdentity,
+): Record<string, string> => {
   const image = info.imageEnvironment;
   const base: Record<string, string> = {};
   for (const [name, value] of Object.entries(image)) {
@@ -46,6 +55,12 @@ export const sandboxBaseEnvironment = (info: RunnerInfo): Record<string, string>
     USER: "t3",
     LANG: image.LANG ?? "C.UTF-8",
     TERM: "xterm-256color",
+    // As config, not GIT_AUTHOR_*, so a thread holder's author env still wins over it.
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "user.name",
+    GIT_CONFIG_VALUE_0: gitIdentity.name,
+    GIT_CONFIG_KEY_1: "user.email",
+    GIT_CONFIG_VALUE_1: gitIdentity.email,
   };
 };
 
@@ -126,10 +141,15 @@ export class SandboxProcessEnvironment extends Context.Service<
 >()("t3/sandbox/credentials/SandboxProcessEnvironment") {}
 
 /** `GitVcsDriver`'s checkpoint committer, for a server whose git has no identity. */
-const FALLBACK_COMMITTER = { name: "T3 Code", email: "t3code@users.noreply.github.com" };
+export const FALLBACK_GIT_IDENTITY: GitIdentity = {
+  name: "T3 Code",
+  email: "t3code@users.noreply.github.com",
+};
 
 /** A sandbox has no global git identity; commits there name the server's, as local threads do. */
-export const serverGitIdentity = (processRunner: ProcessRunner.ProcessRunner["Service"]) => {
+export const serverGitIdentity = (
+  processRunner: ProcessRunner.ProcessRunner["Service"],
+): Effect.Effect<GitIdentity> => {
   const globalGitConfig = (key: string) =>
     processRunner
       .run({
@@ -142,8 +162,11 @@ export const serverGitIdentity = (processRunner: ProcessRunner.ProcessRunner["Se
         Effect.orElseSucceed(() => ""),
       );
   return Effect.all({
-    name: Effect.map(globalGitConfig("user.name"), (name) => name || FALLBACK_COMMITTER.name),
-    email: Effect.map(globalGitConfig("user.email"), (email) => email || FALLBACK_COMMITTER.email),
+    name: Effect.map(globalGitConfig("user.name"), (name) => name || FALLBACK_GIT_IDENTITY.name),
+    email: Effect.map(
+      globalGitConfig("user.email"),
+      (email) => email || FALLBACK_GIT_IDENTITY.email,
+    ),
   });
 };
 

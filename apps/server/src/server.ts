@@ -813,7 +813,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(MemberGitHub.layer),
   // Above layerAuth, which provides their database.
   // The endpoint opens the runner-only Unix socket on first use; never part of layerMakeRoutes.
-  Layer.provideMerge(RunnerEndpoint.layer.pipe(Layer.provideMerge(RunnerHub.layer))),
+  Layer.provideMerge(
+    RunnerEndpoint.layer.pipe(
+      Layer.provideMerge(RunnerHub.layer.pipe(Layer.provide(ProcessRunner.layer))),
+    ),
+  ),
   Layer.provideMerge(Layer.mergeAll(RunnerGrants.layer, RunnerBundle.layer)),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),

@@ -24,7 +24,6 @@ import type { WorkspaceHost, WorkspaceHostInfo } from "../workspaceHost/Workspac
 
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { serverGitIdentity } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export interface VcsProcessInput {
@@ -187,7 +186,6 @@ const canRetryFullFsync = (stderr: string) =>
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
-  const sandboxGitIdentity = yield* Effect.cached(serverGitIdentity(processRunner));
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
@@ -207,19 +205,6 @@ export const make = Effect.gen(function* () {
     hostInfo: WorkspaceHostInfo,
   ) {
     let failedExit = false;
-    const env: NodeJS.ProcessEnv = { ...input.env };
-    if (host.kind === "sandbox" && input.command === "git") {
-      const identity = yield* sandboxGitIdentity;
-      for (const [key, value] of [
-        ["user.name", identity.name],
-        ["user.email", identity.email],
-      ] as const) {
-        Object.assign(
-          env,
-          gitConfigEnv({ ...hostInfo.environment, ...env }, key, value, hostInfo.platform),
-        );
-      }
-    }
     const execution = processRunner
       .run({
         host,
@@ -232,8 +217,11 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
-          ...env,
-          ...explicitBareRepositoryEnv({ ...hostInfo.environment, ...env }, hostInfo.platform),
+          ...input.env,
+          ...explicitBareRepositoryEnv(
+            { ...hostInfo.environment, ...input.env },
+            hostInfo.platform,
+          ),
         },
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,

@@ -86,7 +86,10 @@ const sandboxHost = Effect.gen(function* () {
       platform: "linux",
       architecture: "x64",
       homeDirectory: "/home/t3",
-      environment: SandboxProcessEnvironment.sandboxBaseEnvironment(runnerInfo),
+      environment: SandboxProcessEnvironment.sandboxBaseEnvironment(runnerInfo, {
+        name: "Ada Lovelace",
+        email: "t3code@users.noreply.github.com",
+      }),
       userId: 1000,
       executablePath: "/opt/pair-runner/build/t3",
     }),
@@ -137,6 +140,21 @@ const layerWith = (settings: Parameters<typeof ServerSettings.layerTest>[0]) => 
 };
 
 describe("SandboxProcessEnvironment", () => {
+  it("names the server's git identity in the base env, for git the server itself runs there", () => {
+    expect(
+      SandboxProcessEnvironment.sandboxBaseEnvironment(runnerInfo, {
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+      }),
+    ).toMatchObject({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Ada Lovelace",
+      GIT_CONFIG_KEY_1: "user.email",
+      GIT_CONFIG_VALUE_1: "ada@example.com",
+    });
+  });
+
   it.effect("layers image < team < project, drops reserved names and never the server env", () => {
     const { reads, layer } = layerWith({
       sandbox: {
