@@ -4,12 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type {
@@ -32,6 +34,11 @@ import type { SourceControlProvider } from "@t3tools/source-control-core/server/
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import { PinnedGitHubCredential } from "@t3tools/source-control-github/server/requestPolicy";
+import {
+  GitHubAppInstallationError,
+  GitHubAppInstallationTokens,
+} from "../sandbox/credentials/GitHubAppInstallationTokens.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -252,6 +259,42 @@ const sshAliasHost = {
       : Effect.succeed(null),
 } as SourceControlProvider["Service"];
 
+/** The team's GitHub App, installed on `covered` only; no repositories means no App key. */
+function appCovering(asked: (repository: string) => void, covered: ReadonlyArray<string>) {
+  return GitHubAppInstallationTokens.of({
+    configured: Effect.succeed(covered.length > 0),
+    tokenFor: () => Effect.die("pull request reads never mint a sandbox token"),
+    revoke: () => Effect.void,
+    readTokenFor: ({ repository }) =>
+      Effect.suspend(() => {
+        asked(repository);
+        return covered.includes(repository)
+          ? Effect.succeed({
+              token: Redacted.make(`ghs_read_${repository}`),
+              expiresAt: DateTime.makeUnsafe("2026-07-01T01:00:00Z"),
+              repository,
+              permissions: {},
+            })
+          : Effect.fail(
+              new GitHubAppInstallationError({
+                repository,
+                reason: "not-installed",
+                detail: "not installed",
+              }),
+            );
+      }),
+  });
+}
+
+/** Fails as a signed-out server does unless the read runs under a pinned credential. */
+const pinnedSource = Effect.gen(function* () {
+  const pin = yield* PinnedGitHubCredential;
+  if (pin === null) {
+    return yield* unusable(SourceControlProviderKind.make("github"), "unauthenticated");
+  }
+  return pin.source ?? null;
+});
+
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
@@ -259,6 +302,7 @@ function makeService(input: {
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
   readonly onProjectRead?: () => void;
+  readonly appTokens?: GitHubAppInstallationTokens["Service"];
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -297,6 +341,7 @@ function makeService(input: {
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
         }),
+        Layer.succeed(GitHubAppInstallationTokens, input.appTokens ?? appCovering(() => {}, [])),
         SourceControlRateLimit.layer,
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
@@ -1028,6 +1073,119 @@ it.effect("tries another workspace on the same host for the viewer", () =>
     assert.strictEqual(result.entries.length, 2);
     assert.strictEqual(result.viewers["github.com"], "bilal");
   }),
+);
+
+it.effect(
+  "reads repositories the GitHub App covers with its token when the server has no sign-in",
+  () =>
+    Effect.gen(function* () {
+      const reads: Array<string> = [];
+      const asked: Array<string> = [];
+      let commentPin: unknown = "unset";
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "a", workspaceRoot: "/a", repository: "org/a" }),
+          project({ id: "p2", title: "b", workspaceRoot: "/b", repository: "org/b" }),
+        ],
+        appTokens: appCovering((repository) => asked.push(repository), ["org/a"]),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () => pinnedSource.pipe(Effect.as("pair-app[bot]")),
+            listChangeRequests: (input) =>
+              pinnedSource.pipe(
+                Effect.map((source) => {
+                  reads.push(`${input.repository} ${source}`);
+                  return {
+                    items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                    truncated: false,
+                    continues: true,
+                  };
+                }),
+              ),
+            comment: () =>
+              Effect.gen(function* () {
+                commentPin = yield* PinnedGitHubCredential;
+              }),
+          }),
+        ],
+      });
+
+      const result = yield* service.list({ state: "open" });
+
+      assert.strictEqual(result.viewers["github.com"], "pair-app[bot]");
+      assert.strictEqual(result.providers[0]?.configured, true);
+      assert.deepStrictEqual(
+        result.entries.map((entry) => entry.repository),
+        ["org/a"],
+      );
+      assert.deepStrictEqual(reads, ["org/a installation"]);
+      assert.deepStrictEqual(
+        result.errors.map((error) => error.message),
+        ["org/b could not be read."],
+      );
+      assert.deepStrictEqual(asked.toSorted(), ["org/a", "org/a", "org/b"]);
+
+      yield* service.comment({
+        projectId: "p1" as ProjectId,
+        repository: "org/a",
+        number: 1,
+        body: "Looks good",
+      });
+      assert.strictEqual(commentPin, null);
+    }),
+);
+
+it.effect(
+  "reads with the server's own sign-in, and keeps a verified account's pin over the App's",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<string> = [];
+      let verified = false;
+      const service = yield* makeService({
+        projects: [project({ id: "p1", title: "a", workspaceRoot: "/a", repository: "org/a" })],
+        appTokens: appCovering((repository) => asked.push(repository), ["org/a"]),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            withVerifiedCredential: (_, use) =>
+              use({ accountId: "101", viewer: "octocat", credentialFingerprint: "verified" }).pipe(
+                Effect.provideService(PinnedGitHubCredential, {
+                  host: "github.com",
+                  token: Redacted.make("verified"),
+                  credentialFingerprint: "verified",
+                  source: "settings",
+                }),
+              ),
+            getChangeRequest: () =>
+              Effect.gen(function* () {
+                if ((yield* PinnedGitHubCredential)?.source === "settings") verified = true;
+                return yield* new PullRequestProviderError({
+                  provider: SourceControlProviderKind.make("github"),
+                  operation: "getChangeRequest",
+                  reason: "not-found",
+                  detail: "HTTP 404",
+                });
+              }),
+          }),
+        ],
+      });
+
+      const listed = yield* service.list({ state: "open" });
+      assert.strictEqual(listed.viewers["github.com"], "bilal");
+
+      const reference = {
+        projectId: "p1" as ProjectId,
+        repository: "org/a",
+        number: 1,
+        host: "github.com",
+        expectedAccountId: "101",
+      };
+      const error = yield* Effect.flip(
+        service.withRoutingCredential(reference, service.detail(reference)),
+      );
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.isTrue(verified);
+      assert.deepStrictEqual(asked, []);
+    }),
 );
 
 it.effect("routing verifies the current account on the requested host without caching it", () =>

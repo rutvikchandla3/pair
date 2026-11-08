@@ -375,7 +375,10 @@ risk Settings shows.
   admin adds in Settings → Source Control (M1).
 - Pair's PR list and review panel read GitHub through the server's own sign-in
   ([GitHubRequestPolicy.ts](../../../packages/source-control-github/src/server/GitHubRequestPolicy.ts)),
-  not the App key or a member's token (open questions).
+  never a member's token. Where that sign-in is missing or cannot see a repository the App covers,
+  the read runs under a read-only installation token instead
+  ([pullRequestAppReads.ts](../../../apps/server/src/pullRequest/pullRequestAppReads.ts), M2 2.44).
+  That token lives only in the server's process.
 
 ### Design
 

@@ -145,6 +145,8 @@ const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, st
   gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
   member:
     "Your GitHub connection can't see it. Ask an admin to install the team's GitHub App there.",
+  installation:
+    "The team's GitHub App can't see it. Install the App on this repository, or sign the server in under Settings → Source Control.",
 };
 
 function withAvatar(

@@ -78,12 +78,14 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import { GitHubAppInstallationTokens } from "../sandbox/credentials/GitHubAppInstallationTokens.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { PinnedGitHubCredential } from "@t3tools/source-control-github/server/requestPolicy";
 import {
   type ProviderChangeRequest,
   type ProviderDiffFilePaths,
@@ -97,6 +99,7 @@ import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
 import { toChangeBreakdown } from "./pullRequestChangeBreakdown.ts";
+import { appReadCredential, withAppReads } from "./pullRequestAppReads.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
@@ -709,6 +712,7 @@ export const make = Effect.gen(function* () {
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+  const appTokens = yield* GitHubAppInstallationTokens;
   const clock = yield* Clock.Clock;
 
   /**
@@ -947,7 +951,11 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withAppReads(
+              withRateLimitBackoff(api, host, rateLimits),
+              { host, repository },
+              appTokens,
+            ),
             repository,
             host,
             remote:
@@ -1024,7 +1032,11 @@ export const make = Effect.gen(function* () {
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
-                      api: withRateLimitBackoff(api, host, rateLimits),
+                      api: withAppReads(
+                        withRateLimitBackoff(api, host, rateLimits),
+                        { host, repository },
+                        appTokens,
+                      ),
                       repository,
                       host,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
@@ -1112,17 +1124,33 @@ export const make = Effect.gen(function* () {
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const [host, kind, roots, repositories] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
+        ReadonlyArray<readonly [cwd: string, repository: string]>,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
       const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
+      // With no credential of the server's own, the viewer is the App's bot.
+      const asApp = Effect.firstSuccessOf(
+        repositories.map(([cwd, repository]) =>
+          appReadCredential(appTokens, repository).pipe(
+            Effect.flatMap((pin) => Effect.fromOption(pin)),
+            Effect.flatMap((pin) =>
+              api.getViewer({ cwd, host }).pipe(Effect.provideService(PinnedGitHubCredential, pin)),
+            ),
+          ),
+        ),
+      );
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
+        Effect.catchIf(
+          (error) => host === "github.com" && isProviderUnusable(error) && repositories.length > 0,
+          (error) => asApp.pipe(Effect.mapError(() => error)),
+        ),
         Effect.map((viewer) => ({
           host,
           kind,
@@ -1168,7 +1196,15 @@ export const make = Effect.gen(function* () {
           // Include deduplicated checkouts too; one unreadable worktree must not mark the whole host signed out.
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+          const repositories = [
+            ...new Map(
+              forHost.map(({ project, repository }) => [
+                repository.toLowerCase(),
+                [project.workspaceRoot, repository] as const,
+              ]),
+            ).values(),
+          ].toSorted(([, left], [, right]) => left.localeCompare(right));
+          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort(), repositories]);
           if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // Check pauses outside the shared lookup so background reads cannot spawn repeated failing CLIs and extend the pause.
           return rateLimits.check({ provider: api.kind, host }).pipe(

@@ -90,6 +90,7 @@ const harness = (input: Case) => {
   const app = GitHubAppInstallationTokens.of({
     configured: Effect.succeed(input.app !== "unset"),
     revoke: () => Effect.void,
+    readTokenFor: () => Effect.die("pull request reads never ask for a git credential"),
     tokenFor: ({ sandboxId, repository }) => {
       tokenRequests.push(`${sandboxId} ${repository}`);
       return input.app === "token"

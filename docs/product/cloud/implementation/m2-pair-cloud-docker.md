@@ -3661,9 +3661,16 @@ guide depends on the answer.
        (GitHubRequestPolicy.ts 28) or `ActingSourceControlCredential`
        (ActingSourceControlCredential.ts 15) is already set. So a verified routing account from
        `withRoutingCredential` (PullRequestService.ts 1597) still wins.
-    2. Otherwise, when `tokens.configured` (104) is true and `readTokenFor({ repository })`
-       succeeds, it provides `PinnedGitHubCredential` as `{ host, token, credentialFingerprint, source: "installation" }`.
-    3. On any `GitHubAppInstallationError` it runs as is: today's chain.
+    2. Otherwise it runs as is first, with today's chain. When that fails with `missing-tool`,
+       `unauthenticated`, `not-found` or `forbidden`, `tokens.configured` (104) is true and
+       `readTokenFor({ repository })` succeeds, it runs again with `PinnedGitHubCredential` as
+       `{ host, token, credentialFingerprint, source: "installation" }`.
+    3. On any `GitHubAppInstallationError` it keeps the first error.
+    4. A call naming any other repository (a cross-repository search, line stats, a routed
+       reference `requireProject` rewrote) runs as is: the token is scoped to one repository.
+       (Landed order: the sign-in first, the App second. App-first would show a signed-in server's
+       panel the bot's read-only permissions and refuse its writes, because a client pins the
+       signed-in account only when it routes between environments, pullRequestRouting.ts 343.)
   - `apps/server/src/pullRequest/PullRequestService.ts`:
     - Both `SupportedProject` sites (950, 1027) wrap
       `withAppReads(withRateLimitBackoff(api, host, rateLimits), { host, repository }, tokens)`.
@@ -3685,18 +3692,16 @@ guide depends on the answer.
   - Docs: `docs/user/source-control.md` "Pushing from cloud threads" step 1 (52–56), the
     installation-token App, adds **Checks** and **Commit statuses** read-only, and
     `docs/user/cloud.md` "Pushing and pull requests" (131–133) says PR reads use it.
-    `docs/user/team.md` "Set up the GitHub App" step 3 (101–102) is the device-flow sign-in App; it
-    gets the same two only because a team usually uses one App for both (G1's test App does).
+    `docs/user/team.md` "Set up the GitHub App" step 3 (101–102) is the device-flow sign-in App,
+    which the guides present as a separate App; it stays unchanged (landed).
 - **Types and services:** `GitHubAppInstallationTokens.readTokenFor`; `GitHubCredentialSource`
   `"installation"`; `withAppReads`.
 - **Commands and events:** none.
 - **Migrations:** none.
 - **Proposed gap answers.**
-  - Order (07 open question 1 recommends the App first, then the server sign-in). The App serves a
-    read unless a verified account is already pinned. With a server sign-in, the PR panel keeps
-    reading as the signed-in account, because the client routes and pins it. The list's
-    repository reads use the App, while its "Authored" and "Reviewing" filters still use the
-    sign-in's login. With no sign-in, the App serves everything it covers.
+  - Order (07 open question 1 recommended the App first). **Landed the other way:** the server's
+    own sign-in reads first, and the App serves only what it cannot (see step 2 above). With no
+    sign-in, the App serves everything it covers.
   - With only the App, the viewer is the App's bot. **All**, the default on web
     (pullRequestListPreferences.ts 42) and mobile (pullRequestList.ts 19), shows every PR.
     **Authored** and **Reviewing** come back empty, and the panel offers no write actions,
@@ -3719,8 +3724,9 @@ guide depends on the answer.
     `yield* PinnedGitHubCredential`. A fake `GitHubAppInstallationTokens` covers `org/a` only. The
     list returns `org/a`'s PRs with `source: "installation"` on every read, the provider is
     `configured: true`, `org/b` is listed unreadable, and a `comment` on `org/a` runs with no pin.
-  - New case "keeps a verified account's pin over the App's": through `withRoutingCredential`
-    with an `expectedAccountId`, the read sees the verified credential.
+  - New case "reads with the server's own sign-in, and keeps a verified account's pin over the
+    App's": a signed-in list never asks the App, and a read through `withRoutingCredential` with an
+    `expectedAccountId` sees the verified credential and keeps its not-found.
 
 **Verify.** `vp test run apps/server/src/sandbox/credentials/GitHubAppInstallationTokens.test.ts apps/server/src/pullRequest/PullRequestService.test.ts`;
 `vp run typecheck` for `@t3tools/source-control-github` and `t3`; `vp run check:changed`.

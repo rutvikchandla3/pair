@@ -295,10 +295,10 @@ thread uses that record and asks only the forge.
 
 **PR list and panel.** These reads run on Pair Cloud against the project checkout and the forge API.
 [GitHubRequestPolicy.ts](../../../packages/source-control-github/src/server/GitHubRequestPolicy.ts)
-makes them use the server's own GitHub sign-in in Settings → Source Control, not the App's key or a
-member's token, so Pair Cloud needs that sign-in for them to work
-([user guide](../../user/cloud.md#pushing-and-pull-requests)). Whether the installation token should
-serve them instead is open (Open questions).
+makes them use the server's own GitHub sign-in in Settings → Source Control. Where the server has
+none, or it cannot see a repository the team's GitHub App covers, the read runs under the App's
+read-only installation token, so a Pair Cloud server with only the App shows PRs
+([user guide](../../user/cloud.md#pushing-and-pull-requests), open question 1).
 
 ## 4. Terminals
 
@@ -717,10 +717,11 @@ Each row is about one pull request.
 ## Open questions
 
 1. **Should the GitHub App's installation token serve PR list and panel reads where the App is
-   installed?** Today `GitHubRequestPolicy` uses the server's own GitHub sign-in, so Pair Cloud needs
-   one. Recommend the installation token for repos the App covers, falling back to the server
-   sign-in. `GitHubRequestPolicy` is upstream code; its `PinnedGitHubCredential` reference lets the
-   call site pick the credential without changing it.
+   installed?** Answered by M2 2.44: yes, through `PinnedGitHubCredential`, so `GitHubRequestPolicy`
+   stays unchanged. The server's own sign-in still reads first and the App serves what it cannot.
+   App-first would make the panel show the bot's read-only permissions, and refuse writes, to a
+   server that is signed in: a client pins the signed-in account only when it routes between
+   environments.
 2. **github.com only.** Adding a project, the credential service (`unsupported-host`) and the push
    hook all refuse other hosts, so GitHub Enterprise Server and in-VPC GitLab customers are blocked.
    The git proxy for other hosts is Later; the first customer who asks sets its order.

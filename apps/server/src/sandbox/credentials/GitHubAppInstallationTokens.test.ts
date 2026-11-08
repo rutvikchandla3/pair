@@ -42,6 +42,8 @@ interface Sent {
 const harness = (
   github: { readonly appId: string; readonly appPrivateKey: string },
   revokeStatus = 204,
+  /** The installation has not accepted Checks or Commit statuses read. */
+  lacksReadPermissions = false,
 ) => {
   const sent: Array<Sent> = [];
   const logs: Array<string> = [];
@@ -64,16 +66,21 @@ const harness = (
           ? { status: revokeStatus, body: {} }
           : url.pathname === "/repos/org/repo/installation"
             ? { status: 200, body: { id: 7 } }
-            : url.pathname === "/app/installations/7/access_tokens"
-              ? {
-                  status: 201,
-                  body: {
-                    token: `ghs_minted_${++minted}`,
-                    expires_at: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
-                    permissions: { contents: "write" },
-                  },
-                }
-              : { status: 404, body: { message: "Not Found" } };
+            : url.pathname === "/app/installations/7/access_tokens" &&
+                lacksReadPermissions &&
+                request.body._tag === "Uint8Array" &&
+                new TextDecoder().decode(request.body.body).includes('"checks"')
+              ? { status: 422, body: { message: "The permissions requested are not granted" } }
+              : url.pathname === "/app/installations/7/access_tokens"
+                ? {
+                    status: 201,
+                    body: {
+                      token: `ghs_minted_${++minted}`,
+                      expires_at: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+                      permissions: { contents: "write" },
+                    },
+                  }
+                : { status: 404, body: { message: "Not Found" } };
       return HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify(reply.body), {
@@ -151,6 +158,34 @@ describe("GitHubAppInstallationTokens", () => {
         ),
       ).toBe("ghs_minted_3");
 
+      // A read token asks for read permissions only, and `revoke` never touches it.
+      sent.length = 0;
+      const read = yield* tokens.readTokenFor({ repository: "Org/Repo" });
+      expect(Redacted.value(read.token)).toBe("ghs_minted_4");
+      expect(sent.map((request) => request.body)).toEqual([
+        null,
+        {
+          repositories: ["repo"],
+          permissions: {
+            contents: "read",
+            metadata: "read",
+            pull_requests: "read",
+            checks: "read",
+            statuses: "read",
+          },
+        },
+      ]);
+      expect(read.permissions).toEqual(GitHubAppInstallationTokens.READ_TOKEN_PERMISSIONS);
+      yield* tokens.revoke(sandboxA);
+      expect(sent.slice(2).map(({ method, bearer }) => `${method} ${bearer}`)).toEqual([
+        "DELETE ghs_minted_3",
+      ]);
+      sent.length = 0;
+      expect(Redacted.value((yield* tokens.readTokenFor({ repository: "org/repo" })).token)).toBe(
+        "ghs_minted_4",
+      );
+      expect(sent).toHaveLength(0);
+
       // One line per mint, and nothing secret anywhere in the log.
       const text = logs.join("\n");
       expect(text.match(/minted a GitHub App installation token/gu)).toHaveLength(3);
@@ -222,6 +257,40 @@ describe("GitHubAppInstallationTokens", () => {
       expect(error.reason).toBe(expected.reason);
       expect(sent).toHaveLength(expected.requests);
       expect(`${error.message}\n${logs.join("\n")}`).not.toContain("PRIVATE KEY");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("remembers a repository the App is not installed on for five minutes", () => {
+    const { sent, layer } = harness({ appId: "12345", appPrivateKey: pastedKey });
+    return Effect.gen(function* () {
+      const tokens = yield* GitHubAppInstallationTokens.GitHubAppInstallationTokens;
+      const reason = tokens.readTokenFor({ repository: "org/missing" }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.reason),
+      );
+      expect(yield* reason).toBe("not-installed");
+      expect(sent).toHaveLength(1);
+      yield* TestClock.adjust(Duration.minutes(4));
+      expect(yield* reason).toBe("not-installed");
+      expect(sent).toHaveLength(1);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* reason).toBe("not-installed");
+      expect(sent).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names the permission the App lacks when GitHub refuses a read token", () => {
+    const { layer } = harness({ appId: "12345", appPrivateKey: pastedKey }, 204, true);
+    return Effect.gen(function* () {
+      const tokens = yield* GitHubAppInstallationTokens.GitHubAppInstallationTokens;
+      const error = yield* tokens.readTokenFor({ repository: "org/repo" }).pipe(Effect.flip);
+      expect(error.reason).toBe("failed");
+      expect(error.detail).toBe(
+        "The GitHub App lacks a permission Pair asks for (Checks or Commit statuses read).",
+      );
+      // The sandbox's write token asks for neither, so it still mints.
+      const minted = yield* tokens.tokenFor({ sandboxId: sandboxA, repository: "org/repo" });
+      expect(Redacted.value(minted.token)).toBe("ghs_minted_1");
     }).pipe(Effect.provide(layer));
   });
 });

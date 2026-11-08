@@ -32,6 +32,18 @@ const INSTALLATION_TOKEN_PERMISSIONS = {
   metadata: "read",
   pull_requests: "write",
 } as const;
+/** What the PR list and panel read; never a write, and never inside a machine. */
+export const READ_TOKEN_PERMISSIONS = {
+  contents: "read",
+  metadata: "read",
+  pull_requests: "read",
+  checks: "read",
+  statuses: "read",
+} as const;
+const READ_PERMISSION_REFUSED =
+  "The GitHub App lacks a permission Pair asks for (Checks or Commit statuses read).";
+/** A repository the App does not cover costs one lookup per this long, not two requests a read. */
+const NOT_INSTALLED_TTL = Duration.minutes(5);
 
 export class GitHubAppInstallationError extends Schema.TaggedError<GitHubAppInstallationError>()(
   "GitHubAppInstallationError",
@@ -70,6 +82,13 @@ export class GitHubAppInstallationTokens extends Context.Service<
      * GitHub failures are logged and ignored (stateless tokens may not honor it, 06 §5).
      */
     readonly revoke: (sandboxId: SandboxId) => Effect.Effect<void>;
+    /**
+     * A read-only token for the server's own pull request reads, cached per repository and
+     * untouched by `revoke`. A repository the App is not installed on is remembered for 5 minutes.
+     */
+    readonly readTokenFor: (input: {
+      readonly repository: string;
+    }) => Effect.Effect<InstallationToken, GitHubAppInstallationError>;
   }
 >()("t3/sandbox/credentials/GitHubAppInstallationTokens") {}
 
@@ -100,6 +119,8 @@ const make = Effect.gen(function* () {
   /** Bumped by `revoke`, so a mint already in flight does not cache for a stopped sandbox. */
   const revocations = yield* Ref.make<ReadonlyMap<SandboxId, number>>(new Map());
   const mintLocks = yield* KeyedLock.make<string>();
+  const readCache = yield* Ref.make<ReadonlyMap<string, InstallationToken>>(new Map());
+  const notInstalled = yield* Ref.make<ReadonlyMap<string, DateTime.Utc>>(new Map());
 
   const configured = sourceControlHost.settings.get.pipe(
     Effect.map((settings) => {
@@ -205,8 +226,10 @@ const make = Effect.gen(function* () {
     );
 
   const mint = Effect.fn("GitHubAppInstallationTokens.mint")(function* (
-    sandboxId: SandboxId,
     repository: string,
+    permissions: Readonly<Record<string, string>>,
+    /** What a 422, GitHub's answer to a permission the installation lacks, says. */
+    refusedDetail: string | undefined,
   ) {
     const jwt = yield* signAppJwt(repository);
     const [owner, name] = repository.split("/");
@@ -223,10 +246,17 @@ const make = Effect.gen(function* () {
       HttpClientRequest.post(`${API}/app/installations/${id}/access_tokens`).pipe(
         HttpClientRequest.bodyJsonUnsafe({
           repositories: [name],
-          permissions: INSTALLATION_TOKEN_PERMISSIONS,
+          permissions,
         }),
       ),
     );
+    if (minted.status === 422 && refusedDetail !== undefined) {
+      return yield* new GitHubAppInstallationError({
+        repository,
+        reason: "failed",
+        detail: refusedDetail,
+      });
+    }
     yield* expectStatus(repository, minted, 201);
     const body = yield* decode(repository, minted, AccessTokenResponse);
     const parsed = DateTime.make(body.expires_at);
@@ -237,19 +267,34 @@ const make = Effect.gen(function* () {
         detail: "GitHub sent no token expiry",
       });
     }
-    const expiresAt = DateTime.toUtc(parsed.value);
-    yield* Effect.logInfo("minted a GitHub App installation token", {
-      sandboxId,
-      repository,
-      expiresAt: DateTime.formatIso(expiresAt),
-    });
     return {
       token: Redacted.make(body.token),
-      expiresAt,
+      expiresAt: DateTime.toUtc(parsed.value),
       repository,
-      permissions: INSTALLATION_TOKEN_PERMISSIONS,
+      permissions,
     } satisfies InstallationToken;
   });
+
+  const freshIn = (map: ReadonlyMap<string, InstallationToken>, key: string, now: DateTime.Utc) => {
+    const cached = map.get(key);
+    return cached !== undefined &&
+      DateTime.isLessThan(now, DateTime.subtractDuration(cached.expiresAt, REFRESH_MARGIN))
+      ? cached
+      : undefined;
+  };
+
+  const withEntry = <V>(
+    current: ReadonlyMap<string, V>,
+    key: string,
+    value: V,
+    live: (entry: V) => boolean,
+  ) => {
+    const next = new Map<string, V>();
+    for (const [entryKey, entry] of current) {
+      if (live(entry)) next.set(entryKey, entry);
+    }
+    return next.set(key, value);
+  };
 
   const tokenFor: GitHubAppInstallationTokens["Service"]["tokenFor"] = Effect.fn(
     "GitHubAppInstallationTokens.tokenFor",
@@ -257,12 +302,7 @@ const make = Effect.gen(function* () {
     const repository = input.repository.toLowerCase();
     const key = `${input.sandboxId}\u0000${repository}`;
     const fresh = Effect.gen(function* () {
-      const cached = (yield* Ref.get(cache)).get(key);
-      const now = yield* DateTime.now;
-      return cached !== undefined &&
-        DateTime.isLessThan(now, DateTime.subtractDuration(cached.expiresAt, REFRESH_MARGIN))
-        ? cached
-        : undefined;
+      return freshIn(yield* Ref.get(cache), key, yield* DateTime.now);
     });
     const hit = yield* fresh;
     if (hit !== undefined) return hit;
@@ -273,17 +313,72 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const raced = yield* fresh;
         if (raced !== undefined) return raced;
-        const token = yield* mint(input.sandboxId, repository);
+        const token = yield* mint(repository, INSTALLATION_TOKEN_PERMISSIONS, undefined);
+        yield* Effect.logInfo("minted a GitHub App installation token", {
+          sandboxId: input.sandboxId,
+          repository,
+          expiresAt: DateTime.formatIso(token.expiresAt),
+        });
         if ((yield* Ref.get(revocations)).get(input.sandboxId) !== epoch) return token;
         const now = yield* DateTime.now;
-        yield* Ref.update(cache, (current) => {
-          const next = new Map<string, InstallationToken>();
-          for (const [entryKey, entry] of current) {
-            if (DateTime.isLessThan(now, entry.expiresAt)) next.set(entryKey, entry);
-          }
-          next.set(key, token);
-          return next;
+        yield* Ref.update(cache, (current) =>
+          withEntry(current, key, token, (entry) => DateTime.isLessThan(now, entry.expiresAt)),
+        );
+        return token;
+      }),
+    );
+  });
+
+  const readTokenFor: GitHubAppInstallationTokens["Service"]["readTokenFor"] = Effect.fn(
+    "GitHubAppInstallationTokens.readTokenFor",
+  )(function* (input) {
+    const repository = input.repository.toLowerCase();
+    const cached = Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const token = freshIn(yield* Ref.get(readCache), repository, now);
+      if (token !== undefined) return token;
+      const until = (yield* Ref.get(notInstalled)).get(repository);
+      if (until === undefined || !DateTime.isLessThan(now, until)) return undefined;
+      return yield* new GitHubAppInstallationError({
+        repository,
+        reason: "not-installed",
+        detail: "the App was not installed on it a moment ago",
+      });
+    });
+    const hit = yield* cached;
+    if (hit !== undefined) return hit;
+    // The sandbox keys start with a sandbox id, so this one never shares their lock.
+    return yield* mintLocks.withLock(
+      `read\u0000${repository}`,
+      Effect.gen(function* () {
+        const raced = yield* cached;
+        if (raced !== undefined) return raced;
+        const token = yield* mint(repository, READ_TOKEN_PERMISSIONS, READ_PERMISSION_REFUSED).pipe(
+          Effect.tapError((error) =>
+            error.reason === "not-installed"
+              ? Effect.flatMap(DateTime.now, (now) =>
+                  Ref.update(notInstalled, (current) =>
+                    withEntry(
+                      current,
+                      repository,
+                      DateTime.addDuration(now, NOT_INSTALLED_TTL),
+                      (until) => DateTime.isLessThan(now, until),
+                    ),
+                  ),
+                )
+              : Effect.void,
+          ),
+        );
+        yield* Effect.logInfo("minted a read-only GitHub App installation token", {
+          repository,
+          expiresAt: DateTime.formatIso(token.expiresAt),
         });
+        const now = yield* DateTime.now;
+        yield* Ref.update(readCache, (current) =>
+          withEntry(current, repository, token, (entry) =>
+            DateTime.isLessThan(now, entry.expiresAt),
+          ),
+        );
         return token;
       }),
     );
@@ -343,7 +438,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  return GitHubAppInstallationTokens.of({ configured, tokenFor, revoke });
+  return GitHubAppInstallationTokens.of({ configured, tokenFor, revoke, readTokenFor });
 });
 
 export const layer = Layer.effect(GitHubAppInstallationTokens, make);

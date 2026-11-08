@@ -52,8 +52,11 @@ push or pull with a credential for the thread's own repository, or a fork of it,
 1. With a GitHub App set in **Settings → Source control → GitHub**, a one-hour token for that one
    repository. Create the App in your GitHub account or organization, install it on the
    repositories your team works in, and give it these repository permissions: **Contents** read
-   and write, **Pull requests** read and write, and **Metadata** read. Enter its App ID and paste
-   the private key (`.pem`) it generates.
+   and write, **Pull requests** read and write, **Checks** and **Commit statuses** read-only, and
+   **Metadata** read. Enter its App ID and paste the private key (`.pem`) it generates. The two
+   read-only permissions let the pull request list and panel use the App too
+   ([Pushing and pull requests](./cloud.md#pushing-and-pull-requests)); when you add them to an
+   existing App, GitHub asks each installation to accept them.
 2. Without an App, or for a repository it is not installed on, the thread owner's own GitHub,
    connected or [pasted as a token](./team.md#bring-your-own-github-token) in **Settings → Team**
    on their row.
