@@ -93,7 +93,10 @@ export const SandboxSleepReason = Schema.Literals([
 export type SandboxSleepReason = typeof SandboxSleepReason.Type;
 
 export const SandboxFailure = Schema.Struct({
-  /** Open set: create-failed, start-failed, boot-timeout, lost, driver-removed, workspace-failed. */
+  /**
+   * Open set: create-failed, start-failed, boot-timeout, lost, missing, driver-removed,
+   * workspace-failed.
+   */
   code: TrimmedNonEmptyString,
   message: Schema.String,
   retryable: Schema.Boolean,

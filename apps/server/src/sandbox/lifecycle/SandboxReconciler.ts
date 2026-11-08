@@ -25,6 +25,7 @@ import {
   sandboxBackendName,
 } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import { SANDBOX_BACKEND_MISSING } from "./SandboxDecisions.ts";
 import { getSandboxes, listLiveSandboxes } from "./SandboxProjection.ts";
 
 export type ReconcileAction =
@@ -201,7 +202,7 @@ const make = Effect.gen(function* () {
           commandId: yield* guardedCommandId(record),
           ...generationFields,
           failure: {
-            code: "lost",
+            code: action.retryable ? "lost" : SANDBOX_BACKEND_MISSING,
             message: action.retryable
               ? "The machine stopped and its runner did not come back."
               : "The machine and its disk are gone.",

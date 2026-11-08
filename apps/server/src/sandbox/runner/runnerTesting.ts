@@ -37,6 +37,30 @@ export interface RunnerTestingOptions {
   readonly bundleDirectory?: string;
 }
 
+/** Agents run as the test's own user: no uid, so no setpriv. */
+export const layerConfig = (options: RunnerTestingOptions = {}) =>
+  Layer.effect(
+    RunnerConfig,
+    // Forward sockets live in the state dir; a short tmp path stays under sockaddr_un's limit.
+    FileSystem.FileSystem.use((fs) =>
+      fs.makeTempDirectoryScoped({ directory: "/tmp", prefix: "pair-runner-" }),
+    ).pipe(
+      Effect.map((stateDir) => ({
+        url: "unix:/nonexistent/runner.sock",
+        sandboxId: "sbx_00000000000000000000",
+        runnerBuildId: TEST_RUNNER_BUILD_ID,
+        enrollment: Option.none(),
+        stateDir,
+        facts: {
+          agent: { uid: null, homeDirectory: NodeOS.homedir(), shell: "/bin/sh" },
+          tmpDirectory: NodeOS.tmpdir(),
+          bundleDirectory: options.bundleDirectory ?? `/opt/pair-runner/${TEST_RUNNER_BUILD_ID}`,
+          imageEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
+        },
+      })),
+    ),
+  ).pipe(Layer.provide(NodeServices.layer));
+
 /**
  * The runner's handlers in process, against real child processes, PTYs and files. Serve them
  * with `RpcTest.makeClient(RunnerRpcGroup)` or an `RpcServer` over an in-memory socket.
@@ -46,31 +70,7 @@ export const layerWith = (options: RunnerTestingOptions = {}) =>
     Layer.provideMerge(HandleTable.layer),
     Layer.provideMerge(OpsLayer.layer),
     Layer.provideMerge(layerMemoryCredential),
-    Layer.provideMerge(
-      Layer.effect(
-        RunnerConfig,
-        // Forward sockets live in the state dir; a short tmp path stays under sockaddr_un's limit.
-        FileSystem.FileSystem.use((fs) =>
-          fs.makeTempDirectoryScoped({ directory: "/tmp", prefix: "pair-runner-" }),
-        ).pipe(
-          Effect.map((stateDir) => ({
-            url: "unix:/nonexistent/runner.sock",
-            sandboxId: "sbx_00000000000000000000",
-            runnerBuildId: TEST_RUNNER_BUILD_ID,
-            enrollment: Option.none(),
-            stateDir,
-            // Agents run as the test's own user: no uid, so no setpriv.
-            facts: {
-              agent: { uid: null, homeDirectory: NodeOS.homedir(), shell: "/bin/sh" },
-              tmpDirectory: NodeOS.tmpdir(),
-              bundleDirectory:
-                options.bundleDirectory ?? `/opt/pair-runner/${TEST_RUNNER_BUILD_ID}`,
-              imageEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
-            },
-          })),
-        ),
-      ).pipe(Layer.provide(NodeServices.layer)),
-    ),
+    Layer.provideMerge(layerConfig(options)),
     Layer.provide(NodePtyAdapter.layer),
     Layer.provideMerge(NodeServices.layer),
   );

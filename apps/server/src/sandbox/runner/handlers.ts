@@ -229,7 +229,15 @@ export const layer = RunnerCoreRpcGroup.toLayer(
         // Node reads a number as seconds.
         fs.utimes(path, atime / 1000, mtime / 1000).pipe(systemErrors),
       [RUNNER_METHODS.fsMakeTempDirectory]: ({ directory, prefix }) =>
-        fs.makeTempDirectory({ directory, prefix }).pipe(systemErrors),
+        fs.makeTempDirectory({ directory, prefix }).pipe(
+          // The server makes these for agent processes (a review index for git), which drop to the
+          // agent user; a root-owned 0700 directory would shut them out.
+          Effect.tap((created) => {
+            const { uid } = config.facts.agent;
+            return uid === null ? Effect.void : fs.chown(created, uid, uid);
+          }),
+          systemErrors,
+        ),
       [RUNNER_METHODS.fsReadStream]: ({ path, offset, chunkBytes }) =>
         Stream.suspend(() => {
           let seq = offset ?? 0;

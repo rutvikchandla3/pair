@@ -192,6 +192,11 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      # The runner's fence follows transitive imports, which lint cannot see; sandbox-image.yml only runs on tags.
+      - name: Check runner bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node apps/server/scripts/cli.ts build-runner --out "$RUNNER_TEMP/runner"
+
       - name: Typecheck
         if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
         timeout-minutes: 5

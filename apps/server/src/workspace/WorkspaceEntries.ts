@@ -25,7 +25,7 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import type {
   CoarseOperationError,

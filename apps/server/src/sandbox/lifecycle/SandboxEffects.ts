@@ -32,7 +32,7 @@ import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
-import type { SandboxEffectRequest } from "./SandboxDecisions.ts";
+import { SANDBOX_BACKEND_MISSING, type SandboxEffectRequest } from "./SandboxDecisions.ts";
 
 const SandboxEffectOperation = Schema.Literals([
   "create",
@@ -373,7 +373,17 @@ const make = Effect.gen(function* () {
         case "sandbox.start": {
           const driverRef = yield* requireDriverRef(record, fail);
           // The runner's hello marks it ready; nothing to report here.
-          return yield* call(driver.start(driverRef, yield* bootstrap));
+          const started = yield* call(
+            driver.start(driverRef, yield* bootstrap).pipe(
+              Effect.as(true),
+              Effect.catchIf(
+                (error) => error.reason === "not-found",
+                () => Effect.succeed(false),
+              ),
+            ),
+          );
+          if (started) return;
+          return yield* reportMissing(record);
         }
         case "sandbox.stop":
           // A settled thread's last diff must be in the mirror before its disk goes away.
@@ -417,6 +427,18 @@ const make = Effect.gen(function* () {
       ? Effect.fail(fail(false)("The sandbox has no backend resource to start."))
       : Effect.succeed(record.driverRef);
 
+  const reportMissing = (record: OrchestrationV2Sandbox) =>
+    report(record, {
+      type: "sandbox.failed",
+      commandId: CommandId.make(`sandbox-failed:${record.id}:${record.generation}:missing`),
+      ...generationFields(record),
+      failure: {
+        code: SANDBOX_BACKEND_MISSING,
+        message: "The machine and its disk are gone. Retry starts a new one.",
+        retryable: true,
+      },
+    });
+
   const reportStatus = Effect.fn("SandboxEffects.reportStatus")(function* (
     record: OrchestrationV2Sandbox,
     driver: ComputeDriver["Service"],
@@ -434,6 +456,8 @@ const make = Effect.gen(function* () {
           ...generationFields(record),
         });
       case "missing":
+        yield* revokeCredentials(record, "status");
+        return yield* reportMissing(record);
       case "failed":
         yield* revokeCredentials(record, "status");
         return yield* report(record, {

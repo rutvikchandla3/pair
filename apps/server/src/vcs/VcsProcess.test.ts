@@ -19,7 +19,9 @@ import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const encodeExitError = Schema.encodeEffect(Schema.fromJsonString(VcsProcessExitError));
 
@@ -501,6 +503,51 @@ describe("VcsProcess.run", () => {
       expect(error).toHaveProperty("cause");
       expect(error.message).not.toContain(secretArgument);
     }).pipe(provideLive),
+  );
+
+  it.effect(
+    "runs git -C from the sandbox's home, since the server's cwd is not on that machine",
+    () =>
+      Effect.gen(function* () {
+        const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+        const local = yield* hosts.local.info;
+        yield* hosts.register("/t3-sandbox/sbx_0000000000000000000a", {
+          ...hosts.local,
+          id: "sbx_0000000000000000000a" as WorkspaceHostId,
+          kind: "sandbox",
+          info: Effect.succeed({ ...local, homeDirectory: "/home/t3" }),
+        });
+        const spawnCwds: Array<string | undefined> = [];
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            ProcessRunner.ProcessRunner.of({
+              run: (input) => {
+                spawnCwds.push(input.spawnCwd);
+                return Effect.succeed({
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                });
+              },
+            }),
+          ),
+        );
+
+        yield* service.run({
+          ...baseInput,
+          cwd: "/t3-sandbox/sbx_0000000000000000000a/repos/app",
+          spawnOutsideCwd: true,
+        });
+        yield* service.run({ ...baseInput, cwd: process.cwd(), spawnOutsideCwd: true });
+
+        expect(spawnCwds).toEqual(["/home/t3", process.cwd()]);
+      }).pipe(Effect.scoped, Effect.provide(WorkspaceHostTesting.layerFromContext)),
   );
 
   it.effect("truncates output and appends the marker when requested", () =>

@@ -113,6 +113,9 @@ const admissionWait = (
  * M1's settle-and-archive rule: once every attached thread is archived or settled and none has
  * an active run, the sandbox may sleep. Null while it is still in use, or with no thread left.
  */
+/** The failure code for a backend that no longer exists, disk and all. */
+export const SANDBOX_BACKEND_MISSING = "missing";
+
 export const decideAutoSleep = (
   threads: ReadonlyArray<SandboxAttachedThread>,
 ): Extract<SandboxSleepReason, "archived" | "settled"> | null => {
@@ -465,7 +468,15 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
       }
       return record.state === "destroyed"
         ? refuse("wrong-state")
-        : update({ state: "failed", failure: command.failure }, ["sandbox.release-waiters"]);
+        : update(
+            {
+              state: "failed",
+              failure: command.failure,
+              // Its disk is gone too, so a retry or wake provisions from scratch.
+              ...(command.failure.code === SANDBOX_BACKEND_MISSING ? { driverRef: null } : {}),
+            },
+            ["sandbox.release-waiters"],
+          );
   }
 };
 

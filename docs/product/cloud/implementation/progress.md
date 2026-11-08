@@ -47,18 +47,58 @@ in flight and no worktrees exist; start from `feat/pair`.
 6. **Then:** delete this file (the merged commits are the record) and write M2's full specs
    ([m2-m5.md](./m2-m5.md); maintainer decision #2, the hosted vendor, is due at M2's start).
 
-### Open questions for the maintainer
+### Maintainer answers (2026-11-08)
 
-1. **Integrated passes:** run the server-side part in a cloud container now, or do both passes on
-   a machine with real data, credentials and a device?
-2. **Server-internal commands from clients:** every `OrchestrationV2Command` is dispatchable by any
-   client with operate scope, including `sandbox.provision`, `sandbox.created` and
-   `sandbox.runner.attached`, so a member can provision a machine past `checkCloudLaunch`
-   (`sandboxAllowed`, credential refusals). Predates this run. Should ws.ts refuse server-only
-   command types from clients before M1 ships?
-3. **Driver settings exposure:** the settings stream sends `sandbox` driver config (`dockerHost`,
-   `runnerUrl`) to every member; only the UI hides it. Limit it to admins?
-4. **1.42 evals:** run them with an API key in a later session, or will a maintainer?
+1. **Integrated passes:** run on GCE VM `pair-cloud-pass` (`vm-provider`, `asia-south1-a`,
+   e2-standard-8, x86_64). It stays until every milestone lands; stop it when idle.
+2. **TODO, not an M1 blocker:** every `OrchestrationV2Command` is dispatchable by any client with
+   operate scope, including `sandbox.provision`, `sandbox.created` and `sandbox.runner.attached`,
+   so a member can provision a machine past `checkCloudLaunch` (`sandboxAllowed`, credential
+   refusals). Predates this run. Fix later by having ws.ts refuse server-only command types.
+3. **Accepted for now:** the settings stream sends `sandbox` driver config (`dockerHost`,
+   `runnerUrl`) to every member, and only the UI hides it.
+4. **1.42 evals:** still open; they need a model API key in the repo root `.env`.
+
+### M1 server-side pass (2026-11-08, on `pair-cloud-pass`, uncommitted)
+
+**Passed:** Settings → Cloud **Test**; a CLI cloud thread (`t3 thread start --cloud master`) with
+the clone owned by `t3`; the terminal runs as `t3` in the worktree; checkpoints `ready`, turn diffs
+and Changes work, and read from the mirror after settling; settle stops the container (header
+"Asleep" with **Wake**, **Un-settle**); the thread menu shows Sleep now and Discard machine; a
+removed container reaches "Machine failed" with **Retry** and **Discard**, and Retry provisions a
+new machine; "Connect GitHub to push" shows without a credential.
+
+**Fixed (each with a test unless noted):**
+
+1. The runner bundle pulled in `ProjectionStore` through `StoppedSandboxReads`: the tag moved to
+   `StoppedSandboxReadsService.ts`, and CI checks the bundle.
+2. `git -C` spawned from the server's cwd, which a sandbox lacks ("Failed to resolve the VCS
+   driver"): `VcsProcessInput.spawnOutsideCwd` uses the host's home on a sandbox.
+3. The runner made temp dirs as root with mode 0700, so the agent's git could not use the review
+   index (untracked-file diffs failed): it chowns them to the agent. No unit test: it needs a root
+   runner and a non-root agent, which the test layers are not; proven on the VM.
+4. The runner's ops git (checkpoints, turn diffs) ran as root and git refused the `t3`-owned repo,
+   so every checkpoint was `missing`: `opsLayer.ts` spawns through `setpriv` as the agent. Same
+   test gap as 3.
+5. Retry and Wake on a machine whose container was gone restarted the missing container forever: a
+   start that finds no backend (and a status or reconcile that says missing) fails with code
+   `missing`, which clears `driverRef`, so the retry provisions.
+
+**Not fixed, for the maintainer:**
+
+- **Working-tree Changes on an asleep machine** fail ("Review diff preview cwd must stay within the
+  configured workspace root"): 1.33's stopped reads cover files, search and turn diffs, not
+  `ReviewService.getDiffPreview`. Spec gap.
+- **Wake on a settled thread** starts the machine, and the settle rule stops it a second later. Wake
+  should either un-settle or the rule should fire only on the settle transition.
+- **The M1 pass plan says `docker stop` reaches "Machine failed"**; 04 makes a stopped backend
+  `sleeping` (correct), and only a missing one `failed`. Use `docker rm -f` in the pass.
+- **The runner's other fs writes** (writeAtomic, makeDirectory, copy) also create root-owned files
+  in the agent's tree. None broke the pass; worth one look.
+
+**Still to run:** the web composer's Cloud send with a status capture; a side chat sharing the
+machine; restore a checkpoint; the web branch picker check (item 3 above); the machine-failed push
+(needs a device); `vp run bench:runner`; the M0 git-count metrics; item 2's resource-bound runs.
 
 ## How to resume
 

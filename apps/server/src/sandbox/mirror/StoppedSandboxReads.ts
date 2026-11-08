@@ -2,17 +2,9 @@
 import * as NodePath from "node:path";
 
 import {
-  type FilesystemBrowseInput,
-  type FilesystemBrowseResult,
   type ProjectEntry,
-  type ProjectListEntriesInput,
-  type ProjectListEntriesResult,
-  type ProjectReadFileInput,
-  type ProjectReadFileResult,
   type ProjectSearchContentsInput,
   type ProjectSearchContentsResult,
-  type ProjectSearchEntriesInput,
-  type ProjectSearchEntriesResult,
   SandboxAsleep,
   type SandboxId,
   type ThreadId,
@@ -25,7 +17,6 @@ import {
   type RankedSearchResult,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -38,6 +29,7 @@ import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "../../workspace/WorkspaceSearchIndex.ts";
 import * as CheckpointMirror from "./CheckpointMirror.ts";
+import { StoppedSandboxReads, type StoppedView } from "./StoppedSandboxReadsService.ts";
 
 const posix = NodePath.posix;
 
@@ -48,57 +40,7 @@ const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const CONTENT_SEARCH_MAX_LINE_LENGTH = 512;
 const TREE_LIST_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-export interface StoppedView {
-  readonly sandboxId: SandboxId;
-  /** Whose checkpoint backs the view. */
-  readonly threadId: ThreadId;
-  /** The checkpoint's appRunOrdinal, for "As of turn N" (0 when it has none). */
-  readonly turn: number;
-  /** The checkpoint's oid in the mirror. */
-  readonly commit: string;
-  /** The mirror. */
-  readonly gitDir: string;
-  /** cwd relative to the checkpoint's tree root ("" for the root). */
-  readonly prefix: string;
-  /** The cwd the client asked about. */
-  readonly cwd: string;
-}
-
-export class StoppedSandboxReads extends Context.Service<
-  StoppedSandboxReads,
-  {
-    /** The view for a cwd under /t3-sandbox/<id>/; fails with SandboxAsleep when none exists. */
-    readonly viewFor: (
-      cwd: string,
-      sandboxId: SandboxId,
-    ) => Effect.Effect<StoppedView, SandboxAsleep>;
-    /** The refusal a write to a stopped machine gets; nothing is queued. */
-    readonly refuseWrite: (sandboxId: SandboxId) => Effect.Effect<never, SandboxAsleep>;
-    readonly list: (
-      view: StoppedView,
-      input: ProjectListEntriesInput,
-    ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntries.WorkspaceEntriesError>;
-    readonly search: (
-      view: StoppedView,
-      input: ProjectSearchEntriesInput,
-    ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntries.WorkspaceEntriesError>;
-    readonly searchContents: (
-      view: StoppedView,
-      input: ProjectSearchContentsInput,
-    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceEntries.WorkspaceEntriesError>;
-    readonly browse: (
-      view: StoppedView,
-      input: FilesystemBrowseInput,
-    ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntries.WorkspaceEntriesBrowseError>;
-    readonly readFile: (
-      view: StoppedView,
-      input: ProjectReadFileInput,
-    ) => Effect.Effect<
-      ProjectReadFileResult,
-      WorkspaceFileSystem.WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
-    >;
-  }
->()("t3/sandbox/mirror/StoppedSandboxReads") {}
+export { StoppedSandboxReads, type StoppedView } from "./StoppedSandboxReadsService.ts";
 
 const isInside = (root: string, candidate: string) =>
   candidate === root || candidate.startsWith(root === "/" ? "/" : `${root}/`);

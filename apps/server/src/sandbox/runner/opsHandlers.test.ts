@@ -183,6 +183,7 @@ describe("runner coarse operations", () => {
           OpsHandlers.layer.pipe(
             Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
             Layer.provide(OpsLayer.layer),
+            Layer.provide(RunnerTesting.layerConfig()),
             Layer.provide(NodePtyAdapter.layer),
             Layer.provide(NodeServices.layer),
           ),

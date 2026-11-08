@@ -584,12 +584,67 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       );
       const sandbox = yield* getSandbox(sandboxId);
       assert.equal(sandbox?.state, "failed");
-      assert.deepInclude(sandbox?.failure ?? {}, { code: "lost", retryable: true });
+      assert.deepInclude(sandbox?.failure ?? {}, { code: "missing", retryable: true });
+      assert.equal(sandbox?.driverRef, null);
       // The failure's release-waiters finds no parked run.
       assert.equal(yield* runtime.worker.drain(1), 1);
       assert.equal(yield* Queue.size(runtime.calls), 0);
       // A machine that stopped by itself keeps no credentials either.
       assert.deepEqual(yield* Ref.get(runtime.revokedInstallationTokens), [sandboxId]);
+    }),
+  );
+  it.effect("a wake whose backend is gone fails as missing, and a retry provisions anew", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("gone");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.sleep",
+        commandId: CommandId.make("sleep:gone"),
+        threadId,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "stop" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
+      );
+
+      yield* dispatch({
+        type: "sandbox.wake",
+        commandId: CommandId.make("wake:gone"),
+        threadId,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "start"
+          ? Deferred.fail(
+              call.reply,
+              new ComputeDriverError({
+                driverId: ComputeDriverId.make("fake"),
+                operation: "start",
+                reason: "not-found",
+                retryable: false,
+              }),
+            )
+          : Effect.die(call._tag),
+      );
+      assert.deepInclude(yield* getSandbox(sandboxId), { state: "failed", driverRef: null });
+      assert.deepInclude((yield* getSandbox(sandboxId))?.failure ?? {}, {
+        code: "missing",
+        retryable: true,
+      });
+
+      yield* dispatch({
+        type: "sandbox.retry",
+        commandId: CommandId.make("retry:gone"),
+        threadId,
+        sandboxId,
+      });
+      const [create] = yield* effectsOf("retry:gone");
+      assert.equal(create?.request.type, "sandbox.create");
+      // The failure's release-waiters calls no driver; the new create does.
+      assert.equal(yield* runtime.worker.drain(1), 1);
+      yield* runAnswering(runtime, answerCreate);
     }),
   );
   it.effect("adopts a backend found by name once, after its create's answer was lost", () =>

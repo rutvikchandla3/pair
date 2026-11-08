@@ -31,7 +31,8 @@ export interface VcsProcessInput {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  readonly spawnCwd?: string;
+  /** Spawn from a directory the host surely has, for commands that name their own cwd (`git -C`). */
+  readonly spawnOutsideCwd?: boolean;
   readonly stdin?: string;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
   readonly env?: NodeJS.ProcessEnv;
@@ -210,7 +211,9 @@ export const make = Effect.gen(function* () {
         command: input.command,
         args: input.args,
         cwd: input.cwd,
-        ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
+        ...(input.spawnOutsideCwd
+          ? { spawnCwd: host.kind === "local" ? globalThis.process.cwd() : hostInfo.homeDirectory }
+          : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {

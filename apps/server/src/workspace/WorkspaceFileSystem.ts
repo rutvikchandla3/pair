@@ -19,7 +19,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "./serverInternalPaths.ts";
-import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import type {
   WorkspaceHost,
   WorkspaceHostUnavailableError,

@@ -570,7 +570,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       command: "git",
       args: ["-C", cwd, ...args],
       cwd,
-      spawnCwd: globalThis.process.cwd(),
+      spawnOutsideCwd: true,
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
       ...(options?.env !== undefined ? { env: options.env } : {}),
       ...(options?.allowNonZeroExit !== undefined
