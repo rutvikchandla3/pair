@@ -1,15 +1,17 @@
 # 03 Runner: the runner and its protocol
 
-Status: proposal, 2026-11-06. Nothing here is built. Audience: the engineers building M1. The
-server-side `WorkspaceHost` interface is in [02 Workspace host](./02-workspace-host.md); this doc owns
-what crosses the wire between the team server and `t3 runner`, and the runner itself. It follows the
-decisions in the [plan](./README.md).
+Status: M0 and M1 landed; the rest is a proposal, rewritten 2026-11-08 for local-first Pair Cloud.
+Audience: the engineers working on the runner. The server-side `WorkspaceHost` interface is in
+[02 Workspace host](./02-workspace-host.md); this doc owns what crosses the wire between the Pair
+Cloud server and `t3 runner`, and the runner itself. M1 built both on a team server, and they carry
+over to Pair Cloud unchanged. It follows the decisions in the [plan](./README.md).
 
 ## Summary
 
 - The runner is a slim entry of the server's own build, identified by a **`runnerBuildId`** (a hash of the
-  runner bundle), served by the team server (decision 5). Fetching it at boot is the normal path;
-  an image cache or a Docker read-only mount skips the download.
+  runner bundle), served by the Pair Cloud server (decision 5), whose versioned release carries it
+  from M2. Fetching it at boot is the normal path; an image cache or a Docker read-only mount skips
+  the download.
 - One outbound WebSocket to `/runner/v1/connect`, authenticated by a sandbox token. It carries
   Effect RPC with roles reversed: the server always asks; the runner answers or streams.
 - Every output stream is binary, lossless, windowed and sequence-numbered. When a buffer fills, the
@@ -23,11 +25,11 @@ decisions in the [plan](./README.md).
 
 ## 1. What the runner does and does not do
 
-The runner exposes the sandbox's processes, PTYs, files, watches and ports to one team server, and
+The runner exposes the sandbox's processes, PTYs, files, watches and ports to one Pair Cloud server, and
 runs the coarse operations of decision 2. It holds no thread or provider state and decides
 nothing: it does what the server asks, reports what happened, and enforces resource bounds. It does
 not keep terminal history, enforce workspace path rules, listen beyond loopback, talk to any host
-but its team server, or keep credentials anywhere but memory and tmpfs.
+but its Pair Cloud server, or keep credentials anywhere but memory and tmpfs.
 
 One runner serves every thread that uses its sandbox: the owning cloud thread, its side chats and
 its forks (decision 6). The protocol knows sandboxes, handles and forwards, never threads; the
@@ -61,14 +63,23 @@ path that skips the [binCli.ts](../../../apps/server/src/binCli.ts) graph, as `a
 The bundle also carries the services coarse operations call (section 4.6) and the
 `@ff-labs/fff-node` linux binary beside node-pty. A lint fence keeps `src/sandbox/runner/` from
 importing `orchestration-v2/`, `persistence/`, `auth/` or provider adapters, which keeps the bundle
-small (target under 25 MB with native modules and the worker's SDK, inferred) and keeps server secrets out of the sandbox.
+small and keeps server secrets out of the sandbox. The build fails over 25 MiB
+([cli.ts](../../../apps/server/scripts/cli.ts)); M1's bundle is 22.9 MB with native modules and the
+worker's SDK.
 
 The runner runs on the image's Node, which must satisfy the server's `engines.node`
 (`^22.16 || ^23.11 || >=24.10`, from [package.json](../../../apps/server/package.json)). Team images
 already need Node for most agent CLIs (inferred); [05 Team images](./05-team-images.md) owns that
 requirement.
 
-The team server serves the bundle for its own build only:
+From M2 the versioned Pair Cloud server release (decision 15) carries `dist/runner/` beside the
+server, because teams install and upgrade Pair Cloud from that release, not from a checkout, and a
+single-executable build has no runner tree to serve
+([RunnerBundle.ts](../../../apps/server/src/sandbox/runnerHub/RunnerBundle.ts)). An archive smoke
+test in release CI unpacks the release and boots a machine from it with a fake driver, so a release
+whose runner can't be served or can't enroll never ships.
+
+Pair Cloud serves the bundle for its own build only:
 
 ```
 GET /runner/v1/bundle/<runnerBuildId>.tar.gz     Authorization: Bearer <enrollment secret or sandbox token>
@@ -88,8 +99,9 @@ nothing to reuse.
 The compute driver ([04 Sandbox lifecycle](./04-sandbox-lifecycle.md)) starts the sandbox with the
 bootstrap script as its command and four values: `PAIR_RUNNER_URL`, `PAIR_SANDBOX_ID`,
 `PAIR_RUNNER_BUILD` (the `runnerBuildId`) and `PAIR_RUNNER_ENROLL` (the enrollment secret). Where a driver can
-mount a file instead of setting an environment variable (Docker can), it does, since vendor APIs and
-`docker inspect` show environment variables. The bootstrap hands the secret to the runner as the
+write a file into the machine instead of setting an environment variable, it does, since cloud APIs
+and `docker inspect` show environment variables: Docker writes `/etc/pair-runner/bootstrap.env`
+(mode 0600), which the bootstrap deletes. The bootstrap hands the secret to the runner as the
 file `<stateDir>/enroll`, never through the runner's environment, which `/proc/<pid>/environ` keeps
 readable for the life of the process.
 
@@ -125,19 +137,21 @@ bootstrap fetches the right bundle once before giving up. This is the only versi
 
 **Fetching at boot is the normal path.** A team image build freezes whatever runner it cached, so
 after every server upgrade every sandbox from an older build fetches at boot (doc 05). The download
-is a few MB from the team server and is budgeted, not treated as a failure. Two optimizations skip
+is a few MB from Pair Cloud and is budgeted, not treated as a failure. Two optimizations skip
 it: the Docker driver on the server's own machine bind-mounts the server's `dist/runner/` read only
 at `/opt/pair-runner/<runnerBuildId>`, which matches by construction; and image builds cache it with
-`t3 runner prefetch` (PR 5). A remote `DOCKER_HOST` cannot see the server's disk, so it fetches like a hosted sandbox.
+`t3 runner prefetch` (PR 5). A remote `DOCKER_HOST` cannot see the server's disk, so its machines
+fetch, as EC2 machines do (M5).
 
 ### 2.3 Startup budget
 
 Budget with the bundle present (mounted or cached), from the driver's "started" to
 `sandbox.runner.attached`: **500 ms** for Docker on the server's machine and **500 ms + 4 RTT** for a
-hosted vendor. Node start and `runner.mjs` evaluation take 150–300 ms of it; TLS, the upgrade and
-`runner.hello` take the RTTs. A fetch adds a few MB: under 200 ms on loopback, seconds on a slow
-link (inferred). Container or VM start is the driver's budget. The M1 benchmark (section 9) fails
-when either Docker figure regresses.
+machine across a network (EC2 in M5). Node start and `runner.mjs` evaluation take 150–300 ms of it;
+TLS, the upgrade and `runner.hello` take the RTTs. A fetch adds a few MB: under 200 ms on loopback,
+seconds on a slow link (inferred). Container or VM start is the driver's budget. The benchmark
+(section 9) fails when a Docker figure misses at p50: 500 ms mounted, 700 ms fetched. Both passed on
+M1's integrated pass.
 
 ## 3. Transport
 
@@ -155,10 +169,12 @@ compress what it sends and has no `ws+unix:` URLs. It keeps DeviceHubProxy's no-
 and sends its token in an `Authorization` upgrade header, so it needs no WebSocket ticket.
 
 - **Timers:** every runner timer is in the table below and stated nowhere else. The heartbeat sits
-  well under T3 Connect's roughly 100 s idle cut ([remote](../../internals/remote.md)).
+  well under the idle cut of any proxy or load balancer between a machine and Pair Cloud.
 - **Frames:** at most 256 KiB; large file transfers stream in 64 KiB chunks.
-- **Compression:** the server accepts `perMessageDeflate` on every WebSocket ([server.ts](../../../apps/server/src/server.ts)).
-  The runner offers it over a WAN, not on loopback or a Unix socket, where it is wasted CPU.
+- **Compression:** the member listener accepts `perMessageDeflate` on every WebSocket
+  ([server.ts](../../../apps/server/src/server.ts)); the runner-only Unix socket doesn't. The runner
+  offers it over a network, not on loopback or a Unix socket, where it is wasted CPU
+  ([RunnerSocketServer.ts](../../../apps/server/src/sandbox/runner/RunnerSocketServer.ts)).
 - **TLS and proxies:** `wss://` with the system trust store plus `NODE_EXTRA_CA_CERTS` (M5).
   `HTTPS_PROXY`/`NO_PROXY` reach the server's fetches only through Node's `NODE_USE_ENV_PROXY`,
   which [outboundHttp.ts](../../../apps/server/src/outboundHttp.ts) preserves. Whether `ws` follows
@@ -172,24 +188,35 @@ and sends its token in an `Authorization` upgrade header, so it needs no WebSock
 | Lease (processes survive a drop) | 120 s, per-driver setting               | `RunnerHub`, mirrored by the runner                                                                      |
 | Drain grace (SIGTERM to SIGKILL) | 10 s                                    | Runner                                                                                                   |
 | Enrollment secret                | 15 min, one use                         | `RunnerGrants`                                                                                           |
-| Token rotation                   | Every boot; also every 24 h from M2     | `RunnerGrants`                                                                                           |
+| Token rotation                   | Every boot; periodic rotation is Later  | `RunnerGrants`                                                                                           |
 | Watch coalescing                 | 50 ms                                   | Runner                                                                                                   |
 | Status debounce to clients       | 2 s                                     | `RunnerHub`                                                                                              |
 
 ### 3.2 What URL the runner dials
 
-The server picks the URL and passes it to the driver; the runner never guesses. An admin can
+Every machine must reach the Pair Cloud server. Machines run only where Pair Cloud puts them, never
+on a member's Mac, so the runner always dials from Pair Cloud's own networks: the server's machine,
+a Docker host beside it, or the customer's VPC. The server picks the URL and
+passes it to the driver; the runner never guesses
+([RunnerEndpoint.ts](../../../apps/server/src/sandbox/runnerHub/RunnerEndpoint.ts)). An admin can
 override it per driver (`runnerUrl`) for reverse proxies and split DNS.
 
-| Server reachability    | Driver                                                               | URL the runner dials                                                                                                                                                                                                                                                                                             |
-| ---------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Any                    | Docker on the server's Linux machine                                 | `unix:` path to a runner-only socket in the state directory, bind-mounted into the container. Works whatever the server's bind host is, and exposes no port                                                                                                                                                      |
-| Any                    | Docker Desktop (macOS; Windows team servers are not supported in M1) | `http://host.docker.internal:<port>`. Docker Desktop resolves the name; on Linux it needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a desktop-mode server bound to `127.0.0.1` ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
-| LAN, tailnet or public | Docker on another host (`DOCKER_HOST`)                               | The server's address as that host's containers reach it, set by the admin. Same as BYOC                                                                                                                                                                                                                          |
-| Public HTTPS origin    | Hosted, BYOC                                                         | `wss://<origin>/runner/v1/connect`                                                                                                                                                                                                                                                                               |
-| T3 Connect only        | Hosted, BYOC                                                         | `wss://<managed tunnel hostname>/runner/v1/connect`. The hostname comes from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). The relay never sees traffic; the tunnel carries it to the server's loopback origin like any client's                                        |
-| Tailscale only         | Hosted                                                               | Not supported. A vendor's sandbox is not on the tailnet. Settings says so and suggests T3 Connect                                                                                                                                                                                                                |
-| Tailscale only         | BYOC in a VPC with a route to the server                             | The server's private address, set by the admin                                                                                                                                                                                                                                                                   |
+| Where the machines run | URL the runner dials |
+| --- | --- |
+| Docker on the Pair Cloud server's Linux machine (M2) | `unix:` path to a runner-only socket in the state directory. The driver mounts its directory read only at `/run/pair-host`. Its listener serves runner routes only, uncompressed, works whatever the server's bind host is, and exposes no port |
+| Docker on another host (`DOCKER_HOST`) | The server's address as that host's containers reach it, set by the admin as `runnerUrl`. Without one, the boot fails with `runner-url-required` |
+| EC2 in the customer's VPC (M5) | `wss://<private address>/runner/v1/connect`, set by the deployment kit ([09](./09-byoc.md)), on an internal-only listener that serves `/runner/*` and no client routes. Never the optional public client listener |
+| Docker Desktop on a macOS server (development only) | `http://host.docker.internal:<port>`. Docker Desktop resolves the name. Laptops no longer offer Cloud, so this path only serves Pair Cloud run from source on a Mac. On Linux the name needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a server bound to loopback, as desktop mode is by default ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
+| A hosted vendor (Later) | A public origin, or the T3 Connect tunnel hostname from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). A vendor's machine is on neither the customer's VPC nor a tailnet. Waits for the vendor driver |
+
+A server on any other platform fails with `unsupported-platform` unless the driver sets a
+`runnerUrl`.
+
+How members reach Pair Cloud (VPN, Tailscale or the team's HTTPS domain) doesn't matter to
+machines. The member listener also mounts `/runner/*` today
+([server.ts](../../../apps/server/src/server.ts)); `DOCKER_HOST` drivers and the macOS path dial
+it. In BYOC (M5), `/runner/*` moves to the internal-only listener, so it is reachable only from
+machine networks (see Challenges for M2).
 
 ## 4. Protocol
 
@@ -236,7 +263,7 @@ pressure) is an element of a stream the server subscribed to: one RPC client, on
 | Files    | `fs.stat`, `fs.readDirectory`, `fs.readFile`, `fs.writeFile`, `fs.makeDirectory`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.realPath`, `fs.readLink`, `fs.symlink`, `fs.chmod`, `fs.makeTempDirectory` | call                                | The subset of Effect's `FileSystem` ([FileSystem.ts](../../../.repos/effect/packages/effect/src/FileSystem.ts)) that doc 02 needs. `readFile` takes an offset and a byte cap; `writeFile` is atomic (temp file and rename) when asked       |
 |          | `fs.readStream`, `fs.writeStream`                                                                                                                                                                     | stream, calls                       | Files over 1 MiB in 64 KiB chunks                                                                                                                                                                                                           |
 | Watch    | `fs.watch`                                                                                                                                                                                            | stream                              | Path, recursive. Events coalesced on the runner                                                                                                                                                                                             |
-| TCP      | `tcp.connect`                                                                                                                                                                                         | call                                | Doc 02's `ports.connect`. Loopback ports inside the sandbox only (M2)                                                                                                                                                                       |
+| TCP      | `tcp.connect`                                                                                                                                                                                         | call                                | Doc 02's `ports.connect`. Loopback ports inside the sandbox only (Later, with previews)                                                                                                                                                     |
 |          | `tcp.read`, `tcp.write`, `tcp.close`                                                                                                                                                                  | stream, calls                       | Same seq and window rules as process fds                                                                                                                                                                                                    |
 | Forwards | `forward.open`                                                                                                                                                                                        | call, scoped                        | Name and an opaque `ownerKey`; returns the in-sandbox address. Closing the scope closes the listener. Accepts arrive in `runner.events` as `forward.accepted { forwardId, connectionId }`; the server then uses `tcp.read`/`tcp.write` (M1) |
 | Coarse   | `ops.<name>`                                                                                                                                                                                          | call or stream                      | The fixed list in section 4.6. Doc 02 owns the schemas                                                                                                                                                                                      |
@@ -398,7 +425,9 @@ lifecycle commands.
 Killing on server restart is deliberate. Adapter state (the Claude SDK query, the Codex JSON-RPC
 client) dies with the server, so a surviving CLI has nobody to talk to. Local agents behave the same:
 [agentScope.ts](../../../apps/server/src/process/agentScope.ts) stops agents a previous server left
-behind "so two copies of one session never work in the same worktree".
+behind "so two copies of one session never work in the same worktree". On Pair Cloud every upgrade
+is such a restart. M2 drains the server before an upgrade, and an agent still running when it
+restarts is interrupted (open question 2).
 
 During a blip an adapter's stdout pauses and its writes wait; no error reaches it. Adapter timeouts
 are the risk; M1 replay tests run Claude and Codex turns through a 60 s drop (inferred: none fire).
@@ -427,7 +456,8 @@ enters the event log.
   sockets after a network change are common.
 - **Rotation and revocation.** Every boot (create, wake, restart) gets a new enrollment and token.
   Sleep, destroy and a new boot revoke the generation, and `RunnerHub` closes its socket, as
-  `awaitInvalidation` does for clients. M2 adds periodic rotation over the live socket.
+  `awaitInvalidation` does for clients. A machine that sleeps when idle (M2) gets a new token on
+  every wake; periodic rotation over the live socket waits for hosted vendors (Later).
 - **No DPoP.** A proof key would sit beside the token in the same tmpfs and memory.
 
 What a stolen sandbox token can do, at most, while that sandbox's current boot lives:
@@ -537,8 +567,9 @@ has several forwards; when a session ends, its forward closes:
 The sandbox cannot name a target, so a forward is not a path into the server's network. Reaching
 the loopback listener grants nothing by itself: the auth policy depends on the configured bind host,
 not the peer ([EnvironmentAuthPolicy.ts](../../../apps/server/src/auth/EnvironmentAuthPolicy.ts)),
-and MCP thread tokens resolve only on `/mcp`. M4 can harden this with an in-process listener that
-mounts only `/mcp` (inferred feasibility).
+and MCP thread tokens resolve only on `/mcp`. M5 hardens this for BYOC with an in-process listener
+that mounts only `/mcp` as the forwards' target, beside section 3.2's internal-only `/runner/*`
+listener (inferred feasibility).
 
 Credentials do not change: the workspace host gets the thread's token from `McpSessionRegistry.issue`
 as today and swaps only the endpoint for the `mcp` forward address.
@@ -547,19 +578,31 @@ as today and swaps only the endpoint for the `mcp` forward address.
 
 Budgets, measured from bytes leaving the child to bytes entering the adapter or terminal manager:
 
-| Path                                      | Docker, same machine         | Hosted, RTT r                              |
-| ----------------------------------------- | ---------------------------- | ------------------------------------------ |
-| Provider stdout, added latency p50 / p99  | 1 ms / 5 ms                  | r/2 + 2 ms / r/2 + 10 ms                   |
-| Keystroke to echo in the terminal manager | 2 ms                         | r + 3 ms                                   |
-| PTY throughput (`cat` of a large file)    | 50 MB/s                      | Link speed, window permitting: 256 KiB / r |
-| Server CPU per MB of runner output        | Under 5 ms (compression off) | Under 15 ms (compression on)               |
-| Server memory per sandbox                 | Under 8 MiB steady           | Same                                       |
+| Path                                      | Docker, same machine         | Across a network, RTT r                    | Measured, Docker (M1)              |
+| ----------------------------------------- | ---------------------------- | ------------------------------------------ | ---------------------------------- |
+| Provider stdout, added latency p50 / p99  | 1 ms / 5 ms                  | r/2 + 2 ms / r/2 + 10 ms                   | Within budget                      |
+| Keystroke to echo in the terminal manager | 2 ms                         | r + 3 ms                                   | Within budget                      |
+| PTY throughput (`cat` of a large file)    | 50 MB/s                      | Link speed, window permitting: 256 KiB / r | 41 MB/s                            |
+| Server CPU per MB of runner output        | Under 5 ms (compression off) | Under 15 ms (compression on)               | 25 ms; the local baseline, 17.6 ms |
+| Server memory per sandbox                 | Under 8 MiB steady           | Same                                       | Within budget                      |
 
 Measure with spans for `runner.hello`, spawn and first byte; metrics in
 [Metrics.ts](../../../apps/server/src/observability/Metrics.ts) for bytes by channel and direction,
 ping RTT, time paused at the source and buffer high-water marks; `T3CODE_STARTUP_PROFILE_DIR` marks
-for runner startup; and a benchmark script (not in CI) that runs a real runner over loopback and in
-Docker and compares with `LocalWorkspaceHost`.
+for runner startup; and `vp run bench:runner` (not in CI,
+[runner-benchmark.ts](../../../apps/server/scripts/runner-benchmark.ts)), which runs a real runner
+over loopback and in Docker and compares both with `LocalWorkspaceHost`
+([performance regressions](../../internals/performance-regressions.md#runner)).
+
+The last column is M1's integrated pass on an idle 8-CPU VM. Two misses stay open. The CPU budget is
+below what the local baseline spends on its own, so as written it can't pass; restate it as
+overhead over local. The throughput gap is in the hub.
+
+**Capacity.** One Pair Cloud server carries the whole team's machines, so M2 states a target of 30
+concurrent machines per server and proves it with a load test before it ships: N runners over
+loopback, one saturating a PTY and one streaming a bundle at the same time. The hub gets
+per-sandbox byte budgets, so one machine's output can't starve the others. Framing stays on the
+server's event loop and moves to worker threads only if the load test fails.
 
 Runner traffic stays off the client wire. Clients never subscribe to runner streams. Adapters
 consume provider stdio and emit the same normalized events as today. Terminal output enters the
@@ -597,31 +640,34 @@ buffer size, bytes delivered equal bytes written, no duplicates.
 | 7   | M1        | Forwards: `forward.open`, `mcp`, `codex-token` and `git-credential`, `RunnerForwards`, `t3` shim on `PATH` for ACP bridges                                                                                                            | 3, 4, doc 02                 |
 | 8   | M1        | Docker routes: runner-only Unix socket listener, `host.docker.internal`, per-driver `runnerUrl` for `DOCKER_HOST`                                                                                                                     | 3, doc 04's Docker driver    |
 | 9   | M1        | Benchmarks and metrics; startup budget check, mounted and fetched                                                                                                                                                                     | 4, 5                         |
-| 10  | M2        | TCP tunnels (`tcp.connect`) for previews                                                                                                                                                                                              | 4, doc 07                    |
-| 11  | M2        | Hosted URL selection (public origin, T3 Connect hostname), periodic token rotation, compression per route                                                                                                                             | 3                            |
-| 12  | M4        | SSH over a TCP tunnel to the sandbox's sshd; `/mcp`-only in-process listener for forwards                                                                                                                                             | 10, doc 07                   |
-| 13  | M5        | Private CA and explicit proxy support, BYOC network checklist, optional tailnet join                                                                                                                                                  | 11, doc 09                   |
+| 14  | M2        | The runner tree in the versioned Pair Cloud release (section 2.1), with the archive smoke test that boots a machine with a fake driver                                                                                               | 5                            |
+| 15  | M2        | Capacity: the 30-machine load test and per-sandbox byte budgets in the hub (section 9); the CPU and throughput budgets met or restated                                                                                               | 4, 9                         |
+| 12  | M5        | Internal-only listener for `/runner/*` (section 3.2) and an `/mcp`-only in-process listener for forwards (section 8)                                                                                                                  | 3, 7, doc 09                 |
+| 13  | M5        | Private CA and explicit proxy support, BYOC network checklist                                                                                                                                                                         | 3, doc 09                    |
+| 10  | Later     | TCP tunnels (`tcp.connect`) for previews                                                                                                                                                                                              | 4, doc 07                    |
+| 11  | Later     | Hosted vendor URLs (public origin, T3 Connect hostname) and periodic token rotation                                                                                                                                                  | 3                            |
+| 16  | Later     | SSH over a TCP tunnel to the sandbox's sshd                                                                                                                                                                                           | 10, doc 07                   |
 
 ## Open questions
 
-1. **node-pty in the bundle or the image?** The bundle; an image copy brings back a version matrix.
-   PR 5 verifies the linux prebuild loads on the image's Node (inferred: it is N-API).
-2. **Lease length.** Keep section 3.1's value: it covers a laptop's network change without leaving
-   agents of a dead server running long.
-3. **Runner user and sudo?** Decided (README D3): runner as root, agents as `t3` with passwordless
-   sudo. User separation is no boundary once agents can sudo; doc 06 records it.
-4. **Bundle for a server run from source?** Build `dist/runner` per source hash on first request;
-   a bind-mounted checkout would carry the host's native modules (darwin node-pty on a Mac).
-5. **Is the 256 KiB window right?** Measure in PR 9 first; raise it for hosted sandboxes if terminal
-   throughput at 100 ms RTT disappoints.
-6. **Does the Codex token forward need its own secret in a shared sandbox?** Agents in one sandbox
-   share a uid, so any of them can reach any forward, and a broker request is one JSON line naming
-   its instance, environment and profile key, none secret. Recommend `RunnerForwards` rejects
-   requests whose instance is not the `ownerKey` session's; doc 06 confirms.
+1. **Is the 256 KiB window right for a machine far from its server?** M2's and M5's machines sit
+   near Pair Cloud (inferred), where the window is not the limit. Measure with a hosted vendor
+   (Later), and raise it there if terminal throughput at 100 ms RTT disappoints.
+2. **Every server upgrade interrupts running agents.** Adapters stay on the server (decision 2), so
+   a restart ends every machine's processes (section 5). Draining first (M2) limits the damage but
+   doesn't remove it. Running the agent loop inside the machine would, but it splits a thread
+   across event stores; revisit only if a Pair-hosted control plane ever exists.
 
 ## Challenges to the plan
 
-None. The revised README adopts this doc's earlier challenges (decisions 4, 5 and 6).
+1. **`/runner/*` stays on the member listener until M5.** Decision 4 makes `/runner/*` reachable
+   only from machine networks, but [server.ts](../../../apps/server/src/server.ts) mounts
+   `RunnerRoute` on the listener members use, and the internal-only listener is M5 work. Every
+   runner route needs an enrollment secret or a sandbox token before it does anything but name the
+   server's runner build (section 6), so this is exposure, not a hole. M2's Docker machines dial
+   the Unix socket, and only `DOCKER_HOST` drivers and the macOS development path need the TCP
+   route. Recommended: in M2, the member listener mounts `/runner/*` only when a configured driver
+   needs it.
 
 ## Sources
 

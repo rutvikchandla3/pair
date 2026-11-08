@@ -1,10 +1,18 @@
 # 02 Workspace host: the seam
 
-Status: proposal, 2026-11-06. Audience: the engineers doing M0 and M1. Read the
-[plan](./README.md) first; this doc uses its words and milestones.
+Status: M0 and M1 landed; the rest is a proposal, rewritten 2026-11-08 for local-first Pair Cloud.
+Audience: the engineers working on the seam. Read the [plan](./README.md) first; this doc uses its
+words and milestones.
 
 The question: how does the server stop assuming a thread's files and processes are on its own
 machine, without changing anything for local threads?
+
+Two servers use the seam differently. A member's local server, in the Pair Mac app, runs every
+thread on the Mac through `LocalWorkspaceHost`, exactly as today; no sandbox host ever registers
+there, because only a cloud-only server offers Cloud. The Pair Cloud server is cloud-only: every
+thread runs on a machine through `SandboxWorkspaceHost`, and `LocalWorkspaceHost` there serves only
+server-scoped work (section 1) and the read-only project checkout. M0 and M1 built the seam on a
+team server, and it carries over to Pair Cloud unchanged.
 
 Short answer:
 
@@ -84,7 +92,7 @@ and fixtures (1,031 files). Grep patterns: `ChildProcessSpawner`, `node:child_pr
 | [CodexManagedTokenBroker.ts](../../../apps/server/src/provider/CodexManagedTokenBroker.ts), [McpSessionRegistry.ts](../../../apps/server/src/mcp/McpSessionRegistry.ts) | A unix socket and `http://127.0.0.1:<port>/mcp` on the server. | Agent processes dial them. | `host.exposeServerEndpoint` returns an address that works on that host (runner forwards it over its socket). |
 | [usageTranscriptReader.ts](../../../apps/server/src/usage/usageTranscriptReader.ts), [AgentSessionScanner.ts](../../../apps/server/src/project/AgentSessionScanner.ts) | Reads server-side transcripts for usage and import. | Cloud transcripts live in the sandbox. | Stays local. Cloud usage comes from turn events. Flag for [07](./07-access-and-data.md). |
 | [RepositoryIdentityResolver.ts](../../../apps/server/src/project/RepositoryIdentityResolver.ts), [ServerSourceControlHost.ts](../../../apps/server/src/sourceControl/ServerSourceControlHost.ts), [SourceControlHost.ts](../../../packages/source-control-core/src/server/SourceControlHost.ts), [ForgejoCli.ts](../../../packages/source-control-forgejo/src/server/ForgejoCli.ts) | Forge CLIs and APIs with members' tokens. | Read the checkout's remotes and branch. | Forge calls stay on the server. Repository facts come from git on the thread's host. |
-| [OpenCodeServerLedger.ts](../../../packages/provider-opencode/src/server/OpenCodeServerLedger.ts) | Tracks `opencode serve` PIDs through `/proc`. | Those processes. | One ledger per host (M3). |
+| [OpenCodeServerLedger.ts](../../../packages/provider-opencode/src/server/OpenCodeServerLedger.ts) | Tracks `opencode serve` PIDs through `/proc`. | Those processes. | One ledger per host, when OpenCode runs in cloud (Later). |
 
 ### Server-scoped: stays local (67 spawn files)
 
@@ -95,9 +103,11 @@ abstraction), HTML render and the server browser (`htmlRender/*`, `preview/Serve
 `relayClient.ts`, and 25 provider probe and install files (`*/status.ts`, `*/driver.ts`,
 `provider/Drivers/*`, `providerMaintenanceRunner.ts`, `snapshotProbe.ts`). Probes report the
 server's CLI install. A cloud thread uses the team image's CLI; keeping the two in step is
-[05](./05-team-images.md)'s job. The server browser stays local but reaches sandbox ports through
-`host.ports.connect` in M2. The terminal manager's history logs, the database, settings and
-attachments stay local.
+[05](./05-team-images.md)'s job. The server browser stays local and will reach sandbox ports
+through `host.ports.connect` once previews land (Later). The terminal manager's history logs, the
+database, settings and attachments stay local. On Pair Cloud, this list, the mirror and git in the
+project checkout (PR views, the review guide, repository identity;
+[07](./07-access-and-data.md)) are all that `LocalWorkspaceHost` serves.
 
 ## 2. Interface design
 
@@ -141,12 +151,17 @@ Appealing because nothing changes at call sites. It does not work here:
 process table, search index, which already uses `LayerMap` keyed by cwd and variant). It is not right for the
 whole graph.
 
-### Option B (recommended): a host value that reuses Effect's interfaces
+### Option B (chosen): a host value that reuses Effect's interfaces
 
 Call sites change from `spawner.spawn(cmd)` to `(yield* hosts.forPath(cwd)).spawner.spawn(cmd)`.
 The interfaces stay Effect's, so the about 60 test files that build fakes with
 `ChildProcessSpawner.make(...)` keep working: the local host is built from whatever spawner and
 file system the test provides.
+
+The sketch below is the design. The built interface is
+[WorkspaceHost.ts](../../../apps/server/src/workspaceHost/WorkspaceHost.ts): there `info` is read
+per use, the process group spawn is its own member (`spawnProcessGroup`), port listing is a coarse
+operation, and `ports.connect` waits for previews.
 
 ```ts
 // apps/server/src/workspaceHost/WorkspaceHost.ts (new folder, fork-friendly)
@@ -192,7 +207,7 @@ export interface WorkspaceHost {
   };
   readonly ports: {
     readonly listeners: Effect.Effect<ReadonlyArray<PortListener>, WorkspaceHostError>; // coarse, M1
-    readonly connect: (port: number) => Effect.Effect<Socket.Socket, WorkspaceHostError, Scope.Scope>; // M2
+    readonly connect: (port: number) => Effect.Effect<Socket.Socket, WorkspaceHostError, Scope.Scope>; // Later, previews
   };
   // A named forward (MCP, Codex token broker, git credential helper) reachable from this host.
   readonly exposeServerEndpoint: (
@@ -231,9 +246,10 @@ in M1; while it is stopped, 07 serves reads from the mirror instead of calling t
   so a PID from a sandbox is never signalled on the server. Claude's
   `spawnClaudeProcessGroup` becomes a `processGroup: "kill-on-close"` spawn option that
   `LocalWorkspaceHost` implements with today's watch script, unchanged.
-- **Host facts come from `host.info`, never `HostProcess`, in thread-scoped code.** This matters on
-  day one of M1: a macOS desktop acting as the team server running Linux Docker sandboxes would
-  otherwise apply macOS `git` resolution, `F_FULLFSYNC` retries and `/tmp` defaults (see
+- **Host facts come from `host.info`, never `HostProcess`, in thread-scoped code.** This matters
+  whenever the server's platform is not the machine's: a macOS development server running Linux
+  Docker machines would otherwise apply macOS `git` resolution, `F_FULLFSYNC` retries and `/tmp`
+  defaults (see
   [ClaudeTaskOutputTail.ts](../../../apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts))
   to a Linux box. The lint rule's folders read `HostProcess` about 90 times, about 140 with
   `provider/` and `preview/`.
@@ -242,8 +258,10 @@ in M1; while it is stopped, 07 serves reads from the mirror instead of calling t
   `host.info.environment`. Today `makeClaudeEnvironment`, `codexLaunchArgs` and
   `instanceEnvironment` default to `process.env`; on a sandbox host that would leak the server's
   secrets and paths. Local behavior is unchanged because the local host's base is `process.env`.
-- **Paths are POSIX inside sandboxes.** M1 supports macOS and Linux team servers only (see Open
-  questions).
+- **Paths are POSIX inside sandboxes.** Pair Cloud runs on Linux, or on macOS for development. A
+  Windows server can't host machines: server-side `path.resolve` would turn `/t3-sandbox/...` into
+  `C:\t3-sandbox\...`, and supporting it means `path.posix` for sandbox paths everywhere, a
+  separate refactor.
 
 `LocalWorkspaceHost` is assembled from the context's `ChildProcessSpawner`, `FileSystem`,
 `PtyAdapter`, `AgentScope` and `HostProcess` references. It adds no I/O and no state, so it is
@@ -298,7 +316,7 @@ Where each subsystem resolves:
 | Git and checkpoints | `cwd` on every `VcsProcess.run` and `CheckpointStore` call | Per call in `VcsProcess.run` and `GitVcsDriverCore.executeRaw`; the checkpoint's temp-index file ops use the same host. |
 | Terminals | `session.cwd` | At PTY spawn and in `assertValidCwd`. Logs stay local. |
 | Workspace files and search | `input.cwd` | Per call in `WorkspaceFileSystem` and `WorkspaceEntries`; per host in `WorkspaceSearchIndex`'s `LayerMap` key. |
-| Port discovery | none; machine-wide | One `PortDiscovery` per host (`LayerMap` by host id); coarse listing in M1, previews in M2. |
+| Port discovery | none; machine-wide | One `PortDiscovery` per host (`LayerMap` by host id), with previews (Later). M1 keeps discovery on the local host and ships the coarse listing. |
 | Disk checks | `worktreePath` on rollback, PR discovery, restore safety, storage cleanup | Per call through `forPath`. |
 
 The cost of a lookup is one prefix test and a `Map` get. No parameter is threaded through call
@@ -310,9 +328,9 @@ sites.
 | --- | --- | --- | --- |
 | Claude | `claude` via the SDK hook; the history worker (`__claude-history` or `claude-history-worker.mjs`) | Claude settings (`settings.json`, `.claude/settings*.json` up to the repo root, `.git` and `commondir`), skills dirs, `~/.claude/projects` and settings through in-process SDK calls, task output under `/tmp/claude-<uid>`, workflow files, `attachmentsDir` | **Medium, M1.** The SDK hook takes any object matching its `SpawnedProcess` interface (`stdin`, `stdout`, `killed`, `exitCode`, `kill`, `on`, `once`, `off`); tests already pass plain objects. Build it from a host handle. On a sandbox host, run history calls through the worker on that host. [claudeHistoryWorker.ts](../../../apps/server/src/claudeHistoryWorker.ts) supports `getSessionMessages` and `forkSession` but not `getSubagentMessages`; add it in M1. `resolveSettings` also reads disk in process and needs the same treatment. The runner bundle must include the worker and the Claude Agent SDK (decision 5; [03](./03-runner.md) owns the bundle table). Settings reads go through `host.fileSystem`. Replace the 250 ms task-output poll with `host.fileSystem.watch` on sandbox hosts. |
 | Codex | `codex app-server` | `CODEX_HOME` shadow home with symlinks and `auth.json`; token broker socket | **Easy to medium, M1.** Spawn already uses `ChildProcessSpawner` and the client takes a handle. Home layout runs against `host.fileSystem`; the broker uses `exposeServerEndpoint`. Images already go as data URLs. |
-| ACP runtime (Grok, Kiro, Fx, ACP registry agents) | Agent binaries, client terminals | cgroup v2 leases, agent `fs/read_text_file` via `realpathSync`, registry-managed binaries in the server cache | **Medium, M3.** One runtime covers all of them. Containment becomes the host's `agentScope`; client fs and terminals route through the host. Registry binaries must exist in the image. |
-| Antigravity | ACP agent | Many `node:fs` reads of its profile, session meta and child-work files, `lstat` path checks, `node:sqlite` reads of its session log | **Hard. "Not supported in cloud yet."** Revisit after M3. |
-| OpenCode (v1, v2) | `opencode serve --hostname --port` | `/proc` ledger, usage auth file | **Medium, M3.** Needs `ports.connect` (M2) to reach its HTTP server, and a per-host ledger. |
+| ACP runtime (Grok, Kiro, Fx, ACP registry agents) | Agent binaries, client terminals | cgroup v2 leases, agent `fs/read_text_file` via `realpathSync`, registry-managed binaries in the server cache | **Medium, Later.** One runtime covers all of them. Containment becomes the host's `agentScope`; client fs and terminals route through the host. Registry binaries must exist in the image. |
+| Antigravity | ACP agent | Many `node:fs` reads of its profile, session meta and child-work files, `lstat` path checks, `node:sqlite` reads of its session log | **Hard. "Not supported in cloud yet."** Revisit after the ACP runtime runs in cloud. |
+| OpenCode (v1, v2) | `opencode serve --hostname --port` | `/proc` ledger, usage auth file | **Medium, Later.** Needs `ports.connect` (Later, with previews) to reach its HTTP server, and a per-host ledger. |
 | Pi | `pi --mode rpc` | Writes an MCP extension file and passes the path | **"Not supported in cloud."** Routable later: spawn is spawner-based and the extension file can be written with `host.fileSystem`. |
 | Muse | Inside `@muse-code/sdk`'s `spawnMspConnection` (`createMuseSdkHost` accepts a replacement, which would have to reimplement the SDK's connection) | `node:fs` realpath | **"Not supported in cloud"** (decision 2). The SDK spawns inside the server process. |
 | Cursor | None; `@cursor/sdk` runs the agent in the server process with a local cwd | Everything | **"Not supported in cloud"** (decision 2). It cannot move behind a server-side seam. |
@@ -320,7 +338,7 @@ sites.
 
 Only the Claude and Codex adapters call `PortDiscovery.trackAgent` and inject `T3CODE_THREAD_ID`.
 They keep working because discovery becomes per host. Other adapters need both added when they
-run in a sandbox (M3).
+run in a sandbox (Later).
 
 ## 5. Testing premise 2: a thin runner, adapters on the server
 
@@ -368,6 +386,11 @@ Users notice a lying spinner.
 If a primitive takes more than one trip (spawn, then write stdin, then read), the numbers double.
 So the exec frame shape is a hard requirement on [03](./03-runner.md).
 
+These RTTs are for a machine across a network. On Pair Cloud, M2's machines are Docker containers
+on the server's own VM (or a nearby `DOCKER_HOST`), and M5's are EC2 instances in the server's VPC,
+so their RTT is a few milliseconds at most (inferred). The table matters most for a machine far
+from its server, such as a hosted vendor's (Later).
+
 ### Verdict
 
 Premise 2 holds for provider stdio, terminals, single file reads and writes, and approvals. Those
@@ -387,11 +410,11 @@ Coarse operations for M1 (README decision 2):
 | --- | --- | --- |
 | `search.entries`, `search.contents`, `entries.browse` | `WorkspaceSearchIndex`, `WorkspaceEntries.list/browse` | Native index; recursive `readdir`. Structural. |
 | `processes.table` | `ps` polling in the terminal manager | PIDs are host-local. Structural. Better as a stream the runner pushes on change. |
-| `ports.listeners` | `PortScanner` scan | `/proc` and PIDs. Structural. Lands in M1; previews and stopping servers use it in M2. |
+| `ports.listeners` | `PortScanner` scan | `/proc` and PIDs. Structural. Built in M1; `PortScanner` still scans only the local host, and per-host discovery and previews use it later. |
 | `checkpoint.capture` | ~24 trips, ~40 with files changed | Sequential chain. Run as `CheckpointServiceV2.capture`, it covers files changed and turn end drops to about 6 trips; the driver's capture alone leaves about 25. |
 
 `vcs.localStatus` is the first candidate to join later: the loopback host with injected latency
-(section 7) measures it in M1, and it joins if it adds more than 300 ms at 75 ms RTT.
+(section 7) can measure it, and it joins if it adds more than 300 ms at 75 ms RTT.
 
 These are cheap because the runner is the server's own build: a coarse operation is "run this
 existing service method in the runner, against its own `LocalWorkspaceHost`." No git logic is
@@ -412,12 +435,12 @@ files. New code goes in `apps/server/src/workspaceHost/` and a new lint rule fil
 | 6 | Replay, then Codex, then Claude adapters: resolve at session open from `runtimePolicy.cwd`; `spawnClaudeProcessGroup` moves into `LocalWorkspaceHost` verbatim; in-process history calls go through a host-aware helper; `exposeServerEndpoint` for MCP and the token broker (local host returns today's URL). | `Adapters/*`, `provider-testing` |
 | 7 | Base env: `makeClaudeEnvironment`, `codexLaunchArgs` and `instanceEnvironment` take their base from `host.info.environment`; the local spawner's `extendEnv` reads it too. Session open `stat`, attachment path resolution, investigate-mode text generation, `ClaudeTaskOutputTail`, `workflowFileRead`. | small edits |
 | 7b | Disk checks: restore safety `realPath`, rollback `exists`, PR discovery `.git` check, `storageCleanup` worktree walk, all through `forPath`. | `orchestration-v2/*`, `storageCleanup.ts` |
-| 8 | `PortDiscovery` per host behind `LayerMap` (still one local host). Can slip to early M2. | `preview/PortScanner.ts` |
+| 8 | `PortDiscovery` per host behind `LayerMap` (still one local host). Waits for previews (Later). | `preview/PortScanner.ts` |
 
 Each PR is reviewable alone and leaves every other caller on the old path. PRs 3–7b are
-independent after PR 2; land them in any order. ACP and OpenCode keep their lint disables
-until M3; Pi, Antigravity, Muse and Cursor keep theirs, and every one of these adapters declares
-cloud unsupported until it is routed.
+independent after PR 2; land them in any order. ACP and OpenCode keep their lint disables until
+they run in cloud (Later); Pi, Antigravity, Muse and Cursor keep theirs, and every one of these
+adapters declares cloud unsupported until it is routed.
 
 ### M1: the sandbox host
 
@@ -457,6 +480,12 @@ Effect's `nodeBuiltinImport` diagnostic stays as the second net for the rest of 
 3. **Real numbers once.** Before and after PR 3 and PR 6, run ten Replay turns on a dev server and
    compare `t3_git_command_duration` and `t3_git_commands_total` from
    [Metrics.ts](../../../apps/server/src/observability/Metrics.ts). Attach the comparison to the PR.
+   Measured on the M1 integrated pass (Replay, a local and a worktree thread): every run made the
+   same 41 git operations on `main`, before and after PR 3, and on `feat/pair`, so counts pass. PR 3
+   stayed in the noise (count-weighted p50 19.7 to 21.3 ms). `feat/pair` is about 15% slower than
+   `main` at p50 (27.5 against 23.9 ms over five paired runs), and a bisect found no single commit
+   to blame. M2 closes or explains that gap before it ships
+   ([progress](./implementation/progress.md)).
 4. `vp run test:perf:v2-wire` is unaffected because nothing changes on the wire
    ([performance regressions](../../internals/performance-regressions.md)).
 
@@ -547,38 +576,20 @@ one and record the decision as a `server-scoped:` lint reason.
 
 ## Open questions
 
-1. **Reserved root or a thread-to-host table?** Recommended: the reserved root
-   `/t3-sandbox/<sandboxId>/`. Every call site already has a cwd, and the root fails closed. A
-   table would need a thread id at call sites that do not have one, such as git RPCs from clients.
-2. **Windows team servers with cloud threads?** Settled: M1 supports macOS and Linux only. Server-side `path.resolve`
-   would turn `/t3-sandbox/...` into `C:\t3-sandbox\...`. Supporting it means using `path.posix`
-   for sandbox paths everywhere, which is a separate refactor.
-3. **Should host facts be read through `HostProcess` overrides instead of `host.info`?**
-   Recommended: no. They are `Context.Reference`s. Some code reads them per call
-   (`resolveSpawnCommand`, `executeRaw`'s environment), but `VcsProcess.make`,
-   `makeGitVcsDriverCore`, the terminal manager and the adapters capture them at construction, so a
-   per-call override reaches only some reads. That is the same reason Option A fails.
-4. **Cover Effect's whole `FileSystem` on the sandbox host, or a subset?** Recommended: the whole
-   interface, with `open` returning a remote `File` handle. Methods nobody calls on thread paths
-   (`chown`, `link`) can fail with `PlatformError` "unsupported" until someone needs them.
-5. **Who owns the sandbox path layout?** Recommended: this doc fixes only the root and the
-   identical-path rule. [03](./03-runner.md) and [05](./05-team-images.md) decide what lives under
-   it.
-6. **Does local status join the coarse list?** Recommended: measure it in M1 with the loopback
-   host and add it only if it costs more than 300 ms at 75 ms RTT.
-7. **Should forks in a shared sandbox get their own checkout?** Recommended: no. Today side chats
-   and forks both share the source's checkout (forks copy `worktreePath` in
-   [ThreadForkService.ts](../../../apps/server/src/orchestration-v2/ThreadForkService.ts)); keep it.
+1. **Does local status join the coarse list?** Recommended: measure it with the loopback host and
+   add it only if it costs more than 300 ms at 75 ms RTT. Not measured yet. Pair Cloud's machines
+   sit near their server (section 5), so it matters first for a machine far from it.
 
 ## Challenges to the plan
 
-None. The revised README accepts the coarse list (decision 2), names Cursor and Muse "not
-supported in cloud", makes the server-served build load-bearing for Claude history (decision 5),
-puts platform reads, disk checks and the base environment behind the seam in M0 (decision 3), and
-settles shared sandboxes (decision 6). The final resolutions (cloud identity by `sandboxId`, Pi
-not supported, macOS and Linux team servers only) match this doc.
+None. The README keeps the coarse list (decision 2), names Cursor and Muse "not supported in
+cloud", makes the server-served build load-bearing for Claude history (decision 5), puts platform
+reads, disk checks and the base environment behind the seam (decision 3), and settles shared
+machines (decision 6). Cloud identity by `sandboxId` and Pi not supported match this doc. Pair
+Cloud's cloud-only mode changes which threads use `LocalWorkspaceHost`, not the seam.
 
 ## Sources
 
 No external sources. Every claim above is from code in this repository, cited inline. Round-trip
-times (50–100 ms) are the plan's assumption, not a measurement.
+times (50–100 ms) are the plan's assumption, not a measurement. The git timings in section 6 are
+from the M1 integrated pass.

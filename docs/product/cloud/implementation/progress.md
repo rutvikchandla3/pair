@@ -42,8 +42,9 @@ in flight and no worktrees exist; start from `feat/pair`.
    (needs a model API key; the dry run passes). The PR needs the `agent-context-increase` label.
 4. **PR links:** `docs/product/pair-features.md`'s "Cloud threads on Docker" entry gets PR links
    once the M1 work has GitHub PR numbers.
-5. **Then:** delete this file (the merged commits are the record) and write M2's full specs
-   ([m2-m5.md](./m2-m5.md); maintainer decision #2, the hosted vendor, is due at M2's start).
+5. **Then:** delete this file (the merged commits are the record) and write M2's full specs. M2 is
+   now Pair Cloud on Docker, after the 2026-11-08 local-first rewrite; its PR list is in
+   [m2-m5.md](./m2-m5.md), and the hosted vendor moved to Later.
 
 ### Maintainer answers (2026-11-08)
 
@@ -53,8 +54,11 @@ in flight and no worktrees exist; start from `feat/pair`.
    operate scope, including `sandbox.provision`, `sandbox.created` and `sandbox.runner.attached`,
    so a member can provision a machine past `checkCloudLaunch` (`sandboxAllowed`, credential
    refusals). Predates this run. Fix later by having ws.ts refuse server-only command types.
+   Checked 2026-11-08: those three are already excluded from `dispatchCommand` (`rpc.test.ts`). The
+   real hole is `delegated_task.request` and its optional `sandbox` field; M2 moves that command
+   into the internal union (10 §2, row 2.23).
 3. **Accepted for now:** the settings stream sends `sandbox` driver config (`dockerHost`,
-   `runnerUrl`) to every member, and only the UI hides it.
+   `runnerUrl`) to every member, and only the UI hides it. M2 fixes it (10 §2, row 2.25).
 4. **1.42 evals:** still open; they need a model API key in the repo root `.env`.
 
 ### M1 server-side pass (2026-11-08, on `pair-cloud-pass`)

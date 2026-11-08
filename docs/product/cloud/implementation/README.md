@@ -1,19 +1,19 @@
 # Pair Cloud: implementation plan
 
-Status: implementation plan, 2026-11-06. Nothing here is built. The design is the
-[plan](../README.md) and its ten docs; this folder turns their PR list
+Status: M0 and M1 landed; the rest is a proposal, rewritten 2026-11-08 for local-first Pair Cloud.
+The design is the [plan](../README.md) and its ten docs; this folder turns their PR list
 ([10 §2](../10-delivery-plan.md#2-pull-request-plan)) into specs an engineer or agent can implement
 without re-deriving the design. Before writing it, every code claim in the design docs was checked
 against the repo; the [findings](#verification-findings) are at the end.
 
 ## How to use this set
 
-| File                                                       | What it holds                                                                                           |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                         |
-| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.      |
-| [m2-m5.md](./m2-m5.md)                                     | M2–M5 at PR level: sharper scope, the dependencies the code reveals, and the decision each needs first. |
-| [progress.md](./progress.md)                               | Build status, how to resume, and notes from every landed PR (temporary).                                |
+| File                                                       | What it holds                                                                                                     |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                   |
+| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                |
+| [m2-m5.md](./m2-m5.md)                                     | M2–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first. |
+| [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                          |
 
 To implement a PR: read its spec, then the owner-doc sections its title row in 10 §2 names, then
 re-read every file and symbol the spec cites, since line numbers drift with upstream merges. Every
@@ -22,17 +22,31 @@ Commands and events, Migrations, Tests, Verify, Reviewer checks. Follow AGENTS.m
 `vp test run <files>` while iterating, `vp run check:changed` before pushing, no repo-wide checks,
 and one `test-t3-app` or `test-t3-mobile` pass where a PR changes what users see.
 
-Precedence: the README's decisions 1–15 and D1–D6 are fixed. The design docs say what and why. A
+Precedence: the README's decisions 1–19 and D1–D19 are fixed. The design docs say what and why. A
 spec says how; where it is more specific than a design doc, the spec wins for that PR. Anything
 marked **proposed** fills a gap the design left open: a reviewer can overrule it inside that PR, and
 the spec names what else would change.
 
-Write M2's full specs the same way once M1 lands, and so on: each milestone settles names and seams
-the next one depends on, so specs written earlier would be guesses.
+Write each milestone's full specs the same way while the previous milestone's gate runs: M2's
+during G1, M3's during G2, and so on. Each milestone settles names and seams the next one depends
+on, so specs written earlier would be guesses. Until then, [m2-m5.md](./m2-m5.md) holds each row at
+PR level.
 
 ## Build order
 
-M0 → M1 → M2 → M3, then M4 and M5, which overlap. Inside each milestone:
+M0 → M1 → G1 → M2 → G2 → M3 → G3 → M4 and M5 side by side → G4. A gate is one end-to-end
+run of the real desktop app on a member's Mac, through the Pair Cloud server on the
+`pair-cloud-pass` VM, to a real machine; the steps for each are in
+[10 §4](../10-delivery-plan.md#milestone-gates). The rules:
+
+- A milestone is done only when its gate passes. The next milestone's specs are written, and its
+  PRs can be built, while the gate runs, but they merge only after it passes.
+- Each bug a gate finds gets its own fix PR with a failing test first (a purely visual bug gets
+  before and after captures), and the gate re-runs the steps that failed.
+- Each run is captured as video and recorded in [progress](./progress.md). Steps that need the
+  maintainer (their Mac, real credentials, a phone, an AWS account) are marked in 10 §4.
+
+Inside each milestone:
 
 - **M0:** 0.1, then the lint rule 0.2, then the routing PRs 0.3–0.6 in parallel, then 0.7, 0.8 and
   0.10, then 0.9 last. 0.11 can land any time before 1.2. See [M0's build order](./m0-seam.md#build-order).
@@ -40,9 +54,27 @@ M0 → M1 → M2 → M3, then M4 and M5, which overlap. Inside each milestone:
   (wave 1) to the cloud guide and the integrated pass (wave 14). The critical path runs through the
   sandbox contracts, the driver interface, the decisions, the runner hub, flow control, the sandbox
   host, sessions and cloud launch. See [M1's build order](./m1-cloud-threads-docker.md#build-order).
+- **G1:** M1 end to end on the VM, then the passes progress still lists as open. See
+  [G1](../10-delivery-plan.md#g1-m1-before-any-m2-pr-merges).
+- **M2:** six waves, from cloud-only mode (2.22), the release (2.36), redaction, drain, restore
+  mode, effect lanes and the M1 pass defects (wave 1) to the install and cloud guides (wave 6). The
+  critical path runs through cloud-only mode, Cloud only on cloud-only servers (2.24), the resolver
+  (2.27), web and desktop routing (2.28), account onboarding (2.30) and the docs (2.21). The release
+  and the 30-machine load test (2.40) must be in before G2. See
+  [M2's waves](../10-delivery-plan.md#m2-pair-cloud-on-docker-first-release) and
+  [M2's rows](./m2-m5.md#m2-pair-cloud-on-docker-first-release).
+- **M3:** five waves: the agent link (3.19) and the context export (3.22) first, then staged seeds
+  and continue locally, the seed checkout, continue in cloud (3.23), and mobile and docs. See
+  [M3's waves](../10-delivery-plan.md#m3-continue-in-cloud).
+- **M4 and M5:** merged side by side after G3. M4 starts with the outbox's aggregate key (4.11),
+  which merges before any row that adds effect types; M5 starts with the EC2 driver (5.4), the
+  internal listeners and the policy keys, builds AMIs (5.7) once Docker builds (4.14) are in, and
+  ends with the AWS kit and its CI. See [M4's waves](../10-delivery-plan.md#m4-team-images) and
+  [M5's waves](../10-delivery-plan.md#m5-byoc-on-aws).
 - **Early starts:** the base image (1.20), the GitHub App key (1.27) and the mirror store (1.30)
-  need nothing from M0 but 0.1. The team server release (5.1) and the secret providers (5.2, 5.3)
-  can land any time. The hosted vendor decision (#2 in 10 §7) is due before M2 starts.
+  needed nothing from M0 but 0.1. M2's rows that need only M1 can be built while G1 runs. The secret
+  providers (5.2, 5.3) and the runner's CA and proxy support (5.8) can be built any time and merge
+  with M5.
 
 ## Shared names
 
@@ -88,7 +120,7 @@ the PR that first needs it carries it.
 | P7  | The runner bundle on a source-run server          | Built once per server process on first use; its id is the sha256 over each file's path, mode and hash, as for releases.                                                                                                                                                                                                                                                        | 1.9            |
 | P8  | Migration numbering                               | Pair shares upstream's ids (080–087 are Pair's already) and the migrator refuses a database whose recorded names differ below its head. Take the next free id at merge, keep sandbox schema changes few, and renumber on upstream merges as today.                                                                                                                             | 1.3            |
 | P9  | Where `defaultsToCloud` and `sandboxAllowed` live | Project settings override keys only, special-cased like `providerInstances`, since project records' env-mode field is legacy.                                                                                                                                                                                                                                                  | 1.36           |
-| P10 | What gates Cloud on clients                       | An optional `ServerSettings.sandbox`, omitted until a driver is configured. Capabilities are fixed at startup, while settings stream redacted to every client, so no capability and no `ServerConfig.sandboxCompute`.                                                                                                                                                          | 1.36, 1.37     |
+| P10 | What gates Cloud on clients                       | In M1, an optional `ServerSettings.sandbox`, omitted until a driver is configured: capabilities are fixed at startup, while settings stream redacted to every client. From M2, cloud-only mode is itself a startup mode, so it sets `capabilities.cloudLaunch` (2.24) and the driver list still comes from settings.                                                           | 1.36, 1.37     |
 | P11 | Team cap across threads                           | A process-wide admission lock taken in `dispatchWithReceipt` for commands that take a slot, ordered before the thread lock; the start-rate bucket sits under it.                                                                                                                                                                                                               | 1.18           |
 | P12 | `host.info`                                       | An `Effect`, not a value, because today's code and tests read `HostProcess` per call; the sandbox host returns a constant.                                                                                                                                                                                                                                                     | 0.1            |
 | P13 | Which thread a git request is for                 | The helper sends `T3CODE_THREAD_ID`; the server checks the thread is bound to the asking sandbox and answers for its project remote only, github.com only in M1; no thread id means the owning thread. App failures fall through to the owner's credential.                                                                                                                    | 1.28           |
@@ -108,7 +140,7 @@ place in the owning doc. Most held. These are the corrections that matter, by do
 
 | Doc                                     | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [README](../README.md)                  | Decision 9's wording: the M3 outbox change is a table rebuild plus a `team-image` receipt and stream kind, not "one additive change". The decision itself stands.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| [README](../README.md)                  | Decision 9's wording: the M4 outbox change is a table rebuild plus a `team-image` receipt and stream kind, not "one additive change". The decision itself stands.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | [01](../01-product.md)                  | The local mode is labeled "Current checkout". The invite dialog's real text is quoted. Admins always see Settings → Team.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | [02](../02-workspace-host.md)           | Replay (dev) is an ACP agent ([dev-replay-agent.ts](../../../../apps/server/scripts/dev-replay-agent.ts)), not `replayWorkspace.ts`. A turn costs about 56 sequential round trips, not 28, because every checkpoint call re-runs VCS detection; checkpoint capture must run the whole `CheckpointServiceV2` capture in the runner to get turn end down to about 6. `FileSystem.FileSystem` is an interface, not a service class. Inventory counts, the Claude spawn path (`node:child_process`), `resolveSettings` running in process, and the search index key (cwd and variant) were corrected. |
 | [03](../03-runner.md)                   | The runner dials with `NodeWS` (the `ws` package), not `NodeSocket`. `RpcClient.makeProtocolSocket` has no "retries off" switch. `RpcServer.makeProtocolSocketServer` already takes any `SocketServer`, so the one-socket adapter is about 20 lines. The history worker must be built unsplit for the bundle. The MCP endpoint is the server's bind address, and the `mcp` forward must be an HTTP proxy that checks each bearer, since `/mcp` also takes member API tokens.                                                                                                                      |
@@ -123,11 +155,11 @@ place in the owning doc. Most held. These are the corrections that matter, by do
 
 ## Changes to decisions, milestones and PR order
 
-No README decision or milestone changed. Two decisions' wording did, to match the code:
+The verification changed no README decision. Two decisions' wording did, to match the code:
 
-- **Decision 9.** The M3 outbox change is a table rebuild plus a `team-image` receipt and stream
+- **Decision 9.** The M4 outbox change is a table rebuild plus a `team-image` receipt and stream
   kind, a commit path that writes its effects, and its lock, not "one additive change". The
-  decision (builds belong to no thread, so the outbox gains an aggregate key in M3) stands; 3.1's
+  decision (builds belong to no thread, so the outbox gains an aggregate key in M4) stands; 4.11's
   scope grows.
 - **Decision 7.** `defaultsToCloud` is a project settings override, not a project-record field,
   because project records' env-mode field is legacy. The decision (a sibling flag, never `cloud` in
@@ -139,7 +171,7 @@ PR order and scope in 10 §2, each because the code required it:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | 0.12 dropped                             | Capabilities are fixed at startup, so settings gate Cloud instead (P10).                               |
 | 0.13 folded into 1.37                    | An export with no importer fails knip; its input arrives with 1.36.                                    |
-| 0.6 and 1.12 route the ACP session spawn | Replay (dev), the free test provider, is an ACP agent. Other ACP agents stay M3.                       |
+| 0.6 and 1.12 route the ACP session spawn | Replay (dev), the free test provider, is an ACP agent. Other ACP agents stay Later (3.14).             |
 | 0.3 and 0.8 widened                      | VCS detection, path canonicalization and restore safety at admission also read the server's disk.      |
 | 1.5a folded into 1.5                     | The bound and the replay-safe list are tied to the effect types 1.5 adds.                              |
 | 1.36 before 1.4                          | The driver registry reads driver instances from settings.                                              |
@@ -150,7 +182,7 @@ PR order and scope in 10 §2, each because the code required it:
 | 1.40 needs 1.16, 1.18, 1.23, 1.30        | The Test button boots a runner; the page shows caps, the base image and the mirror size.               |
 | 1.41 carries D1's mobile half            | Mobile has no member GitHub UI today.                                                                  |
 | Head-context record from 1.31 to 2.9     | Nothing reads it while M1's sandboxes stop only when settled.                                          |
-| 2.4 before 2.5                           | Effect retries end within about 2 s, so a vendor's 429 fails a sandbox at once without `retryAfterMs`. |
+| 2.4 before 5.4                           | Effect retries end within about 2 s, so a driver's 429 fails a sandbox at once without `retryAfterMs`. |
 | 5.10 without Replay                      | Replay exists only on dev servers.                                                                     |
 
 The full list, with each PR's smaller Needs changes, is in [M1's summary](./m1-cloud-threads-docker.md#what-the-code-changed-in-10-2)
@@ -172,3 +204,7 @@ and 10 §2 itself.
   `retryAfterMs` holds its queue.
 - **Paths outside `/t3-sandbox/<id>/` route to local disk.** Anything the server reads or writes by
   path in a sandbox must sit under the root (P1).
+- **Every new machine passes the launch gate.** On a server that isn't cloud-only, nothing may
+  create a machine (2.23). A new decision that provisions, including a wake or retry that rebuilds a
+  lost disk, must call the same check as `resolveCloudLaunch`, and a client command that carries a
+  placement must stay internal.
