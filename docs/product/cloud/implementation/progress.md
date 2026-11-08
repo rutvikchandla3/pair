@@ -193,8 +193,10 @@ Passed so far:
 2. **Cloud thread.** A new Cloud-workspace thread on the Docker driver ran a Claude Haiku 5.5 turn
    (5.4 s, `gate-g1.md` +1).
 3. **Commit and push.** Commit & push landed `f7350d6` on `t3/39029d10` (Haiku wrote the message).
-   **Opening the PR** still fails: the server has no GitHub credential of its own (the open item
-   below).
+   Create PR then opened [pair-cloud-test#3](https://github.com/rutvikchandla3/pair-cloud-test/pull/3)
+   once the server had its own token. Settings → Source control takes a fine-grained token with
+   the repo selected and Contents and Pull requests set to read and write. A token without the
+   repo makes GitHub answer "Pull request not found".
 4. **Sleep and Wake** from the thread menu: the container stopped, restarted, and kept the commit.
 
 Fixed during the run:
@@ -214,7 +216,7 @@ server. The VM's text generation is set to Haiku in `~/.t3/dev/settings.json` (b
 Drive the web app in a browser over `gcloud compute ssh … -L 15733:localhost:5733` (the dev
 cookie is set). Desktop GUI automation through `orca computer` repeated typed text and was slow.
 
-Still to run for G1: the PR open (needs the server's GitHub credential), phone plus
+Still to run for G1: phone plus
 `docker rm -f` with the machine-failed push, and the Codex, member-token, evals and
 mobile/app-capture items below.
 
