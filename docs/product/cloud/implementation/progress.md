@@ -229,14 +229,15 @@ offered "Initialize Git". That is the known Retry gap, and 2.13 owns it.
 Video (desktop steps 1–4, then web for the PR, the fixed commit and Machine failed):
 `~/rcode/pair-gate-videos/g1-gate-run-2026-11-08.mp4` on the maintainer's Mac.
 
-Still to run for G1. Each needs the maintainer:
+**G1 closed on 2026-11-09 by the maintainer**, with steps 1–5 and step 6's `docker rm -f`
+passed. These were set aside, not run, and need the maintainer when picked up:
 
-- the step 6 push, on a Pair build;
-- Codex turns: set aside by the maintainer on 2026-11-09. A managed ChatGPT account added from
-  the web (Add provider → Continue with ChatGPT) lost its instance mid sign-in ("This provider
-  instance is no longer available"), and the account was gone from settings afterwards;
-- the member-token push and PR: set aside by the maintainer on 2026-11-09. It needs the App ID
-  cleared first, since `GitCredentialService.sourceFor` picks the App whenever one is configured;
+- step 6's `machine-failed` push, which needs a Pair build signed by a paid Apple Developer team;
+- Codex turns, local and cloud. A managed ChatGPT account added from the web (Add provider →
+  Continue with ChatGPT) lost its instance mid sign-in ("This provider instance is no longer
+  available"), and the account was gone from settings afterwards;
+- the member-token push and PR. Clear the App ID first: `GitCredentialService.sourceFor` picks
+  the App whenever one is configured;
 - the 1.42 evals, with `ANTHROPIC_API_KEY` in the repo root `.env`;
 - test-t3-mobile, with a simulator (this Mac has no full Xcode) or a Pair build.
 
