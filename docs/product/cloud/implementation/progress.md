@@ -221,8 +221,21 @@ Step 6 (phone) is skipped for now. The phone paired over the tailnet, but it run
 T3 Code app, which has no member push. A Pair build that receives push needs a paid Apple
 Developer team to sign it. Personal-team builds leave out the push entitlement.
 
-Still to run for G1: step 6 on a Pair build, and the Codex, member-token, evals and
-mobile/app-capture items below.
+Step 6's `docker rm -f`, run from the web during a `sleep 120` turn, passed. The machine went
+`failed` with `missing` when the 120 s lease ran out, and the banner showed **Retry** and
+**Discard**. Retry provisioned generation 3 with an empty `/t3-sandbox/<id>`, and the details panel
+offered "Initialize Git". That is the known Retry gap, and 2.13 owns it.
+
+Video (desktop steps 1–4, then web for the PR, the fixed commit and Machine failed):
+`~/rcode/pair-gate-videos/g1-gate-run-2026-11-08.mp4` on the maintainer's Mac.
+
+Still to run for G1. Each needs the maintainer:
+
+- the step 6 push, on a Pair build;
+- Codex turns, after a ChatGPT sign-in on the VM;
+- the member-token push and PR, with a member PAT;
+- the 1.42 evals, with `ANTHROPIC_API_KEY` in the repo root `.env`;
+- test-t3-mobile, with a simulator (this Mac has no full Xcode) or a Pair build.
 
 ## How to resume
 
