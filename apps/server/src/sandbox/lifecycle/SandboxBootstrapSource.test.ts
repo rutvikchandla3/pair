@@ -41,6 +41,7 @@ it.effect("mints a grant only once the route and the runner build are known", ()
               : Effect.fail(
                   new RunnerRouteError({ driverId: driver.id, reason: "runner-url-required" }),
                 ),
+          dialsOverTcp: Effect.succeed(false),
         }),
       ),
       Layer.provide(

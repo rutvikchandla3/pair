@@ -878,7 +878,12 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
-    RunnerRoute.layer,
+    // 404 while every driver dials the runner socket, which serves RunnerRoute.layer.
+    Layer.unwrap(
+      Effect.map(RunnerEndpoint.RunnerEndpoint, (endpoint) =>
+        RunnerRoute.layerWhen(endpoint.dialsOverTcp),
+      ),
+    ),
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),

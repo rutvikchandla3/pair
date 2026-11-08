@@ -16,6 +16,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { type DockerHost, parseDockerHost } from "../compute/DockerEngineApi.ts";
 import { RunnerBundle } from "./RunnerBundle.ts";
 import { RunnerHub } from "./RunnerHub.ts";
@@ -94,11 +95,14 @@ export class RunnerEndpoint extends Context.Service<
     readonly planFor: (
       driver: DockerSandboxDriver,
     ) => Effect.Effect<RunnerDialPlan, RunnerRouteError>;
+    /** Whether any configured driver's sandboxes reach `/runner/*` on the TCP listener. */
+    readonly dialsOverTcp: Effect.Effect<boolean>;
   }
 >()("t3/sandbox/runnerHub/RunnerEndpoint") {}
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
+  const settings = yield* ServerSettingsService;
   const httpServer = yield* HttpServer.HttpServer;
   const hub = yield* RunnerHub;
   const bundle = yield* RunnerBundle;
@@ -130,8 +134,8 @@ const make = Effect.gen(function* () {
     yield* Effect.logInfo("runner socket listening", { socketPath });
   });
 
-  const planFor = Effect.fn("RunnerEndpoint.planFor")(function* (driver: DockerSandboxDriver) {
-    const route = chooseRunnerRoute({
+  const routeFor = Effect.fnUntraced(function* (driver: DockerSandboxDriver) {
+    return chooseRunnerRoute({
       runnerUrl: driver.runnerUrl,
       dockerHost: parseDockerHost(
         driver.dockerHost,
@@ -142,6 +146,10 @@ const make = Effect.gen(function* () {
       serverPort,
       hostSocketDir,
     });
+  });
+
+  const planFor = Effect.fn("RunnerEndpoint.planFor")(function* (driver: DockerSandboxDriver) {
+    const route = yield* routeFor(driver);
     if (Result.isFailure(route)) {
       return yield* new RunnerRouteError({ driverId: driver.id, reason: route.failure });
     }
@@ -159,7 +167,21 @@ const make = Effect.gen(function* () {
     return { serverUrl: `unix:${socketPath}` };
   });
 
-  return RunnerEndpoint.of({ planFor });
+  // Per request, since an admin can add a TCP-dialing driver while the server runs.
+  const dialsOverTcp = Effect.gen(function* () {
+    const drivers = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.sandbox?.drivers ?? []),
+      Effect.orElseSucceed(() => []),
+    );
+    for (const driver of drivers) {
+      if (driver.kind !== "docker") continue;
+      const route = yield* routeFor(driver);
+      if (Result.isSuccess(route) && route.success._tag === "url") return true;
+    }
+    return false;
+  });
+
+  return RunnerEndpoint.of({ planFor, dialsOverTcp });
 });
 
 export const layer = Layer.effect(RunnerEndpoint, make);

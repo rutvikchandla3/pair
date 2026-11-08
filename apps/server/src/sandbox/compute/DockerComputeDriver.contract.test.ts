@@ -105,6 +105,7 @@ const makeContractDriver = (installId: EnvironmentId) =>
           // The suite hands each bootstrap its own socket; no route is needed past the egress block.
           Layer.succeed(RunnerEndpoint, {
             planFor: () => Effect.succeed({ serverUrl: "unix:/unused/runner.sock" }),
+            dialsOverTcp: Effect.succeed(false),
           }),
           Layer.succeed(RunnerBundle, {
             current: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),

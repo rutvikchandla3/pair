@@ -16,6 +16,7 @@ import * as Result from "effect/Result";
 
 import { ServerConfig } from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import type { DockerHost } from "../compute/DockerEngineApi.ts";
 import * as RunnerBundle from "./RunnerBundle.ts";
 import * as RunnerEndpoint from "./RunnerEndpoint.ts";
@@ -130,6 +131,7 @@ it.live("opens the runner socket once and serves only the runner routes on it", 
     const services = yield* Layer.build(
       RunnerEndpoint.layer.pipe(
         Layer.provide(Layer.mock(ServerConfig)({ stateDir } as ServerConfig["Service"])),
+        Layer.provide(ServerSettings.layerTest()),
         Layer.provide(NodeHttpServer.layerTest),
         Layer.provide(
           Layer.succeed(RunnerBundle.RunnerBundle, {

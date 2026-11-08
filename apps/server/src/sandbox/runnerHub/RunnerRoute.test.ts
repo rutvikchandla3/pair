@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import { Headers, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 
 import * as ServerConfig from "../../config.ts";
@@ -102,6 +103,44 @@ it.live("answers 400, 426 and 401 without spending a secret, then upgrades and s
       status: 401,
       body: "",
     });
+  }).pipe(Effect.scoped),
+);
+
+it.live("answers 404 on the member listener until a driver dials over TCP", () =>
+  Effect.gen(function* () {
+    const dialsOverTcp = yield* Ref.make(false);
+    const services = yield* Layer.build(
+      HttpRouter.serve(RunnerRoute.layerWhen(Ref.get(dialsOverTcp)), {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provideMerge(layerHub)),
+    );
+    const hub = Context.get(services, RunnerHub.RunnerHub);
+    const client = Context.get(services, HttpClient.HttpClient);
+    const address = Context.get(services, HttpServer.HttpServer).address;
+    const { runnerBuildId } = yield* Context.get(services, RunnerBundle.RunnerBundle).current;
+    assert(address._tag !== "UnixPathAddress");
+    const url = `ws://127.0.0.1:${address.port}/runner/v1/connect`;
+    const secret = yield* hub.mintEnrollment(SandboxId.make("sbx_0000000000000000000a"), 1);
+    const enroll = `Enroll ${Redacted.value(secret)}`;
+    const current = { "x-pair-runner-protocol": "1", "x-pair-runner-build": runnerBuildId };
+    const statuses = Effect.all([
+      client.execute(HttpClientRequest.get("/runner/v1/connect")).pipe(Effect.map((r) => r.status)),
+      upgrade(url, { authorization: "Bearer unknown", ...current }).pipe(
+        Effect.map((r) => r.status),
+      ),
+      upgrade(url, { authorization: enroll }).pipe(Effect.map((r) => r.status)),
+      client
+        .execute(HttpClientRequest.get(`/runner/v1/bundle/${runnerBuildId}.tar.gz`))
+        .pipe(Effect.map((r) => r.status)),
+    ]);
+
+    assert.deepStrictEqual(yield* statuses, [404, 404, 404, 404]);
+    yield* Ref.set(dialsOverTcp, true);
+    assert.deepStrictEqual(yield* statuses, [400, 401, 426, 401]);
+    // The refusals while unmounted spent nothing.
+    const upgraded = yield* upgrade(url, { authorization: enroll, ...current });
+    assert.equal(upgraded.status, 101);
   }).pipe(Effect.scoped),
 );
 

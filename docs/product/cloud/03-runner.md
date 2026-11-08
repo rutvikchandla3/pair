@@ -213,9 +213,10 @@ A server on any other platform fails with `unsupported-platform` unless the driv
 `runnerUrl`.
 
 How members reach Pair Cloud (VPN, Tailscale or the team's HTTPS domain) doesn't matter to
-machines. The member listener also mounts `/runner/*` today
-([server.ts](../../../apps/server/src/server.ts)); `DOCKER_HOST` drivers and the macOS path dial
-it. In BYOC (M5), `/runner/*` moves to the internal-only listener, so it is reachable only from
+machines. The member listener also answers `/runner/*` today
+([server.ts](../../../apps/server/src/server.ts)), but only while some configured driver dials it
+over TCP: a `runnerUrl`, a remote `DOCKER_HOST`, or the macOS path. Otherwise those routes are 404
+there, checked per request so a driver added at runtime takes effect. In BYOC (M5), `/runner/*` moves to the internal-only listener, so it is reachable only from
 machine networks (see Challenges for M2).
 
 ## 4. Protocol
