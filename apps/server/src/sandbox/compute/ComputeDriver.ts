@@ -43,7 +43,6 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
     reason: ComputeDriverErrorReason,
     // Set where the error is built, never derived later from `reason`.
     retryable: Schema.Boolean,
-    // Carried now, honored in 2.4.
     retryAfterMs: Schema.optionalKey(NonNegativeInt),
     // The backend's own status, e.g. the Engine API's HTTP status.
     backendStatus: Schema.optionalKey(Schema.Number),

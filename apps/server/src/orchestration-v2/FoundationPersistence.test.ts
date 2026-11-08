@@ -2310,6 +2310,20 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         );
       }
 
+      // Another thread's work keeps moving while this thread waits out the retry.
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-retry-order:other-title",
+          commandId: CommandId.make("command:foundation-retry-order:other-title"),
+          threadId: ThreadId.make("thread:foundation-retry-order:other"),
+          request: { type: "thread-title.generate", kind: { type: "regenerate" } },
+        },
+      ]);
+      const other = yield* outbox.claimNext({ workerId });
+      assert.equal(Option.getOrUndefined(other)?.id, "effect:foundation-retry-order:other-title");
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId })));
+      yield* outbox.succeed({ effectId: "effect:foundation-retry-order:other-title", workerId });
+
       yield* outbox.cancelUnsettled({
         threadId,
         effectTypes: ["provider-thread.rollback"],

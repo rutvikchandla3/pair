@@ -1,5 +1,6 @@
 import {
   CommandId,
+  NonNegativeInt,
   type OrchestrationV2Sandbox,
   type OrchestrationV2ServerCommand,
   SandboxId,
@@ -50,6 +51,7 @@ export class SandboxEffectError extends Schema.TaggedError<SandboxEffectError>()
     sandboxId: SandboxId,
     operation: SandboxEffectOperation,
     retryable: Schema.Boolean,
+    retryAfterMs: Schema.optionalKey(NonNegativeInt),
     cause: Schema.Defect(),
   },
 ) {
@@ -292,16 +294,26 @@ const make = Effect.gen(function* () {
     record: OrchestrationV2Sandbox,
     operation: Exclude<SandboxEffectOperation, "report">,
   ) {
-    const fail = (retryable: boolean) => (cause: unknown) =>
-      new SandboxEffectError({ sandboxId: record.id, operation, retryable, cause });
+    const fail = (retryable: boolean, retryAfterMs?: number) => (cause: unknown) =>
+      new SandboxEffectError({
+        sandboxId: record.id,
+        operation,
+        retryable,
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        cause,
+      });
     // A removed driver stays removed; a settings read may succeed next time.
     const driver = yield* registry
       .get(record.driverId)
       .pipe(Effect.mapError((cause) => fail(!isDriverNotConfigured(cause))(cause)));
+    // A hinted error leaves at once: the outbox waits it out without holding a worker slot.
     const call = <A>(effect: Effect.Effect<A, ComputeDriverError>) =>
       effect.pipe(
-        Effect.retry({ ...DRIVER_RETRY, while: (error) => error.retryable }),
-        Effect.mapError((error) => fail(error.retryable)(error)),
+        Effect.retry({
+          ...DRIVER_RETRY,
+          while: (error) => error.retryable && error.retryAfterMs === undefined,
+        }),
+        Effect.mapError((error) => fail(error.retryable, error.retryAfterMs)(error)),
       );
     const callIgnoringMissing = (effect: Effect.Effect<void, ComputeDriverError>) =>
       call(

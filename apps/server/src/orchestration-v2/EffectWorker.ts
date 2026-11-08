@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, NonNegativeInt } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,9 +36,25 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
   {
     effectId: Schema.String,
     effectType: Schema.String,
+    retryAfterMs: Schema.optionalKey(NonNegativeInt),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
+
+/** Bounds a driver's hint, so a buggy or hostile backend cannot park a thread's queue for hours. */
+export const RETRY_AFTER_CAP_MS = 10 * 60_000;
+
+const retryDelayMs = (attemptCount: number, cause: Cause.Cause<unknown>) => {
+  const backoff = Math.min(30_000, 100 * 2 ** Math.max(0, attemptCount - 1));
+  const hint = Option.match(Cause.findErrorOption(cause), {
+    onNone: () => undefined,
+    onSome: (error) =>
+      isOrchestrationEffectExecutionError(error) ? error.retryAfterMs : undefined,
+  });
+  return hint === undefined ? backoff : Math.max(backoff, Math.min(RETRY_AFTER_CAP_MS, hint));
+};
 
 /**
  * Do not apply this to `provider-turn.restart`: that compound effect also runs
@@ -74,6 +90,15 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2,
   OrchestrationEffectExecutorV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
+
+const sandboxExecutionError =
+  (effect: EffectOutbox.OrchestrationEffectV2) => (cause: SandboxEffects.SandboxEffectError) =>
+    new OrchestrationEffectExecutionError({
+      effectId: effect.id,
+      effectType: effect.request.type,
+      ...(cause.retryAfterMs === undefined ? {} : { retryAfterMs: cause.retryAfterMs }),
+      cause,
+    });
 
 export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
@@ -612,29 +637,13 @@ export const layerExecutor: Layer.Layer<
           case "sandbox.status":
           case "sandbox.release-waiters":
           case "sandbox.request-wake":
-            return sandboxEffects.execute(effect.request).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
+            return sandboxEffects
+              .execute(effect.request)
+              .pipe(Effect.mapError(sandboxExecutionError(effect)));
           case "sandbox.hand-over":
             return sandboxEffects
               .handOver({ sandboxId: effect.request.sandboxId, fromThreadId: effect.threadId })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(sandboxExecutionError(effect)));
         }
       }),
     });
@@ -906,7 +915,7 @@ export const layerWithOptions = (
                     effectId: effect.id,
                     workerId,
                     error,
-                    delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    delayMs: retryDelayMs(effect.attemptCount, exit.cause),
                   })
                   .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (!updated) {

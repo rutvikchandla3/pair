@@ -458,41 +458,52 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
     }),
   );
 
-  it.effect("records the last driver failure once every attempt of a create has failed", () =>
+  it.effect.each([
+    { name: "a create has failed", id: "fails", retryable: false, retryAfterMs: undefined },
+    // The hint skips the in-effect driver retries: one driver call per attempt, not four.
+    { name: "a hinted create has failed", id: "hinted", retryable: true, retryAfterMs: 1_000 },
+  ])("records the last driver failure once every attempt of $name", (row) =>
     Effect.gen(function* () {
       const runtime = yield* makeSandboxRuntime();
-      const { sandboxId } = yield* provisioned("fails");
+      const { sandboxId } = yield* provisioned(row.id);
+      const creates = yield* Ref.make(0);
       yield* Queue.take(runtime.calls).pipe(
         Effect.flatMap((call) =>
           call._tag === "create"
-            ? Deferred.fail(
-                call.reply,
-                new ComputeDriverError({
-                  driverId: ComputeDriverId.make("fake"),
-                  operation: "create",
-                  reason: "capacity",
-                  retryable: false,
-                }),
+            ? Ref.update(creates, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Deferred.fail(
+                    call.reply,
+                    new ComputeDriverError({
+                      driverId: ComputeDriverId.make("fake"),
+                      operation: "create",
+                      reason: "capacity",
+                      retryable: row.retryable,
+                      ...(row.retryAfterMs === undefined ? {} : { retryAfterMs: row.retryAfterMs }),
+                    }),
+                  ),
+                ),
               )
             : Effect.die(`Expected create, got ${call._tag}`),
         ),
         Effect.forever,
         Effect.forkChild,
       );
-      // Five attempts, each after the previous one's backoff.
+      // Five attempts, each after the previous one's backoff or hint.
       yield* Effect.forEach([1, 2, 3, 4, 5], () =>
         runtime.worker.drain().pipe(Effect.andThen(TestClock.adjust("1 second"))),
       );
 
+      assert.equal(yield* Ref.get(creates), 5);
       const sandbox = yield* getSandbox(sandboxId);
       assert.equal(sandbox?.state, "failed");
       assert.deepEqual(sandbox?.failure, {
         code: "create-failed",
         message: "Compute driver fake failed to create: capacity.",
-        retryable: false,
+        retryable: row.retryable,
       });
       const [create] = yield* EffectOutbox.EffectOutboxV2.use((outbox) =>
-        outbox.listByCommandId(CommandId.make("provision:fails")),
+        outbox.listByCommandId(CommandId.make(`provision:${row.id}`)),
       );
       assert.equal(create?.status, "failed");
       assert.equal(create?.attemptCount, 5);

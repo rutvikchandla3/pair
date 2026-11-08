@@ -10,6 +10,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  SandboxId,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
@@ -85,6 +86,7 @@ function layerExecutorFor(input: {
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
+  readonly sandboxEffects?: Partial<SandboxEffects.SandboxEffects["Service"]>;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -162,7 +164,7 @@ function layerExecutorFor(input: {
       Layer.mergeAll(
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
-        Layer.mock(SandboxEffects.SandboxEffects)({}),
+        Layer.mock(SandboxEffects.SandboxEffects)(input.sandboxEffects ?? {}),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -392,6 +394,89 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     assert.equal(retry.workerId, workerId);
     assert.equal(retry.delayMs, 0);
     assert.include(retry.error, "simulated cancellation-state read failure");
+  }),
+);
+
+it.effect("waits out a driver's retry-after hint, capped, instead of the backoff", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const workerId = "worker-retry-after";
+    const sandboxId = SandboxId.make("sbx_00000000000000000024");
+    const attempt = yield* Ref.make({
+      attemptCount: 1,
+      retryAfterMs: undefined as number | undefined,
+    });
+    const delays = yield* Ref.make<ReadonlyArray<number>>([]);
+    const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () =>
+        Ref.get(attempt).pipe(
+          Effect.map(({ attemptCount }) =>
+            Option.some<EffectOutbox.OrchestrationEffectV2>({
+              id: "effect:worker-retry-after",
+              commandId: CommandId.make("command:worker-retry-after"),
+              threadId: ThreadId.make("thread:worker-retry-after"),
+              request: { type: "sandbox.start", sandboxId, generation: 1 },
+              status: "running",
+              attemptCount,
+              availableAt: now,
+              leaseOwner: workerId,
+              createdAt: now,
+              updatedAt: now,
+              completedAt: null,
+              lastError: null,
+            }),
+          ),
+        ),
+      get: () => Effect.succeedNone,
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: ({ delayMs }) =>
+        Ref.update(delays, (existing) => [...existing, delayMs]).pipe(Effect.as(true)),
+    });
+    const layerExecutor = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      sandboxEffects: {
+        execute: () =>
+          Ref.get(attempt).pipe(
+            Effect.flatMap(({ retryAfterMs }) =>
+              Effect.fail(
+                new SandboxEffects.SandboxEffectError({
+                  sandboxId,
+                  operation: "start",
+                  retryable: true,
+                  ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+                  cause: "simulated driver capacity error",
+                }),
+              ),
+            ),
+          ),
+      },
+    });
+    const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+    );
+
+    yield* Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (const next of [
+        { attemptCount: 1, retryAfterMs: 45_000 },
+        { attemptCount: 2, retryAfterMs: 3_600_000 },
+        { attemptCount: 3, retryAfterMs: 50 },
+        { attemptCount: 1, retryAfterMs: undefined },
+        { attemptCount: 4, retryAfterMs: undefined },
+      ]) {
+        yield* Ref.set(attempt, next);
+        yield* worker.runOnce;
+      }
+    }).pipe(Effect.provide(layerWorker));
+
+    assert.deepStrictEqual(yield* Ref.get(delays), [
+      45_000,
+      EffectWorker.RETRY_AFTER_CAP_MS,
+      400,
+      100,
+      800,
+    ]);
   }),
 );
 
