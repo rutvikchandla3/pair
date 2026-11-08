@@ -759,6 +759,8 @@ export const OrchestrationV2ThreadLaunchCloudStrategy = Schema.Struct({
   type: Schema.Literal("cloud"),
   baseRef: TrimmedNonEmptyString,
   branch: Schema.optional(TrimmedNonEmptyString),
+  /** `branch` already exists and must be on origin; without it `branch` is a new name from `baseRef`. */
+  existingBranch: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2ThreadLaunchCloudStrategy =
   typeof OrchestrationV2ThreadLaunchCloudStrategy.Type;

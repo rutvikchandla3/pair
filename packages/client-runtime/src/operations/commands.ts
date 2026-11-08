@@ -170,7 +170,11 @@ interface StartThreadBootstrap {
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
   };
-  readonly prepareCloud?: { readonly baseRef: string; readonly branch?: string };
+  readonly prepareCloud?: {
+    readonly baseRef: string;
+    readonly branch?: string;
+    readonly existingBranch?: true;
+  };
   readonly runSetupScript?: boolean;
 }
 
@@ -767,6 +771,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             type: "cloud" as const,
             baseRef: prepareCloud.baseRef,
             ...(prepareCloud.branch === undefined ? {} : { branch: prepareCloud.branch }),
+            ...(prepareCloud.existingBranch === undefined
+              ? {}
+              : { existingBranch: prepareCloud.existingBranch }),
           }
         : prepareWorktree !== undefined
           ? {

@@ -96,6 +96,7 @@ export class GitWorkflowService extends Context.Service<
       readonly remoteName: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    readonly remoteHasBranch: GitVcsDriver.GitVcsDriver["Service"]["remoteHasBranch"];
     readonly resolveRemoteTrackingCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -445,6 +446,11 @@ export const make = Effect.gen(function* () {
     remoteBranchExists: Effect.fn("GitWorkflowService.remoteBranchExists")(function (input) {
       return ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(
         Effect.andThen(git.remoteBranchExists(input)),
+      );
+    }),
+    remoteHasBranch: Effect.fn("GitWorkflowService.remoteHasBranch")(function (input) {
+      return ensureGitCommand("GitWorkflowService.remoteHasBranch", input.cwd).pipe(
+        Effect.andThen(git.remoteHasBranch(input)),
       );
     }),
     resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(

@@ -863,8 +863,13 @@ describe("cloud threads on older clients", () => {
   });
 
   it("takes cloud only in the launch input and records a run old clients decode", () => {
-    const cloud = { type: "cloud", baseRef: "main", branch: "pair/fix" } as const;
-    expect(
+    const cloud = {
+      type: "cloud",
+      baseRef: "main",
+      branch: "pair/fix",
+      existingBranch: true,
+    } as const;
+    const launchWith = (workspaceStrategy: unknown) =>
       decodeThreadLaunchInput({
         commandId: "command-1",
         projectId: "project-1",
@@ -872,9 +877,10 @@ describe("cloud threads on older clients", () => {
         modelSelection: { instanceId: "codex", model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-        workspaceStrategy: cloud,
-      }).workspaceStrategy,
-    ).toEqual(cloud);
+        workspaceStrategy,
+      }).workspaceStrategy;
+    expect(launchWith(cloud)).toEqual(cloud);
+    expect(() => launchWith({ ...cloud, existingBranch: false })).toThrow();
     expect(() => decodeRunWorkspacePreparation(cloud)).toThrow();
     // What the launch records for the run (ThreadLaunchService), read by a pre-cloud client.
     const recorded = { type: "worktree", baseRef: cloud.baseRef, branch: cloud.branch } as const;

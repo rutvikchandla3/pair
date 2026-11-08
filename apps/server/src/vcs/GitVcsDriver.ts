@@ -268,6 +268,10 @@ export interface GitRemoteBranchExistsInput extends GitRemoteExistsInput {
   refName: string;
 }
 
+export interface GitRemoteHasBranchInput extends GitRemoteBranchExistsInput {
+  env?: NodeJS.ProcessEnv;
+}
+
 export interface GitResolveRemoteTrackingCommitInput {
   cwd: string;
   refName: string;
@@ -413,6 +417,10 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<void, GitCommandError>;
     readonly remoteBranchExists: (
       input: GitRemoteBranchExistsInput,
+    ) => Effect.Effect<boolean, GitCommandError>;
+    /** Asks the remote itself, not the local remote-tracking refs. */
+    readonly remoteHasBranch: (
+      input: GitRemoteHasBranchInput,
     ) => Effect.Effect<boolean, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,

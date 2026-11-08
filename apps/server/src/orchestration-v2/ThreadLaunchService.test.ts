@@ -144,6 +144,7 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
+  readonly remoteHasBranch?: GitWorkflow.GitWorkflowService["Service"]["remoteHasBranch"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
@@ -231,6 +232,7 @@ function makeHarness(options: HarnessOptions = {}) {
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
+      remoteHasBranch: options.remoteHasBranch ?? (() => Effect.succeed(true)),
       removeWorktree,
       deleteLocalBranch,
       ...options.git,
@@ -2551,6 +2553,11 @@ const runReaching = (threadId: ThreadId, status: "starting" | "failed") =>
   );
 
 const cloudWorkspace = { type: "cloud" as const, baseRef: "main" };
+const existingBranchWorkspace = {
+  ...cloudWorkspace,
+  branch: "feature/login",
+  existingBranch: true as const,
+};
 
 it.effect("launches a cloud thread and releases it on runner hello", () => {
   const harness = cloudHarness();
@@ -2629,7 +2636,35 @@ it.effect.each([
     machineFails: false,
     reason: "main is not on origin. Push main first.",
   },
-])("fails a cloud launch's run when $name", ({ git, machineFails, reason }) => {
+  {
+    // Origin said it had the branch at launch; it was deleted before the machine checked.
+    name: "an existing branch was never pushed",
+    git: {
+      hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
+    workspace: existingBranchWorkspace,
+    machineFails: false,
+    reason: "feature/login is not on github.com/acme/app. Push feature/login first.",
+  },
+  {
+    name: "origin could not be asked about an existing branch that was never pushed",
+    git: {
+      hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+      remoteHasBranch: ({ cwd }) =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.remoteHasBranch",
+            command: "git ls-remote",
+            cwd,
+            detail: "Could not reach the remote.",
+          }),
+        ),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
+    workspace: existingBranchWorkspace,
+    machineFails: false,
+    reason: "feature/login is not on github.com/acme/app. Push feature/login first.",
+  },
+])("fails a cloud launch's run when $name", ({ git, workspace, machineFails, reason }) => {
   const harness = cloudHarness(git);
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -2640,7 +2675,7 @@ it.effect.each([
         command: commandId,
         thread: "thread:launch:cloud-fails",
         message: "Fix the build",
-        workspace: cloudWorkspace,
+        workspace: workspace ?? cloudWorkspace,
       }),
     );
     const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
@@ -2690,24 +2725,51 @@ it.effect.each([
     settings: { sandbox: cloudSettings.sandbox },
     refusal: { _tag: "ProviderCloudLocalOnlyError", instanceId: modelSelection.instanceId },
   },
-])("refuses a cloud launch for $name before any thread or machine", ({ settings, refusal }) => {
-  const harness = makeHarness({ serverSettings: settings });
-  return Effect.gen(function* () {
-    const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const input = launchInput({
-      command: "command:launch:cloud-off",
-      thread: "thread:launch:cloud-off",
-      message: "Fix the build",
-      workspace: cloudWorkspace,
+  {
+    name: "a branch that isn't on origin",
+    settings: cloudSettings,
+    git: {
+      readRemoteUrl: () => Effect.succeed(cloudRemote),
+      remoteHasBranch: () => Effect.succeed(false),
+    },
+    workspace: existingBranchWorkspace,
+    refusal: {
+      _tag: "CloudLaunchError",
+      reason: "branch-not-pushed",
+      branch: "feature/login",
+      remote: "github.com/acme/app",
+    },
+  },
+  {
+    name: "an existing branch with no name",
+    settings: cloudSettings,
+    workspace: { ...cloudWorkspace, existingBranch: true as const },
+    refusal: { _tag: "CloudLaunchError", reason: "no-branch" },
+  },
+])(
+  "refuses a cloud launch for $name before any thread or machine",
+  ({ settings, git, workspace, refusal }) => {
+    const harness = makeHarness({
+      serverSettings: settings,
+      ...(git === undefined ? {} : { git }),
     });
-    const error = yield* Effect.flip(launches.launch(input));
-    assert.equal(error._tag, "ThreadLaunchError");
-    const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
-    assert.include(cause ?? {}, refusal);
-    assert.isNull(yield* threads.getThreadShell(input.threadId));
-  }).pipe(Effect.provide(harness.layer));
-});
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:cloud-off",
+        thread: "thread:launch:cloud-off",
+        message: "Fix the build",
+        workspace: workspace ?? cloudWorkspace,
+      });
+      const error = yield* Effect.flip(launches.launch(input));
+      assert.equal(error._tag, "ThreadLaunchError");
+      const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
+      assert.include(cause ?? {}, refusal);
+      assert.isNull(yield* threads.getThreadShell(input.threadId));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
 
 it.effect("keeps a cloud run parked when the server stops before its machine is ready", () => {
   const harness = cloudHarness();

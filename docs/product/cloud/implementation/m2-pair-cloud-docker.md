@@ -2599,6 +2599,8 @@ because it is a contract change every routed client (2.28, 2.29) builds on, and 
     speeds up the refusal; the in-sandbox check is the guarantee.
   - Retry keeps M1 behavior: `scheduleRunPreparation` (1298) rebuilds from the run record, which
     has no `existingBranch`, so a retry whose branch was deleted from origin falls back to the base.
+    So does a run re-armed after a server restart (`prepareRun` from recovery or `SandboxEffects`),
+    including one still waiting for its machine when the server stopped.
     Recording the key on the run would widen the frozen run union. Inferring it from
     `isTemporaryWorktreeBranch` (shared/git.ts 121) would wrongly refuse agent-named new branches.
     Left as is, flagged.

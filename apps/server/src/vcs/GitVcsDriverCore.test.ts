@@ -5958,6 +5958,29 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("asks the remote whether a branch was pushed, not the local refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", initialBranch]);
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["push", "origin", `HEAD:refs/heads/feature/login`]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const branch = { cwd, remoteName: "origin", refName: "feature/login" };
+
+        assert.isFalse(yield* driver.remoteBranchExists(branch));
+        assert.isTrue(yield* driver.remoteHasBranch(branch));
+        assert.isFalse(yield* driver.remoteHasBranch({ ...branch, refName: "feature/nope" }));
+        yield* git(cwd, ["remote", "set-url", "origin", `${remote}-missing`]);
+        const unreachable = yield* Effect.flip(driver.remoteHasBranch(branch));
+        assert.equal(unreachable.reason, "remote_unreachable");
+      }),
+    );
+
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

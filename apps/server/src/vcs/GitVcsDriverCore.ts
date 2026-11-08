@@ -1152,6 +1152,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.writesSharedConfig ? withSharedConfigLock(input.cwd, execution) : execution,
     );
 
+  const gitExitError = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    result: GitVcsDriver.ExecuteGitResult,
+    fallbackErrorDetail?: string,
+  ) => {
+    const reason = classifyGitFailure(result.stderr);
+    return new GitCommandError({
+      ...gitCommandContext({ operation, cwd, args }),
+      ...(reason === null ? {} : { reason }),
+      detail: fallbackErrorDetail ?? gitFailureDetail(reason),
+      ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
+  };
+
   const executeGit = (
     operation: string,
     cwd: string,
@@ -1176,22 +1194,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.progress ? { progress: options.progress } : {}),
       ...(options.writesSharedConfig ? { writesSharedConfig: true } : {}),
     }).pipe(
-      Effect.flatMap((result) => {
-        if (options.allowNonZeroExit || result.exitCode === 0) {
-          return Effect.succeed(result);
-        }
-        const reason = classifyGitFailure(result.stderr);
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-        );
-      }),
+      Effect.filterOrFail(
+        (result) => options.allowNonZeroExit === true || result.exitCode === 0,
+        (result) => gitExitError(operation, cwd, args, result, options.fallbackErrorDetail),
+      ),
     );
 
   const executeGitWithStableDiagnostics = (
@@ -1721,6 +1727,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         allowNonZeroExit: true,
       },
     ).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const remoteHasBranch: GitVcsDriver.GitVcsDriver["Service"]["remoteHasBranch"] = (input) => {
+    const args = [
+      "ls-remote",
+      "--exit-code",
+      "--",
+      input.remoteName,
+      `refs/heads/${input.refName}`,
+    ];
+    return executeGit("GitVcsDriver.remoteHasBranch", input.cwd, args, {
+      allowNonZeroExit: true,
+      timeoutMs: 15_000,
+      ...(input.env ? { env: input.env } : {}),
+    }).pipe(
+      Effect.flatMap((result) =>
+        // `--exit-code` exits 2 when the remote answered without the ref.
+        result.exitCode === 0 || result.exitCode === 2
+          ? Effect.succeed(result.exitCode === 0)
+          : Effect.fail(gitExitError("GitVcsDriver.remoteHasBranch", input.cwd, args, result)),
+      ),
+    );
+  };
 
   const remoteExists: GitVcsDriver.GitVcsDriver["Service"]["remoteExists"] = (input) =>
     executeGit(
@@ -5177,6 +5205,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readRemoteUrl,
     cloneRepository,
     remoteBranchExists,
+    remoteHasBranch,
     resolveRemoteTrackingCommit,
     resolveWorktreeBaseRemote,
     fetchWorktreeBaseCommit: Effect.fnUntraced(function* (input) {

@@ -11,7 +11,7 @@ import {
   SandboxId,
   type SandboxSize,
 } from "@t3tools/contracts";
-import { parseGitRemoteRepository } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
 import { cloudAvailability } from "@t3tools/shared/sandbox";
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import * as Context from "effect/Context";
@@ -39,9 +39,14 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "project-disallowed",
     "no-origin",
     "base-ref-missing",
+    "branch-not-pushed",
+    "no-branch",
     "sandbox-failed",
   ]),
   baseRef: Schema.optional(Schema.String),
+  branch: Schema.optional(Schema.String),
+  /** The remote that was checked, as `host/path`. */
+  remote: Schema.optional(Schema.String),
   failure: Schema.optional(SandboxFailure),
 }) {
   override get message(): string {
@@ -54,6 +59,10 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return "This project has no origin remote to clone in the cloud.";
       case "base-ref-missing":
         return `${this.baseRef ?? "The base branch"} is not on origin. Push ${this.baseRef ?? "it"} first.`;
+      case "branch-not-pushed":
+        return `${this.branch} is not on ${this.remote}. Push ${this.branch} first.`;
+      case "no-branch":
+        return "Name the existing branch to launch from.";
       case "sandbox-failed":
         return this.failure?.message ?? "The machine stopped before it was ready.";
     }
@@ -206,8 +215,9 @@ const clonePathFor = (root: string, url: string, projectId: ProjectId) => {
 
 /**
  * Clones the project's origin into the sandbox (or fetches the clone already there), then adds a
- * worktree from `origin/<branch>` when that was pushed, else `origin/<baseRef>` (README P4). Git
- * runs through the sandbox host as its agent user, so the agent owns the checkout.
+ * worktree from `origin/<branch>` when that was pushed, else `origin/<baseRef>` (README P4); an
+ * `existingBranch` must have been pushed. Git runs through the sandbox host as its agent user, so
+ * the agent owns the checkout.
  */
 export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
   readonly sandboxId: SandboxId;
@@ -215,6 +225,7 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
   readonly projectRoot: string;
   readonly baseRef: string;
   readonly branch: string;
+  readonly existingBranch: boolean;
   readonly existingWorktreePath: string | null;
 }) {
   const git = yield* GitWorkflow.GitWorkflowService;
@@ -242,6 +253,14 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
   const hasRemoteBranch = (refName: string) =>
     git.hasCommit({ cwd: clonePath, refName: `refs/remotes/origin/${refName}` });
   const pushed = yield* hasRemoteBranch(input.branch);
+  if (input.existingBranch && !pushed) {
+    return yield* new CloudLaunchError({
+      projectId: input.projectId,
+      reason: "branch-not-pushed",
+      branch: input.branch,
+      remote: normalizeGitRemoteUrl(url),
+    });
+  }
   if (!pushed && !(yield* hasRemoteBranch(input.baseRef))) {
     return yield* new CloudLaunchError({
       projectId: input.projectId,

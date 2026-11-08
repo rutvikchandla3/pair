@@ -39,6 +39,7 @@ import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
+  normalizeGitRemoteUrl,
   WORKTREE_BRANCH_PREFIX,
 } from "@t3tools/shared/git";
 
@@ -74,7 +75,12 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly startFromOrigin?: boolean | undefined;
     }
   /** A checkout in a new sandbox; the run records `worktree` and the thread holds the sandbox. */
-  | { readonly type: "cloud"; readonly baseRef: string; readonly branch?: string | undefined };
+  | {
+      readonly type: "cloud";
+      readonly baseRef: string;
+      readonly branch?: string | undefined;
+      readonly existingBranch?: true | undefined;
+    };
 
 type RunWorkspaceStrategy = Exclude<ThreadLaunchWorkspaceStrategy, { readonly type: "cloud" }>;
 
@@ -126,6 +132,8 @@ type PreparationInput = Pick<ThreadLaunchInput, "commandId" | "projectId" | "ini
   readonly sandboxId?: SandboxId | undefined;
   /** A cloud thread's recorded checkout, kept when the sandbox's disk still has it. */
   readonly existingWorktreePath?: string | null;
+  /** A cloud `branch` that must already be on origin. */
+  readonly existingBranch?: true;
 };
 
 type CloudPlacement = Effect.Success<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>;
@@ -277,6 +285,31 @@ const make = Effect.gen(function* () {
     CloudPreparation.resolveCloudLaunch(input.projectId, input.instanceId).pipe(
       Effect.provide(cloudServices),
     );
+
+  /** Refuses a branch origin lacks; when git cannot ask, the checkout in the sandbox decides. */
+  const checkExistingBranch = Effect.fn("ThreadLaunchService.checkExistingBranch")(
+    function* (input: {
+      readonly projectId: ProjectId;
+      readonly workspaceRoot: string;
+      readonly branch: string;
+    }) {
+      const origin = { cwd: input.workspaceRoot, remoteName: "origin" };
+      const url = yield* git.readRemoteUrl(origin);
+      if (url === null || (yield* git.remoteHasBranch({ ...origin, refName: input.branch }))) {
+        return;
+      }
+      return yield* new CloudPreparation.CloudLaunchError({
+        projectId: input.projectId,
+        reason: "branch-not-pushed",
+        branch: input.branch,
+        remote: normalizeGitRemoteUrl(url),
+      });
+    },
+    Effect.catchTags({
+      GitCommandError: (cause) =>
+        Effect.logWarning("Could not ask origin for a cloud launch's branch", { cause }),
+    }),
+  );
 
   /** The machine derives from `commandId`, so a replayed launch provisions the same one. */
   const provisionCloud = Effect.fn("ThreadLaunchService.provisionCloud")(function* (input: {
@@ -477,6 +510,7 @@ const make = Effect.gen(function* () {
           projectRoot: project.workspaceRoot,
           baseRef: input.workspaceStrategy.baseRef,
           branch: branch!,
+          existingBranch: input.existingBranch === true,
           existingWorktreePath: input.existingWorktreePath ?? null,
         }).pipe(
           Effect.provide(cloudServices),
@@ -994,6 +1028,29 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      const strategy = input.workspaceStrategy;
+      const existingBranch = strategy.type === "cloud" && strategy.existingBranch === true;
+      if (existingBranch) {
+        if (strategy.branch === undefined) {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )(
+            new CloudPreparation.CloudLaunchError({
+              projectId: input.projectId,
+              reason: "no-branch",
+            }),
+          );
+        }
+        // Only a new launch asks: a replay never re-asks origin.
+        if (Option.isNone(launchReceipt)) {
+          yield* checkExistingBranch({
+            projectId: input.projectId,
+            workspaceRoot: project.workspaceRoot,
+            branch: strategy.branch,
+          }).pipe(Effect.mapError(mapError(input, "resolve-project")));
+        }
+      }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
         commandId: input.commandId,
@@ -1226,7 +1283,12 @@ const make = Effect.gen(function* () {
                     );
               if (preparationStillRequired) {
                 yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy, sandboxId },
+                  {
+                    ...input,
+                    workspaceStrategy: preparationStrategy,
+                    sandboxId,
+                    ...(existingBranch ? { existingBranch: true as const } : {}),
+                  },
                   threadId,
                   runId,
                 );
