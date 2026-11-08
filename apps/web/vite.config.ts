@@ -346,6 +346,9 @@ export default defineConfig(() => {
       },
       ...(devProxyTarget
         ? {
+            // The backend answers CORS for proxied routes. Vite's localhost-only default would
+            // answer their preflights first, refusing a desktop client's t3code-dev:// origin.
+            cors: false,
             // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.
             proxy: Object.fromEntries(
               DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
