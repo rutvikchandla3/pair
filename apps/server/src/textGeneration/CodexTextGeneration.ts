@@ -59,7 +59,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Scope.Scope
   >,
 ) {
-  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: attachments and the schema and output temp files; staging them is 1.12's
+  // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: image attachments, which only titles send
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
@@ -79,35 +79,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         normalizeCliError("codex", operation, cause, "Failed to collect process output"),
       ),
     );
-
-  const removeTempFileDir = (filePath: string): Effect.Effect<void, never> =>
-    fileSystem.remove(path.dirname(filePath), { recursive: true }).pipe(Effect.ignore);
-
-  // Background fibers may inherit closed scopes that immediately reap temp files; write unscoped.
-  const writeTempFile = (
-    operation: string,
-    prefix: string,
-    content: string,
-  ): Effect.Effect<string, TextGenerationError> =>
-    fileSystem
-      .makeTempFile({
-        prefix: `t3code-${prefix}-${process.pid}-`,
-      })
-      .pipe(
-        Effect.tap((filePath) =>
-          fileSystem
-            .writeFileString(filePath, content)
-            .pipe(Effect.onError(() => removeTempFileDir(filePath))),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: `Failed to write temp file`,
-              cause,
-            }),
-        ),
-      );
 
   const encodeJsonForOperation = (
     operation: TextGenerationOperations.Operation,
@@ -230,23 +201,40 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       operation,
       toJsonSchemaObject(outputSchemaJson),
     );
-    const schemaPath = yield* writeTempFile(operation, "codex-schema", schemaJson);
-    const outputPath = yield* writeTempFile(operation, "codex-output", "").pipe(
-      Effect.onError(() => removeTempFileDir(schemaPath)),
-    );
+    // Titles stay on the server; every other operation runs where `cwd` lives.
+    const host =
+      operation === "generateThreadTitle"
+        ? hosts.local
+        : yield* hosts
+            .forPath(cwd)
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
+              ),
+            );
+    // Codex reads the schema and writes its answer on its own host. Unscoped: background fibers
+    // may inherit closed scopes that would reap the files on creation.
+    const tempDir = yield* host.fileSystem
+      .makeTempDirectory({ prefix: `t3code-codex-${process.pid}-` })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({ operation, detail: "Failed to write temp file", cause }),
+        ),
+      );
+    const cleanup = host.fileSystem.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
+    const schemaPath = path.join(tempDir, "schema.json");
+    const outputPath = path.join(tempDir, "output.json");
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
-      // Titles stay on the server; every other operation runs where `cwd` lives.
-      const host =
-        operation === "generateThreadTitle"
-          ? hosts.local
-          : yield* hosts
-              .forPath(cwd)
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
-                ),
-              );
+      yield* host.fileSystem
+        .writeFileString(schemaPath, schemaJson)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({ operation, detail: "Failed to write temp file", cause }),
+          ),
+        );
       const hostInfo = yield* host.info;
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
@@ -359,10 +347,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       }
     });
 
-    const cleanup = Effect.all([removeTempFileDir(schemaPath), removeTempFileDir(outputPath)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.asVoid);
-
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
@@ -380,7 +364,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
 
-      return yield* fileSystem.readFileString(outputPath).pipe(
+      return yield* host.fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
             new TextGenerationError({

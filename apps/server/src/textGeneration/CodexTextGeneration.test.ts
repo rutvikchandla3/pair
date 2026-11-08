@@ -162,12 +162,31 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   });
 }
 
+const TEMP_FILE_METHODS = new Set([
+  "makeTempDirectory",
+  "makeTempFile",
+  "writeFileString",
+  "readFileString",
+  "remove",
+]);
+
+function withoutTempFiles(fs: FileSystem.FileSystem): FileSystem.FileSystem {
+  return new Proxy(fs, {
+    get: (target, key, receiver) =>
+      typeof key === "string" && TEMP_FILE_METHODS.has(key)
+        ? () => Effect.die(new Error(`server FileSystem.${key}`))
+        : Reflect.get(target, key, receiver),
+  });
+}
+
 function withFakeCodexEnv<A, E, R>(
   input: FakeCodexInput & {
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
     managedRuntime?: boolean;
+    /** The server's own FileSystem dies on temp files, as it cannot reach a cloud workspace. */
+    hostOnlyTempFiles?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -194,6 +213,10 @@ function withFakeCodexEnv<A, E, R>(
             revision: "test",
           })
         : undefined,
+    ).pipe(
+      input.hostOnlyTempFiles
+        ? Effect.provideService(FileSystem.FileSystem, withoutTempFiles(fs))
+        : (effect) => effect,
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -378,6 +401,21 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             .pipe(Effect.provideService(Scope.Scope, closedScope));
 
           expect(generated.branch).toBe("feat/background-generation");
+        }),
+    ),
+  );
+
+  it.effect("keeps its schema and output files on the workspace's host", () =>
+    withFakeCodexEnv(
+      { output: JSON.stringify({ branch: "feat/cloud-branch" }), hostOnlyTempFiles: true },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Please update session handling.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(generated.branch).toBe("feat/cloud-branch");
         }),
     ),
   );
