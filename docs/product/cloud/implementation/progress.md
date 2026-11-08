@@ -184,6 +184,40 @@ push/PR (remove the App key, paste a token under Settings → Team → **Use a t
 server token for the PR panel); the 1.42 evals (`ANTHROPIC_API_KEY` in the VM's `~/pair/.env`); the
 machine-failed push (needs a device); `test-t3-mobile`; `test-t3-app` captures on desktop.
 
+### G1 on real hardware (2026-11-08, Mac → `pair-cloud-pass` over Tailscale)
+
+Passed so far:
+
+1. **Connect.** Pair (Dev) on the Mac added the VM through `vp run dev --share` and listed
+   `pair-cloud-test` and its cloud threads.
+2. **Cloud thread.** A new Cloud-workspace thread on the Docker driver ran a Claude Haiku 5.5 turn
+   (5.4 s, `gate-g1.md` +1).
+3. **Commit and push.** Commit & push landed `f7350d6` on `t3/39029d10` (Haiku wrote the message).
+   **Opening the PR** still fails: the server has no GitHub credential of its own (the open item
+   below).
+4. **Sleep and Wake** from the thread menu: the container stopped, restarted, and kept the commit.
+
+Fixed during the run:
+
+- `cf2fe7cea`: a runner bundle staged on macOS kept musl externals and went over the 25 MiB cap.
+- `8588944fe`: Vite answered CORS preflights for proxied routes itself, so the desktop app
+  (`t3code-dev://` origin) could not add a shared dev server.
+- `12e3c192b`: Codex text generation wrote its schema and output files on the server, but ran on
+  the thread's machine.
+- `621664773`, `85b6f38c4`: git the server itself ran on a machine (Commit & push) had no
+  identity. Every process there now gets the server's identity from the host's base environment.
+
+Found, not fixed: inside a machine, Codex dies with `Permission denied` initializing its app
+server. The VM's text generation is set to Haiku in `~/.t3/dev/settings.json` (backup
+`settings.json.bak-g1`) until the Codex runs.
+
+Drive the web app in a browser over `gcloud compute ssh … -L 15733:localhost:5733` (the dev
+cookie is set). Desktop GUI automation through `orca computer` repeated typed text and was slow.
+
+Still to run for G1: the PR open (needs the server's GitHub credential), phone plus
+`docker rm -f` with the machine-failed push, and the Codex, member-token, evals and
+mobile/app-capture items below.
+
 ## How to resume
 
 The lead agent orchestrates; workers implement one PR each in a sibling worktree and report back;
