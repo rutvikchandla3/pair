@@ -806,7 +806,7 @@ describe("cloud threads on older clients", () => {
     );
   });
 
-  it("reads a machine state or admission reason from a newer server as unknown", () => {
+  it("reads a machine state, admission reason or history origin from a newer server as unknown", () => {
     expect(
       decodeThreadShellJson({
         ...shell,
@@ -814,6 +814,18 @@ describe("cloud threads on older clients", () => {
         sandbox: { ...summary, state: "hibernating", admission: { reason: "budget", since: at } },
       }).sandbox,
     ).toMatchObject({ state: null, admission: { reason: null, since: at } });
+    expect(decodeThreadShellJson({ ...shell, historyOrigin: "cloud_import" }).historyOrigin).toBe(
+      undefined,
+    );
+    expect(decodeAppThreadJson({ ...thread, historyOrigin: "cloud_import" }).historyOrigin).toBe(
+      undefined,
+    );
+    expect(decodeThreadShellJson({ ...shell, historyOrigin: "v1_import" }).historyOrigin).toBe(
+      "v1_import",
+    );
+    expect(decodeAppThreadJson({ ...thread, historyOrigin: "v1_import" }).historyOrigin).toBe(
+      "v1_import",
+    );
   });
 
   it("streams and stores sandbox.updated as a known thread event", () => {
