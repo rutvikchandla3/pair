@@ -497,6 +497,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly version: string;
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
+  readonly runnerDir: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -532,6 +533,13 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     resourceMonitorDir,
     "Build the resource monitor or pass --resource-monitor-dir.",
   );
+  const runnerDir = Option.getOrUndefined(input.runnerDir);
+  if (runnerDir !== undefined) {
+    yield* requireInput(
+      path.join(runnerDir, "MANIFEST.json"),
+      "Pass a tree built by `node apps/server/scripts/cli.ts build-runner`.",
+    );
+  }
 
   const stem = cliArchiveStem(input.version, input.platform, input.arch);
   const stageRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-archive-" });
@@ -542,6 +550,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
+  if (runnerDir !== undefined) {
+    // Beside the executable, where a Pair Cloud server serves it to machines (RunnerBundle.layer).
+    yield* fs.copy(runnerDir, path.join(contentDir, "runner"));
+  }
   yield* stageRuntimeExternals({
     repoRoot,
     stageDir: contentDir,
@@ -623,6 +635,12 @@ const command = Command.make(
     resourceMonitorDir: Flag.String("resource-monitor-dir").pipe(
       Flag.withDescription(
         "Directory laid out like dist/resource-monitor (defaults to apps/server/dist/resource-monitor).",
+      ),
+      Flag.optional,
+    ),
+    runnerDir: Flag.String("runner-dir").pipe(
+      Flag.withDescription(
+        "A runner tree from `cli.ts build-runner`, shipped as runner/ for Pair Cloud releases.",
       ),
       Flag.optional,
     ),

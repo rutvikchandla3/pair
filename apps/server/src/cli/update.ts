@@ -4,6 +4,7 @@ import {
   CLI_RELEASE_CHANNELS,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
+  cliReleaseRepositoryOf,
   newestCliReleaseVersion,
   releaseAssetUrl,
   updateFeedFileName,
@@ -62,14 +63,24 @@ const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(Rele
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 const RELEASE_INDEX_MAX_PAGES = 10;
 
+/** With `releaseBaseUrl`, the releases of the repository it downloads from (a fork's, say). */
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
+  releaseBaseUrl: string | undefined,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
+  const repository =
+    releaseBaseUrl === undefined ? undefined : cliReleaseRepositoryOf(releaseBaseUrl);
+  if (releaseBaseUrl !== undefined && repository === undefined) {
+    return yield* new CliUpdateError({
+      // Not the query, which can hold a signed mirror's token.
+      reason: `Name the version: \`t3 update <version>\`. ${releaseBaseUrl.split("?")[0]} has no release list.`,
+    });
+  }
   const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page, repository)).pipe(
       HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
     );
     const authenticatedRequest =
@@ -380,13 +391,22 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       reason: `'${input.requestedVersion}' is not an exact t3 version.`,
     });
   }
+  // An admin's shell rarely carries the service's env, which is where a fork's base URL lives.
+  const releaseBaseUrl =
+    mirror !== undefined
+      ? undefined
+      : environment[CLI_RELEASE_BASE_URL_ENV]?.trim() ||
+        (yield* CliService.readServiceEnv(input.baseDir)).entries[
+          CLI_RELEASE_BASE_URL_ENV
+        ]?.trim() ||
+        undefined;
   const progress = createUpdateProgress();
   progress.status("Checking for updates...");
   const targetVersion = yield* (
     input.requestedVersion !== undefined
       ? Effect.succeed(input.requestedVersion)
       : mirror === undefined
-        ? resolveNewestVersion(channel)
+        ? resolveNewestVersion(channel, releaseBaseUrl)
         : resolveMirrorVersion(mirror, channel)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
@@ -502,7 +522,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     httpClient,
     platform,
     arch,
-    releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
+    releaseBaseUrl: mirror?.feedUrl ?? releaseBaseUrl,
     requirePublishedRelease: mirror !== undefined,
     validate: (paths) =>
       runner

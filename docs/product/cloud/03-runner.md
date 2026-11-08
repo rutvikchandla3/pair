@@ -72,11 +72,14 @@ The runner runs on the image's Node, which must satisfy the server's `engines.no
 already need Node for most agent CLIs (inferred); [05 Team images](./05-team-images.md) owns that
 requirement.
 
-From M2 the versioned Pair Cloud server release (decision 15) carries `dist/runner/` beside the
-server, because teams install and upgrade Pair Cloud from that release, not from a checkout, and a
-single-executable build has no runner tree to serve
-([RunnerBundle.ts](../../../apps/server/src/sandbox/runnerHub/RunnerBundle.ts)). An archive smoke
-test in release CI unpacks the release and boots a machine from it with a fake driver, so a release
+From M2 the versioned Pair Cloud server release (decision 15) carries a `runner/` tree beside the
+`t3` executable, because teams install and upgrade Pair Cloud from that release, not from a
+checkout. The server serves the tree beside itself (`dist/runner` for the npm layout) and calls a
+build without one `not-bundled`
+([RunnerBundle.ts](../../../apps/server/src/sandbox/runnerHub/RunnerBundle.ts)). Release CI serves
+each archive's tree through the real route and hub, downloads it the way the bootstrap does and
+attaches a runner from it
+([runner-release-smoke.ts](../../../apps/server/scripts/runner-release-smoke.ts)), so a release
 whose runner can't be served or can't enroll never ships.
 
 Pair Cloud serves the bundle for its own build only:

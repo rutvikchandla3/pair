@@ -131,8 +131,19 @@ export function acceptsTrackSwitchRelease(
 }
 
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(
+  page: number,
+  repository: string = CLI_RELEASE_REPOSITORY,
+): string {
+  return `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`;
+}
+
+/** `owner/repo` for a `https://github.com/<owner>/<repo>/releases/download` base; other mirrors list no releases. */
+export function cliReleaseRepositoryOf(baseUrl: string): string | undefined {
+  const match = /^https:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/releases\/download\/*$/.exec(
+    baseUrl.trim(),
+  );
+  return match === null ? undefined : `${match[1]}/${match[2]}`;
 }
 
 /** Draft assets are not downloadable. */

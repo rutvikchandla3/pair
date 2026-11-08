@@ -61,6 +61,7 @@ const runExecutable = Effect.fn("runExecutable")(function* (
 const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
+  readonly expectRunner: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -98,10 +99,24 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const contentDir = path.join(scratch, root);
   const executable = path.join(contentDir, platform === "win32" ? "t3.exe" : "t3");
   const bundledLibatomic = path.join(contentDir, "lib/libatomic.so.1");
+  // A Pair Cloud release. runner-release-smoke.ts serves and attaches it; serve here has no driver.
+  const runnerDir = path.join(contentDir, "runner");
   for (const required of [
     executable,
     path.join(contentDir, "client/index.html"),
     ...(platform === "linux" ? [bundledLibatomic, `${bundledLibatomic}.LICENSE`] : []),
+    ...(input.expectRunner
+      ? [
+          path.join(runnerDir, "MANIFEST.json"),
+          path.join(runnerDir, "runner.mjs"),
+          path.join(
+            runnerDir,
+            "node_modules/node-pty/prebuilds",
+            `${platform}-${yield* HostProcess.Architecture}`,
+            "pty.node",
+          ),
+        ]
+      : []),
   ]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({
@@ -199,6 +214,10 @@ const command = Command.make(
   {
     archive: Flag.String("archive"),
     expectVersion: Flag.String("expect-version"),
+    expectRunner: Flag.Boolean("expect-runner").pipe(
+      Flag.withDescription("Require the runner/ tree a Pair Cloud release carries."),
+      Flag.withDefault(false),
+    ),
   },
   (input) => smokeCliArchive(input).pipe(Effect.scoped),
 ).pipe(Command.withDescription("Extract a CLI archive and run its executable."));

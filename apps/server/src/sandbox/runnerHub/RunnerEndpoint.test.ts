@@ -136,7 +136,7 @@ it.live("opens the runner socket once and serves only the runner routes on it", 
         Layer.provide(
           Layer.succeed(RunnerBundle.RunnerBundle, {
             current: Effect.fail(
-              new RunnerBundle.RunnerBundleUnavailableError({ reason: "single-executable" }),
+              new RunnerBundle.RunnerBundleUnavailableError({ reason: "not-bundled" }),
             ),
           }),
         ),

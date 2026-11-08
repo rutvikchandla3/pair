@@ -18,6 +18,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import { writeServiceEnv } from "./service.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -47,24 +48,45 @@ afterEach(() => vi.restoreAllMocks());
 
 it.effect("authenticates each release page until the requested channel is found", () =>
   Effect.gen(function* () {
-    const pages: string[] = [];
-    const httpClient = HttpClient.make((request) => {
-      const url = new URL(request.url);
-      assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
-      assert.equal(request.headers.accept, "application/vnd.github+json");
-      assert.equal(request.headers.authorization, "Bearer gh-token");
-      const page = url.searchParams.get("page") ?? "";
-      pages.push(page);
-      const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
-      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
+    const resolve = (releaseBaseUrl: string | undefined) =>
+      Effect.gen(function* () {
+        const pages: string[] = [];
+        const httpClient = HttpClient.make((request) => {
+          const url = new URL(request.url);
+          assert.equal(url.origin, "https://api.github.com");
+          assert.equal(request.headers.accept, "application/vnd.github+json");
+          assert.equal(request.headers.authorization, "Bearer gh-token");
+          const page = url.searchParams.get("page") ?? "";
+          pages.push(`${url.pathname}?page=${page}`);
+          const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
+          return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
+        });
+        const version = yield* resolveNewestVersion("stable", releaseBaseUrl).pipe(
+          Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
+        return { version, pages };
+      });
+
+    assert.deepStrictEqual(yield* resolve(undefined), {
+      version: "1.2.3",
+      pages: ["/repos/pingdotgg/t3code/releases?page=1", "/repos/pingdotgg/t3code/releases?page=2"],
     });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
+    assert.deepStrictEqual(
+      yield* resolve("https://github.com/rutvikchandla3/pair/releases/download"),
+      {
+        version: "1.2.3",
+        pages: [
+          "/repos/rutvikchandla3/pair/releases?page=1",
+          "/repos/rutvikchandla3/pair/releases?page=2",
+        ],
+      },
     );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(pages, ["1", "2"]);
+    const error = yield* Effect.flip(resolve("https://mirror.example.com/t3/?token=abc"));
+    assert.equal(
+      error.message,
+      "Name the version: `t3 update <version>`. https://mirror.example.com/t3/ has no release list.",
+    );
   }),
 );
 
@@ -456,6 +478,63 @@ const withoutTerminals = Effect.acquireRelease(
 );
 
 it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
+  it.effect("reads the release base URL from service.env when the shell has none", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      yield* writeServiceEnv(baseDir, {
+        T3CODE_RELEASE_BASE_URL: "https://github.com/rutvikchandla3/pair/releases/download",
+      });
+      const requested: string[] = [];
+      const error = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: "9.9.9",
+        allowDowngrade: false,
+        assumeYes: true,
+      }).pipe(
+        Effect.flip,
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(BootService.BootService, {
+              status: Effect.succeed<BootService.BootServiceStatus>({
+                supported: true,
+                installed: false,
+                current: false,
+                unitPath: path.join(baseDir, "t3code.service"),
+                logPath: path.join(baseDir, "boot-service.log"),
+              }),
+            }),
+            Layer.succeed(ProcessRunner.ProcessRunner, unrelatedLsof),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requested.push(request.url);
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
+                );
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.equal(error.message, "No release archive was published for t3@9.9.9.");
+      assert.deepStrictEqual(requested, [
+        "https://github.com/rutvikchandla3/pair/releases/download/v9.9.9/SHA256SUMS",
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Architecture, "x64"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
+  );
+
   it.effect("names the version a service with a pending restart still runs", () =>
     Effect.gen(function* () {
       yield* withoutTerminals;

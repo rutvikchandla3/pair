@@ -39,13 +39,13 @@ export interface RunnerBundleInfo {
 export class RunnerBundleUnavailableError extends Schema.TaggedError<RunnerBundleUnavailableError>()(
   "RunnerBundleUnavailableError",
   {
-    reason: Schema.Literals(["single-executable", "build-failed"]),
+    reason: Schema.Literals(["not-bundled", "build-failed"]),
     detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return this.reason === "single-executable"
-      ? "A single-executable server carries no runner bundle."
+    return this.reason === "not-bundled"
+      ? "This server was built without a runner tree, so it cannot start cloud machines. Install a Pair Cloud release."
       : `The runner bundle could not be prepared${this.detail ? `: ${this.detail}` : "."}`;
   }
 }
@@ -54,7 +54,7 @@ export class RunnerBundleUnavailableError extends Schema.TaggedError<RunnerBundl
 export class RunnerBundle extends Context.Service<
   RunnerBundle,
   {
-    /** Released: `dist/runner` beside this module. From source: built once per process (P7). */
+    /** Released: the `runner/` tree beside the server (`dist/` or the executable). From source: built once per process (P7). */
     readonly current: Effect.Effect<RunnerBundleInfo, RunnerBundleUnavailableError>;
   }
 >()("t3/sandbox/runnerHub/RunnerBundle") {}
@@ -137,12 +137,13 @@ const fromTree = Effect.fn("RunnerBundle.fromTree")(function* (directory: string
   } satisfies RunnerBundleInfo;
 });
 
-const readReleased = Effect.gen(function* () {
-  if (yield* HostProcess.IsExecutable) {
-    return yield* new RunnerBundleUnavailableError({ reason: "single-executable" });
-  }
+const readReleased = Effect.fn("RunnerBundle.readReleased")(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* fromTree(yield* path.fromFileUrl(new URL("./runner/", import.meta.url)));
+  if (!(yield* fs.exists(path.join(directory, RUNNER_MANIFEST_FILE)))) {
+    return yield* new RunnerBundleUnavailableError({ reason: "not-bundled", detail: directory });
+  }
+  return yield* fromTree(directory);
 });
 
 /** Packs a dev bundle (with Replay, P5) into a staging dir, then renames it to its id. */
@@ -223,9 +224,21 @@ const make = Effect.fn("RunnerBundle.make")(function* (
 
 export const layer = Layer.effect(
   RunnerBundle,
-  // Same test as runClaudeWorker: a `.ts` module means the server runs from source.
-  make(import.meta.url.endsWith(".ts") ? buildFromSource : readReleased),
+  // Same test as runClaudeWorker: a `.ts` module means the server runs from source. Released, the
+  // module's directory is `dist/` (npm) or the executable's own (a CLI archive).
+  make(
+    import.meta.url.endsWith(".ts")
+      ? buildFromSource
+      : Effect.gen(function* () {
+          const path = yield* Path.Path;
+          return yield* readReleased(path.join(import.meta.dirname, "runner"));
+        }),
+  ),
 );
+
+/** A released tree at `directory`, as the release smoke and the load test serve it. */
+export const layerFromTree = (directory: string) =>
+  Layer.effect(RunnerBundle, make(readReleased(directory)));
 
 export interface RunnerBundleTestFile {
   readonly path: string;

@@ -56,7 +56,7 @@ it.effect("mints a grant only once the route and the runner build are known", ()
       Effect.service(SandboxBootstrapSource.SandboxBootstrapSource),
       layer(
         Layer.succeed(RunnerBundle, {
-          current: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
+          current: Effect.fail(new RunnerBundleUnavailableError({ reason: "not-bundled" })),
         }),
       ),
     );

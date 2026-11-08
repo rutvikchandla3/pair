@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+import {
+  cliArchiveTarCommand,
+  cliReleaseRepositoryOf,
+  newestCliReleaseVersion,
+  parseChecksums,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
   it("parses sha256sum output including binary-mode markers", () => {
@@ -38,5 +43,23 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion(releases, "nightly")).toBe("1.2.4-nightly.20260912.7");
     expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
+    expect(
+      newestCliReleaseVersion(
+        [{ tag_name: "v0.1.7-pair.2" }, { tag_name: "v0.1.7-pair.1" }, { tag_name: "v0.1.7" }],
+        "stable",
+      ),
+    ).toBe("0.1.7-pair.2");
+  });
+
+  it("names the repository a GitHub releases base URL points at", () => {
+    expect(cliReleaseRepositoryOf("https://github.com/rutvikchandla3/pair/releases/download")).toBe(
+      "rutvikchandla3/pair",
+    );
+    expect(
+      cliReleaseRepositoryOf("https://github.com/rutvikchandla3/pair/releases/download/"),
+    ).toBe("rutvikchandla3/pair");
+    expect(cliReleaseRepositoryOf("https://updates.example.com/t3code/releases/download")).toBe(
+      undefined,
+    );
   });
 });

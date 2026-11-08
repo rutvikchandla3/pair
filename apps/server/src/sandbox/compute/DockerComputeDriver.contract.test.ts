@@ -108,7 +108,7 @@ const makeContractDriver = (installId: EnvironmentId) =>
             dialsOverTcp: Effect.succeed(false),
           }),
           Layer.succeed(RunnerBundle, {
-            current: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
+            current: Effect.fail(new RunnerBundleUnavailableError({ reason: "not-bundled" })),
           }),
           NodeServices.layer,
         ),

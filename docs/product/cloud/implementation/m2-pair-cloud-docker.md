@@ -2907,6 +2907,10 @@ from it.
     - The four tests that construct `"single-executable"` switch to `"not-bundled"`:
       DockerComputeDriver.contract.test.ts (110), DockerComputeDriver.test.ts (323),
       SandboxBootstrapSource.test.ts (58), RunnerEndpoint.test.ts (137).
+  - `apps/server/src/sandbox/compute/DockerComputeDriver.ts`: the Engine API client moves from
+    `NodeHttpClient.makeUndici` to `makeAgent` + `makeNodeHttp`. `makeUndici` kept a static
+    `import "undici"` in the executable bundle, which `build-exe`'s import check rejects (a single
+    executable imports only builtins), so no archive could be built.
   - `scripts/build-cli-archive.ts`: a `--runner-dir` flag beside `--resource-monitor-dir` (623).
     `buildCliArchive` (494) copies the tree to `<root>/runner/`, keeping exec bits, and fails
     when `MANIFEST.json` is missing. Optional, so the upstream desktop release (release-desktop.yml
@@ -2949,8 +2953,8 @@ from it.
     parses `https://github.com/<owner>/<repo>/releases/download[/]` and returns `owner/repo`, or
     `undefined` for any other base.
   - `apps/server/src/cli/update.ts`:
-    - `resolveNewestVersion` (65): with `T3CODE_RELEASE_BASE_URL` set, list that repository's
-      releases. A base that is not a GitHub releases URL fails with "Name the version:
+    - `resolveNewestVersion` (65) takes the resolved base URL (`resolveNewestVersion(channel, releaseBaseUrl)`):
+      with one, list that repository's releases. A base that is not a GitHub releases URL fails with "Name the version:
       `t3 update <version>`. `<base>` has no release list."
     - `runUpdate` (349): with no base URL in the shell, read `T3CODE_RELEASE_BASE_URL` from
       `service.env` through `readServiceEnv` (cli/service.ts 66), for both the lookup and the

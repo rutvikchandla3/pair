@@ -105,4 +105,45 @@ it.layer(NodeServices.layer)("RunnerBundle", (it) => {
       ),
     ),
   );
+
+  it.effect("serves a released tree from any directory, and calls a missing tree not-bundled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tree = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-release-" });
+      yield* fs.writeFileString(path.join(tree, "runner.mjs"), "runner");
+      const runnerBuildId = yield* RunnerBundle.computeRunnerBuildId(tree);
+      yield* fs.writeFileString(
+        path.join(tree, RunnerBundle.RUNNER_MANIFEST_FILE),
+        yield* RunnerBundle.encodeRunnerManifest({
+          runnerBuildId,
+          protocolVersion: 1,
+          node: ">=22",
+          builtFrom: "release",
+        }),
+      );
+      const current = (directory: string) =>
+        RunnerBundle.RunnerBundle.pipe(
+          Effect.flatMap((bundle) => bundle.current),
+          Effect.provide(RunnerBundle.layerFromTree(directory)),
+        );
+
+      const info = yield* current(tree);
+      assert.equal(info.runnerBuildId, runnerBuildId);
+      assert.equal(info.directory, tree);
+      assert.equal(
+        info.tarballSha256,
+        NodeCrypto.createHash("sha256")
+          .update(yield* fs.readFile(info.tarballPath))
+          .digest("hex"),
+      );
+
+      const empty = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-release-" });
+      const error = yield* Effect.flip(current(empty));
+      assert.equal(error.reason, "not-bundled");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-runner-bundle-test-" })),
+    ),
+  );
 });

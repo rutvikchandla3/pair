@@ -1,4 +1,6 @@
-name: Sandbox image
+# Publishes a Pair Cloud release: the sandbox image, and the server archives that carry the same
+# runner tree, as a GitHub release of the repository running the workflow.
+name: Pair Cloud release
 
 on:
   push:
@@ -7,11 +9,12 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
       - "!v*-preview.*"
-  # Fork dry runs: publishes <version>-dryrun.<run id>, never a release tag.
+  # Fork dry runs: publishes the image as <version>-dryrun.<run id> and the release files as an
+  # artifact, never a release or a tag.
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to label the dry-run image with (for example 1.2.3)."
+        description: "Version to label the dry-run image and archives with (for example 0.1.7-pair.1)."
         required: true
         type: string
   pull_request:
@@ -302,3 +305,202 @@ jobs:
             echo
             echo "Index digest: \`$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The CLI archive plus the bundle job's runner tree, so a release serves exactly the runner its
+  # image bakes in. Native runners: node-pty and the SEA executable build per architecture.
+  archive:
+    needs: bundle
+    name: Build server archive (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+    env:
+      VERSION: ${{ needs.bundle.outputs.version }}
+      RUNNER_BUILD_ID: ${{ needs.bundle.outputs.runner-build-id }}
+      ARCH: ${{ matrix.arch }}
+      RUST_TARGET: ${{ matrix.rust_target }}
+      # Forks report dev telemetry, like release.yml outside pingdotgg/t3code.
+      T3CODE_TELEMETRY_CHANNEL: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/scripts...
+
+      # The public relay and Clerk values, read the way release.yml's preview builds read them.
+      - name: Use the public relay config
+        run: |
+          for key in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_$key=||p" .env.example)"
+            if [ -z "$value" ]; then echo "::error::.env.example has no T3CODE_$key."; exit 1; fi
+            echo "T3CODE_$key=$value" >> "$GITHUB_ENV"
+          done
+
+      # A tag already equals the server version (release-plan); a dry run takes its input's.
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "$RUST_TARGET"
+
+      - name: Stage resource monitor
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/linux-$ARCH"
+          cp "native/resource-monitor/target/$RUST_TARGET/release/t3-resource-monitor" "$RUNNER_TEMP/cli-resource-monitor/linux-$ARCH/"
+
+      - name: Build server and web client
+        run: vp run --filter t3 build
+
+      - name: Apply web client branding
+        run: node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+
+      - name: Build CLI single-executable
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      # The Linux archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
+      - name: Download runner bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: runner-${{ needs.bundle.outputs.runner-build-id }}
+          path: ${{ runner.temp }}/bundle
+
+      - name: Unpack runner bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/runner"
+          tar -C "$RUNNER_TEMP/runner" -xf "$RUNNER_TEMP/bundle/runner.tar"
+
+      - name: Build server archive
+        run: |
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch "$ARCH" \
+            --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --runner-dir "$RUNNER_TEMP/runner" \
+            --output-dir release-cli
+
+      - name: Smoke-test server archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION" --expect-runner
+
+      # The archive's own tree, served by the real route and hub and attached from its download.
+      - name: Smoke-test the archive's runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/extracted"
+          tar -xzf "release-cli/t3-$VERSION-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/extracted"
+          node apps/server/scripts/runner-release-smoke.ts --runner-dir "$RUNNER_TEMP/extracted/t3-$VERSION-linux-$ARCH/runner"
+          test "$(jq -r .runnerBuildId "$RUNNER_TEMP/extracted/t3-$VERSION-linux-$ARCH/runner/MANIFEST.json")" = "$RUNNER_BUILD_ID"
+
+      - name: Upload server archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: pair-cli-linux-${{ matrix.arch }}
+          path: release-cli/*
+          if-no-files-found: error
+
+  # Needs manifest, so no release appears before its image.
+  release:
+    needs: [bundle, manifest, archive]
+    name: ${{ github.event_name == 'push' && 'Publish the GitHub release' || 'Collect the dry-run release files' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.bundle.outputs.version }}
+      IMAGE: ${{ needs.bundle.outputs.image }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/install.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download server archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pair-cli-linux-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
+
+      - name: Assemble release files
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          for arch in x64 arm64; do
+            test -f "t3-$VERSION-linux-$arch.tar.gz" || { echo "::error::No t3-$VERSION-linux-$arch.tar.gz."; exit 1; }
+          done
+          sha256sum t3-*.tar.gz > SHA256SUMS
+          cp "$GITHUB_WORKSPACE/scripts/install.sh" install.sh
+          ls -l
+
+      # Releases are never replaced. Only a missing release clears the way, so an API or auth
+      # error cannot look like a free version.
+      - name: Refuse an existing release
+        if: github.event_name == 'push'
+        run: |
+          if output="$(gh release view "v$VERSION" 2>&1)"; then
+            echo "::error::Release v$VERSION already exists and is never replaced."
+            exit 1
+          fi
+          if ! grep -qi 'release not found' <<<"$output"; then
+            echo "$output"
+            echo "::error::Could not tell whether release v$VERSION exists."
+            exit 1
+          fi
+
+      - name: Create the release
+        if: github.event_name == 'push'
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          gh release create "v$VERSION" --verify-tag --title "v$VERSION" \
+            --notes "Pair Cloud server $VERSION, with the runner of $IMAGE:$VERSION. Install it with \`T3CODE_VERSION=$VERSION T3CODE_RELEASE_BASE_URL=https://github.com/$GH_REPO/releases/download sh install.sh\`." \
+            t3-*.tar.gz SHA256SUMS install.sh
+
+      - name: Upload dry-run release files
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pair-cloud-release-${{ needs.bundle.outputs.tag }}
+          path: |
+            ${{ runner.temp }}/release/t3-*.tar.gz
+            ${{ runner.temp }}/release/SHA256SUMS
+            ${{ runner.temp }}/release/install.sh
+          if-no-files-found: error

@@ -464,19 +464,39 @@ verify that the update stops before restart and run `npx t3@<version> service up
 server machine. Also test the manual or desktop-managed guidance when those environments are
 available.
 
-## Sandbox base image
+## Pair Cloud release
 
-- Workflow: `.github/workflows/sandbox-image.yml`, separate from `release.yml` because that
-  workflow's jobs only run for `pingdotgg/t3code`. It runs on the same stable tags and publishes
-  `ghcr.io/<owner of the running repo, lowercased>/t3-sandbox:<version>` for amd64 and arm64, so a
-  fork publishes its own image unchanged.
-- The tag must equal `apps/server/package.json`'s `version`: a server pulls that exact string, and
-  there is no `latest` tag. A release fails before any build if the image's pinned Claude Code or
-  Codex is not `supported` by the manifest bundled with that version (`check-providers`).
-- Version tags are never re-pushed. The workflow refuses to tag a version that already exists, so
-  a bad image is fixed with a new version.
-- A fork proves the pipeline with `workflow_dispatch` and a `version` input. It publishes
-  `<version>-dryrun.<run id>`, never a release tag.
+- Workflow: `.github/workflows/sandbox-image.yml` ("Pair Cloud release"), separate from
+  `release.yml` because that workflow's jobs only run for `pingdotgg/t3code`. It runs on the same
+  stable tags and publishes to the repository running it, so a fork publishes its own release
+  unchanged.
+- Versions are `<upstream version>-pair.<n>`, for example `0.1.7-pair.1`. Bump them in a release
+  commit with `node scripts/update-release-package-versions.ts <version>`, so the web, desktop and
+  server packages agree, then push the tag `v<version>` on that commit. The tag must equal
+  `apps/server/package.json`'s `version`: a server pulls that exact image tag, and there is no
+  `latest`.
+- One tag publishes, in order:
+  - `ghcr.io/<owner of the running repo, lowercased>/t3-sandbox:<version>` for amd64 and arm64.
+    A release fails before any build if the image's pinned Claude Code or Codex is not
+    `supported` by the manifest bundled with that version (`check-providers`).
+  - A GitHub release `v<version>` with `t3-<version>-linux-x64.tar.gz`,
+    `t3-<version>-linux-arm64.tar.gz`, `SHA256SUMS` and `install.sh`. Each archive is the CLI
+    archive plus a `runner/` tree, the same runner build the image bakes in, which the server
+    serves to its machines. A server built without that tree cannot start cloud machines. The
+    release job waits for the image tag, so no release exists before its image.
+- Install a release with
+  `T3CODE_VERSION=<version> T3CODE_RELEASE_BASE_URL=https://github.com/<owner>/<repo>/releases/download`
+  in front of `install.sh`. `t3 update` reads `T3CODE_RELEASE_BASE_URL` from the shell or the
+  service's `service.env`, and lists that repository's releases.
+- Image tags and releases are never replaced. The workflow refuses a version whose image tag or
+  release already exists, so a bad release is fixed with a new version.
+- A fork proves the pipeline with `workflow_dispatch` and a `version` input. It publishes the image
+  as `<version>-dryrun.<run id>` and uploads the four release files as the artifact
+  `pair-cloud-release-<version>-dryrun.<run id>`. It creates no release and no tag.
+- Every archive is smoke-tested on its own architecture: `--version`, `serve`, the runner tree's
+  layout, and `apps/server/scripts/runner-release-smoke.ts`, which serves the archive's runner
+  through the real route and hub, downloads it the way a machine's bootstrap does, and runs a
+  command through the attached runner.
 - One-time step: after the first push, set the `t3-sandbox` package to public in the owner's
   package settings. A private package makes every pull from a team server fail with an auth error.
 

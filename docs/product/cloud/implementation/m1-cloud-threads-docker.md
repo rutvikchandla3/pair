@@ -2757,10 +2757,11 @@ and needs its own Linux CI job.
 **Docker client.** The repo has no Docker library (no `dockerode`; the vendored
 `.repos/alchemy-effect/packages/docker/src/Docker.ts` shells out to the `docker` CLI, which would
 make the CLI a server prerequisite and parse text). Smallest: the Engine HTTP API through the
-server's own Effect HTTP client on undici, which the server already depends on
-(`apps/server/package.json:72`). `NodeHttpClient.makeDispatcherOptions({ connect: { socketPath } })`
-plus `NodeHttpClient.makeUndici` (effect 4.1.2, `.repos/effect/packages/platform/node/src/NodeHttpClient.ts:130`,
-`:208`) gives a Unix-socket `HttpClient`; the dispatcher lives in the driver's registry scope.
+server's own Effect HTTP client on `node:http`. `NodeHttpClient.makeAgent({ socketPath })` (or the
+TLS `ca`/`cert`/`key`) plus `NodeHttpClient.makeNodeHttp` (effect 4.1.2,
+`.repos/effect/packages/platform/node/src/NodeHttpClient.ts:672`, `:716`) gives a Unix-socket
+`HttpClient`; the agents live in the driver's registry scope. Not undici: the CLI bundle keeps
+undici external, and the single executable can only `import` builtins.
 
 `parseDockerHost(config.dockerHost ?? env.DOCKER_HOST)`, env from `HostProcess.Environment`:
 
@@ -2942,8 +2943,8 @@ socket, `iptables -S PAIR-<id8>` from the host, and the `health` result.
   script built from validated inputs (subnet, bridge name and allow list are parsed, not interpolated
   raw).
 - `health` never reports `applied: true` unless the script exited 0 on this pass.
-- The `undici` dispatcher is scoped to the driver instance and closed by the registry on a
-  config change.
+- The HTTP agents are scoped to the driver instance and closed by the registry on a config
+  change.
 - `start` cannot restart a healthy runner of the same generation (the generation marker check).
 
 ### 1.15 `feat(server): give Docker runners a Unix socket route and a DOCKER_HOST runner URL`

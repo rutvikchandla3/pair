@@ -20,7 +20,7 @@ export const layerWhen = (mounted: Effect.Effect<boolean>) =>
     Effect.gen(function* () {
       const hub = yield* RunnerHub;
       const bundle = yield* RunnerBundle;
-      // Without a bundle (a single executable) the server has no build to compare or serve.
+      // Without a runner tree (not a Pair Cloud release) there is no build to compare or serve.
       const currentBuild = bundle.current.pipe(
         Effect.map((info) => info.runnerBuildId),
         Effect.tapError((error) =>

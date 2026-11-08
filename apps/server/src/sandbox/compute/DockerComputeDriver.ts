@@ -853,6 +853,14 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
 const SSH_ADVICE =
   "Docker over ssh:// is not supported. Forward the socket with `ssh -NL <local.sock>:/var/run/docker.sock` and use unix://.";
 
+// node:http, not undici: a single executable cannot import the undici the server keeps external.
+const nodeHttpClient = (options: NodeHttpClient.HttpAgentOptions | undefined) =>
+  NodeHttpClient.makeAgent(options).pipe(
+    Effect.flatMap((agent) =>
+      NodeHttpClient.makeNodeHttp.pipe(Effect.provideService(NodeHttpClient.HttpAgent, agent)),
+    ),
+  );
+
 const resolveEngine = Effect.fn("DockerComputeDriver.resolveEngine")(function* (host: DockerHost) {
   const fs = yield* FileSystem.FileSystem;
   if (host._tag === "Unsupported") {
@@ -874,10 +882,7 @@ const resolveEngine = Effect.fn("DockerComputeDriver.resolveEngine")(function* (
         break;
       }
     }
-    const dispatcher = yield* NodeHttpClient.makeDispatcherOptions({ connect: { socketPath } });
-    const client = yield* NodeHttpClient.makeUndici.pipe(
-      Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
-    );
+    const client = yield* nodeHttpClient({ socketPath });
     return {
       _tag: "Ready",
       engine: makeDockerEngine(client, "http://docker"),
@@ -902,12 +907,7 @@ const resolveEngine = Effect.fn("DockerComputeDriver.resolveEngine")(function* (
     const [ca, cert, key] = files.success;
     connect = { ca, cert, key };
   }
-  const dispatcher = yield* NodeHttpClient.makeDispatcherOptions(
-    connect === undefined ? undefined : { connect },
-  );
-  const client = yield* NodeHttpClient.makeUndici.pipe(
-    Effect.provideService(NodeHttpClient.Dispatcher, dispatcher),
-  );
+  const client = yield* nodeHttpClient(connect);
   return {
     _tag: "Ready",
     engine: makeDockerEngine(client, host.origin),
@@ -916,8 +916,8 @@ const resolveEngine = Effect.fn("DockerComputeDriver.resolveEngine")(function* (
 });
 
 /**
- * The registry factory for `kind: "docker"`. The undici dispatcher lives in the registry's scope
- * for this instance, so a config change closes it.
+ * The registry factory for `kind: "docker"`. The HTTP agents live in the registry's scope for
+ * this instance, so a config change closes them.
  */
 export const make = Effect.fn("DockerComputeDriver.make")(function* (config: DockerSandboxDriver) {
   const installId = yield* (yield* ServerEnvironmentIdentity).getEnvironmentId;

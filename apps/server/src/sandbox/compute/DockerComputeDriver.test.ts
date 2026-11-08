@@ -320,7 +320,7 @@ const withDriver = <A, E>(
     { _tag: "Ready", engine: fake.engine, local: true },
     {
       route: Effect.succeed({ serverUrl: "unix:/srv/t3/runner/runner.sock" }),
-      bundle: Effect.fail(new RunnerBundleUnavailableError({ reason: "single-executable" })),
+      bundle: Effect.fail(new RunnerBundleUnavailableError({ reason: "not-bundled" })),
     },
     { version: "1.2.3", fromSource: options.fromSource ?? false },
   ).pipe(
