@@ -207,6 +207,24 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("generates a cloud thread's branch name on the server, its machine asleep", () =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify({ structured_output: { branch: "feat/cloud-branch" } }) },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: "/t3-sandbox/sbx_asleep/worktrees/t3-1",
+            message: "Please update session handling.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          expect(generated.branch).toBe("feat/cloud-branch");
+        }),
+    ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

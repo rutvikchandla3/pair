@@ -162,31 +162,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   });
 }
 
-const TEMP_FILE_METHODS = new Set([
-  "makeTempDirectory",
-  "makeTempFile",
-  "writeFileString",
-  "readFileString",
-  "remove",
-]);
-
-function withoutTempFiles(fs: FileSystem.FileSystem): FileSystem.FileSystem {
-  return new Proxy(fs, {
-    get: (target, key, receiver) =>
-      typeof key === "string" && TEMP_FILE_METHODS.has(key)
-        ? () => Effect.die(new Error(`server FileSystem.${key}`))
-        : Reflect.get(target, key, receiver),
-  });
-}
-
 function withFakeCodexEnv<A, E, R>(
   input: FakeCodexInput & {
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
     models?: ReadonlyArray<string>;
     managedRuntime?: boolean;
-    /** The server's own FileSystem dies on temp files, as it cannot reach a cloud workspace. */
-    hostOnlyTempFiles?: boolean;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -213,10 +194,6 @@ function withFakeCodexEnv<A, E, R>(
             revision: "test",
           })
         : undefined,
-    ).pipe(
-      input.hostOnlyTempFiles
-        ? Effect.provideService(FileSystem.FileSystem, withoutTempFiles(fs))
-        : (effect) => effect,
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -405,13 +382,13 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps its schema and output files on the workspace's host", () =>
+  it.effect("generates a cloud thread's branch name on the server, its machine asleep", () =>
     withFakeCodexEnv(
-      { output: JSON.stringify({ branch: "feat/cloud-branch" }), hostOnlyTempFiles: true },
+      { output: JSON.stringify({ branch: "feat/cloud-branch" }) },
       (textGeneration) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateBranchName({
-            cwd: process.cwd(),
+            cwd: "/t3-sandbox/sbx_asleep/worktrees/t3-1",
             message: "Please update session handling.",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });

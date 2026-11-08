@@ -187,29 +187,28 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
-      // Titles run in a temp dir on the server; every other operation runs where `cwd` lives.
-      const host =
-        operation === "generateThreadTitle"
-          ? hosts.local
-          : yield* hosts
-              .forPath(cwd)
+      // Text in, text out, so a cloud thread's request runs here too: in its machine it would
+      // carry the server's env. Only an investigation needs the checkout, which cloud can't give.
+      const host = hosts.local;
+      const cwdOnServer = yield* hosts.forPath(cwd).pipe(
+        Effect.map((cwdHost) => cwdHost.kind === "local"),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!cwdOnServer && investigate !== undefined) {
+        return yield* TextGenerationOperations.cloudInvestigationUnsupported(operation);
+      }
+      const workingDirectory =
+        operation === "generateThreadTitle" || !cwdOnServer
+          ? yield* host.fileSystem
+              .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
               .pipe(
                 Effect.mapError((cause) =>
                   normalizeCliError(
                     "claude",
                     operation,
                     cause,
-                    "Failed to spawn Claude CLI process",
+                    "Failed to create a working directory",
                   ),
-                ),
-              );
-      const workingDirectory =
-        operation === "generateThreadTitle"
-          ? yield* host.fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
                 ),
               )
           : cwd;

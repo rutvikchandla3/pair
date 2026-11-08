@@ -209,15 +209,19 @@ Fixed during the run:
 - `621664773`, `85b6f38c4`: git the server itself ran on a machine (Commit & push) had no
   identity. Every process there now gets the server's identity from the host's base environment.
 
-Found, not fixed: inside a machine, Codex dies with `Permission denied` initializing its app
-server. The VM's text generation is set to Haiku in `~/.t3/dev/settings.json` (backup
-`settings.json.bak-g1`) until the Codex runs.
+- Text generation for a cloud thread ran in its machine with the server's whole environment.
+  Codex died on the server's `HOME` (`Permission denied`), and the agent's user could read any
+  secret in that env. Commit, PR and branch text now generate on the server. A review guide that
+  investigates a cloud thread fails until it gets the machine's own env.
 
 Drive the web app in a browser over `gcloud compute ssh … -L 15733:localhost:5733` (the dev
 cookie is set). Desktop GUI automation through `orca computer` repeated typed text and was slow.
 
-Still to run for G1: phone plus
-`docker rm -f` with the machine-failed push, and the Codex, member-token, evals and
+Step 6 (phone) is skipped for now. The phone paired over the tailnet, but it runs the App Store
+T3 Code app, which has no member push. A Pair build that receives push needs a paid Apple
+Developer team to sign it. Personal-team builds leave out the push entitlement.
+
+Still to run for G1: step 6 on a Pair build, and the Codex, member-token, evals and
 mobile/app-capture items below.
 
 ## How to resume

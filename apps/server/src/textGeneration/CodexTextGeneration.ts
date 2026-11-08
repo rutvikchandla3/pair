@@ -201,19 +201,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       operation,
       toJsonSchemaObject(outputSchemaJson),
     );
-    // Titles stay on the server; every other operation runs where `cwd` lives.
-    const host =
-      operation === "generateThreadTitle"
-        ? hosts.local
-        : yield* hosts
-            .forPath(cwd)
-            .pipe(
-              Effect.mapError((cause) =>
-                normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
-              ),
-            );
-    // Codex reads the schema and writes its answer on its own host. Unscoped: background fibers
-    // may inherit closed scopes that would reap the files on creation.
+    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
+    // the server's env. Only an investigation needs the checkout, which cloud can't give it yet.
+    const host = hosts.local;
+    const cwdOnServer = yield* hosts.forPath(cwd).pipe(
+      Effect.map((cwdHost) => cwdHost.kind === "local"),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!cwdOnServer && investigate !== undefined) {
+      return yield* TextGenerationOperations.cloudInvestigationUnsupported(operation);
+    }
+    // Unscoped: background fibers may inherit closed scopes that would reap the files on creation.
     const tempDir = yield* host.fileSystem
       .makeTempDirectory({ prefix: `t3code-codex-${process.pid}-` })
       .pipe(
@@ -225,6 +223,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const cleanup = host.fileSystem.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
     const schemaPath = path.join(tempDir, "schema.json");
     const outputPath = path.join(tempDir, "output.json");
+    const workingDirectory = cwdOnServer ? cwd : tempDir;
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       yield* host.fileSystem
@@ -271,7 +270,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const mcpServersOff = yield* listEnabledMcpServers({
         spawner: host.spawner,
         binary,
-        cwd,
+        cwd: workingDirectory,
         env,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
@@ -304,7 +303,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
