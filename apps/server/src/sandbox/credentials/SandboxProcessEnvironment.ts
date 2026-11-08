@@ -146,9 +146,17 @@ const make = Effect.gen(function* () {
         Effect.map((output) => (output.code === 0 ? output.stdout.trim() : "")),
         Effect.orElseSucceed(() => ""),
       );
+  const name = (yield* globalGitConfig("user.name")) || FALLBACK_COMMITTER.name;
+  const email = (yield* globalGitConfig("user.email")) || FALLBACK_COMMITTER.email;
+  // As config, not GIT_AUTHOR_*, so a thread holder's author env still wins over it.
   const committer = {
-    GIT_COMMITTER_NAME: (yield* globalGitConfig("user.name")) || FALLBACK_COMMITTER.name,
-    GIT_COMMITTER_EMAIL: (yield* globalGitConfig("user.email")) || FALLBACK_COMMITTER.email,
+    GIT_COMMITTER_NAME: name,
+    GIT_COMMITTER_EMAIL: email,
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "user.name",
+    GIT_CONFIG_VALUE_0: name,
+    GIT_CONFIG_KEY_1: "user.email",
+    GIT_CONFIG_VALUE_1: email,
   };
 
   const sandboxOf = (host: WorkspaceHost) =>

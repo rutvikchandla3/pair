@@ -183,6 +183,12 @@ describe("SandboxProcessEnvironment", () => {
         // No user.email on the server: the checkpoint committer's.
         GIT_COMMITTER_NAME: "Ada Lovelace",
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        // The machine has no git identity, so an author-less commit names the server's too.
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: "user.name",
+        GIT_CONFIG_VALUE_0: "Ada Lovelace",
+        GIT_CONFIG_KEY_1: "user.email",
+        GIT_CONFIG_VALUE_1: "t3code@users.noreply.github.com",
         T3CODE_THREAD_ID: "thread-a",
       });
       expect(Object.values(env)).not.toContain("server-secret");
@@ -294,6 +300,11 @@ describe("SandboxProcessEnvironment", () => {
       DB_PASSWORD: "s3cret",
       GIT_COMMITTER_NAME: "Ada Lovelace",
       GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Ada Lovelace",
+      GIT_CONFIG_KEY_1: "user.email",
+      GIT_CONFIG_VALUE_1: "t3code@users.noreply.github.com",
     };
 
     it.effect("gives a process its own account's one headless credential and nothing else", () =>

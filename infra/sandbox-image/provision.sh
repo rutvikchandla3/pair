@@ -88,7 +88,7 @@ echo 'export PATH="/home/t3/.npm-global/bin:$PATH"' >/etc/profile.d/pair.sh
 
 # 7. Git asks the server for every credential through the runner and never stores one; SSH
 # remotes on github.com go over HTTPS so the helper answers them too. No user.name: the server
-# sets the committer per process.
+# sets the identity per process.
 cat >/etc/gitconfig <<'GITCONFIG'
 [credential]
 	helper = !t3 runner git-credential
