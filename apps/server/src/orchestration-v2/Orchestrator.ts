@@ -220,6 +220,7 @@ import {
   planSandboxOnDelete,
   type SandboxAttachedThread,
   sandboxOwnerMemberChange,
+  hasNoDisk,
   sandboxAttachedThread,
   type SandboxCommand,
   type SandboxDecision,
@@ -11051,14 +11052,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
     if (record === null || record.state === "ready") return command;
-    const firstCheckout =
-      record.state === "destroyed"
-        ? (yield* projectionStore
-            .getThreadRecords(command.threadId, ["runs"])
-            .pipe(mapProjection)).runs
-            .toSorted((left, right) => left.ordinal - right.ordinal)
-            .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation
-        : undefined;
+    const firstCheckout = hasNoDisk(record)
+      ? (yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs"])
+          .pipe(mapProjection)).runs
+          .toSorted((left, right) => left.ordinal - right.ordinal)
+          .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation
+      : undefined;
     const admission = yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection);
     const now = yield* DateTime.now;
     const decision = decideCloudPrompt({
@@ -11095,8 +11095,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ]);
     }
+    // A delivery intent resolves to a start mode later, which would undo the wait.
+    const { deliveryIntent: _deliveryIntent, ...deferred } = command;
     return {
-      ...command,
+      ...deferred,
       dispatchMode: {
         type: "defer_start" as const,
         ...(decision.workspaceStrategy === undefined

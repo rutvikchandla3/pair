@@ -933,17 +933,23 @@ const make = Effect.gen(function* () {
     const key = runId ?? input.commandId;
     yield* preparation.pipe(
       Effect.onError((cause) =>
-        // Free the run first: a retry accepted once the failure lands must find it unreserved.
-        releasePreparation(key).pipe(
-          Effect.andThen(
-            failPreparedRun(
-              input,
-              threadId,
-              runId,
-              Cause.hasInterruptsOnly(cause) ? "Worktree setup cancelled." : Cause.squash(cause),
+        // A cloud run interrupted here was cancelled already, or the server is stopping and
+        // startup recovery re-arms it on its machine.
+        input.sandboxId !== undefined && Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : // Free the run first: a retry accepted once the failure lands must find it unreserved.
+            releasePreparation(key).pipe(
+              Effect.andThen(
+                failPreparedRun(
+                  input,
+                  threadId,
+                  runId,
+                  Cause.hasInterruptsOnly(cause)
+                    ? "Worktree setup cancelled."
+                    : Cause.squash(cause),
+                ),
+              ),
             ),
-          ),
-        ),
       ),
       Effect.ignoreCause,
       Effect.ensuring(releasePreparation(key)),

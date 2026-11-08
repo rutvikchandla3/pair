@@ -30,6 +30,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -43,6 +44,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -2704,6 +2706,39 @@ it.effect.each([
     const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
     assert.include(cause ?? {}, refusal);
     assert.isNull(yield* threads.getThreadShell(input.threadId));
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("keeps a cloud run parked when the server stops before its machine is ready", () => {
+  const harness = cloudHarness();
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    // A second instance, so closing its scope stands in for a server shutdown.
+    const scope = yield* Scope.make();
+    const launches = Context.get(
+      yield* Layer.buildWithScope(
+        Layer.fresh(ThreadLaunch.layer).pipe(
+          Layer.provide(Layer.mergeAll(CommandReceiptStore.layer, IdAllocator.layer)),
+        ),
+        scope,
+      ),
+      ThreadLaunch.ThreadLaunchService,
+    );
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:cloud-shutdown",
+        thread: "thread:launch:cloud-shutdown",
+        message: "Fix the build",
+        workspace: cloudWorkspace,
+      }),
+    );
+    // Its preparation is waiting on the machine, as a run parked across a restart is.
+    yield* threads
+      .streamStoredEventsFrom({ threadId: launched.threadId, eventType: "turn-item.updated" })
+      .pipe(Stream.runHead);
+    yield* Scope.close(scope, Exit.void);
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "preparing");
   }).pipe(Effect.provide(harness.layer));
 });
 

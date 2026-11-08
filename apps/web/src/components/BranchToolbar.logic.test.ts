@@ -9,6 +9,8 @@ import {
   resolveBranchToolbarPrBranch,
   resolveCloudEnvModeItem,
   resolveLocalCheckoutBranchMismatch,
+  resolvePreviousWorktreeSeed,
+  resolveWorktreeBaseBranchName,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -160,6 +162,37 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
     expect(deriveLocalBranchNameFromRemoteRef("my-org/upstream/feature/demo")).toBe(
       "upstream/feature/demo",
     );
+  });
+});
+
+describe("resolveWorktreeBaseBranchName", () => {
+  it("drops the remote from a cloud base, which the machine resolves on origin itself", () => {
+    const remote = { name: "origin/test", isRemote: true };
+    expect(resolveWorktreeBaseBranchName("cloud", remote)).toBe("test");
+    expect(resolveWorktreeBaseBranchName("worktree", remote)).toBe("origin/test");
+  });
+});
+
+describe("resolvePreviousWorktreeSeed", () => {
+  it("skips a newer cloud thread, whose worktree is on its machine", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/local",
+            worktreePath: "/repo/.t3/wt",
+            updatedAt: "2026-11-08T10:00:00.000Z",
+          },
+          {
+            branch: "t3/cloud",
+            worktreePath: "/t3-sandbox/sbx_1/worktrees/t3-cloud",
+            updatedAt: "2026-11-08T11:00:00.000Z",
+            source: { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") },
+          },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/local", worktreePath: "/repo/.t3/wt" });
   });
 });
 

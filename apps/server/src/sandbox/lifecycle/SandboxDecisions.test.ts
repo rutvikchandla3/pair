@@ -606,6 +606,20 @@ describe("decideCloudPrompt", () => {
       },
     },
     {
+      name: "a machine whose disk is gone is replaced and the checkout rebuilt",
+      current: record({
+        state: "failed",
+        driverRef: null,
+        failure: { code: "missing", message: "Gone.", retryable: true },
+      }),
+      expected: {
+        _tag: "Defer",
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "pair/fix" },
+        state: "provisioning",
+        generation: 3,
+      },
+    },
+    {
       name: "a machine that failed for good refuses",
       current: record({ state: "failed", failure: { ...lost, retryable: false } }),
       expected: { _tag: "Refuse", message: "Gone." },

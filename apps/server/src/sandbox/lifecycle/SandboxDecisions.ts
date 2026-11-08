@@ -109,13 +109,13 @@ const admissionWait = (
     : { reason: "rate-limit", since: now };
 };
 
+/** The failure code for a backend that no longer exists, disk and all. */
+export const SANDBOX_BACKEND_MISSING = "missing";
+
 /**
  * M1's settle-and-archive rule: once every attached thread is archived or settled and none has
  * an active run, the sandbox may sleep. Null while it is still in use, or with no thread left.
  */
-/** The failure code for a backend that no longer exists, disk and all. */
-export const SANDBOX_BACKEND_MISSING = "missing";
-
 export const decideAutoSleep = (
   threads: ReadonlyArray<SandboxAttachedThread>,
 ): Extract<SandboxSleepReason, "archived" | "settled"> | null => {
@@ -189,6 +189,10 @@ export type CloudPromptDecision =
     }
   | { readonly _tag: "Refuse"; readonly message: string };
 
+/** A discarded machine, or one whose backend is gone, starts over on an empty disk. */
+export const hasNoDisk = (record: OrchestrationV2Sandbox) =>
+  record.state === "destroyed" || (record.state === "failed" && record.driverRef === null);
+
 /**
  * A prompt to a cloud thread whose machine is not `ready` waits for it instead of starting. A
  * new machine has an empty disk, so that prompt also re-creates the checkout from the remote.
@@ -237,9 +241,7 @@ export const decideCloudPrompt = (input: {
             generation: record.generation,
           },
         };
-  if (record.state !== "destroyed") {
-    return { _tag: "Defer", workspaceStrategy: undefined, wake };
-  }
+  if (!hasNoDisk(record)) return { _tag: "Defer", workspaceStrategy: undefined, wake };
   if (input.checkout === null) {
     return { _tag: "Refuse", message: "This thread has no checkout to rebuild on a new machine." };
   }

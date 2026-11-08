@@ -942,6 +942,8 @@ it.layer(layerTest)("cloud prompts", (it) => {
         text: "Carry on",
         attachments: [],
         dispatchMode: { type: "start_immediately" },
+        // What clients send; it must not override the wait for the machine.
+        deliveryIntent: "auto",
         createdBy: "user",
         creationSource: "web",
       });

@@ -38,13 +38,11 @@ in flight and no worktrees exist; start from `feat/pair`.
    the two push/PR runs, real provider credentials for one Claude (Haiku) and one Codex turn, a
    phone or simulator for `test-t3-mobile`, and a working browser for `test-t3-app` captures on web
    and desktop (Playwright's pinned browser does not launch here).
-3. **Check in the pass:** web's branch picker must not send `origin/<branch>` as `baseRefForCloud`
-   (mobile strips the prefix since 1.41; the server branches from `origin/<base>` and refuses it).
-4. **Live evals for 1.42:** `threads-vs-tasks.ndjson` on the old and new text, Sonnet and Opus
+3. **Live evals for 1.42:** `threads-vs-tasks.ndjson` on the old and new text, Sonnet and Opus
    (needs a model API key; the dry run passes). The PR needs the `agent-context-increase` label.
-5. **PR links:** `docs/product/pair-features.md`'s "Cloud threads on Docker" entry gets PR links
+4. **PR links:** `docs/product/pair-features.md`'s "Cloud threads on Docker" entry gets PR links
    once the M1 work has GitHub PR numbers.
-6. **Then:** delete this file (the merged commits are the record) and write M2's full specs
+5. **Then:** delete this file (the merged commits are the record) and write M2's full specs
    ([m2-m5.md](./m2-m5.md); maintainer decision #2, the hosted vendor, is due at M2's start).
 
 ### Maintainer answers (2026-11-08)
@@ -59,7 +57,7 @@ in flight and no worktrees exist; start from `feat/pair`.
    `runnerUrl`) to every member, and only the UI hides it.
 4. **1.42 evals:** still open; they need a model API key in the repo root `.env`.
 
-### M1 server-side pass (2026-11-08, on `pair-cloud-pass`, uncommitted)
+### M1 server-side pass (2026-11-08, on `pair-cloud-pass`)
 
 **Passed:** Settings → Cloud **Test**; a CLI cloud thread (`t3 thread start --cloud master`) with
 the clone owned by `t3`; the terminal runs as `t3` in the worktree; checkpoints `ready`, turn diffs
@@ -83,6 +81,18 @@ new machine; "Connect GitHub to push" shows without a credential.
 5. Retry and Wake on a machine whose container was gone restarted the missing container forever: a
    start that finds no backend (and a status or reconcile that says missing) fails with code
    `missing`, which clears `driverRef`, so the retry provisions.
+6. That new machine had an empty disk, but only a destroyed machine counted as one: a prompt to a
+   machine failed `missing` now also rebuilds the checkout (`hasNoDisk`).
+7. A server restart failed every cloud run still waiting for its machine ("Worktree setup
+   cancelled"): shutdown interrupts the preparation fiber, which failed the run before startup
+   recovery could re-arm it. An interrupted cloud preparation now leaves the run parked.
+8. Web's branch picker sent a remote ref (`origin/test`) as a cloud base, which the machine refused
+   ("origin/test is not on origin"). Web now drops the remote for Cloud, as mobile does.
+9. A local draft's "Previous worktree" offered a cloud thread's checkout, a path inside its machine.
+   It now skips cloud threads.
+10. Every client send carries `deliveryIntent: "auto"`, which resolved to `start_immediately` after
+    the cloud gate had deferred the prompt: a prompt to an asleep or discarded machine started at
+    once and failed "workspace folder no longer exists". The gate now drops the intent it overrides.
 
 **Not fixed, for the maintainer:**
 
@@ -93,12 +103,47 @@ new machine; "Connect GitHub to push" shows without a credential.
   should either un-settle or the rule should fire only on the settle transition.
 - **The M1 pass plan says `docker stop` reaches "Machine failed"**; 04 makes a stopped backend
   `sleeping` (correct), and only a missing one `failed`. Use `docker rm -f` in the pass.
+- **Retry from the machine-failed banner after `missing`** provisions a machine with no checkout,
+  and every later prompt fails "workspace folder no longer exists". Only a prompt (or the failed
+  run's Retry) rebuilds it. Either the banner should say "Sending starts a new machine", as a
+  discarded one does, or a new disk should get its threads' checkouts back.
+- **A cloud thread waiting for its machine** shows the host checkout's branch ("From master") in
+  its details panel, not the base it asked for: the thread has no branch until preparation runs.
+- **Changes after a restore** keeps the pre-restore count until the window regains focus or
+  reloads: restore does not invalidate git status. Not cloud-specific.
 - **The runner's other fs writes** (writeAtomic, makeDirectory, copy) also create root-owned files
   in the agent's tree. None broke the pass; worth one look.
 
-**Still to run:** the web composer's Cloud send with a status capture; a side chat sharing the
-machine; restore a checkpoint; the web branch picker check (item 3 above); the machine-failed push
-(needs a device); `vp run bench:runner`; the M0 git-count metrics; item 2's resource-bound runs.
+**Also passed:** the web composer's Cloud send; a side chat shares the owner's machine (no second
+container) and its approval shows on the parent; restore on that shared checkout is refused as
+shared; at the Docker cap (a quarter of the CPUs, 2 here) a third thread shows "Waiting for a
+machine: team limit reached"; restore with "Revert files too" on an unshared cloud thread removes
+the turn's file on the machine; a member sees no admin-only machine actions in the menu or palette
+and gets the member-worded GitHub banner; the palette's New cloud thread, Sleep now and Wake machine;
+Discard's confirm and banner, then a prompt that waits for a new machine and rebuilds the checkout.
+
+**`vp run bench:runner` on the idle VM (8 CPUs):** startup, stdout latency, echo and memory pass;
+Docker misses PTY throughput (41 MB/s vs ≥50) and server CPU per MB (25 ms vs ≤5). Local alone
+spends 17.6 ms/MB, so the CPU budget is out of reach as written; the throughput gap is the hub.
+
+**M0 metrics (OTLP to LGTM, Replay `showcase`, Hello-World, a local and a worktree thread):** every
+run made the same 41 git operations the same number of times (`t3_git_commands_total`): `main`,
+0.3's parent `b140d35fa`, 0.3 `b93bd84cc`, and `feat/pair` head. Counts pass. 0.3 itself stayed in
+the noise (count-weighted p50 19.7 → 21.3 ms). Head is slower than `main` in five of five paired
+runs: mean p50 `main` 23.9 ms (22.7–25.5), head 27.5 ms (25.8–29.3), about +15%. A bisect over the
+72 commits after 0.3 found no single step (runs vary ±1.5 ms on this VM), so it is spread out or
+background load; worth a profile before M2.
+
+**M0 in the browser (Replay, Hello-World, a local and a worktree thread):** a turn streams and
+completes; the terminal opens in the thread's cwd, and its busy state shows on the closed drawer's
+button and clears when the command exits; the file browser lists, opens and saves into the thread's
+own worktree, and search finds a file made outside the app; "Revert files too" on the worktree
+thread restores the turn's files and removes a later one; on the local thread it is refused as
+shared and the chat stays; a `python3 -m http.server` started in the terminal shows under Servers
+(only while the drawer is closed, since the details panel drops to compact) and **Stop** frees the
+port.
+
+**Still to run:** the machine-failed push (needs a device); item 2's resource-bound runs.
 
 ## How to resume
 

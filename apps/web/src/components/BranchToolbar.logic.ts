@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type { CloudAvailability } from "@t3tools/shared/sandbox";
-import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
@@ -27,6 +27,16 @@ export const ADD_TO_MACHINE_LABEL_CLASS =
 
 export const EnvMode = Schema.Literals(["local", "worktree", "cloud"]);
 export type EnvMode = typeof EnvMode.Type;
+
+/** A machine clones origin and branches from `origin/<base>`, so its base names no remote. */
+export function resolveWorktreeBaseBranchName(
+  envMode: EnvMode,
+  refName: Pick<VcsRef, "name" | "isRemote">,
+): string {
+  return envMode === "cloud" && refName.isRemote
+    ? deriveLocalBranchNameFromRemoteRef(refName.name)
+    : refName.name;
+}
 
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
@@ -147,6 +157,7 @@ export function resolvePreviousWorktreeSeed(input: {
     worktreePath: string | null;
     updatedAt: string;
     archivedAt?: string | null;
+    source?: { readonly sandboxId?: SandboxId };
   }>;
   currentWorktreePath: string | null;
 }): PreviousWorktreeSeed | null {
@@ -155,7 +166,9 @@ export function resolvePreviousWorktreeSeed(input: {
     if (
       !thread.worktreePath ||
       thread.worktreePath === input.currentWorktreePath ||
-      (thread.archivedAt ?? null) !== null
+      (thread.archivedAt ?? null) !== null ||
+      // A cloud thread's worktree path is inside its machine, not on this host.
+      thread.source?.sandboxId !== undefined
     ) {
       continue;
     }
