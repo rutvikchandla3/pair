@@ -35,6 +35,10 @@
       "types": "./src/presenceReporting.ts",
       "default": "./src/presenceReporting.ts"
     },
+    "./sandbox-viewing": {
+      "types": "./src/sandboxViewing.ts",
+      "default": "./src/sandboxViewing.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

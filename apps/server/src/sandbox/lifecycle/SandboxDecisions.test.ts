@@ -5,6 +5,7 @@ import {
   MemberId,
   type OrchestrationV2Sandbox,
   ProjectId,
+  RunId,
   SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -12,9 +13,13 @@ import * as DateTime from "effect/DateTime";
 
 import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
 import {
+  APPROVAL_HOLD_MS,
   decideGitCredentialRecord,
   decideCloudPrompt,
   decideSandboxCommand,
+  idleDecision,
+  type IdleDecision,
+  type IdleInput,
   planSandboxOnDelete,
   type SandboxAttachedThread,
   type SandboxCommand,
@@ -51,6 +56,10 @@ const lost = { code: "lost", message: "Gone.", retryable: true };
 const bootTimeout = { code: "boot-timeout", message: "No hello.", retryable: true };
 const fork = ThreadId.make("thread-fork");
 
+const nowMs = DateTime.toEpochMillis(now);
+const runId = RunId.make("run-waiting");
+
+/** A settled or archived thread rests from `now` unless the patch says otherwise. */
 const attached = (
   threadId: ThreadId,
   patch: Partial<SandboxAttachedThread> = {},
@@ -59,9 +68,16 @@ const attached = (
   archived: false,
   settled: false,
   activeRun: false,
+  activeRunId: null,
+  activityAt: DateTime.toEpochMillis(earlier),
+  restingAt: patch.settled === true || patch.archived === true ? nowMs : null,
+  pendingRequestAt: null,
+  backgroundWork: false,
   ...patch,
 });
-const autoSleep: SandboxCommand = { type: "sandbox.auto-sleep", ...base, snapshotAt: now };
+const autoSleep = (
+  reason: Extract<SandboxCommand, { readonly type: "sandbox.auto-sleep" }>["reason"] = "settled",
+): SandboxCommand => ({ type: "sandbox.auto-sleep", ...base, snapshotAt: now, reason });
 
 type Row = readonly [
   name: string,
@@ -327,38 +343,65 @@ const rows: ReadonlyArray<Row> = [
   ],
   [
     "auto-sleep once the owner is settled and its fork archived",
-    autoSleep,
+    autoSleep(),
     record(),
     { next: { state: "sleeping", sleepReason: "settled" }, effects: ["sandbox.stop"] },
     [attached(owner, { settled: true }), attached(fork, { archived: true })],
   ],
   [
     "auto-sleep once every thread is archived",
-    autoSleep,
+    autoSleep("archived"),
     record(),
     { next: { state: "sleeping", sleepReason: "archived" }, effects: ["sandbox.stop"] },
     [attached(owner, { archived: true, settled: true }), attached(fork, { archived: true })],
   ],
   [
     "auto-sleep while a fork is still open",
-    autoSleep,
+    autoSleep(),
     record(),
     "in-use",
     [attached(owner, { settled: true }), attached(fork)],
   ],
   [
     "auto-sleep with a run on a settled thread",
-    autoSleep,
+    autoSleep(),
     record(),
     "active-run",
     [attached(owner, { settled: true, activeRun: true })],
   ],
   [
     "auto-sleep when not ready",
-    autoSleep,
+    autoSleep(),
     record({ state: "waking" }),
     "wrong-state",
     [attached(owner, { settled: true })],
+  ],
+  [
+    "auto-sleep idle after a thread was active past the snapshot",
+    autoSleep("idle"),
+    record(),
+    "in-use",
+    [attached(owner), attached(sideChat, { activityAt: nowMs + 1 })],
+  ],
+  [
+    "auto-sleep idle with only a question past its hold",
+    autoSleep("idle"),
+    record(),
+    { next: { state: "sleeping", sleepReason: "idle" }, effects: ["sandbox.stop"] },
+    [
+      attached(owner, {
+        activeRun: true,
+        activeRunId: runId,
+        pendingRequestAt: nowMs - APPROVAL_HOLD_MS,
+      }),
+    ],
+  ],
+  [
+    "auto-sleep settled when the settle predates the last wake",
+    autoSleep(),
+    record({ updatedAt: now }),
+    "in-use",
+    [attached(owner, { settled: true, restingAt: nowMs - 60_000 })],
   ],
   [
     "discard a sleeping sandbox",
@@ -489,6 +532,132 @@ describe("decideSandboxCommand", () => {
         generation: decision.next.generation,
       })),
     );
+  });
+});
+
+describe("idleDecision", () => {
+  const minutes = (count: number) => count * 60_000;
+  const readyAt = DateTime.toEpochMillis(earlier);
+  const thread = (patch: Partial<SandboxAttachedThread> = {}) =>
+    attached(owner, { activityAt: readyAt, ...patch });
+  const input = (
+    atMinute: number,
+    patch: Partial<Omit<IdleInput, "activity">> & {
+      readonly activity?: Partial<IdleInput["activity"]>;
+    } = {},
+  ): IdleInput => ({
+    record: record(),
+    threads: [thread()],
+    policy: { idleMs: minutes(60), sleepOnSettle: true },
+    capPressure: false,
+    ...patch,
+    activity: { viewedAt: null, terminalAt: null, nextScheduledAt: null, ...patch.activity },
+    nowMs: readyAt + minutes(atMinute),
+  });
+  const awake = (atMinute: number): IdleDecision => ({
+    _tag: "Awake",
+    untilMs: readyAt + minutes(atMinute),
+  });
+  const sleeps = (reason: Extract<IdleDecision, { _tag: "Sleep" }>["reason"]): IdleDecision => ({
+    _tag: "Sleep",
+    reason,
+    interrupt: [],
+  });
+
+  it.each<readonly [string, IdleInput, IdleDecision]>([
+    [
+      "a run with no question keeps it busy",
+      input(180, { threads: [thread({ activeRun: true, activeRunId: runId })] }),
+      { _tag: "Busy" },
+    ],
+    [
+      "background work keeps it busy",
+      input(180, {
+        threads: [thread({ settled: true, restingAt: readyAt, backgroundWork: true })],
+      }),
+      { _tag: "Busy" },
+    ],
+    [
+      "a question younger than 2 hours holds it until the hold ends",
+      input(60, {
+        threads: [
+          thread({ activeRun: true, activeRunId: runId, pendingRequestAt: readyAt + minutes(10) }),
+        ],
+      }),
+      awake(130),
+    ],
+    [
+      "a question 2 hours old sleeps it and names the run to interrupt",
+      input(120, {
+        threads: [thread({ activeRun: true, activeRunId: runId, pendingRequestAt: readyAt })],
+      }),
+      { _tag: "Sleep", reason: "idle", interrupt: [{ threadId: owner, runId }] },
+    ],
+    [
+      "a settle after it became ready sleeps it at once",
+      input(1, { threads: [thread({ settled: true, restingAt: readyAt + minutes(1) })] }),
+      sleeps("settled"),
+    ],
+    [
+      "a settle before its last wake waits for the idle deadline",
+      input(20, {
+        record: record({ updatedAt: DateTime.makeUnsafe(readyAt + minutes(10)) }),
+        threads: [thread({ settled: true, restingAt: readyAt })],
+      }),
+      awake(70),
+    ],
+    [
+      "every thread archived sleeps as archived",
+      input(0, {
+        threads: [
+          thread({ archived: true, restingAt: readyAt }),
+          attached(fork, { archived: true, restingAt: readyAt }),
+        ],
+      }),
+      sleeps("archived"),
+    ],
+    [
+      "a driver without sleepOnSettle ignores settling",
+      input(1, {
+        threads: [thread({ settled: true, restingAt: readyAt })],
+        policy: { idleMs: minutes(60), sleepOnSettle: false },
+      }),
+      awake(60),
+    ],
+    [
+      "terminal output inside the window keeps it awake",
+      input(60, { activity: { terminalAt: readyAt + minutes(30) } }),
+      awake(90),
+    ],
+    [
+      "a lease renewal keeps it awake",
+      input(60, { activity: { viewedAt: readyAt + minutes(50) } }),
+      awake(110),
+    ],
+    [
+      "a scheduled run due inside the window keeps it awake until it runs",
+      input(60, { activity: { nextScheduledAt: readyAt + minutes(90) } }),
+      awake(90),
+    ],
+    [
+      "a scheduled run that came due counts as activity",
+      input(90, { activity: { nextScheduledAt: readyAt + minutes(90) } }),
+      awake(150),
+    ],
+    [
+      "a scheduled run past twice the window does not hold it",
+      input(60, { activity: { nextScheduledAt: readyAt + minutes(120) } }),
+      sleeps("idle"),
+    ],
+    ["60 idle minutes sleeps as idle", input(60), sleeps("idle")],
+    [
+      "a waiter queued sleeps one idle 5 minutes",
+      input(5, { capPressure: true }),
+      sleeps("cap-pressure"),
+    ],
+    ["a waiter queued waits until 5 idle minutes", input(2, { capPressure: true }), awake(5)],
+  ])("%s", (_name, idle, expected) => {
+    expect(idleDecision(idle)).toEqual(expected);
   });
 });
 

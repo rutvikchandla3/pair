@@ -278,6 +278,7 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
+import * as SandboxActivity from "./sandbox/lifecycle/SandboxActivity.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1560,6 +1561,7 @@ export const layerWsRpc = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const sandboxOverview = yield* SandboxOverview.SandboxOverview;
+      const sandboxActivity = yield* SandboxActivity.SandboxActivity;
       const computeDriverCheck = yield* ComputeDriverCheck.ComputeDriverCheck;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -2854,6 +2856,9 @@ export const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.sandboxOverview]: (_input) => sandboxOverview.read,
+        // Every member sees every team thread, as with presence; `view` skips local threads.
+        [WS_METHODS.sandboxViewing]: ({ threadId }) =>
+          sandboxActivity.view(threadId).pipe(Effect.asVoid),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),

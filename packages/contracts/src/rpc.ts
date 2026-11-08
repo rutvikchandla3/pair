@@ -12,6 +12,7 @@ import {
   SandboxDriverCheckResult,
   SandboxOverview,
   SandboxOverviewError,
+  SandboxViewingInput,
 } from "./sandbox.ts";
 import {
   McpAppCallToolInput,
@@ -560,6 +561,7 @@ export const WS_METHODS = {
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   sandboxOverview: "sandbox.overview",
+  sandboxViewing: "sandbox.viewing",
   sandboxCheckDriver: "sandbox.checkDriver",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
@@ -1005,6 +1007,12 @@ const WsSandboxOverviewRpc = Rpc.make(WS_METHODS.sandboxOverview, {
   payload: Schema.Struct({}),
   success: SandboxOverview,
   error: Schema.Union([SandboxOverviewError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxViewingRpc = Rpc.make(WS_METHODS.sandboxViewing, {
+  payload: SandboxViewingInput,
+  success: Schema.Void,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
@@ -2242,6 +2250,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
   WsSandboxOverviewRpc,
+  WsSandboxViewingRpc,
   WsSandboxCheckDriverRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

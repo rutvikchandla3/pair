@@ -126,6 +126,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
+import * as SandboxActivity from "./sandbox/lifecycle/SandboxActivity.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
@@ -740,8 +741,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
-  // ProjectService reads it optionally, so it must sit above the orchestration layers.
-  Layer.provideMerge(CheckpointMirror.layer),
+  // ProjectService reads the mirror optionally, so it must sit above the orchestration layers.
+  // The lifecycle worker and the viewer-lease RPC share one SandboxActivity.
+  Layer.provideMerge(
+    Layer.merge(
+      CheckpointMirror.layer,
+      SandboxActivity.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+    ),
+  ),
   Layer.provideMerge(ComputeDriverRegistry.layer({ docker: DockerComputeDriver.make })),
   Layer.provideMerge(SandboxBootstrapSource.layer),
   Layer.provideMerge(SandboxCredentialRevocation.layer),

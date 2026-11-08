@@ -69,6 +69,7 @@ import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
 import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
+import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
@@ -217,11 +218,13 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
       }),
     }),
   );
+  const activity = yield* SandboxActivity.makeTest;
   const layerDriver = Layer.mergeAll(
     FakeComputeDriver.layerRegistry(fake.driver),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getEnvironmentId: Effect.succeed(installId),
     }),
+    Layer.succeed(SandboxActivity.SandboxActivity, activity.service),
   );
   const credentials = yield* makeCredentials();
   const layerSandboxEffects = SandboxEffects.layer.pipe(
@@ -249,7 +252,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
   );
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(Effect.provide(layerWorker));
   const effects = yield* SandboxEffects.SandboxEffects.pipe(Effect.provide(layerSandboxEffects));
-  return { ...fake, bootstraps, worker, effects, layerDriver, ...credentials };
+  return { ...fake, bootstraps, worker, effects, layerDriver, activity, ...credentials };
 });
 
 type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
@@ -421,6 +424,9 @@ const forked = (sourceThreadId: ThreadId, key: string, sideChat = false) =>
 
 const answerStop = (call: FakeComputeDriver.FakeComputeCall) =>
   call._tag === "stop" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag);
+
+const answerStart = (call: FakeComputeDriver.FakeComputeCall) =>
+  call._tag === "start" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag);
 
 const effectsOf = (commandId: string) =>
   EffectOutbox.EffectOutboxV2.use((outbox) => outbox.listByCommandId(CommandId.make(commandId)));
@@ -1205,12 +1211,68 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
         (event) => event.type === "sandbox.updated" && event.payload.state === "sleeping",
       );
       assert.equal(sleeps.length, 1);
-      yield* runAnswering(runtime, (call) =>
-        call._tag === "stop"
-          ? Deferred.succeed(call.reply, undefined)
-          : Effect.die(`Expected stop, got ${call._tag}`),
-      );
+      yield* runAnswering(runtime, answerStop);
       assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+
+      // A wake on the still-settled thread stays up until it has been idle for the window.
+      yield* TestClock.adjust("1 minute");
+      yield* dispatch({
+        type: "sandbox.wake",
+        commandId: CommandId.make("wake:settle"),
+        threadId,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, answerStart);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 2);
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+      yield* TestClock.adjust("60 minutes");
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(sandboxId), { state: "sleeping", sleepReason: "idle" });
+      yield* runAnswering(runtime, answerStop);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sleeps an idle machine at its deadline", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("idle");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+
+      yield* TestClock.adjust("59 minutes");
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+      yield* TestClock.adjust("1 minute");
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(sandboxId), { state: "sleeping", sleepReason: "idle" });
+      yield* runAnswering(runtime, answerStop);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a viewer lease renewal moves the idle deadline", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("lease");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+
+      yield* TestClock.adjust("30 minutes");
+      assert.isTrue(yield* runtime.activity.service.view(threadId));
+      assert.isFalse(yield* runtime.activity.service.view(threadId));
+      yield* TestClock.adjust("59 minutes");
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+      yield* TestClock.adjust("1 minute");
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(sandboxId), { state: "sleeping", sleepReason: "idle" });
+      yield* runAnswering(runtime, answerStop);
     }).pipe(Effect.scoped),
   );
 
@@ -1479,6 +1541,10 @@ it.layer(layerAdmissionTest(100))("sandbox admission at the start rate", (it) =>
 
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
         Effect.provide(FakeComputeDriver.layerRegistry((yield* AdmissionDriver).fake.driver)),
+        Effect.provideServiceEffect(
+          SandboxActivity.SandboxActivity,
+          Effect.map(SandboxActivity.makeTest, (activity) => activity.service),
+        ),
       );
       const eleventh = launched[10]!;
       yield* sweep();
@@ -1486,6 +1552,36 @@ it.layer(layerAdmissionTest(100))("sandbox admission at the start rate", (it) =>
       yield* TestClock.adjust("6 seconds");
       yield* sweep();
       assert.equal((yield* getSandbox(eleventh.sandboxId))?.admission, null);
+    }).pipe(Effect.scoped),
+  );
+});
+
+it.layer(layerAdmissionTest(1))("idle sleep under cap pressure", (it) => {
+  it.effect("sleeps an idle machine early for a waiter, which the next sweep admits", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime((yield* AdmissionDriver).fake);
+      const first = yield* provisioned("pressure-a");
+      yield* runAnswering(runtime, answerCreateOf(first.sandboxId));
+      yield* attachAndRelease(runtime, first.threadId, first.sandboxId, 1);
+      const second = yield* provisioned("pressure-b");
+      assert.equal((yield* getSandbox(second.sandboxId))?.admission?.reason, "team-cap");
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+
+      yield* TestClock.adjust("4 minutes");
+      yield* sweep();
+      assert.equal((yield* getSandbox(first.sandboxId))?.state, "ready");
+      yield* TestClock.adjust("1 minute");
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(first.sandboxId), {
+        state: "sleeping",
+        sleepReason: "cap-pressure",
+      });
+      yield* runAnswering(runtime, answerStop);
+      yield* sweep();
+      assert.equal((yield* getSandbox(second.sandboxId))?.admission, null);
+      yield* runAnswering(runtime, answerCreateOf(second.sandboxId));
     }).pipe(Effect.scoped),
   );
 });

@@ -4,6 +4,8 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Sandbox,
   type OrchestrationV2ServerCommand,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -17,10 +19,15 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as DueHint from "../../scheduling/DueHint.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import { forkParked } from "../../serverActivation.ts";
+import type { ComputeDriver } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
-import { decideAutoSleep, sandboxAttachedThread } from "./SandboxDecisions.ts";
+import { idleDecision, sandboxAttachedThread } from "./SandboxDecisions.ts";
 import { listLiveSandboxes } from "./SandboxProjection.ts";
+
+const APPROVAL_EXPIRED_MESSAGE =
+  "Stopped after 2 hours without an answer, so the machine could sleep. Send a message to continue.";
 
 const PROVISION_DEADLINE_MS = 10 * 60_000;
 const WAKE_DEADLINE_MS = 5 * 60_000;
@@ -41,7 +48,11 @@ const affectsLifecycle = (event: OrchestrationV2DomainEvent) =>
   event.type === "thread.archived" ||
   event.type === "thread.unarchived" ||
   event.type === "thread.deleted" ||
-  event.type === "run.updated";
+  event.type === "run.updated" ||
+  // Questions, background work and messages end a busy machine's hold.
+  event.type === "runtime-request.updated" ||
+  event.type === "provider-thread.updated" ||
+  event.type === "message.updated";
 
 const freshCommandId = (kind: string, sandbox: OrchestrationV2Sandbox) =>
   Effect.sync(() =>
@@ -76,6 +87,7 @@ export const makeSweep = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
   const admission = yield* SandboxAdmission.SandboxAdmission;
+  const activity = yield* SandboxActivity.SandboxActivity;
   const due = DueHint.make();
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
@@ -95,16 +107,58 @@ export const makeSweep = Effect.gen(function* () {
       ),
     );
 
-  const shouldSleep = Effect.fn("SandboxLifecycleWorker.shouldSleep")(function* (
+  const idleFor = Effect.fn("SandboxLifecycleWorker.idleFor")(function* (
     sandbox: OrchestrationV2Sandbox,
+    driver: ComputeDriver["Service"],
+    capPressure: boolean,
+    nowMs: number,
   ) {
     const rows = yield* projections.listSandboxThreads(sandbox.id);
     const shells = yield* Effect.forEach(rows, (row) => projections.getThreadShell(row.threadId));
-    return (
-      decideAutoSleep(
-        shells.flatMap((shell) => (shell === null ? [] : [sandboxAttachedThread(shell)])),
-      ) !== null
+    const threads = shells.flatMap((shell) =>
+      shell === null ? [] : [sandboxAttachedThread(shell)],
     );
+    return idleDecision({
+      record: sandbox,
+      threads,
+      activity: yield* activity.read(threads.map((thread) => thread.threadId)),
+      policy: {
+        idleMs: driver.capabilities.defaultIdleSleepMs,
+        sleepOnSettle: driver.capabilities.sleepOnSettle,
+      },
+      capPressure,
+      nowMs,
+    });
+  });
+
+  /** Stops each run whose question outlived the hold; false if any could not be stopped. */
+  const interruptExpired = Effect.fn("SandboxLifecycleWorker.interruptExpired")(function* (
+    sandbox: OrchestrationV2Sandbox,
+    runs: ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
+  ) {
+    for (const { threadId, runId } of runs) {
+      const stopped = yield* threads
+        .dispatch({
+          type: "run.interrupt",
+          // Per run, so a repeat sweep replays this receipt.
+          commandId: CommandId.make(`server:sandbox-approval-expiry:${runId}`),
+          threadId,
+          runId,
+          reason: APPROVAL_EXPIRED_MESSAGE,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not stop a run whose question expired", {
+              sandboxId: sandbox.id,
+              runId,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
+        );
+      if (!stopped) return false;
+    }
+    return true;
   });
 
   /**
@@ -154,31 +208,36 @@ export const makeSweep = Effect.gen(function* () {
     if (yield* due.isIdle(nowMs)) return;
     const readVersion = yield* due.version;
     const sandboxes = yield* listLiveSandboxes();
-    // Only Docker stops on settle in M1; hosted drivers wait for idle sleep (2.1).
-    const dockerDriverIds = sandboxes.some((sandbox) => sandbox.state === "ready")
-      ? new Set(
-          (yield* registry.list)
-            .filter((driver) => driver.kind === "docker")
-            .map((driver) => driver.driverId),
-        )
-      : new Set();
+    const drivers = sandboxes.some((sandbox) => sandbox.state === "ready")
+      ? new Map((yield* registry.list).map((driver) => [driver.driverId, driver]))
+      : new Map<ComputeDriverId, ComputeDriver["Service"]>();
+    const queues = admissionQueues(sandboxes);
     let acted = false;
     let nextDueMs = Infinity;
-    for (const [driverId, queue] of admissionQueues(sandboxes)) {
+    for (const [driverId, queue] of queues) {
       const result = yield* admitWaiters(driverId, queue);
       if (result.admitted > 0) acted = true;
       nextDueMs = Math.min(nextDueMs, result.nextDueMs);
     }
     for (const sandbox of sandboxes) {
-      if (sandbox.state === "ready" && dockerDriverIds.has(sandbox.driverId)) {
-        if (!(yield* shouldSleep(sandbox))) continue;
+      if (sandbox.state === "ready") {
+        const driver = drivers.get(sandbox.driverId);
+        if (driver === undefined) continue;
+        const decision = yield* idleFor(sandbox, driver, queues.has(sandbox.driverId), nowMs);
+        if (decision._tag === "Busy") continue;
+        if (decision._tag === "Awake") {
+          nextDueMs = Math.min(nextDueMs, decision.untilMs);
+          continue;
+        }
         acted = true;
+        if (!(yield* interruptExpired(sandbox, decision.interrupt))) continue;
         yield* dispatch(sandbox, {
           type: "sandbox.auto-sleep",
           commandId: yield* freshCommandId("auto-sleep", sandbox),
           threadId: sandbox.ownerThreadId,
           sandboxId: sandbox.id,
           snapshotAt: now,
+          reason: decision.reason,
         });
         continue;
       }

@@ -47,11 +47,8 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import {
-  storageCleanupActivityAt,
-  storageCleanupPullRequestMerged,
-  storageCleanupThreadIdle,
-} from "./storageCleanup.ts";
+import { threadActivityAt } from "./orchestration-v2/threadActivity.ts";
+import { storageCleanupPullRequestMerged, storageCleanupThreadIdle } from "./storageCleanup.ts";
 import * as WorkspaceHostTesting from "./workspaceHost/WorkspaceHostTesting.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
@@ -245,9 +242,9 @@ describe("V2 storage cleanup eligibility", () => {
   it("uses V2 run activity instead of metadata refreshes for retention", () => {
     const thread = candidate();
     const runTime = at(-3 * DAY_MS);
-    expect(
-      storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
-    ).toBe(DateTime.toEpochMillis(runTime));
+    expect(threadActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) })).toBe(
+      DateTime.toEpochMillis(runTime),
+    );
   });
 
   function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {

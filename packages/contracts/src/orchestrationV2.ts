@@ -3934,6 +3934,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     sandboxId: SandboxId,
     snapshotAt: Schema.DateTimeUtc,
+    reason: Schema.Literals(["idle", "settled", "archived", "cap-pressure"]),
   }),
   Schema.Struct({
     type: Schema.Literal("sandbox.adopt"),

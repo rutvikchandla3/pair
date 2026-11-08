@@ -87,6 +87,10 @@ export interface ComputeCapabilities {
   }>;
   /** How many of this instance's sandboxes may run at once before new ones queue. */
   readonly defaultRunningCap: number;
+  /** Whether a ready machine stops once its threads settle; per-hour drivers may wait for idle. */
+  readonly sleepOnSettle: boolean;
+  /** How long a ready machine may sit unused before it sleeps. */
+  readonly defaultIdleSleepMs: number;
 }
 
 export interface SandboxBootstrap {

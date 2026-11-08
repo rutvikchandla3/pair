@@ -7,12 +7,14 @@ import type {
   OrchestrationV2SandboxAdmission,
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
+  RunId,
   SandboxSleepReason,
   ThreadId,
 } from "@t3tools/contracts";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
+import { threadActivityAt } from "../../orchestration-v2/threadActivity.ts";
 import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
 import type { SandboxThreadRow } from "./SandboxProjection.ts";
 
@@ -54,20 +56,37 @@ export interface SandboxAttachedThread {
   readonly settled: boolean;
   /** A run that is preparing, queued, starting, running or waiting. */
   readonly activeRun: boolean;
+  readonly activeRunId: RunId | null;
+  /** Epoch ms of the thread's last message or run, as storage cleanup measures it. */
+  readonly activityAt: number;
+  /** When it archived, or else settled; null while neither. */
+  readonly restingAt: number | null;
+  /** When its blocking question was asked; null without one. */
+  readonly pendingRequestAt: number | null;
+  readonly backgroundWork: boolean;
 }
 
-export const sandboxAttachedThread = (
-  shell: Pick<
-    OrchestrationV2ThreadShell,
-    "id" | "archivedAt" | "settledOverride" | "activeRunId" | "activityRunStatus" | "status"
-  >,
-): SandboxAttachedThread => ({
-  threadId: shell.id,
-  archived: shell.archivedAt !== null,
-  settled: shell.settledOverride === "settled",
-  activeRun:
-    shell.activeRunId !== null || shell.activityRunStatus != null || shell.status === "queued",
-});
+const epochMs = (value: DateTime.Utc | null | undefined) =>
+  value == null ? null : DateTime.toEpochMillis(value);
+
+export const sandboxAttachedThread = (shell: OrchestrationV2ThreadShell): SandboxAttachedThread => {
+  const archived = shell.archivedAt !== null;
+  const settled = shell.settledOverride === "settled";
+  const request = shell.pendingRuntimeRequest;
+  return {
+    threadId: shell.id,
+    archived,
+    settled,
+    activeRun:
+      shell.activeRunId !== null || shell.activityRunStatus != null || shell.status === "queued",
+    activeRunId: shell.activeRunId,
+    activityAt: threadActivityAt(shell),
+    restingAt: archived ? epochMs(shell.archivedAt) : settled ? epochMs(shell.settledAt) : null,
+    pendingRequestAt:
+      request === null || request.blocking === false ? null : epochMs(request.createdAt),
+    backgroundWork: (shell.pendingBackgroundTasks?.length ?? 0) > 0,
+  };
+};
 
 /** The orchestrator gathers these under the owner thread's lock; deciding does no I/O. */
 export interface SandboxDecisionInput {
@@ -113,17 +132,115 @@ const admissionWait = (
 export const SANDBOX_BACKEND_MISSING = "missing";
 
 /**
- * M1's settle-and-archive rule: once every attached thread is archived or settled and none has
- * an active run, the sandbox may sleep. Null while it is still in use, or with no thread left.
+ * The settle-and-archive rule: once every attached thread is archived or settled and none has
+ * an active run, the sandbox may sleep. Null while it is still in use, with no thread left, or
+ * when the newest settle came before the machine last became ready, so a wake stays up.
  */
-export const decideAutoSleep = (
+const decideAutoSleep = (
   threads: ReadonlyArray<SandboxAttachedThread>,
+  readySinceMs: number,
 ): Extract<SandboxSleepReason, "archived" | "settled"> | null => {
   if (threads.length === 0) return null;
   if (threads.some((thread) => thread.activeRun || (!thread.archived && !thread.settled))) {
     return null;
   }
+  if (Math.max(...threads.map((thread) => thread.restingAt ?? -Infinity)) < readySinceMs) {
+    return null;
+  }
   return threads.every((thread) => thread.archived) ? "archived" : "settled";
+};
+
+/** How long a blocking question keeps its machine awake before the run is stopped (decision #2). */
+export const APPROVAL_HOLD_MS = 2 * 60 * 60_000;
+/** How long a machine may sit unused while another machine on its driver waits for a slot. */
+const CAP_PRESSURE_IDLE_MS = 5 * 60_000;
+
+const questionExpired = (thread: SandboxAttachedThread, nowMs: number) =>
+  thread.pendingRequestAt !== null && nowMs - thread.pendingRequestAt >= APPROVAL_HOLD_MS;
+
+/** Background work, or an active run unless its blocking question has outlived the hold. */
+const holdsMachine = (thread: SandboxAttachedThread, nowMs: number) =>
+  thread.backgroundWork || (thread.activeRun && !questionExpired(thread, nowMs));
+
+export type AutoSleepReason = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "sandbox.auto-sleep" }
+>["reason"];
+
+export interface IdleInput {
+  /** A ready machine; its `updatedAt` is when it last became ready. */
+  readonly record: OrchestrationV2Sandbox;
+  readonly threads: ReadonlyArray<SandboxAttachedThread>;
+  readonly activity: {
+    readonly viewedAt: number | null;
+    readonly terminalAt: number | null;
+    readonly nextScheduledAt: number | null;
+  };
+  readonly policy: { readonly idleMs: number; readonly sleepOnSettle: boolean };
+  /** Another sandbox on this driver waits for admission. */
+  readonly capPressure: boolean;
+  readonly nowMs: number;
+}
+
+export type IdleDecision =
+  /** Only an event can end it, so it sets no deadline. */
+  | { readonly _tag: "Busy" }
+  | { readonly _tag: "Awake"; readonly untilMs: number }
+  | {
+      readonly _tag: "Sleep";
+      readonly reason: AutoSleepReason;
+      readonly interrupt: ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>;
+    };
+
+const sleep = (reason: AutoSleepReason): IdleDecision => ({ _tag: "Sleep", reason, interrupt: [] });
+
+/** 04 §2's idle policy for one ready machine, from activity across every attached thread. */
+export const idleDecision = (input: IdleInput): IdleDecision => {
+  const { threads, activity, policy, nowMs } = input;
+  const holders = threads.filter((thread) => holdsMachine(thread, nowMs));
+  if (holders.length > 0) {
+    if (holders.some((thread) => thread.backgroundWork || thread.pendingRequestAt === null)) {
+      return { _tag: "Busy" };
+    }
+    return {
+      _tag: "Awake",
+      untilMs: Math.min(...holders.map((thread) => thread.pendingRequestAt! + APPROVAL_HOLD_MS)),
+    };
+  }
+  const expired = threads.filter((thread) => thread.activeRun);
+  if (expired.length > 0) {
+    return {
+      _tag: "Sleep",
+      reason: "idle",
+      interrupt: expired.flatMap((thread) =>
+        thread.activeRunId === null
+          ? []
+          : [{ threadId: thread.threadId, runId: thread.activeRunId }],
+      ),
+    };
+  }
+  const readySinceMs = DateTime.toEpochMillis(input.record.updatedAt);
+  const settled = policy.sleepOnSettle ? decideAutoSleep(threads, readySinceMs) : null;
+  if (settled !== null) return sleep(settled);
+
+  const next = activity.nextScheduledAt;
+  // A run that came due counts as activity from then on, even before its thread shows it.
+  const anchor = Math.max(
+    readySinceMs,
+    ...threads.map((thread) => thread.activityAt),
+    activity.viewedAt ?? -Infinity,
+    activity.terminalAt ?? -Infinity,
+    next !== null && next <= nowMs ? next : -Infinity,
+  );
+  if (input.capPressure) {
+    const pressureAt = anchor + CAP_PRESSURE_IDLE_MS;
+    return nowMs >= pressureAt ? sleep("cap-pressure") : { _tag: "Awake", untilMs: pressureAt };
+  }
+  if (next !== null && next > nowMs && next < anchor + 2 * policy.idleMs) {
+    return { _tag: "Awake", untilMs: next };
+  }
+  const idleAt = anchor + policy.idleMs;
+  return nowMs >= idleAt ? sleep("idle") : { _tag: "Awake", untilMs: idleAt };
 };
 
 /**
@@ -404,12 +521,27 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         : refuse("wrong-state");
     case "sandbox.auto-sleep": {
       if (record.state !== "ready") return refuse("wrong-state");
-      if (busy) return refuse("active-run");
-      const sleepReason = decideAutoSleep(input.attachedThreads);
+      const nowMs = DateTime.toEpochMillis(now);
+      if (input.attachedThreads.some((thread) => holdsMachine(thread, nowMs))) {
+        return refuse("active-run");
+      }
+      const readySinceMs = DateTime.toEpochMillis(record.updatedAt);
+      if (command.reason === "settled" || command.reason === "archived") {
+        if (decideAutoSleep(input.attachedThreads, readySinceMs) !== command.reason) {
+          return refuse("in-use");
+        }
+      } else {
+        // Used since the worker read it, so its idle clock restarted.
+        const snapshotMs = DateTime.toEpochMillis(command.snapshotAt);
+        if (
+          readySinceMs > snapshotMs ||
+          input.attachedThreads.some((thread) => thread.activityAt > snapshotMs)
+        ) {
+          return refuse("in-use");
+        }
+      }
       // Sleeping from the decision on, so a prompt before the stop runs wakes after it.
-      return sleepReason === null
-        ? refuse("in-use")
-        : update({ state: "sleeping", sleepReason }, ["sandbox.stop"]);
+      return update({ state: "sleeping", sleepReason: command.reason }, ["sandbox.stop"]);
     }
   }
 

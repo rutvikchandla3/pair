@@ -347,7 +347,7 @@ need its snapshot, and 2.13 needs the snapshot to restore uncommitted work.
 - **2.12 does not reuse `WorktreeCleanupRules`** (proposed). Its fields
   (`worktreeKeepWhen`, `worktreeUnchanged`, `worktreeSettledAfterDays`) have no meaning for a
   mirrored disk, and it has no archived rule. 2.12 adds a two-field `diskRetention` setting and
-  reuses `storageCleanupActivityAt` (`storageCleanup.ts` 192) for "inactive".
+  reuses `threadActivityAt` (`orchestration-v2/threadActivity.ts`, moved there by 2.1) for "inactive".
 - **2.13's real G1 bug is the Retry button, not the prompt path.** A prompt to a thread with no
   disk already re-checks out from GitHub (1.16: `decideCloudPrompt` Defers with a `worktree`
   strategy, `releaseWaiters` re-arms `prepareRun`). Retry and Wake with no queued message
@@ -429,7 +429,8 @@ lifecycle worker's whole policy.
     group beside the overview RPC.
   - `packages/contracts/src/clientRpcPermissions.ts` `CLIENT_GUARDED_RPC_SCOPES` (18):
     `[WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope`.
-  - `apps/server/src/auth/RpcAuthorization.ts`: the same scope beside `sandboxOverview` (91).
+  - `apps/server/src/auth/RpcAuthorization.ts` needs no entry: it spreads
+    `CLIENT_GUARDED_RPC_SCOPES`.
   - `apps/server/src/ws.ts` beside `sandboxOverview` (2851):
     `[WS_METHODS.sandboxViewing]: ({ threadId }) => sandboxActivity.view(threadId).pipe(Effect.asVoid)`.
     There is no per-thread check, as `presenceReport` (2474) has none: every team member sees
@@ -441,9 +442,11 @@ lifecycle worker's whole policy.
     `true`, `60 * 60_000`. `ComputeDriverTesting.ts` `make` (73): add both to `options`, with
     defaults `true` and 60 minutes.
   - `apps/server/src/sandbox/lifecycle/SandboxDecisions.ts`:
-    - `SandboxAttachedThread` (51) gains `activityAt: number` (epoch ms,
-      `storageCleanupActivityAt`, `apps/server/src/storageCleanup.ts` 192, which Track D's 2.12
-      also uses), `restingAt: number | null` (`archivedAt` when archived, else `settledAt` when
+    - `SandboxAttachedThread` (51) gains `activeRunId: RunId | null` (rule 2 interrupts it),
+      `activityAt: number` (epoch ms,
+      `threadActivityAt`, moved from `storageCleanup.ts` 192 to the pure
+      `orchestration-v2/threadActivity.ts` so the decider does not import storage cleanup; Track
+      D's 2.12 also uses it), `restingAt: number | null` (`archivedAt` when archived, else `settledAt` when
       settled), `pendingRequestAt: number | null` (`pendingRuntimeRequest.createdAt` when
       `blocking !== false`, orchestrationV2.ts 2222), and `backgroundWork: boolean`
       (`pendingBackgroundTasks.length > 0`). `sandboxAttachedThread` (59) takes the full shell.
@@ -452,7 +455,7 @@ lifecycle worker's whole policy.
       the settle transition. A settle at the same instant as attach still sleeps, which keeps the
       existing row at 1167.
     - New constants `APPROVAL_HOLD_MS = 2 * 60 * 60_000` and `CAP_PRESSURE_IDLE_MS = 5 * 60_000`,
-      and `holdsMachine(thread, nowMs)`: `backgroundWork`, or an active run, unless its blocking
+      and `holdsMachine(thread, nowMs)` (module-private, like `decideAutoSleep`): `backgroundWork`, or an active run, unless its blocking
       question is older than the hold. An active run with no question holds.
     - New pure `idleDecision(input: IdleInput): IdleDecision`:
 
@@ -488,7 +491,8 @@ lifecycle worker's whole policy.
       2. Active runs whose questions all passed the hold give `Sleep { reason: "idle", interrupt }`.
       3. With `policy.sleepOnSettle`, a non-null `decideAutoSleep(threads, record.updatedAt)` gives
          `Sleep` with that reason.
-      4. `anchor = max(record.updatedAt, every activityAt, viewedAt, terminalAt)`.
+      4. `anchor = max(record.updatedAt, every activityAt, viewedAt, terminalAt)`, plus
+         `nextScheduledAt` once it is due, so a run about to start is not slept under.
       5. Under `capPressure`, `nowMs - anchor >= CAP_PRESSURE_IDLE_MS` gives
          `Sleep { reason: "cap-pressure" }`. Otherwise it stays awake until that instant.
       6. A `nextScheduledAt` before `anchor + 2 * idleMs` keeps the machine awake until that
@@ -504,8 +508,8 @@ lifecycle worker's whole policy.
         longer holds.
       - For `settled` and `archived`, the reason must equal `decideAutoSleep(threads,
         record.updatedAt)`, else refuse `in-use`.
-      - For `idle` and `cap-pressure`, refuse `in-use` if any `activityAt` is later than
-        `command.snapshotAt`.
+      - For `idle` and `cap-pressure`, refuse `in-use` if `record.updatedAt` (a wake) or any
+        `activityAt` is later than `command.snapshotAt`.
       - Otherwise `update({ state: "sleeping", sleepReason: command.reason }, ["sandbox.stop"])`.
 
       `busy` (382) stays as is for `sandbox.sleep` and `sandbox.discard`.
@@ -520,14 +524,17 @@ lifecycle worker's whole policy.
         readonly view: (threadId: ThreadId) => Effect.Effect<boolean>;
         readonly read: (threadIds: ReadonlyArray<ThreadId>) => Effect.Effect<IdleInput["activity"]>;
       }
-    >()("t3/sandbox/SandboxActivity") {}
+    >()("t3/sandbox/lifecycle/SandboxActivity") {}
     ```
-    `layer` keeps `Map<ThreadId, renewedAtMs>` and prunes expired entries on read. It reads
+    `layer` keeps `Map<ThreadId, renewedAtMs>`. A renewal is activity for the whole idle window,
+    so entries are pruned after a day, not when the lease expires; `VIEWER_LEASE_MS` only decides
+    `view`'s result, and stays unexported until 2.2 needs it. It reads
     `terminalAt` from a new `TerminalManager.lastActivityAt(threadIds)`, and `nextScheduledAt`
     with one `SqlClient` query: the min `next_run_at` over enabled `scheduled_tasks` rows with
     `thread_id IN (...)` (table in `Migrations/OrchestrationV2/ScheduledTasks.ts` 8). It does not
     use `ScheduledTaskService`, which is built inside the runtime layer (`runtimeLayer.ts` 303) and
-    would make a cycle. `layerTest` exposes a `Ref` per input.
+    would make a cycle. `makeTest` returns the service, with real leases on the test clock, and a
+    `Ref` for each of the other two inputs.
   - `apps/server/src/terminal/Manager.ts` `TerminalManager` (158): add `lastActivityAt(threadIds)`,
     the max `updatedAt` of those threads' sessions (it advances on every event,
     `advanceEventSequence` 458). Read from the map `sessionsForThread` (2177) uses.
@@ -558,11 +565,12 @@ lifecycle worker's whole policy.
     Web: `apps/web/src/state/sandboxViewing.ts` `mountViewerLease` beside `mountPresenceReporter`
     (`apps/web/src/state/presence.ts` 98). It runs on the thread route with one 60-second timer
     and a visibility and focus listener, and calls the RPC through
-    `createEnvironmentRpcCommand`. Mobile: `apps/mobile/src/features/threads/ViewerLeaseWatch.tsx`
+    `createEnvironmentRpcCommand` (`sandboxEnvironment.viewing`). `ViewerLeaseWatch`
+    (`apps/web/src/components/sandbox/`) mounts it beside `PresenceWatch` in `__root.tsx`. Mobile: `apps/mobile/src/features/threads/ViewerLeaseWatch.tsx`
     beside `PresenceWatch.tsx`, on `AppState` and screen focus. Desktop wraps web.
 - **Types and services:** `idleDecision`, `IdleInput`, `IdleDecision`, `holdsMachine`,
   `APPROVAL_HOLD_MS`, `CAP_PRESSURE_IDLE_MS`, `VIEWER_LEASE_MS`, `SandboxActivity`,
-  `TerminalManager.lastActivityAt`, `ScheduledTaskService.nextRunAtForThreads`,
+  `TerminalManager.lastActivityAt`,
   `ComputeCapabilities.sleepOnSettle` and `.defaultIdleSleepMs`, `stepViewerLease`.
 - **Commands and events:** `sandbox.auto-sleep` gains `reason`. The approval expiry uses the
   existing `run.interrupt` (orchestrationV2.ts 3534) with `reason`, which the interrupt turn item
@@ -605,10 +613,10 @@ lifecycle worker's whole policy.
   `TestClock.adjust` 60 minutes and `sweep()`: it is `sleeping` with `sleepReason: "idle"`. A
   `TestClock.adjust("1 minute")` between the settle-stop and the wake makes the settle strictly
   older than the new ready time.
-- `makeSandboxRuntime` (201) provides `SandboxActivity.layerTest` for every case, so the existing
-  sweep cases (1107, 1167, 1483) build unchanged.
-- Same file, new case "sleeps an idle machine at its deadline, and early for a waiter". It
-  provides `SandboxActivity.layerTest`. A ready machine with an unsettled idle thread stays ready
+- `makeSandboxRuntime` (201) adds `SandboxActivity.makeTest`'s service to `layerDriver` and
+  returns it as `activity`, so the existing sweep cases build unchanged.
+- Same file, new cases (one per sentence, the last in its own `layerAdmissionTest(1)` block). A
+  ready machine with an unsettled idle thread stays ready
   at 59 minutes and sleeps as `idle` at 60. A second case's lease renewal at 30 minutes moves the
   sleep to 90. With `defaultRunningCap: 1` and a second thread queued, the first sleeps as
   `cap-pressure` at 5 idle minutes, and the waiter is admitted on the next sweep. Drain the

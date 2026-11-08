@@ -222,6 +222,9 @@ export class TerminalManager extends Context.Service<
     readonly subscribeMetadata: (
       listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
+
+    /** Epoch ms of the latest event in these threads' sessions; null with none. */
+    readonly lastActivityAt: (threadIds: ReadonlyArray<string>) => Effect.Effect<number | null>;
   }
 >()("t3/terminal/Manager/TerminalManager") {}
 
@@ -3521,6 +3524,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const lastActivityAt: TerminalManager["Service"]["lastActivityAt"] = (threadIds) =>
+    readManagerState.pipe(
+      Effect.map((state) => {
+        const wanted = new Set(threadIds);
+        let latest: number | null = null;
+        for (const session of state.sessions.values()) {
+          if (!wanted.has(session.threadId)) continue;
+          const at = Date.parse(session.updatedAt);
+          if (Number.isFinite(at) && (latest === null || at > latest)) latest = at;
+        }
+        return latest;
+      }),
+    );
+
   return TerminalManager.of({
     open,
     getShell,
@@ -3535,6 +3552,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     closeIdle,
     subscribe,
     subscribeMetadata,
+    lastActivityAt,
   });
 });
 

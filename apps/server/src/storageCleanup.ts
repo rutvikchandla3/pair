@@ -42,6 +42,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
+import { threadActivityAt } from "./orchestration-v2/threadActivity.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -186,19 +187,6 @@ function heldForLimitRecovery(
   )
     return false;
   return settings.autoResumeLimitedThreads || (settings.snoozeLimitedThreads && resetMs > now);
-}
-
-/** PR metadata refreshes must not reset the inactivity clock. */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
-  return Math.max(
-    ...[
-      thread.createdAt,
-      thread.latestUserMessageAt,
-      thread.latestRunRequestedAt,
-      thread.latestRunStartedAt,
-      thread.latestRunCompletedAt,
-    ].flatMap((value) => (value == null ? [] : [DateTime.toEpochMillis(value)])),
-  );
 }
 
 /** Only a complete subagent or side chat chain within this worktree shares ownership. */
@@ -880,7 +868,7 @@ const make = Effect.gen(function* () {
       if (!worktreeCleanupEnabled(settings)) continue;
       const worktreePath = path.resolve(thread.worktreePath!);
       const group = groups.get(worktreePath) ?? [];
-      const activityAt = Math.max(...group.map(storageCleanupActivityAt));
+      const activityAt = Math.max(...group.map(threadActivityAt));
       const deleted = "workspaceRoot" in thread;
       const settlementChain = deleted
         ? []
@@ -1122,7 +1110,7 @@ const make = Effect.gen(function* () {
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
                 !storageCleanupThreadIdle(shell, now, serverSettings) ||
                 path.resolve(shell.worktreePath!) !== worktreePath ||
-                storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
+                threadActivityAt(shell) !== threadActivityAt(previous)
               );
             })
           )

@@ -86,6 +86,9 @@ const capabilities: Omit<ComputeCapabilities, "defaultRunningCap"> = {
   regions: [],
   nestedDocker: false,
   sizes: SIZES,
+  // Idle costs only memory on a box the team already pays for (04 §2).
+  sleepOnSettle: true,
+  defaultIdleSleepMs: 60 * 60_000,
 };
 
 /** gVisor whenever the daemon offers it. */

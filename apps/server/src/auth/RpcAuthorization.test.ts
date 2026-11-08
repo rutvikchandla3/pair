@@ -107,7 +107,7 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets members read Cloud's overview and keeps the driver check, which boots a machine, admin only", () => {
+  it("lets members read Cloud's overview and hold a viewer lease, and keeps the driver check, which boots a machine, admin only", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver)).toBe(AuthSettingsWriteScope);
     expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
     expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
@@ -115,6 +115,7 @@ describe("RPC authorization scopes", () => {
       AuthSettingsWriteScope,
     ]);
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxOverview));
+    expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxViewing));
   });
 
   it("rejects unknown RPC method names", () => {

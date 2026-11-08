@@ -85,6 +85,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRetryResourceTelemetry]: "server",
   [WS_METHODS.serverCheckOtlpEndpoint]: "server",
   [WS_METHODS.sandboxOverview]: "sandbox",
+  [WS_METHODS.sandboxViewing]: "sandbox",
   [WS_METHODS.sandboxCheckDriver]: "sandbox",
   [WS_METHODS.serverPrepareTriage]: "server",
   [WS_METHODS.serverGetUsageSummary]: "server",

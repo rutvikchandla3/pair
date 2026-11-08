@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import type { OrchestrationV2Sandbox } from "./orchestrationV2.ts";
 
 /** Path-safe: the server addresses a sandbox's files under `/t3-sandbox/<id>/`. */
@@ -159,6 +159,10 @@ export class SandboxOverviewError extends Schema.TaggedError<SandboxOverviewErro
     return "Could not read the Cloud status.";
   }
 }
+
+/** The thread view's viewer lease, renewed while a cloud thread is visible and focused. */
+export const SandboxViewingInput = Schema.Struct({ threadId: ThreadId });
+export type SandboxViewingInput = typeof SandboxViewingInput.Type;
 
 export const SandboxDriverCheckInput = Schema.Struct({ driverId: ComputeDriverId });
 export type SandboxDriverCheckInput = typeof SandboxDriverCheckInput.Type;

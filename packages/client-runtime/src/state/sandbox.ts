@@ -288,6 +288,11 @@ export function createSandboxEnvironmentAtoms<R, E>(
       tag: WS_METHODS.sandboxOverview,
       staleTimeMs: 30_000,
     }),
+    /** The thread view's viewer lease (`sandbox.viewing`); see `stepViewerLease`. */
+    viewing: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandbox:viewing",
+      tag: WS_METHODS.sandboxViewing,
+    }),
     /** Boots and discards one machine; settings:write, like the driver it tests. */
     checkDriver: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandbox:check-driver",
