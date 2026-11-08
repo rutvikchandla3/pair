@@ -232,7 +232,9 @@ Video (desktop steps 1–4, then web for the PR, the fixed commit and Machine fa
 Still to run for G1. Each needs the maintainer:
 
 - the step 6 push, on a Pair build;
-- Codex turns, after a ChatGPT sign-in on the VM;
+- Codex turns: set aside by the maintainer on 2026-11-09. A managed ChatGPT account added from
+  the web (Add provider → Continue with ChatGPT) lost its instance mid sign-in ("This provider
+  instance is no longer available"), and the account was gone from settings afterwards;
 - the member-token push and PR, with a member PAT;
 - the 1.42 evals, with `ANTHROPIC_API_KEY` in the repo root `.env`;
 - test-t3-mobile, with a simulator (this Mac has no full Xcode) or a Pair build.
