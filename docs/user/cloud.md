@@ -128,6 +128,10 @@ repository. Without either, the thread shows **Connect GitHub to push**. See
 [Pushing from cloud threads](./source-control.md#pushing-from-cloud-threads) for the App, and
 [Bring your own GitHub token](./team.md#bring-your-own-github-token) for a member's own.
 
+Pair's pull request list and review panel read GitHub with the server's own sign-in in
+**Settings → Source Control**, not with the App key or a member's token. Sign the server in to
+GitHub too if you use them.
+
 Cloud threads push only to github.com for now.
 
 ## What agents in a machine can read

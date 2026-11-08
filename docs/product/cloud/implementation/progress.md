@@ -143,7 +143,37 @@ shared and the chat stays; a `python3 -m http.server` started in the terminal sh
 (only while the drawer is closed, since the details panel drops to compact) and **Stop** frees the
 port.
 
-**Still to run:** the machine-failed push (needs a device); item 2's resource-bound runs.
+**With real credentials (Claude setup token as the provider env secret, GitHub App
+`pair-cloud-test-d548` installed on the private test repo `rutvikchandla3/pair-cloud-test`):**
+a Haiku turn in a local worktree and in a cloud thread (the token reaches the machine, the agent
+runs as `t3`); a private-repo cloud clone through the installation token; the agent's own commit,
+`git push` and `gh pr create` from the machine (pair-cloud-test#2, opened by the App, committer
+"T3 Code"); a waiting thread gets a machine as soon as another sleeps.
+
+11. **Fixed:** with no member git email, every agent commit on a machine failed "Author identity
+    unknown": the image sets no `user.name` and `GIT_AUTHOR_*` is set only for a member's email.
+    `SandboxProcessEnvironment` now passes the server's identity as `user.name`/`user.email`
+    through `GIT_CONFIG_*`, which a member's `GIT_AUTHOR_*` still overrides.
+
+**Not fixed, from the credential runs:**
+
+- **The PR list and panel need the server's own GitHub credential** (Settings → Source Control
+  token or `gh auth login`): `GitHubRequestPolicy` never uses the App key's installation token, and a
+  member token is used only when Pair opens a PR. With just the App key, the panel says "GitHub has
+  no working credential for this host". Open question: should the installation token serve reads
+  on repos where the App is installed? The cloud threads guide says this for now.
+- **A private repo with no credential** fails provisioning with a bare "git clone failed", while the
+  banner talks only about pushing. It should say "Connect GitHub to clone private repos", as 05
+  does for image builds.
+- **Host setup, for the pass:** the server spawns `claude`, `codex` and `gh` from its own PATH (on
+  the VM the system default, not the shell's: symlink them into `/usr/local/bin`), and the GitHub
+  settings need `gh` 2.81 or newer (Ubuntu's 2.45 is too old; use cli.github.com's apt repo).
+  Settings already names both, so no guide change.
+
+**Still to run:** Codex turns, local and cloud (connect a ChatGPT account); the member-token
+push/PR (remove the App key, paste a token under Settings → Team → **Use a token instead**, and a
+server token for the PR panel); the 1.42 evals (`ANTHROPIC_API_KEY` in the VM's `~/pair/.env`); the
+machine-failed push (needs a device); `test-t3-mobile`; `test-t3-app` captures on desktop.
 
 ## How to resume
 
