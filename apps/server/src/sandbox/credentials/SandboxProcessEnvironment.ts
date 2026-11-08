@@ -128,13 +128,8 @@ export class SandboxProcessEnvironment extends Context.Service<
 /** `GitVcsDriver`'s checkpoint committer, for a server whose git has no identity. */
 const FALLBACK_COMMITTER = { name: "T3 Code", email: "t3code@users.noreply.github.com" };
 
-const make = Effect.gen(function* () {
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const secrets = yield* SecretResolver.SecretResolver;
-  const projections = yield* ProjectionStoreV2;
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-
-  // The sandbox has no global git identity; commits name the server's, as local threads do.
+/** A sandbox has no global git identity; commits there name the server's, as local threads do. */
+export const serverGitIdentity = (processRunner: ProcessRunner.ProcessRunner["Service"]) => {
   const globalGitConfig = (key: string) =>
     processRunner
       .run({
@@ -146,8 +141,19 @@ const make = Effect.gen(function* () {
         Effect.map((output) => (output.code === 0 ? output.stdout.trim() : "")),
         Effect.orElseSucceed(() => ""),
       );
-  const name = (yield* globalGitConfig("user.name")) || FALLBACK_COMMITTER.name;
-  const email = (yield* globalGitConfig("user.email")) || FALLBACK_COMMITTER.email;
+  return Effect.all({
+    name: Effect.map(globalGitConfig("user.name"), (name) => name || FALLBACK_COMMITTER.name),
+    email: Effect.map(globalGitConfig("user.email"), (email) => email || FALLBACK_COMMITTER.email),
+  });
+};
+
+const make = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const secrets = yield* SecretResolver.SecretResolver;
+  const projections = yield* ProjectionStoreV2;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+
+  const { name, email } = yield* serverGitIdentity(processRunner);
   // As config, not GIT_AUTHOR_*, so a thread holder's author env still wins over it.
   const committer = {
     GIT_COMMITTER_NAME: name,
