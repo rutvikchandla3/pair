@@ -106,10 +106,14 @@ const stageRunnerExternals = Effect.fn("stageRunnerExternals")(function* (
     packages: RUNNER_EXTERNALS,
   });
   // The sandbox image is Ubuntu (glibc), and conpty is Windows-only: both would double the size.
+  // A Linux host skips musl variants on its own; staging from macOS installs them all.
   const nodeModules = path.join(stageDir, "node_modules");
-  for (const entry of yield* fs.readDirectory(path.join(nodeModules, "@ff-labs"))) {
-    if (entry.endsWith("-musl")) {
-      yield* fs.remove(path.join(nodeModules, "@ff-labs", entry), { recursive: true });
+  for (const scope of yield* fs.readDirectory(nodeModules)) {
+    if (!scope.startsWith("@")) continue;
+    for (const entry of yield* fs.readDirectory(path.join(nodeModules, scope))) {
+      if (entry.endsWith("-musl")) {
+        yield* fs.remove(path.join(nodeModules, scope, entry), { recursive: true });
+      }
     }
   }
   yield* fs.remove(path.join(nodeModules, "node-pty/third_party"), {
