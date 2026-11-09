@@ -4479,6 +4479,374 @@ Commits, in order:
 6. `fix(web): Source control on Pair Cloud stops pointing at the server's CLI` (5)
 7. `fix(web): adding an environment says environment, not backend` (8)
 
+### 2.50 (new) `fix(server): say why adding or cloning a Pair Cloud project failed`
+
+Adding a project, connecting GitHub and cloning in a machine each fail with text that hides the
+cause or gives the wrong advice. This row closes 11, 14 and 15. All three are error text on the
+same add-then-launch path, and each fix is a few lines plus one test.
+
+Commits, in order:
+
+1. `fix(contracts,server): say plainly why adding a Pair Cloud project failed` (11)
+2. `fix(source-control-github): say when the GitHub App has Device Flow off` (14)
+3. `fix(server): say why a Pair Cloud clone failed` (15)
+
+- **Needs:** none (all touched code has landed). Commit 3's network hint needs 2.51 commit 5 to
+  be true. **Unblocks:** a G2 re-run of adding a private repo, Connect GitHub and a failed clone.
+- **Files:**
+  - Commit 1 (11):
+    - `packages/contracts/src/sourceControl.ts` `SourceControlRepositoryError` (254): `message`
+      (263–264) returns `this.detail`, as `SourceControlSignInError` (249–250) already does.
+      Every detail built today is already a user sentence: `PairCloudProjects.ts` `failure` (129),
+      `ProjectCloneTracker.ts` (322), the 13 in `SourceControlRepositoryService.ts`, and ws.ts
+      `projectCloneStart` (3056–3068), which passes a `PairCloudProjectError`'s message. The
+      operation and provider stay fields for logs. `SourceControlProviderError` (172) keeps its
+      prefix, since its details are not sentences.
+    - `apps/server/src/project/PairCloudProjects.ts`: `PairCloudProjectError` (59) gets the reason
+      `"github-token-needed"`. `checkAccess` (231) reads `members.enabled` (`MemberGitHub` 46,
+      already in scope from `make` 162). With no token and a 404 (258–260), it fails with
+      `github-not-connected` when `enabled` is true and with `github-token-needed` when it is
+      false.
+    - No client change. The web toasts (`CommandPalette.tsx` `runProjectClone` 2095,
+      `addProjectToMachine.ts` 131–147, `NewThreadLinkView.tsx` 225–250) and the mobile
+      `AddProjectScreen.tsx` (1440–1451) render `.message`. Both Settings → Team screens offer
+      "Use a token instead" whether or not the App is set up (web `MemberGitHub.tsx` 162; mobile
+      `TeamMemberGitHub.tsx` 94).
+  - Commit 2 (14), `packages/source-control-github/src/server/GitHubDeviceFlow.ts`:
+    - `postForm` (97) takes an optional `accepts: (status: number) => boolean`, defaulting to
+      2xx. It uses `HttpClientResponse.filterStatus(accepts)` in place of `filterStatusOk` (112).
+    - `requestCode` (130) passes `(status) => status < 500`, so GitHub's 4xx JSON body is decoded.
+      It then branches on `code.error === "device_flow_disabled"` ahead of the existing
+      missing-field branch (148–158). Other 4xx errors use that branch as they do now.
+    - The poll (182) and `refresh` (234) keep 2xx-only. GitHub answers their errors with 200, and
+      a dropped poll must keep retrying (192).
+    - All three callers pick this up: `GitHubAppSignIn.ts` (242, Settings → Source control on
+      web and mobile `SourceControlSignInSection.tsx`), `MemberGitHub.start` (254, Settings →
+      Team) and `GitHubSignIn.start` (151, the pairing page's GitHub sign-in, via
+      `fromDeviceFlow` 59–63).
+  - Commit 3 (15):
+    - `packages/shared/src/git.ts`: export `redactUrlCredentials`, moved unchanged with its three
+      patterns from `SourceControlRepositoryService.ts` (135–146). That file imports it from
+      `@t3tools/shared/git`. `packages/shared/src/observability.ts` has an unrelated private one
+      (410); leave it.
+    - `apps/server/src/vcs/GitVcsDriverCore.ts`: add `cloneFailureDetail(stderr): string |
+      undefined`. It takes the first line starting `fatal: ` or `error: ` and drops that prefix.
+      It drops a leading `unable to access '…': ` and applies `redactUrlCredentials`. It caps the
+      result at 240 characters with `…`, and returns undefined when no line matches.
+      `cloneRepository` (1771) runs with `allowNonZeroExit: true`. On a non-zero exit it fails with
+      `gitExitError("GitVcsDriver.cloneRepository", input.cwd, args, result,
+      cloneFailureDetail(result.stderr) ?? "git clone failed")` (1155). That keeps
+      `classifyGitFailure`'s reason, which `CloudPreparation` needs for `repo-unreadable`. Add a
+      comment over the helper saying why clone quotes git: only redacted diagnostic lines, never
+      `remote:` lines, the same exception `runClone` (`SourceControlRepositoryService.ts` 341–358)
+      makes upstream. The policy note at 442 stays true for everything else.
+      `cloneRepository`'s only caller is `CloudPreparation.checkoutInSandbox` (through
+      `GitWorkflowService`).
+    - `apps/server/src/sandbox/lifecycle/CloudPreparation.ts`: `CloudLaunchError` (39) gets the
+      reason `"clone-failed"` and an optional `detail: Schema.String`. `unreadable` (265–272)
+      becomes `cloneOrFetchFailed`. Auth and `remote_unreachable` still map to `repo-unreadable`.
+      Any other failure of the clone (not the fetch, 275) maps to `clone-failed` with
+      `remote: normalizeGitRemoteUrl(url)` and `detail: error.detail`. A fetch failure stays a
+      `GitCommandError`; its detail is already upstream's fixed `fetchFailureDetail` (584).
+- **Types and services:** `PairCloudProjectError.reason` + `"github-token-needed"` (server only, not
+  on the wire). `CloudLaunchError.reason` + `"clone-failed"`, `detail` field (server only).
+  `GitHubDeviceFlow.make`'s internal `postForm` takes `accepts`. `redactUrlCredentials` is exported
+  from `@t3tools/shared/git`.
+- **Copy:**
+  - Every toast or row showing a `SourceControlRepositoryError` (web, desktop, mobile): `Source
+    control repository operation add-pair-cloud-project failed for github: Connect GitHub to clone
+    private repos, in Settings → Team.` → `Connect GitHub to clone private repos, in Settings →
+    Team.` The same goes for every other detail: the prefix is dropped.
+  - Server without a Client ID (`github-token-needed`): `Add a GitHub token to clone private
+    repos, in Settings → Team.`
+  - Device Flow off (web Settings → Team and Source control, mobile Source control, pairing
+    page): `The server could not reach GitHub to start the sign-in.` → `This server's GitHub App
+    has Device Flow off. An admin can tick Enable Device Flow in the App's settings on GitHub,
+    then try again.` A real network failure keeps the old text.
+  - A failed clone (thread error, launch toast): `Workspace preparation failed during provision
+    worktree: Git command failed in GitVcsDriver.cloneRepository (/sandbox): git clone failed` →
+    `Pair Cloud couldn't clone ${remote}: ${detail}`, for example `Pair Cloud couldn't clone
+    github.com/acme/app: Could not resolve host: github.com`. When `detail` matches
+    `/Could not resolve host|Failed to connect|timed out|Network is unreachable/i`, add ` Run Test
+    in Settings → Cloud to check the machine's network.`
+- **Proposed gap answers.**
+  - **Proposed:** quote the first diagnostic line rather than add fixed diagnoses. The cause G2
+    hit (DNS) and the likely next ones (firewall, disk full, an RPC drop mid-clone) are all in that
+    line. Upstream already shows redacted clone stderr in `runClone`.
+  - **Proposed:** a fetch on a kept disk keeps its current text. It is upstream code, and its
+    fixed diagnoses already name network and auth failures.
+
+**Tests.**
+
+- Commit 1: `apps/server/src/project/PairCloudProjects.test.ts`, table "refuses adding $name before
+  any git runs" (165). Add the row `{ name: "a private repository on a server without the GitHub
+  App", status: 404, githubApp: false, reason: "github-token-needed" }`. `makeHarness` gets
+  `githubApp?: boolean` for the `Layer.mock(MemberGitHub)` `enabled` (~89, default true). It fails
+  on `feat/pair`, where the reason is `github-not-connected`. The contracts getter change is copy:
+  capture it. `ProjectCloneTracker.test.ts` (295, 322) asserts with `toContain` and still passes.
+- Commit 2, failing test first: `packages/source-control-github/src/server/GitHubDeviceFlow.test.ts`
+  gets `describe("GitHubDeviceFlow.requestCode")` with `it.effect("says Device Flow is off when
+  GitHub refuses the code with device_flow_disabled")`. It uses `flowAnswering(400, { error:
+  "device_flow_disabled", error_description: "Device Flow must be explicitly enabled for this
+  App" })` (7) and asserts `reason: "failed"` and the new detail. Add a second row: `flowAnswering(502,
+  {})` keeps "The server could not reach GitHub to start the sign-in."
+- Commit 3:
+  - `apps/server/src/vcs/GitVcsDriverCore.test.ts`, describe "rejected git refs" (1695). Lift
+    `failWith`'s layer (1706–1718) into `layerFailingWith(stderr)` and add
+    `it.effect.each(...)("says why a clone failed without credentials: $label")`. It calls
+    `driver.cloneRepository({ cwd: "/sandbox", url: remoteUrl, path: "/sandbox/repo" })`. Rows:
+    - DNS: `fatal: unable to access 'https://user:token-123@github.com/acme/app.git/': Could not
+      resolve host: github.com` → detail `Could not resolve host: github.com`.
+    - A query token: `fatal: repository 'https://github.com/acme/app.git/?access_token=abc123'
+      not found` → reason `remote_unreachable`, detail without `abc123`.
+    - A `remote: token-123` line before `fatal: write error: No space left on device` → `write
+      error: No space left on device`.
+    - Only `remote:` lines → `git clone failed`.
+      Every row asserts `token-123` and `abc123` appear in neither `detail` nor `message`.
+  - `apps/server/src/orchestration-v2/ThreadLaunchService.test.ts`, table "fails a cloud launch's
+    run when $name" (2885). Row "the clone fails for another reason" (2951–2966) now expects `Pair
+    Cloud couldn't clone github.com/acme/app: git clone failed`. Add the row "the machine can't
+    resolve the remote's host" with detail `Could not resolve host: github.com`, which expects the
+    network hint.
+- Captures: before and after of the Add to Pair Cloud toast (web) and Add project (mobile) for a
+  private repo, the Settings → Team Connect error with Device Flow off, and a cloud thread's
+  failed-clone error.
+
+**Verify.**
+
+- `vp test run apps/server/src/project/PairCloudProjects.test.ts
+  apps/server/src/project/ProjectCloneTracker.test.ts
+  packages/source-control-github/src/server/GitHubDeviceFlow.test.ts
+  apps/server/src/vcs/GitVcsDriverCore.test.ts
+  apps/server/src/sourceControl/SourceControlRepositoryService.test.ts
+  apps/server/src/orchestration-v2/ThreadLaunchService.test.ts packages/shared/src/git.test.ts`.
+- `vp run typecheck` for `packages/contracts`, `packages/shared`, `packages/source-control-github`,
+  `apps/server`, `apps/web` and `apps/mobile`.
+- `vp run check:changed`.
+- The lead runs the captures on a cloud-only dev server with the Docker driver. Device Flow off
+  needs a GitHub App with it unticked. A DNS failure is easiest on plain Docker with
+  `--dns 192.0.2.1` on the check machine, or with the VM's G2 shim removed. No browser test
+  applies.
+
+**Reviewer checks.**
+
+- No detail now shown by the getter is a fragment. Grep `new SourceControlRepositoryError` and read
+  each `detail`.
+- `checkAccess` still fails closed: a 404 with a token is `no-access`, and a 5xx or network error
+  is the generic failure.
+- Only `requestCode` decodes 4xx bodies. The poll still retries a dropped request.
+- The clone detail passes through `redactUrlCredentials` and never includes a `remote:` line. The
+  cap applies after redaction.
+- Surfaces: contracts (getter), server, web and desktop (toasts), mobile (Add project, Source
+  control sign-in). Providers: none. Docs: none, since `docs/user/team.md` 107 already has the
+  Device Flow step.
+
+### 2.51 (new) `fix(server,web): notice stopped machines promptly and test machine networking`
+
+A machine stopped outside Pair is noticed in seconds. Today a booting one waits out the boot
+deadline (10 minutes from `provisioning`, 5 from `waking`) and a ready one waits out the runner's
+120 s lease. The driver **Test** also checks that a machine reaches github.com, which is how gVisor
+DNS went unnoticed. This row closes 16 and 20. Both are about the server not seeing the machine's
+real state, and both change only `apps/server/src/sandbox`, the contracts step list and one web
+label map.
+
+Commits, in order:
+
+4. `fix(server): notice a Pair Cloud machine that stopped outside Pair` (16)
+5. `feat(server,web): the Cloud Test checks that a machine reaches github.com` (20)
+
+- **Needs:** none. **Unblocks:** 2.50 commit 3's hint, and the G2 re-run of `docker stop` on a
+  machine mid-preparation.
+- **Files:**
+  - Commit 4 (16), part a. A ready machine's runner drops and its container is not running:
+    - `apps/server/src/sandbox/runnerHub/RunnerHub.ts`: the service (151–175) gains `readonly
+      drops: Stream.Stream<RunnerDrop>`, where `RunnerDrop = { sandboxId, generation, runnerBootId
+      }`. It is a `PubSub.unbounded` like `boots` (236, `Stream.fromPubSub` 685). It is not a new
+      `RunnerHubFact`, so the fact order RunnerHub.test.ts and RunnerResume.test.ts read stays the
+      same. `startReconnecting` (318) publishes one after the status turns `reconnecting`, when
+      `slot.boot` is set.
+    - `apps/server/src/sandbox/runnerHub/RunnerHubFacts.ts` (`layer` 24) also takes
+      `ComputeDriverRegistry`; the outer runtime already provides it to the sibling
+      `SandboxLifecycleWorker.layer`, `runtimeLayer.ts` 431/452. Add
+      `hub.drops.pipe(Stream.mapEffect(verdict, { concurrency: "unbounded" }),
+      Stream.runForEach(...))` to the `forkParked` list (114). Emission stays in drop order, so
+      dispatches do too.
+    - `verdict` sleeps `DROP_SETTLE = Duration.seconds(5)` (**proposed**) and reads the record. It
+      continues only when the record is `ready`, at the drop's generation, with `runnerLostAt ===
+      null` and a `driverRef`. It then calls `driver.status(driverRef)` through `registry.get`,
+      bounded at 10 s, logging and keeping on any error. Status `stopped`, `missing` or `failed`
+      yields the fact `{ _tag: "lost", ..., reason: "lease-expired" }`, which the consumer sends to
+      `dispatch` (30). `awaitReturn` (83–100) already dispatches such a fact early.
+    - From there the existing path runs: `sandbox.runner.lost` (SandboxDecisions 703–706), then
+      `sandbox.status`, then `reportStatus` (SandboxEffects 565–600). That revokes the hub, so
+      `hub.connection` waiters fail now, and reports stopped, missing or failed. A `running` or
+      `starting` backend yields nothing, and the lease still covers blips and runner restarts. The
+      command id matches the lease's, so a later expiry is deduplicated.
+  - Commit 4 (16), part b. A booting machine's container stopped before hello:
+    - `apps/server/src/sandbox/lifecycle/SandboxLifecycleWorker.ts`, sweep (311). Add `BOOT_CHECK_MS
+      = 30_000` (**proposed**). For `provisioning` with `admission === null`, a `driverRef` and
+      `nowMs >= since + BOOT_CHECK_MS`, it calls `driver.status`. `since` is `updatedAt`, as in
+      `bootDeadlineMs` 49; `sandbox.created` sets the ref after the container started, so
+      `updatedAt` is the boot.
+      - `stopped` or `failed` dispatches `sandbox.failed` with `freshCommandId("boot-check",
+        sandbox)` and `failure: { code: "boot-stopped", message: "The machine stopped before it
+        was ready.", retryable: true }`.
+      - `missing` dispatches `{ code: SANDBOX_BACKEND_MISSING, message: "The machine and its disk
+        are gone. Retry starts a new one.", retryable: true }`, the same text as `reportMissing`
+        (SandboxEffects 554).
+      - Otherwise `nextDueMs = min(nextDueMs, nowMs + BOOT_CHECK_MS, deadlineMs)`.
+      - The `drivers` map (320–322) is built when a sandbox is `ready` or is `provisioning` with a
+        `driverRef`. Status errors are logged and the sweep goes on; the deadline stays the
+        backstop.
+    - `apps/server/src/sandbox/lifecycle/SandboxDecisions.ts` `sandbox.failed` (719): the guard at
+      720 covers `"boot-timeout"` and `"boot-stopped"`. A late check after the hello is refused, and
+      the stop and `release-waiters` effects run. Stopping a stopped container is a no-op.
+    - `packages/contracts/src/sandbox.ts` `SandboxFailure` comment (103–104) lists `boot-stopped`.
+      No schema change.
+  - Commit 4 docs: `docs/product/cloud/04-sandbox-lifecycle.md` Runner connection (73–76), the
+    `planReconciliation` row at 424 and the boot deadline paragraph (453–454) each gain one
+    sentence. A dropped runner whose backend is not running is lost at once. A booting machine's
+    backend is checked every 30 s.
+  - Commit 5 (20):
+    - `packages/contracts/src/sandbox.ts` `SandboxDriverCheckStep` (188–194) gets `"network"` after
+      `"git"`.
+    - `apps/server/src/sandbox/compute/ComputeDriverCheck.ts` adds:
+
+      ```ts
+      /** What the Test runs in the machine to reach the network. Only tests replace it. */
+      export const MachineNetworkProbe = Context.Reference<ChildProcess.Command>(
+        "t3/sandbox/compute/ComputeDriverCheck/MachineNetworkProbe",
+        {
+          defaultValue: () =>
+            ChildProcess.make(
+              "curl",
+              ["-sS", "-o", "/dev/null", "--max-time", "20", "https://github.com"],
+              { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+            ),
+        },
+      );
+      ```
+
+      The precedent is `MemberPushEndpoint` (MemberPushNotifier.ts 36).
+
+    - After the `git` step (160–175), `steady` runs `run("network", ...)` on the same host. It
+      calls `host.spawner.exitCode(yield* MachineNetworkProbe)` and fails on a non-zero code; the
+      precedent is `SandboxProviderHome.ts` 69–72. `curl` ships in the image (`provision.sh` 35).
+      This tests the machine's own resolver, since the check boots through the same `driver.create`
+      as a thread's machine, `PAIR_DNS` included (`pair-bootstrap.sh` 20–24).
+    - `apps/web/src/components/settings/CloudSettings.tsx` `STEP_LABELS` (57–63) adds `network:
+      "Reach github.com"`. The `Record<SandboxDriverCheckStep, …>` type makes this required.
+    - Docs: in `docs/user/pair-cloud.md` 107 and `docs/user/cloud.md` 29, "checks that it connects
+      back and runs git" → "checks that it connects back, runs git and reaches github.com". In
+      `docs/product/cloud/implementation/README.md` P16 (131), "the check stops after `git
+      --version`" → "the check ends by reaching github.com from the machine" (see For the lead).
+- **Types and services:** `RunnerHub.drops` and the `RunnerDrop` type. `RunnerHubFacts.layer` needs
+  `ComputeDriverRegistry`. Failure code `boot-stopped` (open set). `SandboxDriverCheckStep` gains
+  `"network"` (wire). `ComputeDriverCheck.MachineNetworkProbe` reference.
+- **Copy:**
+  - A booting thread whose machine was stopped (thread error, via `CloudLaunchError` sandbox-failed):
+    after up to 10 minutes `The machine did not connect in time.` → within 30 s `The machine stopped
+    before it was ready.`
+  - Settings → Cloud → Test, new row `Reach github.com`. Failure messages by curl exit code:
+    - 6: `The machine can't look up github.com. Allow outbound DNS (port 53) from this host; under
+      gVisor, machines use 1.1.1.1 and 8.8.8.8.`
+    - 7: `The machine can't connect to github.com. Allow outbound HTTPS (port 443) from this host.`
+    - 28: `The machine timed out reaching github.com. Allow outbound DNS (port 53) and HTTPS (port
+      443) from this host.`
+    - Any other: `The machine couldn't reach github.com (curl exit ${code}).`
+    - Spawn error: `curl did not run in the machine.`
+- **Proposed gap answers.**
+  - **Proposed:** no Docker events subscription. Inspecting on a runner drop and on the sweep
+    covers every case G2 saw. An events stream ends whenever Docker restarts and would still need
+    this reconcile behind it.
+  - **Proposed:** `waking` keeps only its 5-minute deadline. `driverRef` is set before
+    `sandbox.start` runs, so a check could see the old stopped container and fail a wake that is
+    about to succeed. Waking lasts seconds, so a stop in that window is rare.
+  - **Proposed:** the Test fails on no github.com rather than warning. Pair Cloud adds only GitHub
+    repos (`parsePairCloudRemote`), so a machine that can't reach it can't do any work.
+
+**Tests.**
+
+- Commit 4a:
+  - `apps/server/src/sandbox/runnerHub/RunnerHub.test.ts`, case "enrolls, hands the runner its
+    token in hello, keeps a reconnect inside the lease silent, and loses it at expiry" (82).
+    Subscribe to `hub.drops` before `first.drop` (106) and assert one `{ sandboxId: sandboxA,
+    generation: 1, runnerBootId: attached.runnerBootId }`.
+  - `apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts`, beside "turns a runner's
+    attached fact into a ready sandbox on the owner thread" (1055), add `it.effect("loses a
+    dropped runner's machine at once when its container stopped, and keeps one still running")`:
+    - Set up two ready sandboxes with `provisioned`, `runAnswering(runtime, answerCreateOf(id))`
+      and `attachAndRelease` (468, runner boot `"boot"`).
+    - Build `RunnerHubFacts.layer` with `runtime.layerDriver` and `Layer.mock(RunnerHub)({ facts:
+      Stream.never, drops: Stream.make(dropOf(running), dropOf(stopped)), connection: () =>
+      Effect.never })`.
+    - `TestClock.adjust("5 seconds")`, take both `status` calls from `runtime.calls` and answer
+      each by `driverRef`.
+    - Await the `stopped` sandbox's `sandbox.updated` with `runnerLostAt !== null`; its commandId
+      is `sandbox-lost:${id}:1:boot`. Because dispatch keeps drop order, the `running` sandbox's
+      `runnerLostAt` is still null at that point.
+    - Fails on `feat/pair`: `drops` does not exist.
+  - Add `drops: Stream.never` to the mocks at 1061 and 1107.
+- Commit 4b:
+  - `SandboxLifecycle.test.ts`, beside "fails a sandbox whose runner never connects at the boot
+    deadline" (1727), add `it.effect.each([...])("checks a booting machine's backend and fails it
+    when it is $status")`. Each row runs `provisioned`, then `runAnswering(runtime,
+    answerCreate)`, then `makeSweep` with `runtime.layerDriver` and `TestClock.adjust("30
+    seconds")`. It forks `sweep()`, answers the `status` call with the row's status (the shape at
+    766–772) and joins. Rows:
+    - `stopped`: state `failed` with the `boot-stopped` failure. The next `runAnswering` gets the
+      `stop` call.
+    - `missing`: code `missing`, `driverRef` null.
+    - `running`: still `provisioning`.
+  - The 1727 case is unchanged: its create is unanswered, so there is no `driverRef` and no check.
+    None of the other `makeSweep` cases (1443–2126) has a created, unattached `provisioning`
+    sandbox 30 s old; run the file to confirm.
+  - `SandboxDecisions.test.ts`, after "a boot deadline after the runner attached" (538), add two
+    rows. "a stopped boot fails a waking machine and stops it": `waking`, then `failed` with effects
+    `["sandbox.stop", "sandbox.release-waiters"]`. "a stopped boot after the runner attached":
+    `ready`, then `wrong-state`. Add `bootStopped` beside `bootTimeout` (60).
+- Commit 5, `apps/server/src/sandbox/compute/ComputeDriverCheck.test.ts`:
+  - The happy-path case (133) gets `Effect.provideService(ComputeDriverCheck.MachineNetworkProbe,
+    ChildProcess.make("sh", ["-c", "exit 0"]))`. Its outline adds `"network:ok"` before
+    `"discard:ok"`.
+  - New `it.effect.each([{ code: 6, message: /look up github\.com/ }, { code: 7, message:
+    /connect to github\.com/ }, { code: 35, message: /curl exit 35/ }])("fails the network step
+    when curl exits $code, then discards the machine")`. It uses the real runner as in 133 with
+    `sh -c "exit ${code}"`. It asserts the outline `[..., "git:ok", "network:failed",
+    "discard:ok"]` and the step's message.
+  - Fails on `feat/pair`: no `network` step.
+  - Capture: Settings → Cloud → Test passing, and failing on a machine with broken DNS.
+
+**Verify.**
+
+- `vp test run apps/server/src/sandbox/runnerHub/RunnerHub.test.ts
+  apps/server/src/sandbox/runnerHub/RunnerResume.test.ts
+  apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts
+  apps/server/src/sandbox/lifecycle/SandboxDecisions.test.ts
+  apps/server/src/sandbox/compute/ComputeDriverCheck.test.ts
+  apps/web/src/components/settings/CloudSettings.logic.test.ts`.
+- `vp run typecheck` for `packages/contracts`, `apps/server`, `apps/web` and `apps/mobile`. Mobile
+  only follows the contracts change; it has no driver Test.
+- `vp run check:changed`.
+- The lead, on the VM or a cloud-only dev server with the Docker driver:
+  - `docker stop` a ready machine mid-turn: the thread errors within about 10 s, not 2 minutes.
+  - `docker stop` a provisioning machine: within 30 s it shows `The machine stopped before it was
+    ready.`, and Retry works.
+  - Test passes on the VM, then fails with the DNS message once the G2 shim is removed and before
+    V2 ships `PAIR_DNS`.
+
+**Reviewer checks.**
+
+- A running backend is never lost by a drop. Only `stopped`, `missing` or `failed` cuts the lease
+  short, and status errors keep the lease.
+- The boot check skips `waking`, admission waiters and a sandbox with no `driverRef`. It only adds
+  due times; it never moves the deadline.
+- `boot-stopped` is refused once `ready`, like `boot-timeout`.
+- The probe is in the machine (`hosts.forPath`), not on the server. The default is used outside
+  tests, and its timeout is under the check's 3-minute bound (27).
+- Surfaces: contracts (step literal, failure comment), server, web and desktop (one label), docs
+  (two user lines, 04, README P16). Mobile: none. Providers: none.
+
 ### 2.52 (new) `fix(contracts,server,client-runtime,web): warn about unpushed commits on any branch a cloud draft picks`
 
 A routed Cloud draft (a local project that sends to Pair Cloud, 2.28) warns "N commits not pushed
