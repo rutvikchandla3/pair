@@ -4189,6 +4189,296 @@ because a whole `providerInstances` map without the account deletes it from sett
 registry. The add dialog and onboarding's mode switch now send `create` and `upsert` mutations, so
 no web code writes the whole map. Reproduce in a real client to confirm.
 
+### 2.48 (new) `fix(web,mobile): show Pair Cloud only where it applies in Settings and pickers`
+
+Settings → Cloud lists only environments that have Cloud, and with one of them it shows that
+one without asking (findings 6 and 9). Load balancing leaves Pair Cloud out (10). A draft on a Pair
+Cloud project, including the one **Add to Pair Cloud** opens, offers no other machine and no
+**Auto balance** (13). These are one row because each is a filter on the same signal
+(`isCloudLaunchEnvironment`, `packages/client-runtime/src/state/cloudTarget.ts` 38–42, or
+`cloudSettingsVisible`), and all of them are checked in G2 steps 2 and 3.
+
+- **Needs:** 2.24, 2.28 (landed). **Unblocks:** a clean re-run of G2 steps 2 and 3.
+- **Files:**
+  - Findings 6 and 9 (Settings → Cloud):
+    - `apps/web/src/components/settings/CloudSettings.tsx` `CloudSettings` (78–93): stop reading
+      `useSettingsScope`. Copy `TeamSettings` (`apps/web/src/components/team/TeamSettings.tsx`
+      86–126):
+      - `candidates` = `useEnvironments().environments` that pass `cloudSettingsVisible(serverConfig)`
+        (`CloudSettings.logic.ts` 5). That is `cloudLaunch` or a configured driver, so an old
+        non-cloud server with drivers still shows its "Cloud moved to Pair Cloud" alert (218–224).
+      - `environmentId` = `resolveAccessEnvironmentId` (`ConnectionsSettings.logic.ts` 468–484)
+        over `candidates`, with `selected` from `useOptionalSettingsScope()?.search.machine`.
+      - Show `SettingsEnvironmentPicker` (`SettingsEnvironmentPicker.tsx` 9) labelled "Showing
+        Cloud on" only when `candidates.length > 1`. `onChange` is `scope.selectScope({ machine })`.
+      - No candidate: a `SettingsRow` with `NOT_CLOUD_ONLY_MESSAGE`
+        (`packages/shared/src/sandbox.ts` 5–6). A candidate that isn't connected, or has no
+        `serverConfig`: "Reconnect {label} to change its settings." Otherwise
+        `<CloudEnvironmentSettings key={environmentId} …>`.
+      - Move `SettingsPageContainer` from `CloudEnvironmentSettings` (186–489) up into
+        `CloudSettings`, so the picker sits on the same page. Drop the `SettingsScopeNotice`
+        import if nothing else uses it.
+    - `apps/web/src/components/settings/SettingsScopeSentence.tsx` `SETTINGS_DEVICE_ONLY_PATHS`
+      (45–55): add `"/settings/cloud"` next to `"/settings/access"` and `"/settings/team"`. The
+      settings route then passes Cloud through without a scope notice (`_chat.settings.tsx`
+      `SettingsScopeBoundary` 45, device-only passthrough 88), and the scope sentence is hidden.
+    - `apps/web/src/components/settings/settingsSearch.ts` `SETTINGS_CATEGORY_SCOPES` (1356):
+      `"/settings/cloud": "connections"`, as Team and Access use, so Cloud search results open
+      while the scope is "all" (`isSettingsSearchScopeAvailable` 1439).
+  - Finding 10: `apps/web/src/components/settings/LoadBalancingSettings.tsx`
+    `LoadBalancingSettings` (47): filter out `isCloudLaunchEnvironment(environment.serverConfig)`
+    before the `< 2` check (57) and before `summarizeLoadPreferences`. Don't filter in
+    `ConnectionsSettings.tsx` `loadBalancingEnvironments` (276–279). That list also feeds
+    `PullRequestRoutingSettings` (1627), where Pair Cloud is a real choice.
+  - Finding 13:
+    - `apps/web/src/components/BranchToolbar.logic.ts` `resolveLogicalProjectEnvironments`
+      (47): after `pushEnvironment` (74), when the active project's environment is cloud-launch,
+      push only `activeProject` and return. This covers both the scratch and the project branch.
+      Reword the comment at 44–46 to "Pair Cloud runs only cloud threads: a draft there stays
+      there, and other drafts leave it out." Through `useLogicalProjectEnvironments` (12–30), this
+      single option turns off ChatView's `hasMultipleEnvironments` (1255),
+      `canAutoBalanceEnvironments` (1256) and `automaticEnvironment` (1327–1337),
+      `useDraftEnvironmentRouting`'s candidates (76–109), and `composer.cycleHost` (2862–2870).
+      ChatView itself doesn't change.
+    - `apps/web/src/hooks/useAddProjectTargets.ts` `useAddProjectTargets` (18): return `[]` when
+      `project`'s own environment is cloud-launch (**proposed**). Otherwise BranchToolbar's
+      `hasMultipleEnvironments` (780) still shows the picker just to offer "Add to Mac".
+    - `apps/mobile/src/features/threads/new-task-flow-provider.tsx` `offersLocalModes`
+      (921–924): when `selectedProject`'s environment is cloud-launch, offer only that environment
+      (**proposed**). It feeds `scratchEnvironments` (925–932) and `environments` (938–985), so the
+      phone's environment picker (`NewTaskContextPickerScreens.tsx` 185–220) and cycle-host
+      (`NewTaskDraftScreen.tsx` 428–436) follow.
+  - `docs/user/remote-access.md` (155–157): see **Copy**.
+- **Types and services:** none.
+- **Copy:**
+  - Settings → Cloud, web/desktop: the notice "Choose one environment to set up Cloud on it."
+    (CloudSettings.tsx 83) → gone. New picker label "Showing Cloud on". New offline row "Reconnect
+    {label} to change its settings." (same words as `_chat.settings.tsx` 101).
+  - `docs/user/remote-access.md` 156–157: "The section appears once two or more machines are
+    switched on." → "The section appears once two or more machines are switched on, not counting
+    Pair Cloud, which runs only cloud threads."
+- **Proposed gap answers.**
+  - Add targets on a Pair Cloud project: none. To clone it locally, use **Add Project** on the Mac.
+  - Mobile matches web: a new task on a Pair Cloud project stays on Pair Cloud.
+
+**Tests.** Finding 13 is logic, so it gets a failing test first. In
+`apps/web/src/components/BranchToolbar.logic.test.ts`, extend the case "keeps a cloud-launch server
+out of a local draft's machines unless it holds the project" (466). Change
+`expect(resolve(onCloud)).toEqual([mac, cloud])` to `[cloud]`, add
+`expect(resolve(onCloud, true)).toEqual([cloud])`, and rename the case to "keeps a cloud-launch
+server out of a local draft's machines, and a draft on it on it alone". Mobile is the same logic,
+so it gets a phone capture, not a second test. Findings 6, 9 and 10 are what renders: they get
+before/after captures, not tests.
+
+**Verify.**
+
+- `vp test run apps/web/src/components/BranchToolbar.logic.test.ts`.
+- `vp run typecheck` for `apps/web` and `apps/mobile`; `vp run check:changed`.
+- The lead runs `apps/web/src/components/AddProjectToMachineDialog.browser.test.tsx`.
+- With `test-t3-app`, on a dev web client connected to its local server and a cloud-only dev
+  server, capture before and after:
+  - Settings → Cloud opens on Pair Cloud with no picker, and the local server isn't offered.
+  - Settings → Connections → Load balancing is hidden with one local machine plus Pair Cloud.
+  - **Add to Pair Cloud** lands on a draft with no **Run on** picker and no **Auto balance**.
+    The same holds for a new draft in Pair Cloud's own project.
+- With `test-t3-mobile`: a new task on a Pair Cloud project offers no other environment.
+
+**Reviewer checks.**
+
+- With two eligible environments (two Pair Clouds), the picker shows, and `?machine=` survives a
+  reload.
+- A non-cloud server that has drivers still opens on its "Cloud moved" alert.
+- Pull request routing still lists Pair Cloud.
+- Drafts on local projects keep their machine list, still without Pair Cloud (G2 step 2).
+- Surfaces: web and desktop (one component), mobile (`offersLocalModes`), and docs
+  (remote-access.md). Contracts and providers don't apply.
+
+Commits, in order:
+
+1. `fix(web): Settings → Cloud lists only environments with Cloud and picks one by itself` (6, 9).
+   One change closes both findings, so they share a commit.
+2. `fix(web): load balancing leaves out Pair Cloud` (10)
+3. `fix(web,mobile): a draft on Pair Cloud offers no other machine` (13)
+
+### 2.49 (new) `fix(server,web,scripts): say the right next step when setting up Pair Cloud`
+
+The copy a Pair Cloud admin or member sees while setting up says Pair and points at what works on
+a cloud-only server (findings 1, 2, 3, 4, 5, 7, 8). Each branch reads a signal that already
+exists, and text shared with other servers changes only on cloud-only. The exceptions are the
+installer and "backend", which are wrong everywhere. It is one row because each change is a few
+lines of copy, and G2 step 1 checks them together.
+
+- **Needs:** 2.22, 2.24, 2.45 (landed). **Unblocks:** a clean re-run of G2 step 1 and onboarding.
+- **Files:**
+  - Finding 1, the installer:
+    - `scripts/install.sh`: the header (2), the banner (50–58), "Installing" (211), "Extracting"
+      (228), "Installed" (247) and the PATH hint (249).
+    - `scripts/install.ps1`: the header (1), the banner (100–116; drop `$mark` and its comment),
+      173, 194, 229 and 233.
+    - `scripts/install.test.ts`: 49 and 122 expect `Installed Pair ${version}`; 234 expects it
+      absent.
+    - **Proposed:** `.github/workflows/sandbox-image.yml` (472) publishes install.sh with its
+      `repo=` default (install.sh 20, `pingdotgg/t3code`) replaced by `$GH_REPO`, and fails if the
+      line didn't change. A release's installer then installs that release's Pair even without
+      `T3CODE_RELEASE_BASE_URL`.
+  - Finding 2: `apps/server/src/cli/service.ts` `serviceInstallCommand` (200–222). When
+    `!result.previouslyInstalled`, read `readServiceEnv(baseDir)` (66–74), with `baseDir` from
+    `ServerConfig.ServerConfig`, as `update.ts` does (394–401). Decode `T3CODE_CLOUD_ONLY` with
+    `Config.Boolean("T3CODE_CLOUD_ONLY").pipe(Config.withDefault(false)).parse(ConfigProvider.fromEnv({ env: entries }))`,
+    falling back to false on a bad value. This uses the same literals the service accepts
+    (`cli/config.ts` 199; G2's service.env uses `1`). On cloud-only, print the Pair Cloud line
+    (see **Copy**), using `entries.T3CODE_PUBLIC_URL` if it is set. Leave the command description
+    (201–203) alone: it is static help shared by every server.
+  - Finding 7: `apps/server/src/provider/Drivers/ClaudeDriver.ts`. Take `cloudOnly` from the
+    `ServerConfig` it already yields (106). In `checkProvider` (235–265), after
+    `checkClaudeProviderStatus`, a provider with `auth.status === "unauthenticated"` on
+    cloud-only gets the Pair Cloud `message`. `apps/server/src/provider/Drivers/CodexDriver.ts`
+    does the same in `checkProvider` (233–241); its R already has `ServerConfig` (112). The probes
+    (`ClaudeProvider.ts` 683, `CodexProvider.ts` 728) stay host-agnostic. Every client shows this
+    `message` (web `providerStatus.ts` `getProviderSummary` 67–72; mobile
+    `SettingsEnvironmentDetailRouteScreen.tsx` 371–373), so there is no client change.
+  - Finding 3 (web; mobile has no agents onboarding):
+    - `apps/web/src/components/onboarding/WelcomeWizard.tsx` `ConnectedAgentsStep` (705): read
+      `useAtomValue(environmentCloudLaunchAtom(environmentId))`. Pass it to both `AgentCard`
+      call sites (813, and `OnboardingCodexSetup`'s at 940–946). In `AgentCard` (963), when
+      `cloudLaunch` is set, the sign-in and install states show no terminal button (1007–1015).
+      The server refuses that terminal on cloud-only (`terminal/Manager.ts` 2916), and the detail
+      line already carries finding 7's message.
+    - `apps/web/src/components/settings/CodexSetupSection.tsx` `CodexSetupSection` (105): read the
+      same atom. On cloud-only, drop the "Use existing CLI" `secondaryControl` (170–178) and pass
+      `allowExistingCli={false}` to `ManagedCodexSetup` (200), which already hides it at 897 and
+      1014 (prop at 259/266, as `AddManagedCodexAccountDialog` does at 243). This covers both the
+      wizard and Settings → Providers.
+  - Finding 4: `WelcomeWizard.tsx` `WelcomeWizard` (116). Derive
+    `importIds = setupIds.filter((id) => !isCloudLaunchEnvironment(<its serverConfig>))` from
+    `useEnvironments()` (126). Use it for `useProjectScans` (160) and `isLoadingProjects`
+    (161–164). When `importIds` is empty, the stages are `["Connect", "Agents"]` instead of
+    `ONBOARDING_STAGES` (113), and `AgentsStep`'s `onContinue` (275) calls `finish()` instead of
+    `setStep("import")`. `AgentsStep` takes a `last` flag for its button label. The server
+    refuses the scan on cloud-only (`AgentSessionScanner.ts` 1509–1513), so today's Retry can
+    never help.
+  - Finding 5: `apps/web/src/components/settings/SourceControlSettings.tsx`. Read the atom in
+    `SourceControlSettingsPanel` (370) for its `environmentId`, and pass `cloudLaunch` through
+    `DiscoveryItemRow` (209, 495, 511) to `itemSummary` (147, 259). The unauthenticated branch
+    (188–196) then uses the cloud-only text. GitHub is the only provider with `credentials`
+    (`packages/source-control-github/src/shared/definition.ts` 84), and its details hold
+    `GitHubAppKeySettings`.
+  - Finding 8: `apps/web/src/components/settings/AddEnvironmentDialog.tsx` (217, 222, 237, 242, 261) and `apps/web/src/components/desktop/DesktopWebLinkCoordinator.tsx` (117, 118, 134,
+    144). Update `DesktopWebLinkCoordinator.browser.test.tsx` (280 case name, 287 string).
+  - `docs/user/welcome-wizard.md`, end of "Check your agents" (after 58): see **Copy**.
+- **Types and services:** none.
+- **Copy:**
+  - Installer (sh and ps1, every install):
+    - Header: "Installs the T3 Code CLI from a GitHub Release archive" → "Installs Pair's `t3`
+      CLI from a GitHub Release archive".
+    - Banner: the T3 block mark with "T3 Code" / "CLI installer" → one line, bold "Pair" then
+      muted "CLI installer".
+    - "Installing T3 Code {version}" → "Installing Pair {version}".
+    - "Extracting T3 Code..." → "Extracting Pair...".
+    - "Installed T3 Code {version}" → "Installed Pair {version}".
+    - "Run t3 to use T3 Code here, or t3 up to use it from your other devices." → "Run t3 to use
+      Pair here, or t3 up to use it from your other devices."
+  - `t3 service install`, cloud-only only: "Run `t3 up` to choose how your other devices reach
+    it." → "Put a proxy or Tailscale HTTPS in front of it, then sign in with
+    `t3 auth pairing create --base-url {T3CODE_PUBLIC_URL or <its URL>}`." Other servers keep
+    today's line.
+  - Providers, cloud-only only:
+    - Claude: "Claude Code is not authenticated. Run `claude auth login` and try again." →
+      "Claude Code has no account on Pair Cloud. Add a setup token or API key in Settings → Team,
+      or a team token in this provider's environment variables."
+    - Codex: "Codex CLI is not authenticated. Run `codex login` and try again." → "Codex has no
+      account on Pair Cloud. Choose Continue with ChatGPT, or set OPENAI_API_KEY in this
+      provider's environment variables."
+  - Onboarding, cloud-only:
+    - The Claude and Codex cards lose the terminal **Sign in** / **Install** button.
+    - "Use existing CLI" is gone in the wizard and in Settings → Providers.
+    - When every chosen environment is Pair Cloud, the **Projects** stage, "Could not check
+      projects. This server runs agents, terminals and scripts only on cloud machines." with
+      **Retry**, and "Import 0 projects" are all gone. The Agents step's button reads "Finish"
+      instead of "Continue".
+  - Source control, cloud-only only:
+    - GitHub: "{label} is not authenticated on this server. Sign in or configure credentials
+      using the `{executable}` tool on the server host to enable change request features." →
+      "GitHub has no sign-in of its own on Pair Cloud. Cloud threads push with the GitHub App,
+      set in its details, or with each member's GitHub."
+    - Other providers: → "{label} has no sign-in on Pair Cloud."
+  - Adding an environment (web and desktop, everywhere):
+    - "Backend added" → "Environment added".
+    - "Could not add backend" → "Could not add environment".
+    - "Failed to add backend." → "Something went wrong. Try again."
+    - "Add the backend at {origin}?" → "Add the environment at {origin}?".
+  - `docs/user/welcome-wizard.md`, new paragraph at the end of "Check your agents": "On Pair
+    Cloud, agents run in cloud machines, so there is no terminal sign-in. Add accounts in
+    **Settings → Team** or **Settings → Providers** (see [Provider
+    accounts](./cloud.md#provider-accounts)). Setup skips project import there; add projects by
+    Git URL (see [Add projects](./pair-cloud.md#add-projects))."
+- **Proposed gap answers.**
+  - Choosing Pair Cloud and a Mac in onboarding scans only the Mac. Pair Cloud gets no Projects
+    row.
+  - Non-GitHub source control rows on Pair Cloud say only that they have no sign-in. Pair has no
+    in-app way to add one, and the server's terminal is refused.
+  - The installer can't know it is installing Pair Cloud (service.env comes later), so its
+    `t3` / `t3 up` hint stays generic. The guide says what comes next.
+
+**Tests.**
+
+- Finding 2 is a branch on a parsed file. Add `it.effect.each` "install on $label says how to
+  reach it" in `apps/server/src/cli/service.test.ts`, beside "install keeps $label off the local
+  network only when it is new" (92). No existing case asserts install's last line. Use
+  `TestConsole.logLines` as the case at 133 does. Rows:
+  - `{ label: "a new server", env: "", says: "Run \`t3 up\`" }`
+  - `{ label: "a new Pair Cloud", env: "T3CODE_CLOUD_ONLY=1\nT3CODE_PUBLIC_URL=https://pair.example.com\n", says: "t3 auth pairing create --base-url https://pair.example.com" }`
+    It fails on `feat/pair` for the second row.
+- Finding 1: update the three `install.test.ts` expectations (49, 122, 234). No new case.
+- Findings 3, 4, 5, 7 and 8 are copy or visibility on one boolean, so they get before/after
+  captures and no new test. Finding 4's filter is trivial logic.
+
+**Verify.**
+
+- `vp test run apps/server/src/cli/service.test.ts scripts/install.test.ts`.
+- `vp run typecheck` for `apps/server` and `apps/web`; `vp run check:changed`.
+- The lead runs these browser tests:
+  - `apps/web/src/components/desktop/DesktopWebLinkCoordinator.browser.test.tsx`;
+  - `apps/web/src/components/onboarding/WelcomeWizard.import.browser.test.tsx`;
+  - `apps/web/src/components/settings/ProviderSettingsPanel.environment.browser.test.tsx`, which
+    clicks "Use existing CLI" at 355 off cloud-only and must stay green;
+  - `apps/web/src/components/settings/AddCodexAccountDialog.browser.test.tsx`.
+- A transcript of `sh scripts/install.sh` against a local mirror and of `t3 service install` with
+  a cloud-only `service.env` (a scratch `--base-dir`, never `~/.t3`).
+- With `test-t3-app` on a cloud-only dev server, capture before and after:
+  - the wizard's Agents step (no terminal button, no "Use existing CLI", the new message);
+  - no Projects stage;
+  - Settings → Providers (both messages);
+  - Settings → Source control (GitHub row);
+  - an environment added by pairing link ("Environment added").
+- With `test-t3-mobile`, capture the provider message in the environment detail screen.
+
+**Reviewer checks.**
+
+- Off cloud-only, every changed string except the installer's and "backend" reads exactly as
+  before: the wizard terminal buttons, "Use existing CLI", the `codex login` / `claude auth
+  login` messages and the gh host text.
+- `T3CODE_CLOUD_ONLY=1`, `true` and `yes` all count, and a bad value falls back to the generic
+  hint rather than failing the install.
+- No Pair Cloud message promises a step the app can't do. Settings → Team has provider accounts
+  (2.45), and Settings → Source control → GitHub has the App key.
+- The published install.sh still verifies `SHA256SUMS`. If the `repo=` stamp is taken, the
+  workflow fails when the line didn't change.
+- Surfaces: web and desktop (wizard, Settings, toasts), mobile (finding 7's message only), server
+  (CLI and drivers), providers (Claude and Codex; others keep their messages), docs
+  (welcome-wizard.md). Contracts don't apply.
+
+Commits, in order:
+
+1. `fix(scripts): the installer says Pair` (1)
+2. `fix(server): t3 service install on Pair Cloud says how to sign in` (2)
+3. `fix(server): Claude and Codex on Pair Cloud say where to add an account` (7)
+4. `fix(web): onboarding on Pair Cloud offers no host sign-in` (3), after 3, whose message it
+   relies on
+5. `fix(web): onboarding on Pair Cloud skips the project import` (4)
+6. `fix(web): Source control on Pair Cloud stops pointing at the server's CLI` (5)
+7. `fix(web): adding an environment says environment, not backend` (8)
+
 ### 2.52 (new) `fix(contracts,server,client-runtime,web): warn about unpushed commits on any branch a cloud draft picks`
 
 A routed Cloud draft (a local project that sends to Pair Cloud, 2.28) warns "N commits not pushed
