@@ -36,12 +36,13 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (6 of 12), specs written 2026-11-10:** full specs in
+**M4 (7 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557) landed too, so waves 1–4 are done. Next: wave 5
-(4.17 critical, 4.18 small, then 4.19 critical), wave 6 (4.20, 4.21, 4.22, all small), a release
+(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557) and 4.17 (0cac39638) landed too. The run stopped at the account's usage limit on
+2026-11-10 with 4.18 in flight in `../pair-wt/4.18` (branch `wt/4.18`, `wip:` commits; finish or
+restart it). Next: 4.18 (small), 4.19 (critical), wave 6 (4.20, 4.21, 4.22, all small), a release
 with M4, and the M4 integrated pass (G4 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -2106,6 +2107,19 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   `team-image.build.request` with an agent requester and `activateOnSuccess: false`.
 - Owes, with the M4 pass: image deletion on a real daemon with `keepSucceeded: 1`, the rollback
   timed against 10 s, and Docker's answer when a stray container still uses the image.
+
+## 4.17 boot from the active build (landed 0cac39638)
+
+- `resolveCloudLaunch` returns `imageBuild`; the sandbox record carries it and the create boots
+  its image. A removed image or a store error boots the base, and `sandbox.created` from the base
+  drops `imageBuild`. Delegated tasks carry `imageBuild` too.
+- `checkoutInSandbox` copies the image's clone (`cp -a` to a staging folder, then a rename) and
+  fetches instead of cloning; a failed copy falls back to a clone and records "Not in the team
+  image". `RunnerConfig.imageEnvironmentFrom` reads the manifest's `imageEnv`.
+- Copy time: span `CloudPreparation.copyImageClone` (`team_image.copy_ms`, `team_image.copied`);
+  the checkout span has `checkout.clone_source`.
+- Owes, with the M4 pass's step 2: a session from `t3-team-image:1`, `psql` and `PATH` in its
+  terminal, a copy and a fetch in the trace, and the five-run copy median against 30 s on gVisor.
 
 ## Open follow-ups and risks
 
