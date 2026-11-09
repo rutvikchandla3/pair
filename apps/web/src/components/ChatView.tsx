@@ -114,7 +114,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { cloudBranchCheck } from "@t3tools/client-runtime/state/cloud-target";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
@@ -249,7 +249,7 @@ import {
 } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
-import { vcsEnvironment } from "../state/vcs";
+import { vcsEnvironment, vcsStatusRevalidation } from "../state/vcs";
 import {
   type EnvironmentPresentation,
   useEnvironment,
@@ -2317,6 +2317,9 @@ export default function ChatView(props: ChatViewProps) {
     routedCloud && gitCwd !== null
       ? vcsEnvironment.listRefs({ environmentId, input: { cwd: gitCwd, limit: 2 } })
       : null,
+  );
+  useAtomMount(
+    vcsStatusRevalidation(routedCloud && gitCwd !== null ? { environmentId, cwd: gitCwd } : null),
   );
   const routedCloudSend =
     routedCloud && routedCloudBranch !== null
