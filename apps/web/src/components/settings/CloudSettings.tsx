@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type ComputeDriverId,
   type DockerSandboxDriver,
-  type EnvironmentId,
+  EnvironmentId,
   isReservedSandboxEnvName,
   type SandboxDiskRetention,
   type SandboxDriverCheckResult,
@@ -27,6 +27,7 @@ import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/
 
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { sandboxEnvironment } from "~/state/sandbox";
 import { serverEnvironment } from "~/state/server";
@@ -38,15 +39,21 @@ import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { dockerDriverFormError, isRemoteDockerHost, nextDriverId } from "./CloudSettings.logic";
+import {
+  cloudSettingsVisible,
+  dockerDriverFormError,
+  isRemoteDockerHost,
+  nextDriverId,
+} from "./CloudSettings.logic";
+import { resolveAccessEnvironmentId } from "./ConnectionsSettings.logic";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { RetentionControl } from "./RetentionControl";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { searchableSetting } from "./settingsSearch";
-import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
 
 const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
   small: "Small",
@@ -76,20 +83,48 @@ function formatDuration(ms: number): string {
 }
 
 export function CloudSettings() {
-  const { environment, scope } = useSettingsScope();
-  if (scope.kind !== "environment" || !environment?.serverConfig) {
-    return (
-      <SettingsScopeNotice target="environment">
-        Choose one environment to set up Cloud on it.
-      </SettingsScopeNotice>
-    );
-  }
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const scope = useOptionalSettingsScope();
+  const candidates = environments.filter((environment) =>
+    cloudSettingsVisible(environment.serverConfig),
+  );
+  const machine = scope?.search.machine;
+  const environmentId = resolveAccessEnvironmentId({
+    primaryEnvironmentId,
+    environments: candidates.map((environment) => ({
+      environmentId: environment.environmentId,
+      connected: environment.connection.phase === "connected",
+    })),
+    selected: machine === undefined ? null : EnvironmentId.make(machine),
+  });
+  const environment = candidates.find((candidate) => candidate.environmentId === environmentId);
   return (
-    <CloudEnvironmentSettings
-      key={environment.environmentId}
-      environmentId={environment.environmentId}
-      serverConfig={environment.serverConfig}
-    />
+    <SettingsPageContainer>
+      {candidates.length > 1 && environmentId !== null && scope !== null ? (
+        <SettingsEnvironmentPicker
+          label="Showing Cloud on"
+          environments={candidates}
+          value={environmentId}
+          onChange={(next) => scope.selectScope({ machine: next })}
+        />
+      ) : null}
+      {environment?.serverConfig && environment.connection.phase === "connected" ? (
+        <CloudEnvironmentSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          serverConfig={environment.serverConfig}
+        />
+      ) : (
+        <SettingsSection {...searchableSetting("cloud-overview")} title="Overview">
+          {environment === undefined ? (
+            <SettingsRow title="Cloud threads" description={NOT_CLOUD_ONLY_MESSAGE} />
+          ) : (
+            <SettingsRow title={`Reconnect ${environment.label} to change its settings.`} />
+          )}
+        </SettingsSection>
+      )}
+    </SettingsPageContainer>
   );
 }
 
@@ -183,7 +218,7 @@ function CloudEnvironmentSettings({
     formatDayAwareTimestamp(DateTime.formatIso(time), timestampFormat);
 
   return (
-    <SettingsPageContainer>
+    <>
       {plainDocker.length > 0 ? (
         <Alert variant="warning">
           <TriangleAlertIcon aria-hidden />
@@ -486,7 +521,7 @@ function CloudEnvironmentSettings({
           />
         </SettingsSection>
       ) : null}
-    </SettingsPageContainer>
+    </>
   );
 }
 

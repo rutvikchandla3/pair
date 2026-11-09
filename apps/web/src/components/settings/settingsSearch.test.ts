@@ -249,7 +249,7 @@ describe("settings search targets", () => {
     for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "boring-sidebar"]) {
       expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
     }
-    // Settings → Cloud edits one environment; only its project rows reach a project scope.
+    // Settings → Cloud picks its environment on the page, so its rows open from any scope.
     for (const id of [
       "cloud-overview",
       "cloud-docker-driver",
@@ -260,12 +260,11 @@ describe("settings search targets", () => {
       "cloud-env",
       "cloud-test",
     ]) {
-      expect(
-        isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "environment"),
-      ).toBe(true);
-      expect(
-        isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "project"),
-      ).toBe(false);
+      for (const scopeKind of ["all", "environment", "project"] as const) {
+        expect(
+          isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, scopeKind),
+        ).toBe(true);
+      }
     }
     for (const id of ["project-cloud-allowed", "project-cloud-env"]) {
       expect(
