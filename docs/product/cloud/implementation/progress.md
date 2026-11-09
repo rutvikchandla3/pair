@@ -1488,6 +1488,58 @@ procedure there. Head-only background work is the sandbox lifecycle sweep (every
 sandbox projection reads, about 7 ms of span time per run: not worth gating. Raw tables, trace
 summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committed).
 
+## 2.48 Pair Cloud only where it applies (landed d275c814e, bfe0d6bee, afe053f0e)
+
+- Settings → Cloud lists only environments where Cloud settings apply, picks the only one by itself,
+  ignores the project/all scope, and takes `?machine=` to choose. Load balancing leaves out Pair
+  Cloud. A draft on Pair Cloud offers no other machine (web `BranchToolbar.logic.ts`,
+  `useAddProjectTargets.ts`; mobile `new-task-flow-provider.tsx`).
+- Owes: `AddProjectToMachineDialog.browser.test.tsx` in CI and before/after captures.
+- Follow-up: a routed Cloud draft on a local project with two local machines still offers Run on /
+  Auto balance (ChatView `canChangeEnvironment` ~1320, `automaticEnvironment` 1327; moving drops
+  `cloudEnvironmentId`, composerDraftStore.ts 1527–1529). Gate on `envMode !== "cloud"`.
+
+## 2.53 commit and PR text on a cloud-only server (landed 991b8e4b8)
+
+- `TextGeneration.ts` `canGenerate`: on cloud-only, a selected provider that is disabled, missing,
+  signed out, unavailable or not text-capable falls back to a ready one. The fallback skips
+  member-owned instances on every server (a member's own account never writes text for others).
+- Owes: the VM check (Codex signed out, Claude team account: Commit, push & create PR writes text).
+- Follow-up: nothing stops an admin picking a member's account as the Text generation model (a
+  2.46-style refusal would be its own row). Local servers keep upstream's behavior (no fallback).
+
+## 2.49 next steps on a Pair Cloud setup (landed 05f179188..24294fe72)
+
+- Installer banner and lines say Pair (`install.sh`, `install.ps1`; the code-page check lost the
+  logo glyphs). `sandbox-image.yml` checks the accepted `repo=` stamp line changed.
+- `t3 service install` on cloud-only (read from `service.env`) prints the proxy or Tailscale HTTPS
+  line and `t3 auth pairing create --base-url <T3CODE_PUBLIC_URL>`; a bad `T3CODE_CLOUD_ONLY`
+  value falls back to `t3 up`.
+- Claude and Codex drivers on cloud-only say where to add an account instead of "Run … login".
+  Onboarding on Pair Cloud: no terminal sign-in, no "Use existing CLI", no Projects stage
+  ("Finish"); the 2-stage header shows once setup starts. Source control reads
+  `isCloudLaunchEnvironment(environment?.serverConfig ?? null)` (its `environmentId` can be null).
+  "Backend added" → environment.
+- Owes: browser tests `DesktopWebLinkCoordinator`, `WelcomeWizard.import`, `AddEnvironmentDialog`,
+  `ProviderSettingsPanel.environment`, `AddCodexAccountDialog` in CI; a `t3 service install`
+  transcript on the VM; captures.
+- Not changed: other "backend" copy (PairingRouteSurface.tsx 259/282, ConnectionsSettings.logic.ts
+  277, the `backend.example.com` placeholder). `claudeSignedOutMessage` (Drivers/ClaudeHome.ts
+  127–135) still says `claude auth login` in a cloud thread's turn error.
+
+## 2.52 unpushed commits on any branch (landed 0155b0073, 57b3e8ac0)
+
+- `VcsRef.aheadCount` (new on the wire, optional): the snapshot's `for-each-ref` also reads
+  `%(upstream:track,nobracket)`; set only with an upstream that isn't `gone`. No new spawn or cache.
+  `cloudBranchCheck` uses HEAD's status only when HEAD is the branch and has an upstream.
+- ChatView mounts `vcsStatusRevalidation` for a routed cloud draft, so a branch checked out after
+  the draft opened is checked again when the window comes back.
+- Perf, kept in the snapshot (paid once per snapshot refresh, at most every 2 min): `snapshotRefs`
+  p50 12.7 → 14.9 ms on this repo; 13.3 → 31.3 ms with 301 tracking branches; raw `for-each-ref`
+  42 → 86 ms with 300 branches up to 3000 behind (Mac under load). Recheck on a large real repo.
+- Owes: `ChatView.browser.test.tsx` in CI, the video and a phone capture. Follow-up: a `gone`
+  upstream checks ok on the client; 2.31 refuses after send ("Push <branch> first." before send).
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
