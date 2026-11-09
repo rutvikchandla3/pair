@@ -469,7 +469,9 @@ jobs:
             test -f "t3-$VERSION-linux-$arch.tar.gz" || { echo "::error::No t3-$VERSION-linux-$arch.tar.gz."; exit 1; }
           done
           sha256sum t3-*.tar.gz > SHA256SUMS
-          cp "$GITHUB_WORKSPACE/scripts/install.sh" install.sh
+          # The installer defaults to this release's repository, so it needs no T3CODE_RELEASE_BASE_URL.
+          sed "s|^repo=\"pingdotgg/t3code\"\$|repo=\"$GH_REPO\"|" "$GITHUB_WORKSPACE/scripts/install.sh" > install.sh
+          grep -qxF "repo=\"$GH_REPO\"" install.sh || { echo "::error::install.sh has no repo= line to stamp with $GH_REPO."; exit 1; }
           ls -l
 
       # Releases are never replaced. Only a missing release clears the way, so an API or auth
