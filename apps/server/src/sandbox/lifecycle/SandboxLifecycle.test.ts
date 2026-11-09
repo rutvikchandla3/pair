@@ -1058,7 +1058,10 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       const facts = yield* Queue.unbounded<RunnerHubFact>();
       yield* Layer.build(
         RunnerHubFacts.layer.pipe(
-          Layer.provide(Layer.mock(RunnerHub)({ facts: Stream.fromQueue(facts) })),
+          Layer.provide(
+            Layer.mock(RunnerHub)({ facts: Stream.fromQueue(facts), drops: Stream.never }),
+          ),
+          Layer.provide(Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({})),
         ),
       );
       yield* Queue.offer(facts, {
@@ -1095,6 +1098,70 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
   );
 });
 
+// Its worker claims the oldest effect, and the lifecycle block leaves creates queued.
+it.layer(layerTest)("runner drops", (it) => {
+  it.effect(
+    "loses a dropped runner's machine at once when its container stopped, and keeps one still running",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* makeSandboxRuntime();
+        const ready = Effect.fnUntraced(function* (key: string) {
+          const sandbox = yield* provisioned(key);
+          yield* runAnswering(runtime, answerCreate);
+          yield* attachAndRelease(runtime, sandbox.threadId, sandbox.sandboxId, 1);
+          return sandbox;
+        });
+        const running = yield* ready("drop-running");
+        const stopped = yield* ready("drop-stopped");
+        const dropOf = ({ sandboxId }: { readonly sandboxId: SandboxId }) => ({
+          sandboxId,
+          generation: 1,
+          runnerBootId: "boot",
+        });
+        yield* Layer.build(
+          RunnerHubFacts.layer.pipe(
+            Layer.provide(
+              Layer.mock(RunnerHub)({
+                facts: Stream.never,
+                drops: Stream.make(dropOf(running), dropOf(stopped)),
+                connection: () => Effect.never,
+              }),
+            ),
+            Layer.provide(runtime.layerDriver),
+          ),
+        );
+
+        yield* TestClock.adjust("5 seconds");
+        const stoppedRef = `pair-0f1e2d3c-${stopped.sandboxId}-g1`;
+        for (const _ of [running, stopped]) {
+          const call = yield* Queue.take(runtime.calls);
+          if (call._tag !== "status") return yield* Effect.die(`Expected status, got ${call._tag}`);
+          yield* Deferred.succeed(call.reply, {
+            driverRef: call.driverRef,
+            name: call.driverRef,
+            sandboxId: null,
+            status: call.driverRef === stoppedRef ? "stopped" : "running",
+            createdAt: yield* DateTime.now,
+          });
+        }
+
+        const lost = yield* EventSink.EventSinkV2.use((sink) =>
+          sink.stream({ threadId: stopped.threadId, eventType: "sandbox.updated" }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "sandbox.updated" &&
+                stored.event.payload.runnerLostAt !== null,
+            ),
+            Stream.runHead,
+          ),
+        ).pipe(Effect.map(Option.getOrThrow));
+        assert.equal(lost.commandId, `sandbox-lost:${stopped.sandboxId}:1:boot`);
+        // Drops dispatch in order, so the running machine's verdict is already in.
+        assert.isNull((yield* getSandbox(running.sandboxId))?.runnerLostAt);
+      }).pipe(Effect.scoped),
+  );
+});
+
 it.layer(layerTest)("runner return after a restart", (it) => {
   it.effect("loses a ready sandbox whose runner does not dial back within the lease", () =>
     Effect.gen(function* () {
@@ -1106,10 +1173,12 @@ it.layer(layerTest)("runner return after a restart", (it) => {
           Layer.provide(
             Layer.mock(RunnerHub)({
               facts: Stream.never,
+              drops: Stream.never,
               // The real hub fails this once the lease passes with no runner.
               connection: (id) => Effect.fail(new RunnerUnavailableError({ sandboxId: id })),
             }),
           ),
+          Layer.provide(Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({})),
         ),
       );
 
@@ -1758,6 +1827,58 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       });
       // A machine that never booted has no working tree to keep.
       assert.deepEqual(yield* Ref.get(snapshots.captures), []);
+    }).pipe(Effect.scoped),
+  );
+});
+
+// The worker block's leftover machines and queued effects would join these sweeps and drains.
+it.layer(layerTest)("sandbox boot checks", (it) => {
+  // `running` goes last: its machine stays booting, so any later row's sweep would ask about it.
+  it.effect.each([
+    { status: "stopped", code: "boot-stopped" },
+    { status: "missing", code: "missing" },
+    { status: "running", code: null },
+  ] as const)("checks a booting machine's backend and fails it when it is $status", (row) =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { sandboxId } = yield* provisioned(`${row.status}-boot`);
+      yield* runAnswering(runtime, answerCreate);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+      yield* TestClock.adjust("30 seconds");
+      const swept = yield* sweep().pipe(Effect.forkChild);
+      const call = yield* Queue.take(runtime.calls);
+      if (call._tag !== "status") return yield* Effect.die(`Expected status, got ${call._tag}`);
+      yield* Deferred.succeed(call.reply, {
+        driverRef: call.driverRef,
+        name: call.driverRef,
+        sandboxId,
+        status: row.status,
+        createdAt: yield* DateTime.now,
+      });
+      yield* Fiber.join(swept);
+
+      const sandbox = yield* getSandbox(sandboxId);
+      if (row.code === null) {
+        assert.deepInclude(sandbox, { state: "provisioning", failure: null });
+        return;
+      }
+      assert.equal(sandbox?.state, "failed");
+      assert.equal(sandbox?.failure?.code, row.code);
+      if (row.code === "boot-stopped") {
+        assert.deepEqual(sandbox?.failure, {
+          code: "boot-stopped",
+          message: "The machine stopped before it was ready.",
+          retryable: true,
+        });
+        yield* runAnswering(runtime, answerStop);
+      } else {
+        assert.equal(sandbox?.driverRef, null);
+      }
+      // The failure's release-waiters finds no parked run.
+      assert.equal(yield* runtime.worker.drain(1), 1);
+      assert.equal(yield* Queue.size(runtime.calls), 0);
     }).pipe(Effect.scoped),
   );
 });

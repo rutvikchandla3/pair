@@ -131,6 +131,13 @@ export interface RunnerBoot {
   readonly connection: RunnerConnection;
 }
 
+/** A connected runner's socket ended; the lease is now running. */
+export interface RunnerDrop {
+  readonly sandboxId: SandboxId;
+  readonly generation: number;
+  readonly runnerBootId: string;
+}
+
 /** An authenticated connect. The token is present only on the enrollment connect. */
 export interface AuthenticatedRunner extends RunnerGrant {
   readonly sandboxToken: Option.Option<Redacted.Redacted<string>>;
@@ -166,6 +173,8 @@ export class RunnerHub extends Context.Service<
     readonly facts: Stream.Stream<RunnerHubFact>;
     /** Each new runner boot once, from its first hello; subscribers see boots after they start. */
     readonly boots: Stream.Stream<RunnerBoot>;
+    /** Each drop of a connected runner's socket; subscribers see drops after they start. */
+    readonly drops: Stream.Stream<RunnerDrop>;
     /**
      * How sandbox hosts expose server endpoints, while the scope is open. `RunnerForwards` sits
      * above the hub (it needs the MCP registry), so it hands this in; until then a host's
@@ -234,6 +243,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits, ingressBytesPerS
   const hubScope = yield* Effect.scope;
   const facts = yield* Queue.unbounded<RunnerHubFact>();
   const boots = yield* PubSub.unbounded<RunnerBoot>();
+  const drops = yield* PubSub.unbounded<RunnerDrop>();
   let endpoints: ((sandboxId: SandboxId) => WorkspaceHost["exposeServerEndpoint"]) | undefined;
   const leases = yield* FiberMap.make<SandboxId>();
   // Every slot change runs under this lock; nothing slow runs inside it.
@@ -336,6 +346,10 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits, ingressBytesPerS
       },
       client: undefined,
     });
+    if (slot.boot !== undefined) {
+      const { generation, runnerBootId } = slot.boot;
+      PubSub.publishUnsafe(drops, { sandboxId: slot.sandboxId, generation, runnerBootId });
+    }
   });
 
   /** A boot's next live client other than `failed`; fails once that boot is gone. */
@@ -683,6 +697,7 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits, ingressBytesPerS
     serve,
     facts: Stream.fromQueue(facts),
     boots: Stream.fromPubSub(boots),
+    drops: Stream.fromPubSub(drops),
     // Once, from the RunnerForwards layer.
     // @effect-diagnostics-next-line effectFnOpportunity:off
     serveEndpoints: (expose) =>

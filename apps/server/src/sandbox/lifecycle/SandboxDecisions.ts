@@ -9,6 +9,7 @@ import type {
   OrchestrationV2ThreadShell,
   RunId,
   SandboxDiskRetention,
+  SandboxFailure,
   SandboxSettings,
   SandboxSleepReason,
   ThreadId,
@@ -140,6 +141,11 @@ const admissionWait = (
 
 /** The failure code for a backend that no longer exists, disk and all. */
 export const SANDBOX_BACKEND_MISSING = "missing";
+export const SANDBOX_BACKEND_MISSING_FAILURE: SandboxFailure = {
+  code: SANDBOX_BACKEND_MISSING,
+  message: "The machine and its disk are gone. Retry starts a new one.",
+  retryable: true,
+};
 
 /**
  * The settle-and-archive rule: once every attached thread is archived or settled and none has
@@ -719,7 +725,7 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
     case "sandbox.destroyed":
       return record.state === "destroyed" ? noOp : update({ state: "destroyed" });
     case "sandbox.failed":
-      if (command.failure.code === "boot-timeout") {
+      if (command.failure.code === "boot-timeout" || command.failure.code === "boot-stopped") {
         return record.state === "provisioning" || record.state === "waking"
           ? update({ state: "failed", failure: command.failure }, [
               "sandbox.stop",

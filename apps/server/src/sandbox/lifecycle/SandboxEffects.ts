@@ -41,7 +41,7 @@ import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
 import { sandboxSnapshotRef, snapshotNamers } from "../mirror/CheckpointMirror.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
-import { SANDBOX_BACKEND_MISSING, type SandboxEffectRequest } from "./SandboxDecisions.ts";
+import { SANDBOX_BACKEND_MISSING_FAILURE, type SandboxEffectRequest } from "./SandboxDecisions.ts";
 
 const SandboxEffectOperation = Schema.Literals([
   "create",
@@ -556,11 +556,7 @@ const make = Effect.gen(function* () {
       type: "sandbox.failed",
       commandId: CommandId.make(`sandbox-failed:${record.id}:${record.generation}:missing`),
       ...generationFields(record),
-      failure: {
-        code: SANDBOX_BACKEND_MISSING,
-        message: "The machine and its disk are gone. Retry starts a new one.",
-        retryable: true,
-      },
+      failure: SANDBOX_BACKEND_MISSING_FAILURE,
     });
 
   const reportStatus = Effect.fn("SandboxEffects.reportStatus")(function* (

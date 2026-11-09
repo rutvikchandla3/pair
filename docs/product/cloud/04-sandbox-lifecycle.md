@@ -73,7 +73,9 @@ reconciler.
 `provisioning` or `waking` dispatches `sandbox.runner.attached` to the owner's stream: `ready`. A
 disconnect past the 120 s lease while `ready` dispatches `sandbox.runner.lost`, which sets
 `runnerLostAt` and enqueues `sandbox.status` to decide between waiting, restarting or `failed`. A
-later attach clears it. A separate **boot deadline** covers "no hello since boot" (section 5).
+later attach clears it. When a `ready` runner's socket drops, the hub asks the driver 5 s later,
+and a backend that is not running loses the runner at once instead of after the lease. A separate
+**boot deadline** covers "no hello since boot" (section 5).
 
 ### Commands, events and effects
 
@@ -421,7 +423,7 @@ driver's sandboxes tagged with this server's install id (its environment id) and
 
 | Record                                           | Backend                      | Action                                                                                                                             |
 | ------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `ready`, `waking`, `provisioning`                | running                      | Keep. A runner that was attached gets the 120 s lease, then `sandbox.runner.lost`; one that never attached gets the boot deadline. |
+| `ready`, `waking`, `provisioning`                | running                      | Keep. A dropped runner gets the 120 s lease, or is lost at once when its backend stops; one never attached gets the boot deadline. |
 | `ready`                                          | stopped                      | `sandbox.stopped`                                                                                                                  |
 | `ready`, `waking`                                | missing                      | `sandbox.failed` with `lost`, retryable                                                                                            |
 | `sleeping`                                       | running                      | Stop it                                                                                                                            |
@@ -451,7 +453,10 @@ outbox row's `available_at`, capped (old 2.4). The EC2 driver (M5) needs it for
 `InsufficientInstanceCapacity` and API throttling. On the last attempt (`willRetry: false`) the
 executor dispatches `sandbox.failed`, `retryable` from the error, outside the bound, whose timeout
 interrupts it. The boot deadline (no hello since boot) is 10 minutes from `provisioning` and 5 from
-`waking`; missing it dispatches `sandbox.failed` and enqueues `sandbox.stop`.
+`waking`; missing it dispatches `sandbox.failed` and enqueues `sandbox.stop`. A created
+`provisioning` machine's backend is checked every 30 s until its hello: stopped or failed fails it
+as `boot-stopped`, missing as `missing`. A wake is not checked, since its ref names the stopped
+container until `sandbox.start` runs.
 
 ### Restoring an older database: restore mode (M2)
 

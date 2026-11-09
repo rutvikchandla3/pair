@@ -58,6 +58,7 @@ const base = { commandId: CommandId.make("command"), threadId: owner, sandboxId 
 const at = (generation: number) => ({ ...base, generation });
 const lost = { code: "lost", message: "Gone.", retryable: true };
 const bootTimeout = { code: "boot-timeout", message: "No hello.", retryable: true };
+const bootStopped = { code: "boot-stopped", message: "Stopped.", retryable: true };
 const fork = ThreadId.make("thread-fork");
 
 const nowMs = DateTime.toEpochMillis(now);
@@ -538,6 +539,21 @@ const rows: ReadonlyArray<Row> = [
   [
     "a boot deadline after the runner attached",
     { type: "sandbox.failed", ...at(2), failure: bootTimeout },
+    record(),
+    "wrong-state",
+  ],
+  [
+    "a stopped boot fails a waking machine and stops it",
+    { type: "sandbox.failed", ...at(2), failure: bootStopped },
+    record({ state: "waking" }),
+    {
+      next: { state: "failed", failure: bootStopped },
+      effects: ["sandbox.stop", "sandbox.release-waiters"],
+    },
+  ],
+  [
+    "a stopped boot after the runner attached",
+    { type: "sandbox.failed", ...at(2), failure: bootStopped },
     record(),
     "wrong-state",
   ],

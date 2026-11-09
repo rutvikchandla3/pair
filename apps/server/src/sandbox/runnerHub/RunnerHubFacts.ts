@@ -3,18 +3,24 @@ import {
   type OrchestrationV2Sandbox,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
 import { listLiveSandboxes } from "../lifecycle/SandboxProjection.ts";
-import { RunnerHub, type RunnerHubFact } from "./RunnerHub.ts";
+import { type RunnerDrop, RunnerHub, type RunnerHubFact } from "./RunnerHub.ts";
 
 /** The runner boot id of a `lost` for a runner this server boot never saw. */
 const UNATTACHED = "unattached";
+/** A container that is stopping still reports running for a moment after its runner's socket ends. */
+const DROP_SETTLE = Duration.seconds(5);
+const STATUS_BOUND = Duration.seconds(10);
 
 /**
  * Turns runner facts into `sandbox.runner.attached` and `.lost` on the owner thread's stream. It
@@ -26,6 +32,7 @@ export const layer = Layer.effectDiscard(
     const hub = yield* RunnerHub;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const registry = yield* ComputeDriverRegistry;
 
     const dispatch = Effect.fn("RunnerHubFacts.dispatch")(
       function* (fact: RunnerHubFact) {
@@ -111,8 +118,48 @@ export const layer = Layer.effectDiscard(
       ),
     );
 
+    /**
+     * A dropped runner whose machine is no longer running is lost now, not at the lease's end. A
+     * running one keeps the lease, which covers network blips and runner restarts.
+     */
+    const verdict = Effect.fn("RunnerHubFacts.verdict")(
+      function* (drop: RunnerDrop) {
+        yield* Effect.sleep(DROP_SETTLE);
+        const record = yield* projections.getSandbox(drop.sandboxId);
+        if (
+          record === null ||
+          record.state !== "ready" ||
+          record.generation !== drop.generation ||
+          record.runnerLostAt !== null ||
+          record.driverRef === null
+        ) {
+          return Option.none<RunnerHubFact>();
+        }
+        const driver = yield* registry.get(record.driverId);
+        const backend = yield* driver.status(record.driverRef).pipe(Effect.timeout(STATUS_BOUND));
+        if (backend.status === "running" || backend.status === "starting") {
+          return Option.none<RunnerHubFact>();
+        }
+        return Option.some<RunnerHubFact>({ _tag: "lost", ...drop, reason: "lease-expired" });
+      },
+      (effect, drop) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("sandbox.runner-drop.status-failed", { cause }).pipe(
+              Effect.as(Option.none<RunnerHubFact>()),
+            ),
+          ),
+          Effect.annotateLogs({ sandboxId: drop.sandboxId, generation: drop.generation }),
+        ),
+    );
+    // Verdicts run at once and dispatch in drop order.
+    const loseStoppedRunners = hub.drops.pipe(
+      Stream.mapEffect(verdict, { concurrency: "unbounded" }),
+      Stream.runForEach((fact) => (Option.isSome(fact) ? dispatch(fact.value) : Effect.void)),
+    );
+
     yield* forkParked(
-      Effect.all([Stream.runForEach(hub.facts, dispatch), awaitReadyRunners], {
+      Effect.all([Stream.runForEach(hub.facts, dispatch), awaitReadyRunners, loseStoppedRunners], {
         concurrency: "unbounded",
         discard: true,
       }),

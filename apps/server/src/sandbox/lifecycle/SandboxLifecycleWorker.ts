@@ -35,6 +35,7 @@ import {
   diskExpiryFloorMs,
   diskRetentionOf,
   idleDecision,
+  SANDBOX_BACKEND_MISSING_FAILURE,
   sandboxAttachedThread,
 } from "./SandboxDecisions.ts";
 import { listLiveSandboxes } from "./SandboxProjection.ts";
@@ -44,6 +45,9 @@ const APPROVAL_EXPIRED_MESSAGE =
 
 const PROVISION_DEADLINE_MS = 10 * 60_000;
 const WAKE_DEADLINE_MS = 5 * 60_000;
+/** How often a created machine's backend is asked whether it still runs, until its hello. */
+const BOOT_CHECK_MS = 30_000;
+const STATUS_BOUND = "10 seconds";
 
 /** When a booting sandbox that never says hello fails; null for one with no deadline. */
 const bootDeadlineMs = (sandbox: OrchestrationV2Sandbox): number | null => {
@@ -53,6 +57,10 @@ const bootDeadlineMs = (sandbox: OrchestrationV2Sandbox): number | null => {
   if (sandbox.state === "provisioning") return since + PROVISION_DEADLINE_MS;
   return sandbox.state === "waking" ? since + WAKE_DEADLINE_MS : null;
 };
+
+/** Ready machines sleep by their driver's policy; created, booting ones are checked through it. */
+const needsDriver = (sandbox: OrchestrationV2Sandbox) =>
+  sandbox.state === "ready" || (sandbox.state === "provisioning" && sandbox.driverRef !== null);
 
 const affectsLifecycle = (event: OrchestrationV2DomainEvent) =>
   event.type === "sandbox.updated" ||
@@ -235,6 +243,51 @@ export const makeSweep = Effect.gen(function* () {
     return { expired: true, nextDueMs: Infinity };
   });
 
+  /**
+   * Fails a provisioning machine whose backend stopped before its hello; else when to ask again.
+   * A wake is not checked: until its start runs, the ref names the container that was stopped.
+   */
+  const checkBoot = Effect.fn("SandboxLifecycleWorker.checkBoot")(function* (
+    sandbox: OrchestrationV2Sandbox,
+    driver: ComputeDriver["Service"] | undefined,
+    nowMs: number,
+  ) {
+    if (sandbox.state !== "provisioning" || sandbox.driverRef === null || driver === undefined) {
+      return { failed: false, nextDueMs: Infinity };
+    }
+    // `sandbox.created` set the ref once the container started, so `updatedAt` is the boot.
+    const dueMs = DateTime.toEpochMillis(sandbox.updatedAt) + BOOT_CHECK_MS;
+    if (dueMs > nowMs) return { failed: false, nextDueMs: dueMs };
+    const backend = yield* driver.status(sandbox.driverRef).pipe(
+      Effect.timeout(STATUS_BOUND),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not check a booting machine's backend", {
+          sandboxId: sandbox.id,
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (backend === null || backend.status === "running" || backend.status === "starting") {
+      return { failed: false, nextDueMs: nowMs + BOOT_CHECK_MS };
+    }
+    yield* dispatch(sandbox, {
+      type: "sandbox.failed",
+      commandId: yield* freshCommandId("boot-check", sandbox),
+      threadId: sandbox.ownerThreadId,
+      sandboxId: sandbox.id,
+      generation: sandbox.generation,
+      failure:
+        backend.status === "missing"
+          ? SANDBOX_BACKEND_MISSING_FAILURE
+          : {
+              code: "boot-stopped",
+              message: "The machine stopped before it was ready.",
+              retryable: true,
+            },
+    });
+    return { failed: true, nextDueMs: Infinity };
+  });
+
   /** Stops each run whose question outlived the hold; false if any could not be stopped. */
   const interruptExpired = Effect.fn("SandboxLifecycleWorker.interruptExpired")(function* (
     sandbox: OrchestrationV2Sandbox,
@@ -317,7 +370,7 @@ export const makeSweep = Effect.gen(function* () {
     if (!drainEnded && (yield* due.isIdle(nowMs))) return;
     const readVersion = yield* due.version;
     const sandboxes = yield* listLiveSandboxes();
-    const drivers = sandboxes.some((sandbox) => sandbox.state === "ready")
+    const drivers = sandboxes.some(needsDriver)
       ? new Map((yield* registry.list).map((driver) => [driver.driverId, driver]))
       : new Map<ComputeDriverId, ComputeDriver["Service"]>();
     const queues = admissionQueues(sandboxes);
@@ -369,7 +422,9 @@ export const makeSweep = Effect.gen(function* () {
       const deadlineMs = bootDeadlineMs(sandbox);
       if (deadlineMs === null) continue;
       if (deadlineMs > nowMs) {
-        nextDueMs = Math.min(nextDueMs, deadlineMs);
+        const check = yield* checkBoot(sandbox, drivers.get(sandbox.driverId), nowMs);
+        if (check.failed) acted = true;
+        nextDueMs = Math.min(nextDueMs, check.nextDueMs, deadlineMs);
         continue;
       }
       acted = true;

@@ -4694,8 +4694,8 @@ Commits, in order:
         sandbox)` and `failure: { code: "boot-stopped", message: "The machine stopped before it
         was ready.", retryable: true }`.
       - `missing` dispatches `{ code: SANDBOX_BACKEND_MISSING, message: "The machine and its disk
-        are gone. Retry starts a new one.", retryable: true }`, the same text as `reportMissing`
-        (SandboxEffects 554).
+        are gone. Retry starts a new one.", retryable: true }`, shared with `reportMissing`
+        (SandboxEffects 554) as `SANDBOX_BACKEND_MISSING_FAILURE`.
       - Otherwise `nextDueMs = min(nextDueMs, nowMs + BOOT_CHECK_MS, deadlineMs)`.
       - The `drivers` map (320–322) is built when a sandbox is `ready` or is `provisioning` with a
         `driverRef`. Status errors are logged and the sweep goes on; the deadline stays the
@@ -4774,9 +4774,10 @@ Commits, in order:
     token in hello, keeps a reconnect inside the lease silent, and loses it at expiry" (82).
     Subscribe to `hub.drops` before `first.drop` (106) and assert one `{ sandboxId: sandboxA,
     generation: 1, runnerBootId: attached.runnerBootId }`.
-  - `apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts`, beside "turns a runner's
-    attached fact into a ready sandbox on the owner thread" (1055), add `it.effect("loses a
-    dropped runner's machine at once when its container stopped, and keeps one still running")`:
+  - `apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts`, in its own `it.layer` block
+    "runner drops", add `it.effect("loses a dropped runner's machine at once when its container
+    stopped, and keeps one still running")`. Beside 1055 its drains would claim the `sandbox.create`
+    effects earlier cases leave queued, and hang on the fake driver.
     - Set up two ready sandboxes with `provisioned`, `runAnswering(runtime, answerCreateOf(id))`
       and `attachAndRelease` (468, runner boot `"boot"`).
     - Build `RunnerHubFacts.layer` with `runtime.layerDriver` and `Layer.mock(RunnerHub)({ facts:
@@ -4790,19 +4791,18 @@ Commits, in order:
     - Fails on `feat/pair`: `drops` does not exist.
   - Add `drops: Stream.never` to the mocks at 1061 and 1107.
 - Commit 4b:
-  - `SandboxLifecycle.test.ts`, beside "fails a sandbox whose runner never connects at the boot
-    deadline" (1727), add `it.effect.each([...])("checks a booting machine's backend and fails it
-    when it is $status")`. Each row runs `provisioned`, then `runAnswering(runtime,
-    answerCreate)`, then `makeSweep` with `runtime.layerDriver` and `TestClock.adjust("30
-    seconds")`. It forks `sweep()`, answers the `status` call with the row's status (the shape at
-    766–772) and joins. Rows:
+  - `SandboxLifecycle.test.ts`, in its own `it.layer` block "sandbox boot checks", add
+    `it.effect.each([...])("checks a booting machine's backend and fails it when it is $status")`.
+    Each row runs `provisioned`, then `runAnswering(runtime, answerCreate)`, then `makeSweep` with
+    `runtime.layerDriver` and `TestClock.adjust("30 seconds")`. It forks `sweep()`, answers the
+    `status` call with the row's status (the shape at 766–772) and joins. Rows:
     - `stopped`: state `failed` with the `boot-stopped` failure. The next `runAnswering` gets the
       `stop` call.
     - `missing`: code `missing`, `driverRef` null.
     - `running`: still `provisioning`.
   - The 1727 case is unchanged: its create is unanswered, so there is no `driverRef` and no check.
-    None of the other `makeSweep` cases (1443–2126) has a created, unattached `provisioning`
-    sandbox 30 s old; run the file to confirm.
+    The rows can't sit in the worker block (1443–2126): its leftover machines and queued effects
+    join their sweeps and drains.
   - `SandboxDecisions.test.ts`, after "a boot deadline after the runner attached" (538), add two
     rows. "a stopped boot fails a waking machine and stops it": `waking`, then `failed` with effects
     `["sandbox.stop", "sandbox.release-waiters"]`. "a stopped boot after the runner attached":

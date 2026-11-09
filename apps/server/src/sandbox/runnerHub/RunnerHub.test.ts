@@ -104,8 +104,16 @@ it.effect(
         // The token came in `runner.hello`; the reconnect uses it and attaches nothing new.
         const bearer = yield* runner.authorization;
         assert.match(Redacted.value(bearer), /^Bearer /);
+        const drops = yield* hub.drops.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
         yield* first.drop;
         yield* awaitStatus(sandboxA, "reconnecting");
+        assert.deepStrictEqual(Array.from(yield* Fiber.join(drops)), [
+          { sandboxId: sandboxA, generation: 1, runnerBootId: attached.runnerBootId },
+        ]);
         yield* TestClock.adjust("119 seconds");
         const second = yield* runner.connect(bearer);
         yield* awaitStatus(sandboxA, "connected");
