@@ -17,12 +17,12 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (13 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.4, 2.7, 2.22, 2.25, 2.31, 2.32, 2.33, 2.34, 2.36, 2.38, 2.43, 2.44. In flight on the
-Mac (worktrees under `../pair-wt/`): 2.2, 2.8, 2.23, 2.35, 2.37, 2.39. Lead decision awaiting
-maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the App only
-where that can't (07 open question 1 recommended App-first). Open maintainer questions are under the
-spec page's "What the code changed in 10 §2".
+**M2 (21 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.2, 2.4, 2.7, 2.8, 2.22, 2.23, 2.24, 2.25, 2.31–2.39, 2.43, 2.44, 2.47. In flight on
+the Mac (worktrees under `../pair-wt/`): 2.9, 2.13, 2.18, 2.26, 2.27, 2.42, 2.45. Lead decision
+awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
+App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
+under the spec page's "What the code changed in 10 §2".
 
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
@@ -1083,6 +1083,139 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - For 2.8/2.13: a failed snapshot sync isn't retried by the 30 s pass (time stays unset); after an
   unplanned stop the field is null while an older snapshot ref may still be in the mirror. Docker
   runtime transcript owed in G2.
+
+## 2.2 wake triggers (landed)
+
+- `SandboxWake` tag in `apps/server/src/sandbox/lifecycle/SandboxWakeService.ts` (key
+  `t3/sandbox/lifecycle/SandboxWakeService/SandboxWake`); layer in `SandboxWake.ts` (split to break
+  a cycle through the terminal manager). `wake({threadId, actorId?})` sends one `sandbox.wake` when
+  the machine is `sleeping`, id `sandbox-wake:<sandboxId>:<ownerThreadId>:<generation>`; `viewed`
+  wakes only on a new viewer lease of a thread that is neither settled nor archived. Never fails.
+- `sandbox.viewing` RPC calls `sandboxWake.viewed`. A key typed in a stopped machine's terminal wakes
+  it (TerminalManager reads `SandboxWake` per call via `serviceOption`).
+- Orchestrator: a cloud-thread `checkpoint.rollback` takes the admission lock, refuses when the
+  machine has no disk, else wakes like a prompt (shared `applyCloudWake`) and parks its rollback
+  effect `RESTORE_PARK_MS` (10 min). `EffectOutboxV2.expedite({threadIds, effectTypes})`; a pending
+  `provider-thread.rollback` no longer blocks the thread's `sandbox.*` effects. `releaseWaiters`
+  expedites parked rollbacks. `ThreadMessageIntake.dispatchSandboxCommand` is exported.
+- For 2.18: call `SandboxWake.wake`. Gaps: the no-disk restore refusal is untested; a side chat's
+  restore committed after the owner's release-waiters waits out the full park.
+
+## 2.35 Pair's one app build (landed)
+
+- `MemberPushNotifier`: pushes gate on `cloudOnly ? true : team.isTeamMode` (handle and seeding);
+  `ws.ts` advertises `memberPush` when `cloudOnly || isTeamMode`. `AgentAwarenessRelay` treats a
+  cloud-only server like a team server (no Live Activity).
+- Mobile: `T3CODE_ANDROID_PACKAGE` override (Java package pattern check). `eas.json` gains
+  `pair-production` build and submit profiles with `PAIR_*_PLACEHOLDER` values that fail the config
+  checks until replaced. The Google services file stays an EAS file variable, not profile env.
+- `decisions.md` "Identifiers and builds" rewritten; team-push.md, team.md, pair-features.md, 01
+  and 08 updated. Owed: real store ids/Apple team/EAS project/ASC app id/Firebase (maintainer),
+  a device pass on Pair's preview build, a CI workflow for `pair-production`; universal links don't
+  open Pair's build in M2.
+
+## 2.23 launch gate (landed)
+
+- `NOT_CLOUD_ONLY_MESSAGE` in `packages/shared/src/sandbox.ts`. `SandboxDecisionInput.cloudOnly`
+  and `decideCloudPrompt({..., cloudOnly})` are required; refusal reason `"not-cloud-only"`.
+  `decideSandboxCommand` wraps the private `decide` with `createsMachine` (a `sandbox.create`
+  effect, or a new-generation `provisioning`). Off cloud-only, a gated `sandbox.admit` marks the
+  record `failed` with `failure.code "not-cloud-only"` (retryable false) and releases waiters; every
+  other gated command is refused. Waking, sleeping and discarding stay open everywhere.
+- `CloudLaunchError` reason `"not-cloud-only"`; `resolveCloudLaunch` checks
+  `ServerConfig.cloudOnly` first (2.24 should move it into `cloudAvailability`).
+- `delegated_task.request` moved to `OrchestrationV2InternalCommand` (clients can't dispatch it).
+- Lead fix at landing: 2.2's `parkRestoreForMachine` now passes `cloudOnly`. Untested: that the
+  orchestrator passes `cloudOnly` through; Settings → Cloud **Test** isn't behind the gate (2.24
+  hides Cloud on these servers). At a full cap, a gated waiting create fails once a slot frees.
+
+## 2.39 effect lanes and bounds (landed)
+
+- `EFFECT_LANE_SLOTS = 4` (exported) and module-private `RUNNER_BOUND_EFFECT_TYPES` (turn
+  start/restart, runtime continue, rollback, checkpoint capture, terminal cleanup) in
+  EffectOutbox.ts. A runner-bound effect on a thread in `orchestration_v2_projection_sandbox_threads`
+  claims from its own lane of 4; everything else shares the other 4. The worker runs
+  `2 * EFFECT_LANE_SLOTS` fibers. Lane counts are global (a test leaving rows `running` in a shared
+  DB fills a lane).
+- `EFFECT_TIMEOUTS` adds `checkpoint.capture` and `provider-thread.rollback` (10 min) and
+  `terminal.cleanup` (60 s), and `satisfies` replay-safe types only. The rollback's
+  `checkpoint.rollback.fail` report moved to `reportExhausted`, so a timed-out last attempt still
+  sets `rollbackFailure`.
+- Unrelated Mac failure: `sandbox/runner/handlers.test.ts` "signals a ready watch…" (120 s timeout).
+
+## 2.37 drain before upgrade (landed)
+
+- `apps/server/src/drain/ServerDrain.ts` (in-memory: `current`, `changes`, `start`, `cancel`,
+  `watch`; `layerTest`). `t3 drain [--timeout 15m] [--cancel]` (`cli/drain.ts`); shared server
+  connection code moved to `cli/liveServer.ts`.
+- Contracts: `server.drain` (stream of `ServerDrainStatus {since, runningTurns}`) and
+  `server.cancelDrain`, both `AuthEnvironmentMaintainScope`; `ServerDrainError`;
+  `SandboxAdmissionReason "draining"`; `ServerConfig.drainingSince`; a `drainUpdated` config event
+  sent only to subscribers passing `drainUpdates: true`.
+- `ProjectionStore.countRunningRuns`. Admission, decisions (`AdmissionSnapshot.draining`;
+  `sandbox.admit` refuses while draining), the orchestrator's prompt gate, SandboxEffects and the
+  lifecycle worker hold new prompts and machines during a drain; the sweep checks for an ended
+  drain itself. `selfUpdate` drains before hand-off and cancels only its own drain on refusal.
+- Clients: waiting label, a drain notice above a cloud thread's composer (web and mobile), Settings
+  → Cloud notice with **Cancel drain** for admins.
+- Gaps: a run still preparing its checkout isn't held if its machine turns ready mid-drain; no
+  server test for the opt-in event; ChatView browser tests owed; runtime transcript owed in G2.
+
+## 2.47 managed Codex account add (landed, root cause unconfirmed)
+
+- Web `AddCodexAccountDialog.createAccount` now sends `mutateProviderInstance` `create`, and
+  onboarding's Codex mode switch sends `upsert`; no web code writes the whole `providerInstances`
+  map any more (`buildProviderInstanceUpdatePatch` remains only in ProviderSettingsPanel, which
+  strips the map). Lead 2 (sign-in before the registry builds the instance) is ruled out for Add
+  provider; a watcher reload after create yields an equal config.
+- Not confirmed: reproduce Add provider → ChatGPT in a real client in G2 (note which "no longer
+  available" message fires and whether the account stays in settings.json). Untraced candidates:
+  server-mode OAuth callback on `localhost:1455` not reaching a remote server, and the panel's
+  "…on this device." message after the return-URL reload. Browser tests owed:
+  AddCodexAccountDialog, WelcomeWizard.import.
+
+## 2.24 Cloud offered only on cloud-only servers (landed)
+
+- `ExecutionEnvironmentCapabilities.cloudLaunch` (contracts environment.ts), set true only when
+  `ServerConfig.cloudOnly`. `cloudAvailability(settings, projectId, cloudLaunch)` returns reason
+  `"not-cloud-only"` first (message `NOT_CLOUD_ONLY_MESSAGE`); `newThreadPrefersCloud(...,
+  cloudLaunch)` ignores `defaultsToCloud` (every new thread is cloud while available). The 2.23
+  check in `resolveCloudLaunch` now comes from `cloudAvailability`.
+- Web: `environmentCloudLaunchAtom` (state/server.ts), `CloudEnvModeItem.only` (pickers show Cloud
+  alone), `resolveEffectiveEnvMode(..., cloudLaunch)`; `cloudSettingsVisible` in
+  CloudSettings.logic.ts; search-row flag `cloudSettingsOnly`, `sandboxOnly` needs `cloudLaunch`.
+  Off cloud-only, Settings → Cloud hides Add/Test/Edit/base image/limits/env (Remove and Leave
+  restore mode stay) and shows "Cloud moved to Pair Cloud…". Project Workspace picker lost Cloud;
+  a stale `defaultsToCloud` clears on the next workspace write. Mobile follows `cloudLaunch`.
+- On a cloud-only server `"not-configured"` shows Cloud disabled with its message (local modes are
+  refused there). Not done: the project Workspace default still lists local/worktree on cloud-only
+  servers. Browser tests owed: ChatView, CommandPalette, SettingsSidebarNav.composition,
+  ProjectSettingsPanel.
+
+## 2.8 asleep reads (landed f072d5046)
+
+- contracts terminal.ts: `TerminalStoppedBy {reason: "sleep" | null (forward-compatible), at}`, optional
+  `stoppedBy` on snapshot, summary and exited event.
+- Server: `StoppedSandboxReads` gains snapshot candidates (only while `sleepSnapshotAt` is set; a
+  wake does not reset it, 2.13 owns that), `StoppedView.source` ("snapshot" | "checkpoint") and
+  `diffPreview` (whole tree, Uncommitted source only; branch/commit sources come back empty).
+  `ReviewService` reads the mirror for an unreachable /t3-sandbox/ cwd before the workspace guard;
+  `getDiffFileContents` fails `VcsUnsupportedOperationError` "This machine is asleep…".
+  `CheckpointMirror.snapshotNamers`; review constants exported from `GitVcsDriverCore`.
+- `SandboxEffects.SandboxSleepHooks` (Context.Reference, no-op default) runs after the snapshot and
+  mirror flush, before driver.stop; server.ts wires it to `TerminalManager.stopForSleep`, which
+  exits each shell with `stoppedBy`. The next open on a reachable machine keeps history, appends
+  "Machine woke. Earlier processes were stopped." and spawns. Restart is client-driven (type, or Wake
+  by this viewer); viewing never restarts. client-runtime lifecycle neither closes nor reopens a
+  sleep-stopped shell.
+- client-runtime sandbox.ts: `stoppedFilesFromProjection`, `stoppedReadLabel`,
+  `terminalStoppedLabel`, `TERMINAL_ASLEEP_LABEL`. 2.9 passes `stoppedFilesFromProjection(projection)`
+  to `stoppedReadLabel`.
+- Web `TerminalStoppedNotice`, `stoppedFilesNotice`; mobile `StoppedMachineNotice` (files, review,
+  terminal; not the file inspector pane). Browser tests owed: ThreadTerminalDrawer, DiffPanel,
+  FilePreviewPanel. Mobile notice placement under the iOS header needs a look in G2.
+- Lead fixes at landing: merged 2.2's wake-on-key check into 2.8's Manager.test case; removed
+  duplicate imports from the auto-merge (Manager.ts `sandboxIdFromPath`, client-runtime DateTime).
 
 ## Open follow-ups and risks
 
