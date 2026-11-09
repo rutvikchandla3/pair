@@ -608,6 +608,11 @@ const makeLaptop = (
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(
+        Layer.succeed(ServerConfig.ServerConfig, {
+          cloudOnly: false,
+        } as ServerConfig.ServerConfig["Service"]),
+      ),
       Layer.fresh,
     );
     const here = yield* Layer.build(layerHere);

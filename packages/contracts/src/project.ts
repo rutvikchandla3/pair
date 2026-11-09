@@ -456,6 +456,7 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "operation_failed",
+  "cloud_only",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
 

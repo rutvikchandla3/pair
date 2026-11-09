@@ -28,6 +28,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -40,6 +41,11 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(layerSingleMemberViews),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.succeed(ServerConfig.ServerConfig, {
+      cloudOnly: false,
+    } as ServerConfig.ServerConfig["Service"]),
+  ),
 );
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");

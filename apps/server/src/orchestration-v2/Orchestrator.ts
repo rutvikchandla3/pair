@@ -209,6 +209,7 @@ import {
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
@@ -315,6 +316,15 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+export class OrchestratorLocalThreadReadOnlyError extends Schema.TaggedError<OrchestratorLocalThreadReadOnlyError>()(
+  "OrchestratorLocalThreadReadOnlyError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return "This thread ran on the server, which now runs threads only in the cloud. Start a cloud thread to continue.";
+  }
+}
+
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
   {
@@ -403,6 +413,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorLocalThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
   OrchestratorRuntimeModeAboveCeilingError,
   OrchestratorSandboxCommandMovedError,
@@ -1185,6 +1196,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
@@ -11034,6 +11046,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * A prompt to a cloud thread whose machine is not `ready` waits in `preparing`; on the owner the
    * same commit wakes the machine, or provisions a new one after a discard.
    */
+  // A thread without a machine ran on this server; on a cloud-only server it takes no new work.
+  const refuseLocalThread = Effect.fn("Orchestrator.refuseLocalThread")(function* (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    loaded?: Pick<OrchestrationV2AppThread, "sandboxId">,
+  ) {
+    if (!cloudOnly) return;
+    const thread =
+      loaded ??
+      (yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        ));
+    if (thread.sandboxId === undefined) {
+      return yield* new OrchestratorLocalThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+      });
+    }
+  });
+
   const gateCloudMessage = Effect.fn("Orchestrator.gateCloudMessage")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     thread: OrchestrationV2ThreadProjection["thread"],
@@ -14358,6 +14393,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
           });
         }
+        yield* refuseLocalThread(command, thread);
         const guestSend =
           command.guestMessageId === undefined
             ? undefined
@@ -14390,6 +14426,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchPreparedRunFail(command, events);
         break;
       case "prepared-run.retry":
+        yield* refuseLocalThread(command);
         yield* dispatchPreparedRunRetry(command, events);
         break;
       case "runtime-request.respond":
@@ -14530,6 +14567,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedRunEdit(command, events);
         break;
       case "checkpoint.rollback":
+        yield* refuseLocalThread(command);
         yield* dispatchCheckpointRollback(command, events, effects);
         break;
       case "checkpoint.rollback.fail":
@@ -14727,7 +14765,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
             cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
-            cause._tag === "OrchestratorSandboxCommandMovedError"
+            cause._tag === "OrchestratorSandboxCommandMovedError" ||
+            cause._tag === "OrchestratorLocalThreadReadOnlyError"
           ) {
             return yield* cause;
           }
@@ -15475,6 +15514,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | RuntimePolicyV2
   | SandboxAdmission.SandboxAdmission
+  | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(

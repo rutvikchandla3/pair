@@ -232,3 +232,16 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
+
+export const CLOUD_ONLY_MESSAGE =
+  "This server runs agents, terminals and scripts only on cloud machines.";
+
+/** A cloud-only server refused work on its own machine. */
+export class CloudOnlyRefusedError extends Schema.TaggedError<CloudOnlyRefusedError>()(
+  "CloudOnlyRefusedError",
+  { operation: Schema.String },
+) {
+  override get message(): string {
+    return CLOUD_ONLY_MESSAGE;
+  }
+}

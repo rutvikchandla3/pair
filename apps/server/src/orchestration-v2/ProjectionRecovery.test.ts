@@ -26,6 +26,7 @@ import * as Statement from "effect/sql/Statement";
 
 import delegatedRecoveryIndexes from "../persistence/Migrations/079_DelegatedRecoveryIndexes.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -53,6 +54,11 @@ const layerRecoveryTest = ProviderRuntimeRecovery.layer.pipe(
     ),
   ),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.succeed(ServerConfig.ServerConfig, {
+      cloudOnly: false,
+    } as ServerConfig.ServerConfig["Service"]),
+  ),
 );
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };

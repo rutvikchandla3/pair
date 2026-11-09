@@ -59,6 +59,7 @@ import * as ThreadTitles from "../../orchestration-v2/ThreadTitleRegenerationSer
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
+import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
@@ -77,7 +78,6 @@ import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "./SandboxReconciler.ts";
 import * as SandboxRestoreMode from "./SandboxRestoreMode.ts";
-import * as ServerConfig from "../../config.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -1420,6 +1420,9 @@ it.layer(layerTest)("delegated cloud tasks", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            Layer.succeed(ServerConfig.ServerConfig, {
+              cloudOnly: false,
+            } as ServerConfig.ServerConfig["Service"]),
             Layer.mock(ThreadLaunch.ThreadLaunchService)({
               prepareRun: (input) =>
                 input.threadId === child.id

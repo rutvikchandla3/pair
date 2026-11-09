@@ -42,6 +42,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "branch-not-pushed",
     "no-branch",
     "sandbox-failed",
+    "local-launch",
   ]),
   baseRef: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.String),
@@ -65,6 +66,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return "Name the existing branch to launch from.";
       case "sandbox-failed":
         return this.failure?.message ?? "The machine stopped before it was ready.";
+      case "local-launch":
+        return "This server runs threads only in the cloud. Launch it as a cloud thread.";
     }
   }
 }

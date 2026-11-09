@@ -27,6 +27,7 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
@@ -56,6 +57,16 @@ export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRun
   }
 }
 
+export class CloudOnlyLocalWorkError extends Schema.TaggedError<CloudOnlyLocalWorkError>()(
+  "CloudOnlyLocalWorkError",
+  { threadIds: Schema.Array(ThreadId) },
+) {
+  override get message(): string {
+    const count = this.threadIds.length;
+    return `Cloud-only mode can't start while ${count} local thread${count === 1 ? "" : "s"} ${count === 1 ? "has" : "have"} work (${this.threadIds.join(", ")}). Start without --cloud-only, let them finish or stop them, then restart with it.`;
+  }
+}
+
 export interface ProviderRuntimeRecoverySummary {
   readonly terminalizedRuns: number;
   readonly stoppedSessions: number;
@@ -79,7 +90,10 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
       trigger: "startup" | "shutdown",
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
-    readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
+    readonly recover: Effect.Effect<
+      ProviderRuntimeRecoverySummary,
+      ProviderRuntimeRecoveryError | CloudOnlyLocalWorkError
+    >;
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
@@ -187,6 +201,7 @@ function latestStartedRun(
 
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -927,7 +942,26 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
   );
 
+  // Before reconciling, so a refused start changes nothing and a restart without the flag resumes.
+  const refuseLocalWork = Effect.gen(function* () {
+    const read = Effect.mapError(
+      (cause: ProjectionStore.ProjectionStoreV2Error) =>
+        new ProviderRuntimeRecoveryError({ operation: "read-projections", cause }),
+    );
+    const candidates = new Set([
+      ...(yield* projections.getRecoveryThreadIds("runtime").pipe(read)),
+      ...(yield* projections.getRecoveryThreadIds("queued-runs").pipe(read)),
+    ]);
+    const local: Array<ThreadId> = [];
+    for (const threadId of candidates) {
+      const shell = yield* projections.getThreadShell(threadId).pipe(read);
+      if (shell !== null && shell.sandboxId === undefined) local.push(threadId);
+    }
+    if (local.length > 0) return yield* new CloudOnlyLocalWorkError({ threadIds: local });
+  });
+
   const recover = Effect.gen(function* () {
+    if (cloudOnly) yield* refuseLocalWork;
     const { summary, parkedCloudRuns } = yield* reconcileThreads("startup");
     // Runs with no checkout to make are released by their machine's durable release-waiters.
     if (Option.isSome(threadLaunch)) {

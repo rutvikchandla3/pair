@@ -113,6 +113,7 @@ import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingEr
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   clientModeCeiling,
@@ -1028,6 +1029,7 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const threadViewers = yield* makeThreadViewers;
   const team = yield* Effect.serviceOption(TeamState.TeamState);
@@ -2397,6 +2399,12 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      if (cloudOnly && input.isolation !== "cloud") {
+        return yield* failure(
+          "invalid_request",
+          "This server runs threads only in the cloud. Use isolation 'cloud'.",
+        );
+      }
       if (
         input.target?.projectId !== undefined &&
         input.target.projectId !== parent.thread.projectId
@@ -2829,6 +2837,12 @@ const make = Effect.gen(function* () {
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
+        if (cloudOnly || parent.thread.sandboxId !== undefined) {
+          return yield* failure(
+            "invalid_request",
+            "create_threads shares your checkout, which cloud threads can't do. Use delegate_task with isolation 'cloud'.",
+          );
+        }
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
           parentRun === undefined ||
@@ -3371,6 +3385,7 @@ export const layer: Layer.Layer<
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
+  | ServerConfig.ServerConfig
   | RemoteDelegation.RemoteDelegation
   | ProjectionStore.ProjectionStoreV2
   | TeamState.TeamState

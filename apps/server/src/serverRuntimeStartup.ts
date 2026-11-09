@@ -193,6 +193,8 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<Pick<Project, "id" | "workspaceRoot" | "autoPull">>,
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
+  // A pull writes the server's own checkouts, which a cloud-only server never does.
+  if ((yield* ServerConfig.ServerConfig).cloudOnly) return;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const workspaceRoots = [
     ...new Set(

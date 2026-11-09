@@ -1528,29 +1528,18 @@ it adds.
     - Add `cloudOnly ? Option.some(false) : Option.none()` to the `autoBootstrapProjectFromCwd`
       precedence (389–397), because a cwd project is a local project.
     - Return `cloudOnly` with the config (522).
-  - **New** `apps/server/src/environment/CloudOnly.ts` (proposed):
-    ```ts
-    export const CLOUD_ONLY_MESSAGE =
-      "This server runs agents, terminals and scripts only on cloud machines.";
-    export class CloudOnlyRefusedError extends Schema.TaggedError<CloudOnlyRefusedError>()(
-      "CloudOnlyRefusedError",
-      { operation: Schema.String },
-    ) {
-      override get message() {
-        return CLOUD_ONLY_MESSAGE;
-      }
-    }
-    /** On a cloud-only server, fails unless `path` resolves to a sandbox host. */
-    export const refuseLocalHost = Effect.fn("CloudOnly.refuseLocalHost")(function* (
-      operation: string,
-      path: string | null,
-    ) {
-      /* ServerConfig.cloudOnly false: void; null path or forPath(path).kind !== "sandbox": fail */
-    });
-    ```
-    It reads `ServerConfig` and `WorkspaceHosts.forPath` (WorkspaceHosts.ts 52). It is fail-closed
-    by type: there is deliberately no `Context.Reference` default that could leave the flag off in a
-    layer that forgot to provide it.
+  - **New** `apps/server/src/environment/CloudOnly.ts`:
+    - It re-exports `CLOUD_ONLY_MESSAGE` and `CloudOnlyRefusedError` (`operation`; its message is
+      `CLOUD_ONLY_MESSAGE`). Both are defined in `packages/contracts/src/environment.ts`, so the
+      wire errors below and `TerminalCloudOnlyError` share the one string.
+    - `refuseLocalHost(operation, path)`: on a cloud-only server it fails for a null path or a path
+      whose host is not `"sandbox"`. A path under the sandbox root whose machine is not connected
+      passes, because routing to it already fails closed.
+    - `localHostGuard` reads the services once, so a service's methods can call the check without
+      gaining an R.
+    - It reads `ServerConfig` and `WorkspaceHosts.forPath` (WorkspaceHosts.ts 52). It is fail-closed
+      by type: there is deliberately no `Context.Reference` default that could leave the flag off in
+      a layer that forgot to provide it.
   - `apps/server/src/orchestration-v2/Orchestrator.ts`:
     - Add `OrchestratorLocalThreadReadOnlyError` (`commandId`, `threadId`) beside
       `OrchestratorSubagentThreadReadOnlyError` (309–316). Its message: "This thread ran on the
@@ -1564,10 +1553,12 @@ it adds.
         (14365);
       - in `prepared-run.retry` (14392);
       - in `checkpoint.rollback` (14532), whose rollback touches the host checkout.
+    - The refusal records no rejected receipt, like the mode-limit refusals: the same command must
+      work again after a restart without `--cloud-only`.
     - Forks and merge-backs are transcript-level and stay open.
   - `apps/server/src/orchestration-v2/ProviderSessionManager.ts` `open` (~2160): on cloud-only, a
-    null `cwd`, or a `cwd` whose host is not `"sandbox"`, fails `ProviderWorkspaceMissingError`
-    (the same error 2168 uses) before any spawn. This is the backstop for every path that reaches a
+    null `cwd`, or a `cwd` whose host is not `"sandbox"`, fails `CloudOnlyRefusedError` before any
+    spawn. `ProviderWorkspaceMissingError` would tell the user the folder is gone. This is the backstop for every path that reaches a
     provider without the Orchestrator's check, such as outbox effects queued before the restart.
   - `apps/server/src/orchestration-v2/ThreadLaunchService.ts` `launch` (960): on cloud-only, a
     `workspaceStrategy.type !== "cloud"` fails before `checkCloudLaunch` (969–975). It uses
@@ -1592,20 +1583,31 @@ it adds.
       release. The same holds for `"cloud_only"` below.
     - `apps/server/src/terminal/Manager.ts` `openWithWorkspaceLease` (2877): after `assertValidCwd`
       (2881), a non-null `host` with `host.kind !== "sandbox"` on cloud-only fails
-      `TerminalCloudOnlyError`. `Manager.ts` already reads `ServerConfig` (1403).
+      `TerminalCloudOnlyError`. `make` reads `ServerConfig` (1403) and passes `cloudOnly` as a
+      required `TerminalManagerOptions` field, so `makeWithOptions` callers can't leave it off.
     - Setup and project scripts open terminals (`ProjectSetupScriptRunner.ts`), so this one check
       covers them. The server still parses `t3.json`.
   - Workspace writes:
     - `packages/contracts/src/project.ts`: `ProjectFileFailure` (453) gains `"cloud_only"`.
     - `apps/server/src/workspace/WorkspaceFileSystem.ts` `writeFile` (496): after `hostForCwd`
-      (500), a local host on cloud-only fails `ProjectWriteFileError` (552) with `"cloud_only"`.
-  - Host-tool RPCs, refused in the service each `ws.ts` handler calls through `refuseLocalHost` or
-    a plain cloud-only check, mapped to that RPC's existing error with `CLOUD_ONLY_MESSAGE`:
-    - `shellOpenInEditor` (ws.ts 3148, `externalLauncher.launchEditor`);
-    - `projectsEnsureScratch` (3031) and `projectsCreateNew` (3037), until 2.26 replaces create;
-    - `agentSessionsScan` and `agentSessionsImport` (3163–3164);
-    - `serverImportAcpRegistrySession` (2536);
-    - `previewStopLocalServer` (3381).
+      (500), a local host on cloud-only fails `CloudOnlyRefusedError`. `ws.ts`
+      `projectFileFailureContext` maps it to `ProjectWriteFileError` (552) with `"cloud_only"`.
+  - Host-tool RPCs, each refused with a plain cloud-only check:
+    - `projectsEnsureScratch` (3031) and `projectsCreateNew` (3037), until 2.26 replaces create:
+      in `ManagedProjectFolders`, so the MCP project tools refuse too. The existing
+      `OrchestrationDispatchCommandError` carries the message.
+    - `serverImportAcpRegistrySession` (2536): in ws.ts `importAcpRegistrySession`, as
+      `AcpRegistryOperationError` `"session_import_failed"` with `CLOUD_ONLY_MESSAGE`. Its root
+      launch is refused by `"local-launch"` anyway.
+    - `agentSessionsScan` and `agentSessionsImport` (3163–3164): in `AgentSessionScanner` `scan` and
+      `recentThreads`, which the importer reads before it writes anything.
+    - `shellOpenInEditor` (ws.ts 3148) and `previewStopLocalServer` (3381): in the ws.ts handler,
+      because `ExternalLauncher` and `PortScanner` also run where no `ServerConfig` exists (`t3
+      connect`, the runner).
+    - These four RPCs' errors have fixed messages, so `CloudOnlyRefusedError` joins their error
+      unions in `rpc.ts`. Like `"cloud_only"`, that is safe before G2.
+  - Startup auto-pull: `autoPullProjects` (serverRuntimeStartup.ts 192) returns at once on
+    cloud-only. It runs `git pull` on the server's checkouts, the write `pullCurrentBranch` refuses.
   - Git writes on host paths: `GitWorkflowService.ts` `pullCurrentBranch` (378), `runStackedAction`
     (382), `createWorktree` (418), `removeWorktree` (472), `createRef` (487), `switchRef` (496),
     `preparePullRequestThread` (interface 71), and `VcsProvisioningService.initRepository`
@@ -1676,9 +1678,12 @@ it adds.
   cloud-only server and for a cloud caller. Beside "a cloud task $name" (1952), add "a worktree or
   shared task on a cloud-only server is refused before any thread": `delegateTask` with each
   isolation returns `invalid_request` and dispatches nothing.
-- `ProviderSessionManager`, the host-tool RPCs and the git writes share one helper. Add one table
-  `CloudOnly.test.ts` for `refuseLocalHost` (local path, machine path, null, reserved root), and
-  give each site a reviewer check rather than its own test.
+- The git writes share `refuseLocalHost`. Add one table `CloudOnly.test.ts` for it (local path,
+  connected and sleeping machine paths, null, a path that climbs out of a machine), and give each
+  git site, `ProviderSessionManager` and the host-tool RPCs a reviewer check rather than its own
+  test.
+- `apps/server/src/serverRuntimeStartup.test.ts`: extend "automatic pull only updates enabled,
+  behind, clean default-branch checkouts" with a cloud-only pass that pulls nothing.
 
 **Verify.**
 

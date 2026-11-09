@@ -28,6 +28,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
+import * as CloudOnly from "../environment/CloudOnly.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -180,6 +181,26 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const refuseLocalHost = yield* CloudOnly.localHostGuard;
+  // Writes only: the server's own reads and fetches (mirror, Pair Cloud checkouts) stay open.
+  const refuseLocalCommand = (operation: string, cwd: string) =>
+    refuseLocalHost(operation, cwd).pipe(
+      Effect.mapError(
+        () =>
+          new GitCommandError({
+            operation,
+            command: "cloud-only",
+            cwd,
+            detail: CloudOnly.CLOUD_ONLY_MESSAGE,
+          }),
+      ),
+    );
+  const refuseLocalManager = (operation: string, cwd: string) =>
+    refuseLocalHost(operation, cwd).pipe(
+      Effect.mapError(
+        () => new GitManagerError({ operation, cwd, detail: CloudOnly.CLOUD_ONLY_MESSAGE }),
+      ),
+    );
 
   // Nested projects and path aliases must share the checkout's branch-mutation lease.
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
@@ -376,12 +397,14 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
     pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
-      return ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
+      return refuseLocalCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
+        Effect.andThen(ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd)),
         Effect.andThen(git.pullCurrentBranch(cwd)),
       );
     }),
     runStackedAction: Effect.fn("GitWorkflowService.runStackedAction")(function (input, options) {
-      return ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
+      return refuseLocalManager("GitWorkflowService.runStackedAction", input.cwd).pipe(
+        Effect.andThen(ensureGit("GitWorkflowService.runStackedAction", input.cwd)),
         Effect.flatMap((handle) =>
           withCheckoutLease(
             handle.repository.rootPath,
@@ -396,7 +419,8 @@ export const make = Effect.gen(function* () {
     ),
     preparePullRequestThread: Effect.fn("GitWorkflowService.preparePullRequestThread")(
       function (input) {
-        return ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+        return refuseLocalManager("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+          Effect.andThen(ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd)),
           Effect.flatMap((handle) =>
             input.mode === "local"
               ? withCheckoutLease(
@@ -416,7 +440,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     createWorktree: Effect.fn("GitWorkflowService.createWorktree")(function (input, options) {
-      return ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
+      return refuseLocalCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
+        Effect.andThen(ensureGitCommand("GitWorkflowService.createWorktree", input.cwd)),
         Effect.andThen(gitManager.createWorktree(input, options)),
       );
     }),
@@ -475,7 +500,8 @@ export const make = Effect.gen(function* () {
       },
     ),
     removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
-      return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+      return refuseLocalCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+        Effect.andThen(ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd)),
         Effect.andThen(git.removeWorktree(input)),
       );
     }),
@@ -490,7 +516,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     createRef: Effect.fn("GitWorkflowService.createRef")(function (input) {
-      return ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
+      return refuseLocalCommand("GitWorkflowService.createRef", input.cwd).pipe(
+        Effect.andThen(ensureGitCommand("GitWorkflowService.createRef", input.cwd)),
         Effect.flatMap((handle) =>
           input.switchRef
             ? withCheckoutLease(handle.repository.rootPath, git.createRef(input))
@@ -499,7 +526,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     switchRef: Effect.fn("GitWorkflowService.switchRef")(function (input) {
-      return ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
+      return refuseLocalCommand("GitWorkflowService.switchRef", input.cwd).pipe(
+        Effect.andThen(ensureGitCommand("GitWorkflowService.switchRef", input.cwd)),
         Effect.flatMap((handle) =>
           withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
         ),

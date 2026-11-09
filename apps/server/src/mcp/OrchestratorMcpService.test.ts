@@ -64,6 +64,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -83,11 +84,17 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
-const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
-  Layer.provide(layerSingleMemberViews),
-  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-);
+const layerServerConfig = (cloudOnly = false) =>
+  Layer.succeed(ServerConfig.ServerConfig, { cloudOnly } as ServerConfig.ServerConfig["Service"]);
+
+const orchestratorService = (cloudOnly = false) =>
+  OrchestratorMcpService.layer.pipe(
+    Layer.provide(layerSingleMemberViews),
+    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(layerServerConfig(cloudOnly)),
+  );
+const layerOrchestratorService = orchestratorService();
 
 describe("OrchestratorMcpService", () => {
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
@@ -2059,6 +2066,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
         ),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        Layer.provide(layerServerConfig()),
       );
 
       yield* Effect.gen(function* () {
@@ -2096,6 +2104,111 @@ describe("OrchestratorMcpService provider resolution", () => {
           },
         });
       }).pipe(Effect.provide(service.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect.each([
+    { name: "a worktree", isolation: "worktree" as const },
+    { name: "a shared", isolation: "shared" as const },
+    { name: "an unspecified", isolation: undefined },
+  ])("$name task on a cloud-only server is refused before any thread", ({ isolation }) =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+          dispatch: (command) =>
+            Ref.update(dispatched, (all) => [...all, command]).pipe(Effect.as({} as never)),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const error = yield* mcp
+          .delegateTask(scope, {
+            task: "Fix the cache.",
+            mode: "async",
+            ...(isolation === undefined ? {} : { isolation }),
+          })
+          .pipe(Effect.flip);
+        assert.include(error, {
+          code: "invalid_request",
+          message: "This server runs threads only in the cloud. Use isolation 'cloud'.",
+        });
+        assert.deepEqual(yield* Ref.get(dispatched), []);
+      }).pipe(Effect.provide(orchestratorService(true).pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect.each([
+    { name: "on a cloud-only server", cloudOnly: true, parentSandboxId: undefined },
+    {
+      name: "for a cloud caller",
+      cloudOnly: false,
+      parentSandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+    },
+  ])("create_threads is refused $name", ({ cloudOnly, parentSandboxId }) =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const projection = parentProjection([]);
+      const parent = {
+        ...projection,
+        thread: {
+          ...projection.thread,
+          ...(parentSandboxId === undefined ? {} : { sandboxId: parentSandboxId }),
+        },
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: () => Effect.succeed(parent as never),
+          dispatch: (command) =>
+            Ref.update(dispatched, (all) => [...all, command]).pipe(Effect.as({} as never)),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const error = yield* mcp
+          .createThreads(scope, {
+            threads: [{ target: { driverKind: ProviderDriverKind.make("codex") } }],
+            clientRequestId: "create-cloud-only",
+          })
+          .pipe(Effect.flip);
+        assert.include(error, {
+          code: "invalid_request",
+          message:
+            "create_threads shares your checkout, which cloud threads can't do. Use delegate_task with isolation 'cloud'.",
+        });
+        assert.deepEqual(yield* Ref.get(dispatched), []);
+      }).pipe(
+        Effect.provide(orchestratorService(cloudOnly).pipe(Layer.provide(layerDependencies))),
+      );
     }),
   );
 
@@ -2943,6 +3056,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.provide(layerSingleMemberViews),
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(layerServerConfig()),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -3616,6 +3730,7 @@ describe("OrchestratorMcpService send actor", () => {
                 Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
                 Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+                layerServerConfig(),
                 NodeServices.layer,
                 NodeCrypto.layer,
                 Layer.mock(ThreadManagementService.ThreadManagementService)({

@@ -104,6 +104,12 @@ const lanFlag = Flag.Boolean("lan").pipe(
   ),
   Flag.optional,
 );
+const cloudOnlyFlag = Flag.Boolean("cloud-only").pipe(
+  Flag.withDescription(
+    "Run every thread, terminal and script on cloud machines, never on this server (equivalent to T3CODE_CLOUD_ONLY).",
+  ),
+  Flag.optional,
+);
 
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
@@ -190,6 +196,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  cloudOnly: Config.Boolean("T3CODE_CLOUD_ONLY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -228,6 +238,7 @@ export interface CliServerFlags {
   readonly tailscaleServePort: Option.Option<number>;
   readonly lan: Option.Option<boolean>;
   readonly restoreMode: Option.Option<boolean>;
+  readonly cloudOnly: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -265,6 +276,7 @@ export const sharedServerCommandFlags = {
   tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
   restoreMode: restoreModeFlag,
+  cloudOnly: cloudOnlyFlag,
 } as const;
 
 const PUBLIC_URL_NOT_ORIGIN = "--public-url must be an origin, like https://pair.example.com.";
@@ -325,6 +337,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     lan: flags.lan ?? Option.none(),
     restoreMode: flags.restoreMode ?? Option.none(),
+    cloudOnly: flags.cloudOnly ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -341,6 +354,15 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => "web",
   );
+  const cloudOnly = Option.getOrElse(
+    resolveOptionPrecedence(normalizedFlags.cloudOnly, Option.fromUndefinedOr(env.cloudOnly)),
+    () => false,
+  );
+  if (cloudOnly && mode === "desktop") {
+    return yield* new CliError.UserError({
+      cause: "Cloud-only mode is for Pair Cloud servers, not the desktop app.",
+    });
+  }
 
   const port = yield* Option.match(
     resolveOptionPrecedence(
@@ -428,6 +450,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
+      cloudOnly ? Option.some(false) : Option.none(),
       Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
       isHeadlessStartup ? Option.some(false) : Option.none(),
       normalizedFlags.autoBootstrapProjectFromCwd,
@@ -565,6 +588,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBrowserControlFd,
     resourceMonitorPath,
     autoBootstrapProjectFromCwd,
+    cloudOnly,
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
@@ -596,6 +620,7 @@ export const resolveCliAuthConfig = (
       tailscaleServePort: Option.none(),
       lan: Option.none(),
       restoreMode: Option.none(),
+      cloudOnly: Option.none(),
     },
     cliLogLevel,
   );

@@ -21,6 +21,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as CloudOnly from "../environment/CloudOnly.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -90,7 +91,10 @@ export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
-    readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
+    readonly ensureScratchProject: Effect.Effect<
+      { readonly projectId: ProjectId },
+      ScratchError | CloudOnly.CloudOnlyRefusedError
+    >;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
@@ -105,7 +109,7 @@ export class ManagedProjectFolders extends Context.Service<
         readonly workspaceRoot: string;
         readonly commitError?: string;
       },
-      NamedProjectError
+      NamedProjectError | CloudOnly.CloudOnlyRefusedError
     >;
   }
 >()("t3/project/ManagedProjectFolders") {}
@@ -250,8 +254,15 @@ const make = Effect.gen(function* () {
       .makeDirectory(folder, { recursive: true })
       .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
 
+  // Both folders live on the server's own disk; a cloud-only server keeps projects in the cloud.
+  const refuseOnCloudOnly = (operation: string) =>
+    config.cloudOnly
+      ? Effect.fail(new CloudOnly.CloudOnlyRefusedError({ operation }))
+      : Effect.void;
+
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
+      yield* refuseOnCloudOnly("projects.ensureScratch");
       const workspaceRoot = yield* scratchRoot.pipe(
         Effect.flatMap(
           Option.match({
@@ -422,6 +433,7 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
+    yield* refuseOnCloudOnly("projects.createNew");
     const workspaceRoot = yield* claimNamedFolder(input.name);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     const prepared = yield* Effect.all([

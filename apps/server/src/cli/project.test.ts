@@ -83,6 +83,7 @@ const makeConfig = (baseDir: string) =>
       startupPresentation: "browser",
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
+      cloudOnly: false,
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,

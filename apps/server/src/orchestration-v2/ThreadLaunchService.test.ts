@@ -138,6 +138,7 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly cloudOnly?: boolean;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -262,6 +263,9 @@ function makeHarness(options: HarnessOptions = {}) {
         layerReceipts,
         layerProjections,
         IdAllocator.layer,
+        Layer.succeed(ServerConfig.ServerConfig, {
+          cloudOnly: options.cloudOnly ?? false,
+        } as ServerConfig.ServerConfig["Service"]),
       ),
     ),
   );
@@ -2559,6 +2563,28 @@ const existingBranchWorkspace = {
   existingBranch: true as const,
 };
 
+it.effect("refuses a worktree launch on a cloud-only server before creating a thread", () => {
+  const harness = makeHarness({ cloudOnly: true });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    for (const workspace of [worktreeStrategy, { type: "root" as const }]) {
+      const input = launchInput({
+        command: `command:launch:cloud-only:${workspace.type}`,
+        thread: `thread:launch:cloud-only:${workspace.type}`,
+        message: "Fix the build",
+        workspace,
+      });
+      const error = yield* Effect.flip(launches.launch(input));
+      assert.equal(error._tag, "ThreadLaunchError");
+      const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
+      assert.include(cause ?? {}, { _tag: "CloudLaunchError", reason: "local-launch" });
+      assert.isNull(yield* threads.getThreadShell(input.threadId));
+    }
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("launches a cloud thread and releases it on runner hello", () => {
   const harness = cloudHarness();
   return Effect.gen(function* () {
@@ -2780,7 +2806,15 @@ it.effect("keeps a cloud run parked when the server stops before its machine is 
     const launches = Context.get(
       yield* Layer.buildWithScope(
         Layer.fresh(ThreadLaunch.layer).pipe(
-          Layer.provide(Layer.mergeAll(CommandReceiptStore.layer, IdAllocator.layer)),
+          Layer.provide(
+            Layer.mergeAll(
+              CommandReceiptStore.layer,
+              IdAllocator.layer,
+              Layer.succeed(ServerConfig.ServerConfig, {
+                cloudOnly: false,
+              } as ServerConfig.ServerConfig["Service"]),
+            ),
+          ),
         ),
         scope,
       ),

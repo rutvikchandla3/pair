@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import {
   AgentSessionScanError,
   ClaudeSettings,
+  CloudOnlyRefusedError,
   CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -197,11 +198,14 @@ export type AgentSessionRecentThread =
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
-    readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
+    readonly scan: Effect.Effect<
+      AgentSessionScanResult,
+      AgentSessionScanError | CloudOnlyRefusedError
+    >;
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
-    ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError | CloudOnlyRefusedError>;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -1501,7 +1505,12 @@ export const make = Effect.gen(function* () {
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
 
+  // The server's own agent history is host data; a cloud-only server offers none of it.
+  const refuseOnCloudOnly = (operation: string) =>
+    serverConfig.cloudOnly ? Effect.fail(new CloudOnlyRefusedError({ operation })) : Effect.void;
+
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
+    yield* refuseOnCloudOnly("agentSessions.scan");
     const { candidates: raw, truncated } = yield* collectCandidates();
     cachedCandidates = raw;
 
@@ -1787,7 +1796,12 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+  ) =>
+    Stream.unwrap(
+      refuseOnCloudOnly("agentSessions.import").pipe(
+        Effect.andThen(prepareRecentThreads(workspaceRoot, completedSources)),
+      ),
+    );
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

@@ -550,6 +550,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("refuses a local write on a cloud-only server", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        const files = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provide(layerKnownWorkspacesTest),
+          Effect.updateService(ServerConfig.ServerConfig, (config) => ({
+            ...config,
+            cloudOnly: true,
+          })),
+        );
+
+        const error = yield* files
+          .writeFile({ cwd, relativePath: "plan.md", contents: "# nope\n" })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "CloudOnlyRefusedError" });
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual([]);
+      }),
+    );
+
     it.effect("rejects writes by absolute path", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

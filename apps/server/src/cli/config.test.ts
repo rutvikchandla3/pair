@@ -52,6 +52,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
   restoreMode: Option.none<boolean>(),
+  cloudOnly: Option.none<boolean>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -237,6 +238,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
         restoreMode: Option.none<boolean>(),
+        cloudOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -284,6 +286,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
         restoreMode: Option.none<boolean>(),
+        cloudOnly: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -342,6 +345,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -377,6 +381,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         startupPresentation: "browser",
         desktopBootstrapToken: "desktop-bootstrap-token",
         autoBootstrapProjectFromCwd: false,
+        cloudOnly: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -421,6 +426,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.some(false),
         },
         Option.some("Debug"),
       ).pipe(
@@ -435,6 +441,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                   T3CODE_LOG_WS_EVENTS: "true",
+                  T3CODE_CLOUD_ONLY: "true",
                 },
               }),
             ),
@@ -458,10 +465,42 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         startupPresentation: "browser",
         desktopBootstrapToken: "desktop-token",
         autoBootstrapProjectFromCwd: true,
+        cloudOnly: false,
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
+    }),
+  );
+
+  it.effect("refuses cloud-only in desktop mode and never bootstraps a cwd project", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-cloud-only-" })),
+      );
+      const provideEnv = (env: Record<string, string>) =>
+        Effect.provide(
+          Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromEnv({ env })), NetService.layer),
+        );
+
+      const desktopError = yield* resolveServerConfig(
+        { ...minimalDesktopFlags(baseDir), cloudOnly: Option.some(true) },
+        Option.none(),
+      ).pipe(provideEnv({}), Effect.flip);
+      const web = yield* resolveServerConfig(
+        {
+          ...minimalDesktopFlags(baseDir),
+          mode: Option.some("web" as const),
+          autoBootstrapProjectFromCwd: Option.some(true),
+        },
+        Option.none(),
+        { forceAutoBootstrapProjectFromCwd: true },
+      ).pipe(provideEnv({ T3CODE_CLOUD_ONLY: "true" }));
+
+      assert(desktopError._tag === "UserError");
+      expect(desktopError.message).toContain("Cloud-only mode is for Pair Cloud servers");
+      expect(web.cloudOnly).toBe(true);
+      expect(web.autoBootstrapProjectFromCwd).toBe(false);
     }),
   );
 
@@ -571,6 +610,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -622,6 +662,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -665,6 +706,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.none(),
         },
         Option.none(),
         {
@@ -701,6 +743,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         startupPresentation: "headless",
         desktopBootstrapToken: undefined,
         autoBootstrapProjectFromCwd: false,
+        cloudOnly: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -730,6 +773,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           restoreMode: Option.none(),
+          cloudOnly: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -772,6 +816,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
     restoreMode: Option.none<boolean>(),
+    cloudOnly: Option.none<boolean>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>

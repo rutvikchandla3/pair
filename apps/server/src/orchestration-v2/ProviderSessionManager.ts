@@ -48,6 +48,8 @@ import {
 import { sandboxInstanceConfig } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ServerConfig from "../config.ts";
+import * as CloudOnly from "../environment/CloudOnly.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -150,6 +152,7 @@ export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSes
 
 export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
+  CloudOnly.CloudOnlyRefusedError,
   ProviderWorkspaceMissingError,
   ProviderCloudUnsupportedError,
   ProviderCloudLocalOnlyError,
@@ -343,12 +346,14 @@ export const layerWithOptions = (
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | WorkspaceHosts.WorkspaceHosts
+  | ServerConfig.ServerConfig
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      const { cloudOnly } = yield* ServerConfig.ServerConfig;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
@@ -2181,6 +2186,10 @@ export const layerWithOptions = (
                     cwd,
                   });
                 }
+              }
+              // Backstop for paths that skip the orchestrator's check, such as queued effects.
+              if (cloudOnly && host?.kind !== "sandbox") {
+                return yield* new CloudOnly.CloudOnlyRefusedError({ operation: "provider.open" });
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);

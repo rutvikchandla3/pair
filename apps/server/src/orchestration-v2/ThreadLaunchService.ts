@@ -48,6 +48,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -250,6 +251,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const preparationScope = yield* Scope.make("sequential");
   // Keyed by run when there is one, so a re-arm never prepares a run a launch already prepares.
   const scheduledLaunches = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -993,6 +995,17 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
+      if (cloudOnly && request.workspaceStrategy.type !== "cloud") {
+        return yield* mapError(
+          request,
+          "resolve-project",
+        )(
+          new CloudPreparation.CloudLaunchError({
+            projectId: request.projectId,
+            reason: "local-launch",
+          }),
+        );
+      }
       // Scratch has no Git repository. Normalize before folder allocation so
       // durable preparation and retries use the thread's own Scratch folder.
       const input: ThreadLaunchInput =

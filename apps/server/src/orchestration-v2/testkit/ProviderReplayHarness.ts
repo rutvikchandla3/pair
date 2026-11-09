@@ -81,6 +81,7 @@ import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.
 
 export function makeReplayServerConfig(
   scenario: string,
+  options: { readonly cloudOnly?: boolean } = {},
 ): Effect.Effect<
   ServerConfig.ServerConfig["Service"],
   PlatformError.PlatformError,
@@ -143,6 +144,7 @@ export function makeReplayServerConfig(
       tailscaleServePort: 443,
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
+      cloudOnly: options.cloudOnly ?? false,
       logWebSocketEvents: false,
       stateDir,
       dbPath: path.join(stateDir, "state.sqlite"),
@@ -296,6 +298,7 @@ export function layerWithRegistry<Error>(
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
     readonly managedPolicy?: ManagedPolicyDocument;
+    readonly cloudOnly?: boolean;
     /** `SandboxAdmission.layer` over a driver registry, for tests of the cap and start rate. */
     readonly sandboxAdmission?: Layer.Layer<
       SandboxAdmission.SandboxAdmission,
@@ -314,7 +317,9 @@ export function layerWithRegistry<Error>(
 > {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
-    makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+    makeReplayServerConfig(scenario.name, { cloudOnly: options.cloudOnly ?? false }).pipe(
+      Effect.orDie,
+    ),
   ).pipe(Layer.provide(NodeServices.layer));
   const layerRuntimeBase =
     scenario.runtimePolicyOverride === undefined
@@ -419,6 +424,7 @@ export function layerWithRegistry<Error>(
         McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        layerServerConfig,
       ),
     ),
   );
@@ -517,6 +523,7 @@ export function layerWithRegistry<Error>(
         layerProviderSessionManagerProvided,
         layerProviderSwitchServiceProvided,
         layerRunExecutionServiceProvided,
+        layerServerConfig,
         layerServerSettings,
         ThreadForkService.layer,
       ),
@@ -601,6 +608,7 @@ export function layerWithRegistry<Error>(
               layerEventSinkProvided,
               IdAllocator.layer,
               layerServerSettings,
+              layerServerConfig,
             ),
           ),
         )

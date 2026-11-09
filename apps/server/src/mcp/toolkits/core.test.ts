@@ -68,6 +68,11 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(McpToolAccessTestkit.layerSingleMemberViews),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.succeed(ServerConfig.ServerConfig, {
+      cloudOnly: false,
+    } as ServerConfig.ServerConfig["Service"]),
+  ),
 );
 
 const declaredFailure = (result: McpSchema.CallToolResult) => {

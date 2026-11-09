@@ -120,6 +120,7 @@ import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ServerConfig from "./config.ts";
+import * as CloudOnly from "./environment/CloudOnly.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -561,7 +562,8 @@ function projectFileFailureContext(
     | WorkspaceFileSystem.WorkspaceFileSystemError
     | WorkspacePaths.WorkspacePathOutsideRootError
     | KnownWorkspaces.UnknownWorkspaceError
-    | SandboxAsleep,
+    | SandboxAsleep
+    | CloudOnly.CloudOnlyRefusedError,
 ): {
   readonly failure: ProjectFileFailure;
   readonly resolvedPath?: string;
@@ -575,6 +577,8 @@ function projectFileFailureContext(
     // Older clients show the message; newer ones offer Wake for the sandbox (P15).
     case "SandboxAsleep":
       return { failure: "operation_failed", sandboxId: error.sandboxId, message: error.message };
+    case "CloudOnlyRefusedError":
+      return { failure: "cloud_only", message: error.message };
     case "WorkspacePathOutsideRootError":
     case "UnknownWorkspaceError":
       return { failure: "workspace_path_outside_root" };
@@ -1530,6 +1534,11 @@ export const layerWsRpc = (
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
+      // For host tools whose services also run where no ServerConfig exists.
+      const refuseOnCloudOnly = (operation: string) =>
+        config.cloudOnly
+          ? Effect.fail(new CloudOnly.CloudOnlyRefusedError({ operation }))
+          : Effect.void;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
@@ -1683,6 +1692,12 @@ export const layerWsRpc = (
       const importAcpRegistrySession = Effect.fn("ws.acpRegistry.importSession")(function* (
         input: AcpRegistryImportSessionInput,
       ) {
+        if (config.cloudOnly) {
+          return yield* new AcpRegistryOperationError({
+            reason: "session_import_failed",
+            message: CloudOnly.CLOUD_ONLY_MESSAGE,
+          });
+        }
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
             yield* acpRegistryProject(input.projectId);
@@ -3155,7 +3170,10 @@ export const layerWsRpc = (
                 }),
             ),
           ),
-        [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.shellOpenInEditor]: (input) =>
+          refuseOnCloudOnly("shell.openInEditor").pipe(
+            Effect.andThen(externalLauncher.launchEditor(input)),
+          ),
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
@@ -3388,7 +3406,10 @@ export const layerWsRpc = (
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
-        [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
+        [WS_METHODS.previewStopLocalServer]: (input) =>
+          refuseOnCloudOnly("preview.stopLocalServer").pipe(
+            Effect.andThen(portDiscovery.stopServer(input)),
+          ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {

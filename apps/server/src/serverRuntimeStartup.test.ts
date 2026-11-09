@@ -103,6 +103,7 @@ it.effect.each([
           noBrowser: true,
           startupPresentation: "browser",
           autoBootstrapProjectFromCwd: true,
+          cloudOnly: false,
         }),
         Layer.mock(Keybindings.Keybindings)({ start: Effect.void }),
         Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
@@ -300,67 +301,83 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
   ),
 );
 
-it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
-  Effect.gen(function* () {
-    const pulled: string[] = [];
-    const git = {
-      statusDetails: (cwd: string) =>
-        Effect.succeed({
-          isRepo: true,
-          isDefaultBranch: cwd !== "/feature",
-          hasUpstream: true,
-          hasWorkingTreeChanges: cwd === "/dirty",
-          aheadCount: cwd === "/ahead" ? 1 : 0,
-          behindCount: cwd === "/current" ? 0 : 1,
-        } as never),
-      pullCurrentBranch: (cwd: string) =>
-        Effect.sync(() => {
-          pulled.push(cwd);
-          return {
-            status: "pulled" as const,
-            refName: "main",
-            upstreamRef: "origin/main",
-          };
+const withCloudOnly = (cloudOnly: boolean) =>
+  Effect.provide(
+    Layer.succeed(ServerConfig.ServerConfig, { cloudOnly } as ServerConfig.ServerConfig["Service"]),
+  );
+
+it.effect(
+  "automatic pull only updates enabled, behind, clean default-branch checkouts, never on a cloud-only server",
+  () =>
+    Effect.gen(function* () {
+      const pulled: string[] = [];
+      const git = {
+        statusDetails: (cwd: string) =>
+          Effect.succeed({
+            isRepo: true,
+            isDefaultBranch: cwd !== "/feature",
+            hasUpstream: true,
+            hasWorkingTreeChanges: cwd === "/dirty",
+            aheadCount: cwd === "/ahead" ? 1 : 0,
+            behindCount: cwd === "/current" ? 0 : 1,
+          } as never),
+        pullCurrentBranch: (cwd: string) =>
+          Effect.sync(() => {
+            pulled.push(cwd);
+            return {
+              status: "pulled" as const,
+              refName: "main",
+              upstreamRef: "origin/main",
+            };
+          }),
+      } as unknown as GitVcsDriver.GitVcsDriver["Service"];
+      const project = (workspaceRoot: string) =>
+        ({ id: ProjectId.make(workspaceRoot), workspaceRoot }) as never;
+      const overrides = (entries: Record<string, boolean>) => ({
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: Object.fromEntries(
+          Object.entries(entries).map(([root, defaultAutoPull]) => [
+            ProjectId.make(root),
+            { defaultAutoPull },
+          ]),
+        ),
+      });
+
+      yield* ServerRuntimeStartup.autoPullProjects(
+        [
+          project("/clean"),
+          project("/current"),
+          project("/dirty"),
+          project("/ahead"),
+          project("/feature"),
+          project("/disabled"),
+        ],
+        overrides({
+          "/clean": true,
+          "/current": true,
+          "/dirty": true,
+          "/ahead": true,
+          "/feature": true,
+          "/disabled": false,
         }),
-    } as unknown as GitVcsDriver.GitVcsDriver["Service"];
-    const project = (workspaceRoot: string) =>
-      ({ id: ProjectId.make(workspaceRoot), workspaceRoot }) as never;
-    const overrides = (entries: Record<string, boolean>) => ({
-      ...DEFAULT_SERVER_SETTINGS,
-      projectSettingsOverrides: Object.fromEntries(
-        Object.entries(entries).map(([root, defaultAutoPull]) => [
-          ProjectId.make(root),
-          { defaultAutoPull },
-        ]),
-      ),
-    });
+      ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git), withCloudOnly(false));
 
-    yield* ServerRuntimeStartup.autoPullProjects(
-      [
-        project("/clean"),
-        project("/current"),
-        project("/dirty"),
-        project("/ahead"),
-        project("/feature"),
-        project("/disabled"),
-      ],
-      overrides({
-        "/clean": true,
-        "/current": true,
-        "/dirty": true,
-        "/ahead": true,
-        "/feature": true,
-        "/disabled": false,
-      }),
-    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+      assert.deepStrictEqual(pulled, ["/clean"]);
 
-    assert.deepStrictEqual(pulled, ["/clean"]);
+      pulled.length = 0;
+      const inherited = { ...overrides({ "/opted-out": false }), defaultAutoPull: true };
+      const projects = [project("/inherited"), project("/opted-out"), project("/dirty")];
+      yield* ServerRuntimeStartup.autoPullProjects(projects, inherited).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+        withCloudOnly(false),
+      );
+      assert.deepStrictEqual(pulled, ["/inherited"]);
 
-    pulled.length = 0;
-    yield* ServerRuntimeStartup.autoPullProjects(
-      [project("/inherited"), project("/opted-out"), project("/dirty")],
-      { ...overrides({ "/opted-out": false }), defaultAutoPull: true },
-    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
-    assert.deepStrictEqual(pulled, ["/inherited"]);
-  }),
+      pulled.length = 0;
+      yield* ServerRuntimeStartup.autoPullProjects(projects, inherited).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+        withCloudOnly(true),
+      );
+      assert.deepStrictEqual(pulled, []);
+    }),
 );

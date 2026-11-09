@@ -166,6 +166,7 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import { CloudOnlyRefusedError } from "./environment.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -1427,7 +1428,11 @@ const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThre
 
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
-  error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ExternalLauncherError,
+    CloudOnlyRefusedError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
@@ -1445,7 +1450,11 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
-  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    AgentSessionScanError,
+    CloudOnlyRefusedError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
@@ -1455,6 +1464,7 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
     AgentSessionImportProjectChangedError,
     AgentSessionImportProjectNotFoundError,
     AgentSessionScanError,
+    CloudOnlyRefusedError,
     EnvironmentAuthorizationError,
   ]),
 });
@@ -1711,7 +1721,11 @@ const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, 
 
 const WsPreviewStopLocalServerRpc = Rpc.make(WS_METHODS.previewStopLocalServer, {
   payload: PreviewStopLocalServerInput,
-  error: Schema.Union([PreviewStopLocalServerError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    PreviewStopLocalServerError,
+    CloudOnlyRefusedError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(WS_METHODS.subscribeDiscoveredLocalServers, {

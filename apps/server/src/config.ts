@@ -104,6 +104,7 @@ export class ServerConfig extends Context.Service<
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
+    readonly cloudOnly: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
@@ -247,6 +248,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     ...derivedPaths,
     mode: "web",
     autoBootstrapProjectFromCwd: false,
+    cloudOnly: false,
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,

@@ -24,8 +24,12 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
+
+const layerServerConfig = (cloudOnly = false) =>
+  Layer.succeed(ServerConfig.ServerConfig, { cloudOnly } as ServerConfig.ServerConfig["Service"]);
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");
@@ -53,7 +57,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
     nodes: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -105,7 +109,7 @@ it.effect("preserves async questions across startup and shutdown", () => {
   } as unknown as OrchestrationV2ThreadProjection;
   const commitCommand = vi.fn(() => Effect.die("an async question needs no process-loss write"));
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -175,7 +179,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -320,7 +324,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -386,7 +390,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -462,7 +466,7 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
     ],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -503,15 +507,19 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each([
-  "queued",
-  "preparing",
-  "preparing-cloud",
-  "starting",
-  "starting-other-request",
-  "starting-own-request",
-  "starting-scheduled",
-] as const)("recovers $0 work after restart", (scenario) => {
+it.effect.each(
+  (
+    [
+      "queued",
+      "preparing",
+      "preparing-cloud",
+      "starting",
+      "starting-other-request",
+      "starting-own-request",
+      "starting-scheduled",
+    ] as const
+  ).flatMap((scenario) => [false, true].map((cloudOnly) => ({ scenario, cloudOnly }))),
+)("recovers $scenario work after restart (cloud-only: $cloudOnly)", ({ scenario, cloudOnly }) => {
   const status = scenario.startsWith("starting")
     ? "starting"
     : scenario === "preparing-cloud"
@@ -605,7 +613,7 @@ it.effect.each([
   } as unknown as OrchestrationV2ThreadProjection;
   const rearmed = Deferred.makeUnsafe<ThreadLaunch.ThreadLaunchPreparationInput>();
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig(cloudOnly))),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -613,6 +621,7 @@ it.effect.each([
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getThreadShell: () => Effect.succeed(projection.thread as never),
           getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           getMessagesById: (requestedThreadId, messageIds) =>
             Effect.succeed(
@@ -647,6 +656,13 @@ it.effect.each([
 
   return Effect.gen(function* () {
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    if (cloudOnly && !cloud) {
+      const refused = yield* Effect.flip(recovery.recover);
+      assert.equal(refused._tag, "CloudOnlyLocalWorkError");
+      assert.include(refused.message, threadId);
+      assert.isNull(committedInput);
+      return;
+    }
     if (cloud) {
       assert.equal((yield* recovery.recover).terminalizedRuns, 0);
       assert.isNull(committedInput);
@@ -764,7 +780,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -886,7 +902,7 @@ it.effect("cancels workflow members and child roots without run ids after restar
   } as unknown as OrchestrationV2ThreadProjection;
   const committed: Array<Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0]> = [];
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1051,7 +1067,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1208,7 +1224,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1338,7 +1354,7 @@ it.effect(
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1495,7 +1511,7 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
     ],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.merge(ServerSettings.layerTest(), layerServerConfig())),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({

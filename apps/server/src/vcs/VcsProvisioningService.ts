@@ -8,6 +8,7 @@ import {
   type VcsInitInput,
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
+import * as CloudOnly from "../environment/CloudOnly.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 
 export class VcsProvisioningService extends Context.Service<
@@ -38,11 +39,22 @@ function resolveRequestedKind(
 /** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const refuseLocalHost = yield* CloudOnly.localHostGuard;
 
   const initRepository: VcsProvisioningService["Service"]["initRepository"] = Effect.fn(
     "VcsProvisioningService.initRepository",
   )(function* (input) {
     const kind = yield* resolveRequestedKind(input.kind);
+    yield* refuseLocalHost("VcsProvisioningService.initRepository", input.cwd).pipe(
+      Effect.mapError(
+        (refused) =>
+          new VcsUnsupportedOperationError({
+            operation: refused.operation,
+            kind,
+            detail: CloudOnly.CLOUD_ONLY_MESSAGE,
+          }),
+      ),
+    );
     const driver = yield* registry.get(kind);
     return yield* driver.initRepository(input);
   });

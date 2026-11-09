@@ -5,6 +5,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  TerminalCloudOnlyError,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -1324,6 +1325,8 @@ function normalizedRuntimeEnv(
 
 interface TerminalManagerOptions {
   logsDir: string;
+  /** Required so no caller can leave it off: a cloud-only server opens only machine PTYs. */
+  cloudOnly: boolean;
   historyLineLimit?: number;
   historyByteLimit?: number;
   shellResolver?: () => string;
@@ -1403,7 +1406,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, cloudOnly } =
+    yield* ServerConfig.ServerConfig;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1421,6 +1425,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
+    cloudOnly,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
         (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
@@ -2890,6 +2895,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const stopped = yield* getSession(requestedInput.threadId, terminalId);
       if (Option.isSome(stopped)) return snapshot(stopped.value);
       return yield* new TerminalNotRunningError({ threadId: requestedInput.threadId, terminalId });
+    }
+    if (options.cloudOnly && host.kind !== "sandbox") {
+      return yield* new TerminalCloudOnlyError({ threadId: requestedInput.threadId, terminalId });
     }
 
     const sessionKey = toSessionKey(requestedInput.threadId, terminalId);

@@ -76,6 +76,7 @@ const layerConfig = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         ...derivedPaths,
         mode: "web",
         autoBootstrapProjectFromCwd: false,
+        cloudOnly: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,

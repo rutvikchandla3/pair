@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CLOUD_ONLY_MESSAGE } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const DEFAULT_TERMINAL_ID = "term-1";
@@ -362,6 +363,19 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+/** A cloud-only server opens terminals only on machines. */
+export class TerminalCloudOnlyError extends Schema.TaggedError<TerminalCloudOnlyError>()(
+  "TerminalCloudOnlyError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return CLOUD_ONLY_MESSAGE;
+  }
+}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,
@@ -369,6 +383,7 @@ export const TerminalError = Schema.Union([
   TerminalProviderInstanceNotFoundError,
   TerminalProviderEnvironmentError,
   TerminalNotRunningError,
+  TerminalCloudOnlyError,
   TerminalWriteError,
   TerminalResizeError,
 ]);

@@ -15,6 +15,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 it("uses the thread provider for stale background work without provider threads", async () => {
@@ -48,6 +49,11 @@ it("uses the thread provider for stale background work without provider threads"
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.succeed(ServerConfig.ServerConfig, {
+        cloudOnly: false,
+      } as ServerConfig.ServerConfig["Service"]),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({

@@ -231,6 +231,7 @@ const historyLogPath = (logsDir: string, threadId = "thread-1") =>
   );
 
 interface CreateManagerOptions {
+  cloudOnly?: boolean;
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
@@ -310,6 +311,7 @@ const createManager = (
 
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
+        cloudOnly: options.cloudOnly ?? false,
         historyLineLimit,
         ...(options.historyByteLimit !== undefined
           ? { historyByteLimit: options.historyByteLimit }
@@ -749,6 +751,27 @@ it.layer(
       const fresh = yield* manager.open(openInput({ cwd, terminalId: "second" })).pipe(Effect.flip);
       expect(fresh._tag).toBe("TerminalNotRunningError");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("refuses a server terminal on a cloud-only server and opens a machine's", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-server-" });
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        cloudOnly: true,
+        sandbox: {
+          environment: { PATH: "/usr/bin" },
+          forProcess: () => Effect.succeed({ PATH: "/usr/bin" }),
+        },
+      });
+
+      const refused = yield* manager.open(openInput({ cwd: serverDir })).pipe(Effect.flip);
+      const machine = yield* manager.open(openInput({ cwd: baseDir, terminalId: "machine" }));
+
+      expect(refused._tag).toBe("TerminalCloudOnlyError");
+      expect(machine.status).toBe("running");
+      expect(ptyAdapter.spawnInputs.map((input) => input.cwd)).toEqual([baseDir]);
     }),
   );
 

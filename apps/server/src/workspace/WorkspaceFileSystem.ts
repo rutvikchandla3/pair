@@ -18,6 +18,8 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
+import * as CloudOnly from "../environment/CloudOnly.ts";
 import { makeIsServerInternalPath } from "./serverInternalPaths.ts";
 import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import type {
@@ -135,6 +137,7 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
       | SandboxAsleep
+      | CloudOnly.CloudOnlyRefusedError
     >;
   }
 >()("t3/workspace/WorkspaceFileSystem") {}
@@ -142,6 +145,7 @@ export class WorkspaceFileSystem extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
@@ -498,6 +502,9 @@ export const make = Effect.gen(function* () {
   )(
     function* (input) {
       const host = yield* hostForCwd(input.cwd);
+      if (cloudOnly && host.kind !== "sandbox") {
+        return yield* new CloudOnly.CloudOnlyRefusedError({ operation: "projects.writeFile" });
+      }
       yield* knownWorkspaces.assertContains(input.cwd);
       const target = yield* resolveWriteTarget(input, host);
       const realTargetPath = target.realTargetPath;

@@ -69,6 +69,10 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const withLocalServerConfig = Effect.provideService(ServerConfig.ServerConfig, {
+  cloudOnly: false,
+} as ServerConfig.ServerConfig["Service"]);
+
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -2660,6 +2664,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           turnItems: [],
         } as unknown as OrchestrationV2ThreadProjection;
         const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+          withLocalServerConfig,
           Effect.provide(
             Layer.mergeAll(
               ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
@@ -2851,6 +2856,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isSome(yield* outbox.claimNext({ workerId: "crashed-worker" })));
 
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        withLocalServerConfig,
         Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           EffectWorker.OrchestrationEffectWorkerV2,
@@ -3068,6 +3074,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       });
 
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        withLocalServerConfig,
         Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           EffectWorker.OrchestrationEffectWorkerV2,
