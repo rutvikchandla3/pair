@@ -26,9 +26,9 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (3 of 8), specs written 2026-11-09:** full specs in
+**M3 (4 of 8), specs written 2026-11-09:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
-(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff). In flight: 3.22 context export. Next: waves 3–5, a release with M3 (maintainer approval), then G3 by the spec's
+(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), so wave 2 is done. In flight: 3.25. Next: waves 4–5, a release with M3 (maintainer approval), then G3 by the spec's
 [integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
 
 ### M3 maintainer answers (2026-11-09)
@@ -1775,6 +1775,31 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   with `actorId` the link member. New `CloudLaunchError` reasons go after `seed-unavailable`.
 - Owes, with G3 step 1: the Docker run (`restoredFrom: "seed"`, then `docker rm -f`, Retry,
   `"mirror"`).
+
+## 3.22 context export (landed 598da8e4b)
+
+- `ContextExports.ts` (`build`, `import`, `capContextExport`, `ContextExportError`) needs
+  `ThreadManagementService` and `ServerEnvironment`, wired in `runtimeLayer.ts`.
+  `ThreadLaunchService` now requires `ContextExports`: anything that builds `ThreadLaunch.layer`
+  must provide it.
+- Orchestrator deciders for `thread.history.import` and `thread.move.record` derive ids from the
+  command id. Every `v1_import` reader uses `threadHasImportedHistory`; `prepareLegacyImport` takes
+  `historyOrigin`. The gap notice text is built in the decider (importing it from ContextExports
+  would cycle back to the Orchestrator); the `from` row text is in ContextExports.ts.
+- `capContextExport` reserves 16 KiB for the envelope; messages before the first user message stay
+  only when everything fits; `build` skips empty messages. `import` tells `not-empty` from `failed`
+  by re-reading the shell after a refused dispatch.
+- `StagedCloudImports` handles `context-export` (plus `readContextExport`, `dropContextExport`):
+  capped while streaming, decoded, renamed into `<stateDir>/cloud-moves/<key>/`, removed on any
+  failure. `CloudMoveHttp`'s routes are `stagedUpload(kind, maxBytes)`; `invalid-export` is 422;
+  `too-large` names both limits.
+- A launch with `contextExportRef` checks the export before creating anything, then after 3.21's
+  seed claim and before `provisionCloud` claims, imports (skipped if the history is there) and
+  drops the staged file. Transcripts leave out `move` rows; MCP shows the row's sentence; web
+  renders `MoveDivider`; mobile's three switches take `move`.
+- 3.23 calls `ContextExports.build` and `thread.move.record`; 3.25 passes
+  `ThreadLaunchInput.contextExport`.
+- Owes, with 3.25's: the runtime curl transcript and `test-t3-app` captures.
 
 ## Open follow-ups and risks
 
