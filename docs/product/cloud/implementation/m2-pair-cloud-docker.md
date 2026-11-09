@@ -1454,7 +1454,9 @@ no feature catalogs, a settings path where useful.
        Cloud.
     4. **Reach it on your own domain.** A reverse proxy with TLS in front of the port, or
        Tailscale (remote-access.md). No T3 Connect. Webhook URLs use the public origin.
-    5. **Set up Docker.** Install gVisor and register `runsc`. The driver prefers it
+    5. **Set up Docker.** Install gVisor and register `runsc` with `--host-uds=open` (as found in
+       G2: without it gVisor refuses the runner's connect to the bound-in server socket, so a
+       local create fails with that fix). The driver prefers it
        (`isolationFromInfo`, DockerComputeDriver.test.ts 167), and the driver's row under Settings →
        Cloud → Overview shows the isolation (as landed; **Test** shows only its steps). Or point
        the driver at another host's daemon with `dockerHost` (settings.ts 1207). Add the service
@@ -4204,7 +4206,8 @@ release, never from `~/pair`. Subagents do not start their own servers. Reach th
    Check the archive against `SHA256SUMS`. Write `~/.t3/service.env` with `T3CODE_CLOUD_ONLY=1`,
    `T3CODE_RELEASE_BASE_URL=$BASE`, `T3CODE_GITHUB_APP_CLIENT_ID=<pair-cloud-test-d548's client id>`
    and the public origin (2.34) set to the VM's tailnet URL. Run `t3 service install`, then
-   `t3 service status`. Install gVisor and register `runsc` with Docker; add the user to `docker`.
+   `t3 service status`. Install gVisor and register `runsc` with Docker
+   (`sudo runsc install -- --host-uds=open`); add the user to `docker`.
    `t3 pair` mints a link for the Mac browser. Passes when the server is cloud-only and
    `cloudLaunch` is true in the environment's capabilities (capture), and Settings → Cloud →
    **Test** reports gVisor. In Settings → Cloud → Compute, set the team cap to 6, above the VM's

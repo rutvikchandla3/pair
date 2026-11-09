@@ -2900,7 +2900,10 @@ Settings never claims a block it does not keep (06 §8).
 **Isolation detection.** `isolationFromInfo(GET /info)`: `Runtimes` has `runsc` → create with
 `Runtime: "runsc"` and report `gvisor` (**proposed**: use gVisor whenever the daemon offers it);
 else `SecurityOptions` has `name=rootless` → `rootless-container`; else `container`. `health`
-reports it; 1.40 warns for `container`. `capabilities` are static: `persistentDisk: true`,
+reports it; 1.40 warns for `container`. As found in M2's G2: gVisor refuses connects to the
+bound-in server socket unless `runsc`'s `runtimeArgs` carry `--host-uds=open` (or `all`), so a
+local create on a `runsc` without it fails `unsupported` with that fix rather than booting a
+machine whose runner never connects. `capabilities` are static: `persistentDisk: true`,
 `memoryOnStop: false`, `snapshot: false` (until 3.4), `imageBuild: "snapshot"`, `maxSessionMs: null`,
 `diskRetentionDays: null`, `isolation: "container"` (the floor; `health` has the detected value),
 `egressRules: "none"` (allowlists are 3.18), `nestedDocker: false`, `regions: []`, the three sizes.

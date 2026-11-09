@@ -168,15 +168,27 @@ it("prefers gVisor, then rootless, then plain containers", () => {
   assert.deepStrictEqual(isolationFromInfo({ Runtimes: { runc: {}, runsc: {} } }), {
     isolation: "gvisor",
     runtime: "runsc",
+    hostSockets: false,
   });
   assert.deepStrictEqual(
     isolationFromInfo({ SecurityOptions: ["name=seccomp,profile=builtin", "name=rootless"] }),
-    { isolation: "rootless-container", runtime: "runc" },
+    { isolation: "rootless-container", runtime: "runc", hostSockets: true },
   );
   assert.deepStrictEqual(isolationFromInfo({ Runtimes: { runc: {} }, SecurityOptions: null }), {
     isolation: "container",
     runtime: "runc",
+    hostSockets: true,
   });
+});
+
+it.each([
+  { runtimeArgs: ["--host-uds=open"], hostSockets: true },
+  { runtimeArgs: ["-host-uds", "all"], hostSockets: true },
+  { runtimeArgs: ["--host-uds=open", "--host-uds=create"], hostSockets: false },
+  { runtimeArgs: ["--network=host"], hostSockets: false },
+])("reads runsc $runtimeArgs as hostSockets $hostSockets", ({ runtimeArgs, hostSockets }) => {
+  const info = { Runtimes: { runsc: { path: "/usr/bin/runsc", runtimeArgs } } };
+  assert.strictEqual(isolationFromInfo(info).hostSockets, hostSockets);
 });
 
 describe("egressScript", () => {
@@ -219,7 +231,11 @@ interface FakeImages {
  * An Engine API answering from memory; `calls` records `METHOD /path` for each request. Without
  * `images`, every image is on the daemon as `sha256:base`.
  */
-const fakeEngine = (containers: Map<string, FakeContainer>, images?: FakeImages) => {
+const fakeEngine = (
+  containers: Map<string, FakeContainer>,
+  images?: FakeImages,
+  runtimes: Readonly<Record<string, unknown>> = { runc: {} },
+) => {
   const calls: Array<string> = [];
   const archives: Array<Uint8Array> = [];
   /** The image each created container was asked to boot from. */
@@ -237,7 +253,7 @@ const fakeEngine = (containers: Map<string, FakeContainer>, images?: FakeImages)
       const container = /^\/containers\/([^/]+)/.exec(path)?.[1];
       const existing = container === undefined ? undefined : containers.get(container);
       if (path === "/info") {
-        return reply(200, { NCPU: 4, MemTotal: 16 * 2 ** 30, Runtimes: { runc: {} } });
+        return reply(200, { NCPU: 4, MemTotal: 16 * 2 ** 30, Runtimes: runtimes });
       }
       if (path === "/images/create") {
         const ref = `${url.searchParams.get("fromImage")}:${url.searchParams.get("tag")}`;
@@ -311,9 +327,13 @@ const withDriver = <A, E>(
     driver: Effect.Success<ReturnType<typeof makeWithEngine>>,
     fake: ReturnType<typeof fakeEngine>,
   ) => Effect.Effect<A, E, ServerSettingsService>,
-  options: { readonly images?: FakeImages; readonly fromSource?: boolean } = {},
+  options: {
+    readonly images?: FakeImages;
+    readonly fromSource?: boolean;
+    readonly runtimes?: Readonly<Record<string, unknown>>;
+  } = {},
 ) => {
-  const fake = fakeEngine(containers, options.images);
+  const fake = fakeEngine(containers, options.images, options.runtimes);
   return makeWithEngine(
     { kind: "docker", id: driverId, label: "Local" },
     installId,
@@ -382,6 +402,20 @@ describe("DockerComputeDriver", () => {
       }),
     );
   });
+
+  it.effect("refuses a local create when gVisor would block the runner's socket", () =>
+    withDriver(
+      new Map(),
+      (driver, fake) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(driver.create(createInput));
+          assert.deepStrictEqual([error.reason, error.retryable], ["unsupported", false]);
+          assert.include(error.message, "sudo runsc install -- --host-uds=open");
+          assert.notInclude(fake.calls, "POST /volumes/create");
+        }),
+      { runtimes: { runc: {}, runsc: { path: "/usr/bin/runsc" } } },
+    ),
+  );
 
   it.effect("start leaves a runner of the same generation alone and replaces an older one", () => {
     const containers = new Map([[name, { labels: { ...tags }, status: "running", generation: 1 }]]);

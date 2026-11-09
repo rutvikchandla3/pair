@@ -91,17 +91,45 @@ const capabilities: Omit<ComputeCapabilities, "defaultRunningCap"> = {
   defaultIdleSleepMs: 60 * 60_000,
 };
 
+/** gVisor refuses connects to host sockets unless runsc runs with `--host-uds=open` or `all`. */
+const runscReachesHostSockets = (runsc: unknown) => {
+  const args =
+    typeof runsc === "object" && runsc !== null && "runtimeArgs" in runsc
+      ? runsc.runtimeArgs
+      : undefined;
+  if (!Array.isArray(args)) return false;
+  let value = "none";
+  args.forEach((arg, index) => {
+    const match = /^--?host-uds(?:=(.*))?$/u.exec(String(arg));
+    if (match !== null) value = match[1] ?? String(args[index + 1] ?? "");
+  });
+  return value === "open" || value === "all";
+};
+
 /** gVisor whenever the daemon offers it. */
 export const isolationFromInfo = (
   info: Pick<EngineInfo, "Runtimes" | "SecurityOptions">,
-): { readonly isolation: ComputeCapabilities["isolation"]; readonly runtime: "runc" | "runsc" } => {
+): {
+  readonly isolation: ComputeCapabilities["isolation"];
+  readonly runtime: "runc" | "runsc";
+  /** Whether a machine can connect to a socket bound in from the server's machine. */
+  readonly hostSockets: boolean;
+} => {
   if (info.Runtimes != null && "runsc" in info.Runtimes) {
-    return { isolation: "gvisor", runtime: "runsc" };
+    return {
+      isolation: "gvisor",
+      runtime: "runsc",
+      hostSockets: runscReachesHostSockets(info.Runtimes.runsc),
+    };
   }
   const rootless = (info.SecurityOptions ?? []).some((option) =>
     option.split(",").includes("name=rootless"),
   );
-  return { isolation: rootless ? "rootless-container" : "container", runtime: "runc" };
+  return {
+    isolation: rootless ? "rootless-container" : "container",
+    runtime: "runc",
+    hostSockets: true,
+  };
 };
 
 const limitsFor = (size: SandboxSize, info: Pick<EngineInfo, "NCPU" | "MemTotal">) => {
@@ -629,6 +657,21 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     // A sandbox boots from the image id it resolved, never from a tag that could move.
     const { image, baseImage } = yield* bootImage(engine, input.image);
     const info = yield* engine.info;
+    const isolation = isolationFromInfo(info);
+    const socketPath = input.bootstrap.serverUrl.startsWith("unix:")
+      ? input.bootstrap.serverUrl.slice("unix:".length)
+      : null;
+    if (local && socketPath !== null && !isolation.hostSockets) {
+      return yield* new ComputeDriverError({
+        driverId,
+        operation: "create",
+        reason: "unsupported",
+        retryable: false,
+        setupHint:
+          "Docker's gVisor runtime blocks machines from reaching this server. An admin can fix it " +
+          "with `sudo runsc install -- --host-uds=open` and a Docker restart.",
+      });
+    }
     const network = yield* setupLock.withPermits(1)(
       Effect.gen(function* () {
         if (!blockEnsuredOnCreate) {
@@ -647,9 +690,6 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     const labels = { ...input.tags, "pair.size": input.size };
     // The volume takes the container's name: a stray from a lost create owns its own disk.
     yield* engine.createVolume({ Name: input.name, Labels: labels });
-    const socketPath = input.bootstrap.serverUrl.startsWith("unix:")
-      ? input.bootstrap.serverUrl.slice("unix:".length)
-      : null;
     // A bundle of another build than this boot's would not be the one it runs.
     const bundle =
       local && socketPath !== null
@@ -671,7 +711,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
         volume: input.name,
         network: network.Id,
         limits: limitsFor(input.size, info),
-        runtime: isolationFromInfo(info).runtime,
+        runtime: isolation.runtime,
         local:
           local && socketPath !== null
             ? Option.some({

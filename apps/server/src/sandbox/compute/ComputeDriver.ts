@@ -54,11 +54,14 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
         hint: Schema.optionalKey(Schema.String),
       }),
     ),
+    /** How an admin fixes a host the driver cannot run machines on. */
+    setupHint: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
   // Sandbox failures show this text to the user.
   override get message(): string {
+    if (this.setupHint !== undefined) return this.setupHint;
     if (this.image?.state === "pulling") {
       return "The machine image is still downloading. Retry in a few minutes.";
     }

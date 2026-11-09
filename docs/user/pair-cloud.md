@@ -29,8 +29,8 @@ and kernel, and on Pair Cloud that host holds the server's database and secrets.
 under gVisor:
 
 1. Install gVisor following [gVisor's install guide](https://gvisor.dev/docs/user_guide/install/),
-   and register it with Docker under the name `runsc` (`sudo runsc install`, then
-   `sudo systemctl restart docker`).
+   and register it with Docker under the name `runsc`, letting machines reach Pair's socket:
+   `sudo runsc install -- --host-uds=open`, then `sudo systemctl restart docker`.
 2. Let Pair's user reach Docker: `sudo usermod -aG docker "$(id -un)"`, then log out and back in.
    Do this before you install the service, which keeps the groups it started with.
 3. Check that `docker info` works without `sudo` and lists `runsc` under its runtimes.
