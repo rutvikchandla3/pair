@@ -25,6 +25,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { TEAM_IMAGE_STREAM_ID } from "../orchestration-v2/EffectOutbox.ts";
 import { replayAndBufferProjectedLiveEvents } from "../orchestration-v2/LiveStreamBudget.ts";
 
 import {
@@ -43,12 +44,32 @@ export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Even
     : never
   : never;
 
+/** The caller owns the event schema and passes its encoded payload. */
+export interface TeamImageEventInput {
+  readonly eventId: EventId;
+  readonly type: string;
+  readonly occurredAt: string;
+  readonly payload: unknown;
+}
+
+export interface StoredTeamImageEvent extends TeamImageEventInput {
+  readonly sequence: number;
+  readonly streamVersion: number;
+  readonly commandId: CommandId | null;
+}
+
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   {
     readonly appendProjectEvent: (
       event: UnsequencedProjectEvent,
     ) => Effect.Effect<ApplicationProjectEvent, OrchestrationEventStoreError>;
+
+    /** Readers filter by aggregate kind, so these rows never reach a thread or project read. */
+    readonly appendTeamImageEvents: (input: {
+      readonly commandId?: CommandId;
+      readonly events: ReadonlyArray<TeamImageEventInput>;
+    }) => Effect.Effect<ReadonlyArray<StoredTeamImageEvent>, OrchestrationEventStoreError>;
 
     readonly appendAgentEvents: (input: {
       readonly commandId?: CommandId;
@@ -167,7 +188,7 @@ interface ApplicationEventRow {
   readonly sequence: number;
   readonly event_id: string;
   readonly command_id: string | null;
-  readonly aggregate_kind: "project" | "thread";
+  readonly aggregate_kind: "project" | "thread" | "team-image";
   readonly stream_id: string;
   readonly event_type: string;
   readonly occurred_at: string;
@@ -388,6 +409,80 @@ const makeEventStore = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.appendProjectEvent:insert",
           "OrchestrationEventStore.appendProjectEvent:decode",
+        ),
+      ),
+    );
+
+  const appendTeamImageEvents: OrchestrationEventStore["Service"]["appendTeamImageEvents"] = (
+    input,
+  ) =>
+    Effect.forEach(
+      input.events,
+      (event) =>
+        Effect.gen(function* () {
+          const commandId = input.commandId ?? null;
+          const rows = yield* sql<{ readonly sequence: number; readonly stream_version: number }>`
+            INSERT INTO orchestration_events (
+              event_id,
+              aggregate_kind,
+              stream_id,
+              stream_version,
+              event_type,
+              occurred_at,
+              command_id,
+              causation_event_id,
+              correlation_id,
+              actor_kind,
+              payload_json,
+              metadata_json,
+              application_event_version
+            )
+            VALUES (
+              ${event.eventId},
+              'team-image',
+              ${TEAM_IMAGE_STREAM_ID},
+              COALESCE(
+                (
+                  SELECT stream_version + 1
+                  FROM orchestration_events
+                  WHERE aggregate_kind = 'team-image'
+                    AND stream_id = ${TEAM_IMAGE_STREAM_ID}
+                  ORDER BY stream_version DESC
+                  LIMIT 1
+                ),
+                0
+              ),
+              ${event.type},
+              ${event.occurredAt},
+              ${commandId},
+              NULL,
+              ${commandId},
+              'server',
+              ${yield* encodeJson(event.payload)},
+              '{}',
+              2
+            )
+            RETURNING sequence, stream_version
+          `;
+          const row = rows[0];
+          if (row === undefined) {
+            return yield* Effect.die(
+              new Error(`Team-image event ${event.eventId} was not stored.`),
+            );
+          }
+          return {
+            ...event,
+            sequence: row.sequence,
+            streamVersion: row.stream_version,
+            commandId,
+          } satisfies StoredTeamImageEvent;
+        }),
+      { concurrency: 1 },
+    ).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.appendTeamImageEvents:insert",
+          "OrchestrationEventStore.appendTeamImageEvents:encode",
         ),
       ),
     );
@@ -765,6 +860,7 @@ const makeEventStore = Effect.gen(function* () {
 
   return {
     appendProjectEvent,
+    appendTeamImageEvents,
     appendAgentEvents,
     readAgentEvents,
     getAgentReplayStats,

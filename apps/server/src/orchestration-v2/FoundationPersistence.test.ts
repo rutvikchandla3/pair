@@ -1452,6 +1452,81 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("commits a team-image command, its rows and its effects once", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const now = yield* DateTime.now;
+      const applied = yield* Ref.make<ReadonlyArray<number>>([]);
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-team-image-commit:old-launch",
+          commandId: CommandId.make("command:foundation-team-image-commit:old"),
+          request: { type: "team-image.build.launch", imageBuildId: "build-old" },
+        },
+      ]);
+      const commandId = CommandId.make("command:foundation-team-image-commit");
+      const commit = eventSink.commitTeamImageCommand({
+        commandId,
+        commandType: "team-image.build.request",
+        acceptedAt: now,
+        events: [
+          {
+            eventId: EventId.make("event:foundation-team-image-commit"),
+            type: "team-image.build.requested",
+            occurredAt: DateTime.formatIso(now),
+            payload: { imageBuildId: "build-new" },
+          },
+        ],
+        effects: [
+          {
+            id: "effect:foundation-team-image-commit:new-launch",
+            commandId,
+            request: { type: "team-image.build.launch", imageBuildId: "build-new" },
+          },
+        ],
+        cancelUnsettledEffects: {
+          effectTypes: ["team-image.build.launch"],
+          reason: "Superseded.",
+        },
+        apply: (stored) =>
+          Ref.update(applied, (current) => [...current, ...stored.map((event) => event.sequence)]),
+      });
+
+      const first = yield* commit;
+      const retry = yield* commit;
+
+      assert.isTrue(first.committed);
+      assert.equal(first.cancelledEffectCount, 1);
+      assert.isFalse(retry.committed);
+      assert.lengthOf(retry.storedEvents, 0);
+      assert.deepEqual(retry.receipt, first.receipt);
+      assert.deepEqual(yield* Ref.get(applied), [first.receipt.resultSequence]);
+      assert.deepEqual(
+        Option.getOrUndefined(yield* receipts.getTeamImageByCommandId(commandId)),
+        first.receipt,
+      );
+      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+      assert.equal(
+        (yield* outbox.get("effect:foundation-team-image-commit:old-launch")).pipe(
+          Option.getOrThrow,
+        ).status,
+        "cancelled",
+      );
+      assert.equal(
+        (yield* outbox.get("effect:foundation-team-image-commit:new-launch")).pipe(
+          Option.getOrThrow,
+        ).status,
+        "pending",
+      );
+      yield* outbox.cancelUnsettledTeamImage({
+        effectTypes: ["team-image.build.launch"],
+        reason: "Test cleanup.",
+      });
+    }),
+  );
+
   it.effect("does not publish a stale provider start after an interrupt wins", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
@@ -2338,6 +2413,61 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.equal(Option.getOrUndefined(unblocked)?.id, "effect:foundation-retry-order:a-start");
       yield* outbox.succeed({ effectId: "effect:foundation-retry-order:a-start", workerId });
       yield* outbox.succeed({ effectId: "effect:foundation-retry-order:b-title", workerId });
+    }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
+  );
+
+  it.effect("runs one team-image effect at a time beside thread effects", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const workerId = "team-image-key-worker";
+      const commandId = CommandId.make("command:foundation-team-image-key");
+      const threadId = ThreadId.make("thread:foundation-team-image-key");
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-team-image-key:a-launch",
+          commandId,
+          request: { type: "team-image.build.launch", imageBuildId: "build-1" },
+        },
+        {
+          id: "effect:foundation-team-image-key:b-launch",
+          commandId,
+          request: { type: "team-image.build.launch", imageBuildId: "build-2" },
+        },
+        {
+          id: "effect:foundation-team-image-key:c-title",
+          commandId,
+          threadId,
+          request: { type: "thread-title.generate", kind: { type: "regenerate" } },
+        },
+      ]);
+
+      const first = yield* outbox.claimNext({ workerId });
+      assert.equal(Option.getOrUndefined(first)?.id, "effect:foundation-team-image-key:a-launch");
+      const title = yield* outbox.claimNext({ workerId });
+      assert.equal(Option.getOrUndefined(title)?.id, "effect:foundation-team-image-key:c-title");
+      assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId })));
+
+      yield* outbox.succeed({ effectId: "effect:foundation-team-image-key:a-launch", workerId });
+      const second = yield* outbox.claimNext({ workerId });
+      assert.equal(Option.getOrUndefined(second)?.id, "effect:foundation-team-image-key:b-launch");
+      if (Option.isSome(second)) {
+        assert.isTrue(EffectOutbox.isTeamImageEffect(second.value));
+        assert.notProperty(second.value, "threadId");
+      }
+
+      assert.deepEqual(
+        yield* outbox.cancelUnsettledTeamImage({
+          effectTypes: ["team-image.build.launch"],
+          reason: "Test cancellation.",
+        }),
+        ["effect:foundation-team-image-key:b-launch"],
+      );
+      assert.equal(
+        (yield* outbox.get("effect:foundation-team-image-key:c-title")).pipe(Option.getOrThrow)
+          .status,
+        "running",
+      );
+      yield* outbox.succeed({ effectId: "effect:foundation-team-image-key:c-title", workerId });
     }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 

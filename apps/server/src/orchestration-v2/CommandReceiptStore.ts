@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
+import { TEAM_IMAGE_STREAM_ID } from "./EffectOutbox.ts";
 
 export class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandReceiptStoreWriteError>()(
   "CommandReceiptStoreWriteError",
@@ -62,7 +63,18 @@ export const ProjectCommandReceiptV2 = Schema.Struct({
 });
 export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 
-type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
+export const TeamImageCommandReceiptV2 = Schema.Struct({
+  commandId: CommandId,
+  streamId: Schema.Literal(TEAM_IMAGE_STREAM_ID),
+  commandType: Schema.String,
+  acceptedAt: Schema.DateTimeUtc,
+  resultSequence: NonNegativeInt,
+  status: CommandReceiptV2Status,
+  error: Schema.NullOr(Schema.String),
+});
+export type TeamImageCommandReceiptV2 = typeof TeamImageCommandReceiptV2.Type;
+
+type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2 | TeamImageCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
   readonly insertIfAbsent: (
@@ -79,6 +91,10 @@ export interface CommandReceiptStoreV2Shape {
   readonly getProjectByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;
+  /** None for thread and project command ids. */
+  readonly getTeamImageByCommandId: (
+    commandId: CommandId,
+  ) => Effect.Effect<Option.Option<TeamImageCommandReceiptV2>, CommandReceiptStoreV2Error>;
 }
 
 export class CommandReceiptStoreV2 extends Context.Service<
@@ -94,6 +110,12 @@ const decodeReceipt = Schema.decodeUnknownEffect(
 );
 const decodeProjectReceipt = Schema.decodeUnknownEffect(
   ProjectCommandReceiptV2.mapFields((fields) => ({
+    ...fields,
+    acceptedAt: Schema.DateTimeUtcFromString,
+  })),
+);
+const decodeTeamImageReceipt = Schema.decodeUnknownEffect(
+  TeamImageCommandReceiptV2.mapFields((fields) => ({
     ...fields,
     acceptedAt: Schema.DateTimeUtcFromString,
   })),
@@ -118,7 +140,9 @@ function toApplicationReceipt(
     commandId: receipt.commandId,
     ...("projectId" in receipt
       ? { aggregateKind: "project" as const, aggregateId: receipt.projectId }
-      : { aggregateKind: "thread" as const, aggregateId: receipt.threadId }),
+      : "threadId" in receipt
+        ? { aggregateKind: "thread" as const, aggregateId: receipt.threadId }
+        : { aggregateKind: "team-image" as const, aggregateId: receipt.streamId }),
     commandType: receipt.commandType,
     acceptedAt: DateTime.formatIso(receipt.acceptedAt),
     resultSequence: receipt.resultSequence,
@@ -184,6 +208,23 @@ const layerBase: Layer.Layer<
               : decodeProjectReceipt({
                   commandId: receipt.value.commandId,
                   projectId: receipt.value.aggregateId,
+                  commandType: receipt.value.commandType,
+                  acceptedAt: receipt.value.acceptedAt,
+                  resultSequence: receipt.value.resultSequence,
+                  status: receipt.value.status,
+                  error: receipt.value.error,
+                }).pipe(Effect.asSome),
+          ),
+          Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
+        ),
+      getTeamImageByCommandId: (commandId) =>
+        receipts.getByCommandId({ commandId }).pipe(
+          Effect.flatMap((receipt) =>
+            Option.isNone(receipt) || receipt.value.aggregateKind !== "team-image"
+              ? Effect.succeedNone
+              : decodeTeamImageReceipt({
+                  commandId: receipt.value.commandId,
+                  streamId: receipt.value.aggregateId,
                   commandType: receipt.value.commandType,
                   acceptedAt: receipt.value.acceptedAt,
                   resultSequence: receipt.value.resultSequence,

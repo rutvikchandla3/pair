@@ -38,6 +38,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
+import * as TeamImageEffects from "../sandbox/image/TeamImageEffects.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -89,6 +90,7 @@ function layerExecutorFor(input: {
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
   readonly sandboxEffects?: Partial<SandboxEffects.SandboxEffects["Service"]>;
+  readonly teamImages?: TeamImageEffects.TeamImageEffects["Service"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -170,10 +172,100 @@ function layerExecutorFor(input: {
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
+        input.teamImages === undefined
+          ? Layer.empty
+          : Layer.succeed(TeamImageEffects.TeamImageEffects, input.teamImages),
       ),
     ),
   );
 }
+
+it.effect.each([
+  { name: "retries a team-image effect, then reports it exhausted", stub: true },
+  { name: "fails a team-image effect once when this server has no team images", stub: false },
+])("$name", ({ stub }) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const workerId = "worker-team-image";
+    const attemptCount = yield* Ref.make(1);
+    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const record = (call: string) => Ref.update(calls, (current) => [...current, call]);
+    const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () =>
+        Ref.get(attemptCount).pipe(
+          Effect.map((count) =>
+            Option.some<EffectOutbox.ClaimedEffectV2>({
+              id: "effect:worker-team-image",
+              commandId: CommandId.make("command:worker-team-image"),
+              request: { type: "team-image.build.launch", imageBuildId: "build-1" },
+              status: "running",
+              attemptCount: count,
+              availableAt: now,
+              leaseOwner: workerId,
+              createdAt: now,
+              updatedAt: now,
+              completedAt: null,
+              lastError: null,
+            }),
+          ),
+        ),
+      get: () => Effect.succeedNone,
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: () => record("retry").pipe(Effect.as(true)),
+      fail: ({ error }) =>
+        record(
+          error.includes("Team images are not available on this server.")
+            ? "fail:unavailable"
+            : "fail",
+        ).pipe(Effect.as(true)),
+    });
+    const layerExecutor = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      ...(stub
+        ? {
+            teamImages: TeamImageEffects.TeamImageEffects.of({
+              execute: (effect) =>
+                record(`execute:${effect.request.type}`).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new EffectWorker.OrchestrationEffectExecutionError({
+                        effectId: effect.id,
+                        effectType: effect.request.type,
+                        cause: "simulated launch failure",
+                      }),
+                    ),
+                  ),
+                ),
+              reportExhausted: (effect) => record(`exhausted:${effect.request.type}`),
+            }),
+          }
+        : {}),
+    });
+    const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+    );
+    yield* Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (const count of stub ? [1, 5] : [1]) {
+        yield* Ref.set(attemptCount, count);
+        yield* worker.runOnce;
+      }
+    }).pipe(Effect.provide(layerWorker));
+    assert.deepEqual(
+      yield* Ref.get(calls),
+      stub
+        ? [
+            "execute:team-image.build.launch",
+            "retry",
+            "execute:team-image.build.launch",
+            "exhausted:team-image.build.launch",
+            "fail",
+          ]
+        : ["fail:unavailable"],
+    );
+  }),
+);
 
 it.effect.each([
   {

@@ -387,13 +387,17 @@ user-visible changes, and every thread path behaves exactly as before.
     `orchestration_v2_effect_outbox_next` with every current column, except that `thread_id`
     becomes nullable, plus
     ```sql
-    aggregate_kind TEXT NOT NULL CHECK (aggregate_kind IN ('thread', 'team-image')),
-    aggregate_id TEXT NOT NULL,
+    aggregate_kind TEXT NOT NULL DEFAULT 'thread'
+      CHECK (aggregate_kind IN ('thread', 'team-image')),
+    aggregate_id TEXT NOT NULL GENERATED ALWAYS AS (COALESCE(thread_id, aggregate_kind)) VIRTUAL,
     CHECK ((aggregate_kind = 'thread') = (thread_id IS NOT NULL)),
     ```
-    then `INSERT INTO …_next (…, aggregate_kind, aggregate_id) SELECT …, 'thread', thread_id FROM
-    orchestration_v2_effect_outbox ORDER BY rowid` (the claim predicate orders by `rowid`, so the
-    copy must keep it), `DROP`, `ALTER TABLE … RENAME`, and recreate the three indexes
+    `aggregate_id` is derived, not written: a thread row's key is its thread id, and the one
+    team-image stream is named after its kind, so the thread writers and the test fixtures that
+    insert raw outbox rows stay as they are. Then `INSERT INTO …_next (rowid, …, aggregate_kind)
+    SELECT rowid, …, 'thread' FROM orchestration_v2_effect_outbox ORDER BY rowid` (the claim
+    predicate orders by `rowid`, so the copy keeps it), `DROP`, `ALTER TABLE … RENAME`, and
+    recreate the three indexes
     (`_claim_idx`, `_command_idx`, `_thread_status_idx`) plus
     `orchestration_v2_effect_outbox_aggregate_idx (aggregate_kind, aggregate_id, status)`. One
     transaction, as the migrator runs it.
@@ -414,25 +418,27 @@ user-visible changes, and every thread path behaves exactly as before.
       so 4.11 does not wait for 4.12 in the same wave; 4.13 swaps in `TeamImageBuildId`.
       (`ComputeDriverId` already exists.)
     - `REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS` (163–183) gains launch, capture,
-      destroy-machine and delete-image; `PROCESS_BOUND_EFFECT_TYPES` (185–191) gains run-program
-      (its program died with the process, so 4.14's recovery fails the build instead). Both
-      `satisfies` clauses widen to `(OrchestrationEffectRequestV2 | TeamImageEffectRequestV2)["type"]`.
-      None is runner-bound (194–201).
+      destroy-machine and delete-image, and its `satisfies` clause widens to both unions.
+      `PROCESS_BOUND_EFFECT_TYPES` stays thread-only, because `ProviderRuntimeRecoveryService`
+      passes it to the thread `cancelUnsettled`; a private `PROCESS_BOUND_TEAM_IMAGE_EFFECT_TYPES`
+      holds run-program (its program died with the process, so 4.14's recovery fails the build
+      instead), and `reconcileAfterProcessLoss` cancels both lists. None is runner-bound
+      (194–201), so team-image effects run in the shared lane.
     - `TeamImageEffectV2` and `PendingTeamImageEffectV2`, shaped as `OrchestrationEffectV2` and
       `PendingOrchestrationEffectV2` (219–240) without `threadId`. Those two keep their shape, so
       no thread fixture changes. `ClaimedEffectV2 = OrchestrationEffectV2 | TeamImageEffectV2` and
       `isTeamImageEffect(effect)` (by `request.type` prefix).
-    - `EffectRow` (316–330) gains `aggregate_kind` and `aggregate_id`; `rowToEffect` (337–353)
-      returns a `TeamImageEffectV2` for a `team-image` row.
+    - `EffectRow.thread_id` (316–330) becomes nullable, and a row with no thread id decodes as a
+      `TeamImageEffectV2`.
     - `claimableCandidatePredicate` (395–443): line 413 becomes `active.aggregate_kind =
       candidate.aggregate_kind AND active.aggregate_id = candidate.aggregate_id`. With a nullable
       `thread_id` the old comparison would let two team-image effects run at once (`NULL = NULL`
       is not true). The `provider-thread.rollback` and `thread-title.generate` clauses stay; they
       never match a team-image row.
-    - `enqueue` (459) writes the key: `thread`, `threadId` for thread effects;
-      `team-image`, `TEAM_IMAGE_STREAM_ID` and a null `thread_id` otherwise. `claimNext`,
-      `succeed`, `retry` and `fail` return or take `ClaimedEffectV2`.
-    - `get` and `listByCommandId` stay thread-only (their callers are thread code). New
+    - `enqueue` (459) takes either pending shape and writes `aggregate_kind`: `thread` with the
+      thread id, or `team-image` with a null `thread_id`. `claimNext` returns `ClaimedEffectV2`.
+    - `get` also returns `ClaimedEffectV2`: the worker rechecks every claim's durable status
+      through it. `listByCommandId` stays thread-only and skips team-image rows. New
       `cancelUnsettledTeamImage({ effectTypes, reason })`, the twin of `cancelUnsettled` (529–541)
       for the team-image key. `expedite` (550–558) is unchanged.
   - `apps/server/src/orchestration-v2/EffectWorker.ts`:
@@ -443,25 +449,32 @@ user-visible changes, and every thread path behaves exactly as before.
     - `layerExecutor` (106) reads it with `Effect.serviceOption`, as it reads `CheckpointMirror`
       (135), so executor tests need none. `execute` (171) and `reportExhausted` (137) branch on
       `isTeamImageEffect` first; with no service, a team-image effect fails with "Team images are
-      not available on this server" and is not retried.
+      not available on this server" and is not retried. `OrchestrationEffectExecutionError` gains
+      an optional `retryable`; `false` sends the effect straight to `reportExhausted` and `fail`,
+      which 4.14 can use for failures a retry cannot fix.
     - `EFFECT_TIMEOUTS` (664–685): launch 60 s, capture 20 min (**proposed**, see the track notes),
       destroy-machine 60 s, delete-image 60 s. run-program has none: it returns once the program
       is spawned. `maxAttempts` (753) stays 5.
   - `apps/server/src/persistence/OrchestrationEventStore.ts`: the row literal (170) widens to
-    `"project" | "thread" | "team-image"`. New `appendTeamImageEvents(rows)`, modeled on
+    `"project" | "thread" | "team-image"`. New `appendTeamImageEvents({ commandId?, events })`,
+    taking `TeamImageEventInput { eventId, type, occurredAt, payload }` and modeled on
     `appendProjectEventRow` (310–368): `aggregate_kind = 'team-image'`, `stream_id =
     TEAM_IMAGE_STREAM_ID`, the same `stream_version` computation, `application_event_version = 2`.
-    The event payload type is `unknown` here and encoded by the caller (4.13 owns the schema);
-    existing readers filter by kind (432–434) and never see these rows.
+    It returns `StoredTeamImageEvent`s with their `sequence` and `streamVersion`. The payload is
+    `unknown` here and encoded by the caller (4.13 owns the schema); existing readers filter by
+    kind (432–434) and never see these rows. `EventStoreV2` passes it through.
   - `apps/server/src/persistence/OrchestrationCommandReceipts.ts` (16–25): `aggregateKind` gains
-    `"team-image"` and `aggregateId` gains the stream id literal. `CommandReceiptStore.ts`
-    `toApplicationReceipt` (114–128) returns null for a team-image receipt; no client reads one.
+    `"team-image"` and `aggregateId` gains the stream id literal. `CommandReceiptStore.ts` adds
+    `TeamImageCommandReceiptV2` (`streamId` in place of `threadId`) and
+    `getTeamImageByCommandId`; `getByCommandId` and `getProjectByCommandId` return none for a
+    team-image receipt, and no client reads one.
   - `apps/server/src/orchestration-v2/EventSink.ts` (interface 69–197): `commitTeamImageCommand({
     commandId, commandType, acceptedAt, events, effects, cancelUnsettledEffects?, apply })` and
     `commitRejectedTeamImageCommand({ commandId, commandType, rejectedAt, error })`. One
     transaction, as `commitCommandEffect` (635–711): the receipt replay check, the events, `apply`
     (a callback that writes the caller's projection rows inside the transaction, so 4.13's tables
-    and the receipt agree), the cancel, then the effects; `notifyAvailable` after commit. The
+    and the receipt agree), the cancel, then the effects; `notifyAvailable` after commit. A
+    replayed command id returns its first receipt with `committed: false` and runs nothing. The
     caller holds the lock; EventSink takes none.
 - **Types and services:** above. No lock here; 4.13's `TeamImageService` is the stream's only
   writer and holds one `Semaphore`.
@@ -473,7 +486,8 @@ user-visible changes, and every thread path behaves exactly as before.
     refused by the `CHECK`.
   - `FoundationPersistence.test.ts`: two pending team-image effects claim one at a time; a
     team-image effect and a thread effect claim together; `cancelUnsettledTeamImage` leaves thread
-    rows alone. Extend the existing claim cases rather than adding a file.
+    rows alone; `commitTeamImageCommand` applies, cancels and enqueues once and replays its
+    receipt. Extend the existing claim cases rather than adding a file.
   - `EffectWorker.test.ts`: a team-image effect reaches a stub `TeamImageEffects.execute`, and its
     exhaustion reaches `reportExhausted`; with no service it fails once, unretried.
   - `OrchestrationEventStore.test.ts`: appended team-image events get versions 0, 1, … and do not

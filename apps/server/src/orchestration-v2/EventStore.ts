@@ -55,6 +55,13 @@ export interface EventStoreV2Shape {
   readonly appendProjectEvent: (
     event: OrchestrationEventStore.UnsequencedProjectEvent,
   ) => Effect.Effect<ApplicationProjectEvent, EventStoreV2Error>;
+  readonly appendTeamImageEvents: (input: {
+    readonly commandId?: CommandId;
+    readonly events: ReadonlyArray<OrchestrationEventStore.TeamImageEventInput>;
+  }) => Effect.Effect<
+    ReadonlyArray<OrchestrationEventStore.StoredTeamImageEvent>,
+    EventStoreV2Error
+  >;
   readonly read: (input?: {
     readonly afterSequence?: number;
     readonly throughSequence?: number;
@@ -123,6 +130,16 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
             .appendProjectEvent(event)
             .pipe(
               Effect.mapError((cause) => new EventStoreAppendEventsError({ eventCount: 1, cause })),
+            );
+        }),
+        appendTeamImageEvents: Effect.fn("EventStoreV2.appendTeamImageEvents")(function (input) {
+          return applicationEvents
+            .appendTeamImageEvents(input)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventStoreAppendEventsError({ eventCount: input.events.length, cause }),
+              ),
             );
         }),
         read,

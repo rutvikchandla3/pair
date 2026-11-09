@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
+  ComputeDriverId,
   MessageId,
   NodeId,
   NonNegativeInt,
@@ -160,6 +161,31 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
+/** The one team-image stream per server; its effects run one at a time, as a thread's do. */
+export const TEAM_IMAGE_STREAM_ID = "team-image";
+
+/** Each effect reads its build when it runs, so a cancel committed before the claim is seen. */
+export const TeamImageEffectRequestV2 = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literals([
+      "team-image.build.launch",
+      "team-image.build.run-program",
+      "team-image.build.capture",
+      "team-image.build.destroy-machine",
+    ]),
+    imageBuildId: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("team-image.build.delete-image"),
+    imageBuildId: Schema.String,
+    driverId: ComputeDriverId,
+    imageRef: Schema.String,
+  }),
+]);
+export type TeamImageEffectRequestV2 = typeof TeamImageEffectRequestV2.Type;
+
+type AnyEffectTypeV2 = (OrchestrationEffectRequestV2 | TeamImageEffectRequestV2)["type"];
+
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
   "provider-session.detach",
@@ -180,7 +206,11 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "sandbox.release-waiters",
   "sandbox.request-wake",
   "sandbox.hand-over",
-] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+  "team-image.build.launch",
+  "team-image.build.capture",
+  "team-image.build.destroy-machine",
+  "team-image.build.delete-image",
+] as const satisfies ReadonlyArray<AnyEffectTypeV2>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
@@ -189,6 +219,11 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.restart",
   "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+/** Its program died with the process, so the team-image recovery fails the build instead. */
+const PROCESS_BOUND_TEAM_IMAGE_EFFECT_TYPES = [
+  "team-image.build.run-program",
+] as const satisfies ReadonlyArray<TeamImageEffectRequestV2["type"]>;
 
 /** On a sandbox thread these wait on its machine. Interrupt, steer and answers stay shared so they never queue behind one. */
 const RUNNER_BOUND_EFFECT_TYPES = [
@@ -239,6 +274,24 @@ export interface PendingOrchestrationEffectV2 {
   readonly availableAt?: DateTime.Utc;
 }
 
+export interface TeamImageEffectV2 extends Omit<OrchestrationEffectV2, "threadId" | "request"> {
+  readonly request: TeamImageEffectRequestV2;
+}
+
+export interface PendingTeamImageEffectV2 extends Omit<
+  PendingOrchestrationEffectV2,
+  "threadId" | "request"
+> {
+  readonly request: TeamImageEffectRequestV2;
+}
+
+export type ClaimedEffectV2 = OrchestrationEffectV2 | TeamImageEffectV2;
+
+export const isTeamImageEffect = <E extends { readonly request: { readonly type: string } }>(
+  effect: E,
+): effect is Extract<E, { readonly request: TeamImageEffectRequestV2 }> =>
+  effect.request.type.startsWith("team-image.");
+
 export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
   "EffectOutboxError",
   {
@@ -259,17 +312,23 @@ export interface EffectOutboxV2Shape {
   readonly notifyAvailable: (count?: number) => Effect.Effect<void>;
   /** Persist rows only. Notify workers after the surrounding transaction commits. */
   readonly enqueue: (
-    effects: ReadonlyArray<PendingOrchestrationEffectV2>,
+    effects: ReadonlyArray<PendingOrchestrationEffectV2 | PendingTeamImageEffectV2>,
   ) => Effect.Effect<void, EffectOutboxError>;
+  /** Reads any aggregate's effect: the worker rechecks every claim's durable status here. */
   readonly get: (
     effectId: string,
-  ) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
+  ) => Effect.Effect<Option.Option<ClaimedEffectV2>, EffectOutboxError>;
+  /** Thread effects only. */
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+    readonly reason: string;
+  }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
+  readonly cancelUnsettledTeamImage: (input: {
+    readonly effectTypes: ReadonlyArray<TeamImageEffectRequestV2["type"]>;
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
   /** Makes these threads' pending effects of these types claimable now, then wakes workers. */
@@ -289,7 +348,7 @@ export interface EffectOutboxV2Shape {
   readonly claimNext: (input: {
     readonly workerId: string;
     readonly excludeRestartContinuations?: boolean;
-  }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
+  }) => Effect.Effect<Option.Option<ClaimedEffectV2>, EffectOutboxError>;
   readonly nextClaimableAt: Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
   readonly succeed: (input: {
     readonly effectId: string;
@@ -316,7 +375,8 @@ export class EffectOutboxV2 extends Context.Service<EffectOutboxV2, EffectOutbox
 type EffectRow = {
   readonly effect_id: string;
   readonly command_id: string;
-  readonly thread_id: string;
+  /** Null exactly for non-thread aggregates (the table's CHECK). */
+  readonly thread_id: string | null;
   readonly effect_type: string;
   readonly payload_json: string;
   readonly status: string;
@@ -333,24 +393,39 @@ const encodeRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffec
 const decodeRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
+const encodeTeamImageRequest = Schema.encodeSync(Schema.fromJsonString(TeamImageEffectRequestV2));
+const decodeTeamImageRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(TeamImageEffectRequestV2),
+);
 
-const rowToEffect = (row: EffectRow) =>
+const rowFields = (row: EffectRow) => ({
+  id: row.effect_id,
+  commandId: CommandId.make(row.command_id),
+  status: row.status as OrchestrationEffectStatusV2,
+  attemptCount: row.attempt_count,
+  availableAt: row.available_at,
+  leaseOwner: row.lease_owner,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  completedAt: row.completed_at,
+  lastError: row.last_error,
+});
+
+const rowToEffect = (row: EffectRow, threadId: string) =>
   decodeRequest(row.payload_json).pipe(
     Effect.map((request): OrchestrationEffectV2 => ({
-      id: row.effect_id,
-      commandId: CommandId.make(row.command_id),
-      threadId: ThreadId.make(row.thread_id),
+      ...rowFields(row),
+      threadId: ThreadId.make(threadId),
       request,
-      status: row.status as OrchestrationEffectStatusV2,
-      attemptCount: row.attempt_count,
-      availableAt: row.available_at,
-      leaseOwner: row.lease_owner,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      completedAt: row.completed_at,
-      lastError: row.last_error,
     })),
   );
+
+const rowToClaimedEffect = (row: EffectRow): Effect.Effect<ClaimedEffectV2, Schema.SchemaError> =>
+  row.thread_id === null
+    ? decodeTeamImageRequest(row.payload_json).pipe(
+        Effect.map((request): TeamImageEffectV2 => ({ ...rowFields(row), request })),
+      )
+    : rowToEffect(row, row.thread_id);
 
 export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = Layer.effect(
   EffectOutboxV2,
@@ -410,7 +485,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         AND NOT EXISTS (
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active
-          WHERE active.thread_id = candidate.thread_id
+          WHERE active.aggregate_kind = candidate.aggregate_kind
+            AND active.aggregate_id = candidate.aggregate_id
             AND (
               active.status = 'running'
               OR (
@@ -451,9 +527,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     };
 
     const decodeRows = (operation: string, rows: ReadonlyArray<EffectRow>) =>
-      Effect.forEach(rows, rowToEffect).pipe(
-        Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
-      );
+      Effect.forEach(
+        rows.flatMap((row) => (row.thread_id === null ? [] : [{ row, threadId: row.thread_id }])),
+        ({ row, threadId }) => rowToEffect(row, threadId),
+      ).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation, cause })));
 
     const service: EffectOutboxV2Shape = {
       enqueue: Effect.fn("EffectOutbox.enqueue")(
@@ -467,6 +544,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 effect_id,
                 command_id,
                 thread_id,
+                aggregate_kind,
                 effect_type,
                 payload_json,
                 status,
@@ -478,9 +556,14 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               VALUES (
                 ${effect.id},
                 ${effect.commandId},
-                ${effect.threadId},
+                ${isTeamImageEffect(effect) ? null : effect.threadId},
+                ${isTeamImageEffect(effect) ? "team-image" : "thread"},
                 ${effect.request.type},
-                ${encodeRequest(effect.request)},
+                ${
+                  isTeamImageEffect(effect)
+                    ? encodeTeamImageRequest(effect.request)
+                    : encodeRequest(effect.request)
+                },
                 'pending',
                 0,
                 ${DateTime.formatIso(effect.availableAt ?? now)},
@@ -505,7 +588,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           NodeSqliteClient.readOnly,
           Effect.flatMap((rows) => {
             const row = rows[0];
-            return row === undefined ? Effect.succeedNone : rowToEffect(row).pipe(Effect.asSome);
+            return row === undefined
+              ? Effect.succeedNone
+              : rowToClaimedEffect(row).pipe(Effect.asSome);
           }),
           Effect.mapError((cause) => new EffectOutboxError({ operation: "get", effectId, cause })),
         ),
@@ -546,6 +631,30 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           return rows.map(({ effect_id }) => effect_id);
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause })),
+      ),
+      cancelUnsettledTeamImage: Effect.fn("EffectOutbox.cancelUnsettledTeamImage")(
+        function* ({ effectTypes, reason }) {
+          if (effectTypes.length === 0) return [];
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const rows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'cancelled',
+              lease_owner = NULL,
+              completed_at = ${now},
+              updated_at = ${now},
+              last_error = ${reason}
+            WHERE aggregate_kind = 'team-image'
+              AND aggregate_id = ${TEAM_IMAGE_STREAM_ID}
+              AND status IN ('pending', 'running')
+              AND effect_type IN ${sql.in(effectTypes)}
+            RETURNING effect_id
+          `;
+          return rows.map(({ effect_id }) => effect_id);
+        },
+        Effect.mapError(
+          (cause) => new EffectOutboxError({ operation: "cancel-unsettled-team-image", cause }),
+        ),
       ),
       expedite: Effect.fn("EffectOutbox.expedite")(
         function* ({ threadIds, effectTypes }) {
@@ -602,7 +711,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             updated_at = ${now},
             last_error = 'Cancelled because the server process ended before the effect completed.'
           WHERE status IN ('pending', 'running')
-            AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
+            AND effect_type IN ${sql.in([
+              ...PROCESS_BOUND_EFFECT_TYPES,
+              ...PROCESS_BOUND_TEAM_IMAGE_EFFECT_TYPES,
+            ])}
           RETURNING effect_id
         `;
         const requeuedRows = yield* sql<{ readonly effect_id: string }>`
@@ -652,7 +764,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const row = rows[0];
           if (row === undefined) return Option.none();
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
-          return Option.some(yield* rowToEffect(row));
+          return Option.some(yield* rowToClaimedEffect(row));
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
       ),

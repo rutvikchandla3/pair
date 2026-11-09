@@ -29,6 +29,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
+import * as TeamImageEffects from "../sandbox/image/TeamImageEffects.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -37,6 +38,8 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
     effectId: Schema.String,
     effectType: Schema.String,
     retryAfterMs: Schema.optionalKey(NonNegativeInt),
+    /** False skips the remaining attempts: the worker reports the effect exhausted now. */
+    retryable: Schema.optionalKey(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -59,6 +62,12 @@ const retryDelayMs = (attemptCount: number, cause: Cause.Cause<unknown>) => {
   return hint === undefined ? backoff : Math.max(backoff, Math.min(RETRY_AFTER_CAP_MS, hint));
 };
 
+const isRetryableFailure = (cause: Cause.Cause<unknown>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => true,
+    onSome: (error) => !isOrchestrationEffectExecutionError(error) || error.retryable !== false,
+  });
+
 /**
  * Do not apply this to `provider-turn.restart`: that compound effect also runs
  * detach and start. Swallowing a start failure that happens to mention
@@ -79,12 +88,12 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
-    effect: EffectOutbox.OrchestrationEffectV2,
+    effect: EffectOutbox.ClaimedEffectV2,
     options?: { readonly willRetry: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
   /** Runs once after the last attempt fails, outside the execution bound. */
   readonly reportExhausted?: (
-    effect: EffectOutbox.OrchestrationEffectV2,
+    effect: EffectOutbox.ClaimedEffectV2,
     cause: Cause.Cause<OrchestrationEffectExecutionError>,
   ) => Effect.Effect<void>;
 }
@@ -95,7 +104,7 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
 const sandboxExecutionError =
-  (effect: EffectOutbox.OrchestrationEffectV2) => (cause: SandboxEffects.SandboxEffectError) =>
+  (effect: EffectOutbox.ClaimedEffectV2) => (cause: SandboxEffects.SandboxEffectError) =>
     new OrchestrationEffectExecutionError({
       effectId: effect.id,
       effectType: effect.request.type,
@@ -133,9 +142,15 @@ export const layerExecutor: Layer.Layer<
     const sandboxEffects = yield* SandboxEffects.SandboxEffects;
     // Optional like ProjectService's, so executor tests need no mirror; the server provides it.
     const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
+    // Optional too: the live layer ships with team-image builds.
+    const teamImages = yield* Effect.serviceOption(TeamImageEffects.TeamImageEffects);
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
+          if (EffectOutbox.isTeamImageEffect(effect)) {
+            if (Option.isSome(teamImages)) yield* teamImages.value.reportExhausted(effect, cause);
+            return;
+          }
           if (effect.request.type === "provider-thread.rollback") {
             // Here rather than in execute: a timed-out last attempt reaches only this hook.
             const rollbackError = Option.flatMap(Cause.findErrorOption(cause), (error) =>
@@ -169,6 +184,20 @@ export const layerExecutor: Layer.Layer<
         },
       ),
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
+        if (EffectOutbox.isTeamImageEffect(effect)) {
+          return Option.match(teamImages, {
+            onNone: () =>
+              Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  retryable: false,
+                  cause: "Team images are not available on this server.",
+                }),
+              ),
+            onSome: (service) => service.execute(effect, options),
+          });
+        }
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           case "provider-runtime.continue": {
@@ -662,7 +691,7 @@ export const layerExecutor: Layer.Layer<
 // so an effect that can hang must give up and fall through to the normal retry/fail path.
 // Replay-safe types only: cutting a process-bound one midway and retrying it can run it twice.
 const EFFECT_TIMEOUTS: Partial<
-  Record<EffectOutbox.OrchestrationEffectRequestV2["type"], Duration.Duration>
+  Record<EffectOutbox.ClaimedEffectV2["request"]["type"], Duration.Duration>
 > = {
   "delegated-tasks.stop": Duration.seconds(30),
   // Far above a healthy run, so hitting one means the call hung, not that it ran slow.
@@ -677,6 +706,11 @@ const EFFECT_TIMEOUTS: Partial<
   "sandbox.release-waiters": Duration.seconds(60),
   "sandbox.request-wake": Duration.seconds(60),
   "sandbox.hand-over": Duration.seconds(60),
+  "team-image.build.launch": Duration.seconds(60),
+  // A commit of a 10 GB layer on a slow disk can pass 10 minutes.
+  "team-image.build.capture": Duration.minutes(20),
+  "team-image.build.destroy-machine": Duration.seconds(60),
+  "team-image.build.delete-image": Duration.seconds(60),
 } satisfies Partial<
   Record<
     (typeof EffectOutbox.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)[number],
@@ -685,7 +719,7 @@ const EFFECT_TIMEOUTS: Partial<
 >;
 
 const boundExecution =
-  (effect: EffectOutbox.OrchestrationEffectV2) =>
+  (effect: EffectOutbox.ClaimedEffectV2) =>
   (execution: Effect.Effect<void, OrchestrationEffectExecutionError>) => {
     const timeout = EFFECT_TIMEOUTS[effect.request.type];
     return timeout === undefined
@@ -760,10 +794,7 @@ export const layerWithOptions = (
             }),
           ),
         );
-      const requeueClaim = (
-        effect: EffectOutbox.OrchestrationEffectV2,
-        cause: Cause.Cause<unknown>,
-      ) =>
+      const requeueClaim = (effect: EffectOutbox.ClaimedEffectV2, cause: Cause.Cause<unknown>) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
           : outbox
@@ -794,7 +825,7 @@ export const layerWithOptions = (
                 ),
               );
       const terminalizeClaim = (
-        effect: EffectOutbox.OrchestrationEffectV2,
+        effect: EffectOutbox.ClaimedEffectV2,
         cause: Cause.Cause<unknown>,
       ) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
@@ -832,7 +863,7 @@ export const layerWithOptions = (
           );
       };
       const recoverPostSuccessSettlement = (
-        effect: EffectOutbox.OrchestrationEffectV2,
+        effect: EffectOutbox.ClaimedEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
         EffectOutbox.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
@@ -923,7 +954,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts || !isRetryableFailure(exit.cause)
               ? yield* (executor.reportExhausted?.(effect, exit.cause) ?? Effect.void).pipe(
                   Effect.andThen(outbox.fail({ effectId: effect.id, workerId, error })),
                   Effect.onError((cause) => terminalizeClaim(effect, cause)),

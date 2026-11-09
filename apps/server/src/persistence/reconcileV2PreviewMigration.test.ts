@@ -73,6 +73,7 @@ describe("V2 preview upgrade", () => {
         [91, "ScheduledTaskCloudRuns"],
         [92, "PeerLinkCloudLaunch"],
         [93, "StagedCloudImports"],
+        [94, "OutboxAggregateKey"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -189,6 +190,7 @@ describe("V2 preview upgrade", () => {
         [91, "ScheduledTaskCloudRuns"],
         [92, "PeerLinkCloudLaunch"],
         [93, "StagedCloudImports"],
+        [94, "OutboxAggregateKey"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

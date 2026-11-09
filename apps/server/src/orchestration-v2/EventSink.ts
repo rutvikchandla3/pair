@@ -24,7 +24,11 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
+import type {
+  StoredTeamImageEvent,
+  TeamImageEventInput,
+  UnsequencedProjectEvent,
+} from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
@@ -181,6 +185,33 @@ export interface EventSinkV2Shape {
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptStore.ProjectCommandReceiptV2, EventSinkV2Error>;
+  /** The caller serializes team-image commands; apply writes its projection rows in the same transaction. */
+  readonly commitTeamImageCommand: (input: {
+    readonly commandId: CommandId;
+    readonly commandType: string;
+    readonly acceptedAt: DateTime.Utc;
+    readonly events: ReadonlyArray<TeamImageEventInput>;
+    readonly effects: ReadonlyArray<EffectOutbox.PendingTeamImageEffectV2>;
+    readonly cancelUnsettledEffects?: {
+      readonly effectTypes: ReadonlyArray<EffectOutbox.TeamImageEffectRequestV2["type"]>;
+      readonly reason: string;
+    };
+    readonly apply: (events: ReadonlyArray<StoredTeamImageEvent>) => Effect.Effect<void, unknown>;
+  }) => Effect.Effect<
+    {
+      readonly receipt: CommandReceiptStore.TeamImageCommandReceiptV2;
+      readonly storedEvents: ReadonlyArray<StoredTeamImageEvent>;
+      readonly committed: boolean;
+      readonly cancelledEffectCount: number;
+    },
+    EventSinkV2Error
+  >;
+  readonly commitRejectedTeamImageCommand: (input: {
+    readonly commandId: CommandId;
+    readonly commandType: string;
+    readonly rejectedAt: DateTime.Utc;
+    readonly error: string;
+  }) => Effect.Effect<CommandReceiptStore.TeamImageCommandReceiptV2, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
@@ -796,6 +827,94 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const existingTeamImageReceipt = (commandId: CommandId) =>
+      commandReceipts.getTeamImageByCommandId(commandId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(`Command ${commandId} was already used by another aggregate.` as const),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+
+    const commitTeamImageCommandEffect = Effect.fn(
+      "orchestrationV2.EventSink.commitTeamImageCommand",
+    )(function* (input: Parameters<EventSinkV2Shape["commitTeamImageCommand"]>[0]) {
+      const result = yield* commitThenPublish(
+        Effect.gen(function* () {
+          const reserved: CommandReceiptStore.TeamImageCommandReceiptV2 = {
+            commandId: input.commandId,
+            streamId: EffectOutbox.TEAM_IMAGE_STREAM_ID,
+            commandType: input.commandType,
+            acceptedAt: input.acceptedAt,
+            resultSequence: 0,
+            status: "accepted",
+            error: null,
+          };
+          if (!(yield* commandReceipts.insertIfAbsent(reserved))) {
+            return {
+              receipt: yield* existingTeamImageReceipt(input.commandId),
+              storedEvents: [],
+              committed: false as const,
+              cancelledEffectIds: [],
+            };
+          }
+          const storedEvents = yield* eventStore.appendTeamImageEvents({
+            commandId: input.commandId,
+            events: input.events,
+          });
+          yield* input.apply(storedEvents);
+          const receipt = {
+            ...reserved,
+            resultSequence:
+              storedEvents.at(-1)?.sequence ?? (yield* eventStore.latestApplicationSequence),
+          };
+          yield* commandReceipts.upsert(receipt);
+          const cancelledEffectIds =
+            input.cancelUnsettledEffects === undefined
+              ? []
+              : yield* effectOutbox.cancelUnsettledTeamImage(input.cancelUnsettledEffects);
+          yield* effectOutbox.enqueue(input.effects);
+          return { receipt, storedEvents, committed: true as const, cancelledEffectIds };
+        }),
+        (result) =>
+          Effect.gen(function* () {
+            yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
+            if (result.committed && input.effects.length > 0) {
+              yield* effectOutbox.notifyAvailable(input.effects.length);
+            }
+          }),
+      );
+      return {
+        receipt: result.receipt,
+        storedEvents: result.storedEvents,
+        committed: result.committed,
+        cancelledEffectCount: result.cancelledEffectIds.length,
+      };
+    });
+
+    const commitRejectedTeamImageCommandEffect = Effect.fn(
+      "orchestrationV2.EventSink.commitRejectedTeamImageCommand",
+    )(function* (input: Parameters<EventSinkV2Shape["commitRejectedTeamImageCommand"]>[0]) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const receipt: CommandReceiptStore.TeamImageCommandReceiptV2 = {
+            commandId: input.commandId,
+            streamId: EffectOutbox.TEAM_IMAGE_STREAM_ID,
+            commandType: input.commandType,
+            acceptedAt: input.rejectedAt,
+            resultSequence: yield* eventStore.latestApplicationSequence,
+            status: "rejected",
+            error: input.error,
+          };
+          return (yield* commandReceipts.insertIfAbsent(receipt))
+            ? receipt
+            : yield* existingTeamImageReceipt(input.commandId);
+        }),
+      );
+    });
+
     const catchUp = (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
@@ -959,6 +1078,24 @@ const layerBase: Layer.Layer<
         ),
       commitRejectedProjectCommand: (input) =>
         commitRejectedProjectCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),
+          ),
+        ),
+      commitTeamImageCommand: (input) =>
+        commitTeamImageCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                commandId: input.commandId,
+                eventCount: input.events.length,
+                cause,
+              }),
+          ),
+        ),
+      commitRejectedTeamImageCommand: (input) =>
+        commitRejectedTeamImageCommandEffect(input).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),

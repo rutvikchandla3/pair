@@ -8,6 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { TEAM_IMAGE_STREAM_ID } from "../orchestration-v2/EffectOutbox.ts";
+
 import {
   toPersistenceSqlError,
   type OrchestrationCommandReceiptRepositoryError,
@@ -15,8 +17,8 @@ import {
 
 export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
-  aggregateKind: Schema.Literals(["project", "thread"]),
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateKind: Schema.Literals(["project", "thread", "team-image"]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, Schema.Literal(TEAM_IMAGE_STREAM_ID)]),
   commandType: Schema.String,
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,

@@ -428,6 +428,20 @@ layer("OrchestrationEventStore", (it) => {
           },
         ],
       });
+      const teamImageEvents = yield* eventStore.appendTeamImageEvents({
+        commandId: CommandId.make("command-team-image-shared-stream"),
+        events: ["a", "b"].map((suffix) => ({
+          eventId: EventId.make(`event-team-image-shared-stream-${suffix}`),
+          type: "team-image.build.requested",
+          occurredAt: now,
+          payload: { imageBuildId: `build-${suffix}` },
+        })),
+      });
+      assert.deepEqual(
+        teamImageEvents.map((event) => event.streamVersion),
+        [0, 1],
+      );
+      assert.isAbove(teamImageEvents[0]!.sequence, threadEvent!.sequence);
 
       const applicationEvents = yield* eventStore
         .streamApplicationEvents({ afterSequence: baselineSequence })
@@ -446,7 +460,7 @@ layer("OrchestrationEventStore", (it) => {
       const finiteReplay = yield* eventStore
         .readApplicationEvents({
           afterSequence: baselineSequence,
-          throughSequence: threadEvent!.sequence,
+          throughSequence: teamImageEvents.at(-1)!.sequence,
         })
         .pipe(
           Stream.runCollect,
@@ -455,6 +469,13 @@ layer("OrchestrationEventStore", (it) => {
       assert.deepEqual(
         finiteReplay.map((event) => event.sequence),
         [projectEvent.sequence, threadEvent!.sequence],
+      );
+      assert.deepEqual(
+        yield* eventStore.readAgentEvents({ threadId }).pipe(
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk, (event) => event.sequence)),
+        ),
+        [threadEvent!.sequence],
       );
     }),
   );
