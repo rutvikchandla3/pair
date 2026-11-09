@@ -918,10 +918,13 @@ export function NewTaskFlowProvider(
     };
   };
 
-  // Pair Cloud runs only cloud threads: it backs the Cloud mode, never a local machine choice.
+  // Pair Cloud runs only cloud threads: a task there stays there, and other tasks leave it out.
+  const selectedOnPairCloud =
+    selectedProject !== null &&
+    isCloudLaunchEnvironment(serverConfigs.get(selectedProject.environmentId) ?? null);
   const offersLocalModes = (environmentId: EnvironmentId) =>
     environmentId === selectedProject?.environmentId ||
-    !isCloudLaunchEnvironment(serverConfigs.get(environmentId) ?? null);
+    (!selectedOnPairCloud && !isCloudLaunchEnvironment(serverConfigs.get(environmentId) ?? null));
   const scratchEnvironments = connectedEnvironments.filter(
     (environment) =>
       offersLocalModes(environment.environmentId) &&

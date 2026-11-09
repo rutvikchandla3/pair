@@ -13,7 +13,7 @@ export type AddProjectTarget = Pick<EnvironmentOption, "environmentId" | "label"
  * Connected machines that do not have the project yet and can clone it. Pair Cloud is not one:
  * its Cloud item adds projects there.
  * `projectEnvironments` is the project's current machine list, from
- * `useLogicalProjectEnvironments`. Projects without a git remote get none.
+ * `useLogicalProjectEnvironments`. Projects without a git remote, or on Pair Cloud, get none.
  */
 export function useAddProjectTargets(
   project: EnvironmentProject | null,
@@ -22,6 +22,10 @@ export function useAddProjectTargets(
   const { environments } = useEnvironments();
   const canClone = useEnvironmentsWithScope(environments, AuthSourceControlWriteScope);
   if (!project?.repositoryIdentity?.locator.remoteUrl) return [];
+  const own = environments.find(
+    (environment) => environment.environmentId === project.environmentId,
+  );
+  if (isCloudLaunchEnvironment(own?.serverConfig ?? null)) return [];
   const hasProject = new Set([
     project.environmentId,
     ...(projectEnvironments ?? []).map((env) => env.environmentId),
