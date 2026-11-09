@@ -4189,6 +4189,262 @@ because a whole `providerInstances` map without the account deletes it from sett
 registry. The add dialog and onboarding's mode switch now send `create` and `upsert` mutations, so
 no web code writes the whole map. Reproduce in a real client to confirm.
 
+### 2.52 (new) `fix(contracts,server,client-runtime,web): warn about unpushed commits on any branch a cloud draft picks`
+
+A routed Cloud draft (a local project that sends to Pair Cloud, 2.28) warns "N commits not pushed
+won't be included." only when the picked branch is HEAD. `cloudBranchCheck` takes the count from
+HEAD's status (`cloudTarget.ts` 164), and `VcsRef` has no count of its own (18). After this row,
+the `for-each-ref` call that already lists refs also reports each local branch's ahead count, and
+the check uses it. The warning also went stale (21) because a draft never refreshes git state when
+the user returns to the window. Only `GitActionsControl.tsx` mounts `vcsStatusRevalidation`
+(1164–1170), and it renders only while the thread details card is open (`ThreadDetailsPanel.tsx`
+227, `ThreadDetailsCard.tsx` 134). ChatView's own refresh, `useWorkspaceMutationRefresh` (1710),
+fires only on Pair's own workspace changes. A terminal checkout is not one of them. The server
+polls remote status (`makeRemoteRefreshLoop`, `VcsStatusBroadcaster.ts` 552) only under a
+foreground lease (`leaseMayRunScopedWork`, `BackgroundPolicy.ts` 148), and the window loses focus
+while you type in the terminal. The client fetches refs once per session (`makeCachedVcsRefsChanges`,
+client-runtime `vcs.ts` 123), from a server snapshot that can be up to 2 minutes old
+(`LIST_REFS_SNAPSHOT_CACHE_TTL`, `GitVcsDriverCore.ts` 107). 18's fix covers the exact G2 case: the
+checkout only moved HEAD, and the picked branch's own count now shows from the start. 21's commit
+covers commits and pushes made after the draft opened. It is one row because both fix the same
+warning. It ships as two commits:
+
+1. `fix(contracts,server,client-runtime): count unpushed commits on every local branch` (18)
+2. `fix(web): refresh a routed cloud draft's branch check when the window comes back` (21)
+
+- **Needs:** 2.28, 2.29 (landed). **Unblocks:** G2 rerun step 4 (**Unpushed branch**).
+- **Files:**
+  - Commit 1:
+    - `packages/contracts/src/git.ts`: in `VcsRef` (83), add after `upstreamRef` (88):
+      ```ts
+      // Commits on this local branch that its upstream lacks. Absent without an upstream that exists.
+      aheadCount: Schema.optional(NonNegativeInt),
+      ```
+      The field is optional, so older servers and clients still decode each other.
+    - `apps/server/src/vcs/GitVcsDriverCore.ts`, `readGitRefsSnapshot` (3989): the format (4001)
+      gains `%09%(upstream:track,nobracket)`, the split (4071) takes a fifth field, `track`, and the
+      local ref (4078–4088) sets `aheadCount` when `upstreamRef` is set and the track is not `gone`.
+      Add a module helper beside `parseWorktreeBranchPaths` (278):
+      ```ts
+      // `%(upstream:track,nobracket)`: "", "ahead 2", "behind 1", "ahead 2, behind 1" or "gone".
+      const parseUpstreamAhead = (track: string): number | undefined =>
+        track === "gone" ? undefined : Number(/ahead (\d+)/.exec(track)?.[1] ?? 0);
+      ```
+      Remote refs have no upstream, so the field is empty for them. This adds no git spawn: it is
+      the same call, behind the same single-flight cache. `listRefs` (4228) is unchanged.
+    - `packages/client-runtime/src/state/cloudTarget.ts`, `cloudBranchCheck` (147): the `ref` Pick
+      (149) adds `"aheadCount"`, and the `status` Pick (150) adds `"hasUpstream"`. Line 164 becomes:
+      ```ts
+      const ahead =
+        input.status?.refName === branch && input.status.hasUpstream
+          ? input.status.aheadCount
+          : (input.ref.aheadCount ?? 0);
+      ```
+      HEAD's streamed status still wins once its remote part has loaded. Any other branch, and HEAD
+      before that, uses its own ref. A ref from an older server has no `aheadCount`, so the check
+      behaves as it does today. In the doc comment (142–146), replace the second sentence with:
+      "HEAD's status counts for HEAD once it knows the upstream; any other branch uses its ref's
+      own count."
+    - No change in `ChatView.tsx` `routedCloudSend` (2321–2337) or in mobile's `cloudBranch`
+      (`apps/mobile/src/features/threads/new-task-flow-provider.tsx` 477–487). Both already pass
+      the branch's own non-remote ref and the full status to the shared check. Mobile shows the
+      warning as its footnote (`NewTaskDraftScreen.tsx` 1073–1077).
+  - Commit 2:
+    - `apps/web/src/components/ChatView.tsx`: after `routedCloudDefaultRefQuery` (2316–2320), add:
+      ```ts
+      useAtomMount(
+        vcsStatusRevalidation(
+          routedCloud && gitCwd !== null ? { environmentId, cwd: gitCwd } : null,
+        ),
+      );
+      ```
+      Add `useAtomMount` to the `@effect/atom-react` import (117) and `vcsStatusRevalidation` to
+      the `../state/vcs` import (252). When the window comes back, this runs `refreshStatus`. Its
+      `onSettled: invalidateRefs` (client-runtime `vcs.ts` 318–324) bumps the refs revision, so
+      `routedCloudRefQuery` (2307) refetches with `refresh: true` and skips the server's snapshot
+      cache (`vcs.ts` 152–158). It is the same per-checkout atom that `GitActionsControl.tsx`
+      mounts (`vcsStatusRevalidation.ts` 13), so an open details card adds no second cadence.
+  - Surfaces: contracts, server, client-runtime, web and desktop (desktop wraps web). Mobile gets
+    commit 1 through the shared check. Providers: none. Docs: none. `docs/user/cloud.md` 69–70
+    already promises the warning, and with this row it holds for every branch.
+- **Types and services:** `VcsRef.aheadCount`, an optional `NonNegativeInt`. No new service or
+  method.
+- **Copy:** none. "N commits not pushed won't be included." (`cloudTarget.ts` 168) and "Pair Cloud
+  only sees what's on origin" (`ChatView.tsx` 2741) stay as they are.
+- **Proposed gap answers.**
+  - Behind-only counts as 0, since origin still has every local commit. A `gone` upstream gets no
+    count and still checks `ok`, and 2.31's server refusal catches it after send, as it does today.
+  - Mobile gets no change for 21. The phone has no moment of coming back from the Mac's terminal.
+    Its refs are as fresh as the server's snapshot, at most 2 minutes old.
+  - Perf: `%(upstream:track)` walks history for each local branch that has an upstream. On this
+    repo (9 local branches, 68 remote), the call takes 0.03 s with and without it. If the large-repo
+    check under **Verify** shows a p50 rise above 10 ms, compute the count in `listRefs` with a
+    second `for-each-ref` over just the page's local branches.
+
+**Tests.**
+
+- `packages/client-runtime/src/state/cloudTarget.test.ts`, `describe("cloudBranchCheck")` (263),
+  table "checks $name before a cloud send" (266). Add `hasUpstream: true` to `head` and to each
+  inline status. Add two rows, and check that both fail on `feat/pair`:
+  - "a branch that isn't checked out with unpushed commits": ref `{ ...tracked, aheadCount: 1 }`,
+    status `{ refName: "main", aheadCount: 0, hasUpstream: true }` → `warn`, "1 commit not pushed
+    won't be included."
+  - "the checked-out branch before its remote status loads": ref `{ ...tracked, aheadCount: 2 }`,
+    status `{ refName: "feature", aheadCount: 0, hasUpstream: false }` → `warn`, "2 commits not
+    pushed won't be included."
+    The existing row "a branch that isn't checked out while HEAD is ahead" stays `ok`, because its
+    ref has no count.
+- `apps/server/src/vcs/GitVcsDriverCore.test.ts`, `describe("refName operations")` (4179): add
+  `it.effect("counts each local branch's unpushed commits, checked out or not")`. Build it like the
+  case at 4180: `initRepoWithCommit` (281), a bare remote, then `push -u origin <initial>`,
+  `switch -c feature`, `push -u origin feature`, two `commit --allow-empty`, `switch <initial>`,
+  and `branch --no-track local-only`. Then call `listRefs({ cwd })` once and assert that `feature`
+  has `aheadCount: 2`, `<initial>` has `aheadCount: 0`, and `"aheadCount" in local-only` is false.
+  Make every commit before the first `listRefs`: the snapshot is cached, and under `TestClock` the
+  cache never expires. This is a new case because the case at 4180 asserts a `remoteOnly` page
+  order that extra pushed branches would change.
+- 21 adds no test. It wires an atom that already has tests (`vcsStatusRevalidation.test.ts`).
+  Evidence is a short video.
+
+**Verify.** `vp test run packages/client-runtime/src/state/cloudTarget.test.ts` and
+`vp test run apps/server/src/vcs/GitVcsDriverCore.test.ts -t "refName operations"`. Run
+`vp run typecheck` for `packages/contracts`, `apps/server`, `packages/client-runtime`, `apps/web`
+and `apps/mobile`, then `vp run check:changed`. The lead also runs these checks:
+
+- On the Mac web client with the VM connected, in a local clone, run
+  `git switch -c g2-ahead && git push -u origin g2-ahead && git commit --allow-empty -m x && git switch main`.
+  Open a Cloud draft and pick `g2-ahead`. "1 commit not pushed won't be included." shows with no
+  reload. Capture it, and the same on the phone's new thread screen.
+- Keep that draft open and add a commit on `g2-ahead` in a terminal. When you switch back to the
+  window, the banner says 2 commits. `git push`, switch back again, and the banner is gone. Record
+  this as a short video.
+- On a large repo with many local branches, compare the duration of span
+  `GitVcsDriver.listRefs.snapshotRefs` before and after. Put the numbers in the PR.
+
+**Reviewer checks.**
+
+- `aheadCount` is optional on the wire and absent with no upstream or a `gone` one. A branch that
+  is only behind gets 0.
+- The count comes from the existing `for-each-ref` in `readGitRefsSnapshot`, with no new git spawn
+  or cache.
+- The order in `cloudBranchCheck` is unchanged: default branch `ok`, no upstream `block`, another
+  upstream `warn`, then the ahead count.
+- The ChatView mount is gated on `routedCloud`, so other drafts and threads are untouched.
+- No copy changes. Web and mobile both read the count through the shared check.
+
+### 2.53 (new) `fix(server): write commit and PR text with a signed-in provider on a cloud-only server`
+
+Commit messages, PR text, branch names and thread titles use the Text generation model. Its
+default is Codex `gpt-6-luna` (`textGenerationModelSelection`, `packages/contracts/src/settings.ts`
+1375–1387; `DEFAULT_TEXT_GENERATION_MODEL`, `model.ts` 136). On a cloud-only server where Codex
+isn't signed in, generation fails even though a Claude team account is ready (17). Upstream picks
+another provider in two cases. One is a chosen provider that is out of usage (`TextGeneration.generate`,
+`TextGeneration.ts` 129–164, from #26164). The other is one turned off in settings
+(`resolveTextGenerationProvider`, `apps/server/src/serverSettings.ts` 637). Neither checks sign-in. 2.45 made only
+Claude and Codex eligible on cloud-only (`TOOL_FREE_DRIVERS`, 70). Since `dc9a23b9d`, a cloud
+thread's commit and PR text run on the server in a temp dir, so only the server's own provider
+instances can write them. After this row, on a cloud-only server, a chosen provider that isn't
+ready triggers the same fallback as one that is out of usage. It is its own row because it is
+server only and unrelated to 2.52. It ships as one commit with the row's title.
+
+- **Needs:** 2.45 and `dc9a23b9d` (landed). **Unblocks:** G2 rerun step 3 (**Commit, push & create
+  PR**).
+- **Files:**
+  - `apps/server/src/textGeneration/TextGeneration.ts`, in `generate` (112):
+    - Add a local check over a snapshot, and import `ServerProvider` as a type from
+      `@t3tools/contracts`:
+      ```ts
+      const canGenerate = (provider: ServerProvider | undefined) =>
+        provider?.enabled === true &&
+        provider.installed &&
+        provider.auth.status !== "unauthenticated" &&
+        isProviderAvailable(provider) &&
+        isProviderTextGenerationCapable(provider);
+      ```
+    - Find the selected snapshot once and widen the trigger (129–134):
+      ```ts
+      const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+      const limited = exhaustedUsageWindow(selected, now, selection.model);
+      if (limited || (cloudOnly && !canGenerate(selected))) {
+      ```
+    - In the candidate predicate (148–161), replace the five snapshot checks with
+      `canGenerate(provider)`. The rest stays: not the selected instance,
+      `resolveProjectProviderInstanceEnabled`, `INVESTIGATING_DRIVERS` for guides,
+      `TOOL_FREE_DRIVERS` on cloud-only, and not out of usage.
+    - When no candidate qualifies, `?? selection` (164) keeps the chosen provider, so its own error
+      shows as it does today.
+  - No change in `GitManager.ts` `textGenerationSettings` (3447–3475), `ThreadLaunchService.ts`
+    (564–565) or `ThreadTitleRegenerationService.ts` (180). They all go through `generate`, so
+    commit, PR, branch and title text all get the fallback.
+  - `docs/user/pair-cloud.md` 151–152 (**proposed**): see **Copy**.
+  - Surfaces: server and docs. Web, desktop and mobile: none, since they only send the request.
+    Contracts: none. Providers: Codex and Claude are read as candidates on cloud-only, and other
+    drivers keep 2.45's refusal.
+- **Types and services:** none. `canGenerate` is a local inside `TextGeneration.make`.
+- **Copy:** no product strings change. In `docs/user/pair-cloud.md` 151–152 (**proposed**), replace
+  "[Review guides](./source-control.md#review-guides) can't use a member's own account, so add a
+  team account in **Settings → Providers** too if your team uses them." with "Commit messages, pull
+  request text and [review guides](./source-control.md#review-guides) can't use a member's own
+  account, so add a team Claude or Codex account in **Settings → Providers** too. When the model
+  under **Settings → Threads → Text generation** isn't signed in, Pair Cloud uses one that is."
+  The worker confirms the first claim: `TextGeneration` resolves instances only through
+  `ProviderInstanceRegistry` (`resolveInstance`, 51), and `MemberProviderAccounts` is not
+  referenced in `textGeneration/` or `GitManager.ts`.
+- **Proposed gap answers.**
+  - The fallback applies only on cloud-only. On a local server, a chosen provider that isn't signed
+    in still fails with its own sign-in advice, which the user can follow on their own machine.
+    Dropping `cloudOnly &&` would apply it everywhere. That is upstream's decision, not Pair's.
+  - Readiness comes from the `ServerProvider` snapshots that `registry.listInstances` already reads
+    (123–127): first the selected instance, then the candidates in `fallbackTextGenerationModelSelection`
+    order (`packages/shared/src/serverSettings.ts` 72). That order is the default `codex` and
+    `claudeAgent` instances, then configured instances (team accounts in **Settings → Providers**)
+    through `includeConfiguredInstances: true` (163). On cloud-only, only `codex` and `claudeAgent`
+    drivers qualify. Members' own accounts are not instances, so the fallback never reads them.
+  - A provider isn't ready when it has no snapshot or is disabled, not installed, unavailable,
+    unable to generate text, or has `auth.status: "unauthenticated"`. The last is what Codex
+    reports when it needs sign-in (`CodexProvider.ts` 724–728). `auth.status: "unknown"` counts as
+    ready, as it does in today's fallback.
+  - **Settings → Threads → Text generation** still shows the chosen model
+    (`resolveAppModelSelectionState`, `apps/web/src/modelSelection.ts` 373). Upstream's usage
+    fallback is silent too, so this row adds no label.
+
+**Tests.** `apps/server/src/textGeneration/CodexTextGeneration.test.ts`, case "text generation
+preflight: exhausted=%s" (578). Turn `it.effect.each([false, true])` into object rows named
+"text generation preflight: exhausted=$exhausted signedIn=$signedIn cloudOnly=$cloudOnly", and
+assert on `fallsBack`:
+
+- `{ exhausted: false, signedIn: true, cloudOnly: false, fallsBack: false }` (today's `false` row)
+- `{ exhausted: true, signedIn: true, cloudOnly: false, fallsBack: true }` (today's `true` row)
+- `{ exhausted: false, signedIn: false, cloudOnly: true, fallsBack: true }` (new; fails on
+  `feat/pair`)
+- `{ exhausted: false, signedIn: false, cloudOnly: false, fallsBack: false }` (new; a local server
+  keeps upstream's behavior)
+
+When `signedIn` is false, the primary snapshot gets `status: "error", auth: { status:
+"unauthenticated" }`. Set `cloudOnly` on `TextGeneration.make` with
+`Effect.updateService(ServerConfig.ServerConfig, ...)`, as the next case does (740). The fallback
+instance `claude_work` is `claudeAgent`, which cloud-only allows. The case "text generation on the
+server's own folders" (679) passes unchanged: its cast snapshot isn't ready, its only candidate is
+the selected instance, and `?? selection` keeps it.
+
+**Verify.** `vp test run apps/server/src/textGeneration/CodexTextGeneration.test.ts -t "text
+generation preflight"`. Run `vp run typecheck` for `apps/server`, then `vp run check:changed`. The
+lead also checks the fix on the VM: with Codex signed out and a Claude team account in
+**Settings → Providers**, **Commit, push & create PR** in a cloud thread writes the commit message
+and PR text. Keep a short runtime transcript: the `TextGeneration.generate` span or the log naming
+the Claude instance.
+
+**Reviewer checks.**
+
+- The trigger is `limited || (cloudOnly && !canGenerate(selected))`. The candidate predicate checks
+  the same things as before, through `canGenerate`.
+- With no candidate, the chosen provider still runs and its own error still shows.
+- On a local server, a chosen provider that isn't signed in fails as it does upstream.
+- On cloud-only, candidates are only Claude and Codex instances (`TOOL_FREE_DRIVERS`), so the 2.45
+  refusal (167–172) still never runs another driver.
+- Review guides on a cloud-only server still hit `confinedCwd`'s refusal (94–99) before any
+  fallback.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
