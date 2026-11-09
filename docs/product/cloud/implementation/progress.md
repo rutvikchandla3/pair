@@ -401,11 +401,16 @@ committed). The VM has a `shutdown -h` timer as a guard while the maintainer is 
    `README.md` change. From g3-b, **Continue locally** made a thread on `g3/step3-a-copy` with the
    change; the cloud session shows "Teammate copied this thread to Rutvik Chandla", stayed awake
    and answered member A's next prompt; `git ls-remote` shows no `g3/*` branch.
-4. **The agent link: partly run.** From g3-a's terminal, `t3 thread start --environment <Pair
-   Cloud's id>` without `--cloud` answers "… runs every thread on a cloud machine. Pass --cloud
-   <base-ref>.", and with `--cloud main` it launches there as member A (step 3's session). Still
-   to run: `delegate_task` from a local Haiku thread, `t3_thread_continue_in_cloud`, and the
-   refused `cloud` delegation to g3-b with the beta on.
+4. **The agent link: passed, with finding 2.** From g3-a's terminal, `t3 thread start
+   --environment <Pair Cloud's id>` without `--cloud` answers "… runs every thread on a cloud
+   machine. Pass --cloud <base-ref>.", and with `--cloud main` it launches there as member A
+   (step 3's session). A local Haiku thread on a pushed worktree branch called `delegate_task`
+   with `isolation: cloud` and the Pair Cloud environment; the child ran on a cloud machine and
+   "delegated-ok" came back to the local thread. Asked to continue itself in cloud, the same
+   agent called `t3_thread_continue_in_cloud` and the thread moved (seed 1,636 bytes, export
+   1,444 bytes, upload 170 ms, 1.1 s). Not run: the refused `cloud` delegation to g3-b with the
+   beta on (its typed refusal has a unit test), the move from the command palette, and a move
+   that skips the seed (the branch was pushed without an upstream, so it was seeded).
 5. **Phone: set aside** (maintainer, 2026-11-10).
 
 Findings so far:
@@ -416,8 +421,12 @@ Findings so far:
   the project's origin from `ProjectService.getShell`, which only peeks the repository-identity
   cache (`ProjectEnrichmentService.getAvailable`) and is null when the cache has no entry, as it
   is after the previous move's git work. `CloudMoves.continueLocally`, `CloudMoves.move` and
-  `CloudMoveSource.seed` all do it. Trying again works. The laptop half is in neither V4 nor the
-  g3 worktrees; the cloud half needs a release.
+  `CloudMoveSource.seed` all do it. Trying again works. Fixed by 3.28 (c7cb8f63e), which is after V4: the steps re-run on the next release.
+- **Finding 2 (fix row 3.29, in flight): a cloud delegation from a thread in the project's own
+  checkout is refused.** `delegate_task` with `isolation: cloud` answered "A cloud task starts
+  from a pushed branch; this thread has none." for a thread started without a worktree, on `main`,
+  which is on origin: `RemoteDelegation.pushedBranch` reads only the thread's recorded branch,
+  which is null there. The agent then offered to push a new branch.
 - A failed Continue locally showed no toast in captures taken 2 s and 9 s after the click. The
   code updates the "Continuing locally…" toast to an error; check that it stays long enough to read.
 - Both local servers on this Mac are labeled "Rutvik Chandla" (the host's name), so the move rows
