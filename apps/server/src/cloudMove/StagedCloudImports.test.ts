@@ -494,3 +494,80 @@ it.effect("sweeps unclaimed seeds after a day and keeps claimed ones", () =>
     assert.lengthOf(yield* rows, 2);
   }).pipe(Effect.scoped, Effect.provide(layerWith())),
 );
+
+it.effect("stages a context export, claims it once and sweeps it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const { staged, rows } = yield* setup();
+    const contextExport = {
+      version: 1,
+      source: {
+        environmentId: "env:laptop",
+        threadId: "thread:laptop",
+        title: "Fix the flaky test",
+        environmentLabel: "Kim's MacBook Pro",
+      },
+      exportedAt: "2026-11-09T10:00:00.000Z",
+      messages: [
+        { role: "user", text: "Why does it flake?", createdAt: "2026-11-09T09:00:00.000Z" },
+      ],
+      omittedMessageCount: 0,
+    };
+    const ref = { kind: "context-export" as const, projectId, memberId: member };
+    const stageText = (text: string, stagingKey = key) =>
+      staged.stage({ ...ref, key: stagingKey, body: Stream.make(new TextEncoder().encode(text)) });
+    const reasonOf = <A>(effect: Effect.Effect<A, StagedCloudImports.StagedCloudImportError>) =>
+      effect.pipe(
+        Effect.flip,
+        Effect.map((error) => error.reason),
+      );
+    const stagedFile = path.join(stateDir, "cloud-moves", key, "context-export.json");
+
+    yield* stageText(JSON.stringify(contextExport));
+    assert.isTrue(yield* fs.exists(stagedFile));
+    yield* staged.check({ ...ref, key });
+
+    // A failed retry removes the earlier export, so a launch can't import a stale one.
+    assert.equal(yield* reasonOf(stageText("{not json")), "invalid-export");
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "cloud-moves", key)));
+    assert.equal(yield* reasonOf(staged.check({ ...ref, key })), "not-found");
+    assert.equal(
+      yield* reasonOf(stageText(JSON.stringify({ ...contextExport, version: 2 }))),
+      "invalid-export",
+    );
+    assert.equal(
+      yield* reasonOf(
+        staged.stage({
+          ...ref,
+          key,
+          body: Stream.make(new Uint8Array(2 * 1024 * 1024 + 1)),
+        }),
+      ),
+      "too-large",
+    );
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "cloud-moves", key)));
+
+    yield* stageText(JSON.stringify(contextExport));
+    const threadA = ThreadId.make("thread:a");
+    yield* staged.claim({ ...ref, key, threadId: threadA });
+    yield* staged.claim({ ...ref, key, threadId: threadA });
+    assert.equal(
+      yield* reasonOf(staged.claim({ ...ref, key, threadId: ThreadId.make("thread:b") })),
+      "claimed",
+    );
+    const read = yield* staged.readContextExport({ key });
+    assert.equal(read.source.title, "Fix the flaky test");
+    assert.equal(read.messages[0]?.text, "Why does it flake?");
+    yield* staged.dropContextExport({ key });
+    assert.equal(yield* reasonOf(staged.readContextExport({ key })), "not-found");
+
+    const unclaimed = keyOf("e");
+    yield* stageText(JSON.stringify(contextExport), unclaimed);
+    yield* TestClock.adjust("25 hours");
+    assert.equal(yield* staged.sweep, 1);
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "cloud-moves", unclaimed)));
+    assert.deepEqual(yield* rows, [{ staging_key: key, claimed_thread_id: threadA }]);
+  }).pipe(Effect.scoped, Effect.provide(layerWith())),
+);

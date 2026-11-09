@@ -439,7 +439,8 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
-    item.type === "link_request"
+    item.type === "link_request" ||
+    item.type === "move"
   );
 }
 
@@ -558,6 +559,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "handoff":
     case "fork":
     case "thread_created":
+    case "move":
       return "zap";
     case "secret_request":
       return "lock";
@@ -624,6 +626,8 @@ function itemSummary(
       return item.label;
     case "link_request":
       return `Link ${item.label ?? item.url ?? "an environment"}`;
+    case "move":
+      return item.message;
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -687,6 +691,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
+    case "move":
       return null;
     case "notification":
       return item.detail ?? null;

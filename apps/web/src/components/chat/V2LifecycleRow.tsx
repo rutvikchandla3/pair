@@ -122,6 +122,31 @@ function MemberNoticeDivider(props: {
   );
 }
 
+/** A thread that moved between environments; it opens the other side when this client reaches it. */
+function MoveDivider(props: { readonly item: Extract<OrchestrationV2TurnItem, { type: "move" }> }) {
+  const { thread, direction, message } = props.item;
+  const otherEnvironment = useEnvironment(thread.environmentId);
+  const navigate = useNavigate();
+  return (
+    <TimelineSystemDivider
+      label={message}
+      icon={ArrowRightLeftIcon}
+      {...(otherEnvironment === null
+        ? {}
+        : {
+            actionLabel: direction === "to" ? "Open new thread" : "Open original thread",
+            onAction: () =>
+              void navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(
+                  scopeThreadRef(thread.environmentId, thread.threadId),
+                ),
+              }),
+          })}
+    />
+  );
+}
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly environmentId: EnvironmentId;
@@ -209,6 +234,7 @@ export function V2LifecycleRow(props: {
       />
     );
   }
+  if (item.type === "move") return <MoveDivider item={item} />;
   if (item.type === "subagent") {
     return (
       <SubagentTimelineLink

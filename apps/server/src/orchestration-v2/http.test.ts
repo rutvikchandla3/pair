@@ -99,6 +99,27 @@ const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
   })),
 );
 
+const moveItem = Schema.decodeSync(OrchestrationV2TurnItem)({
+  id: "item-move",
+  threadId: "source-thread",
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 200,
+  type: "move",
+  direction: "to",
+  thread: { environmentId: "cloud", threadId: "cloud-thread" },
+  message: "Continued locally on Kim's MacBook Pro",
+  status: "completed",
+  title: null,
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
+});
+
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
 const serveOrchestrationHttp = (allowed: () => boolean, memberId = MemberId.make("member-owner")) =>
   Effect.gen(function* () {
@@ -185,7 +206,8 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       (yield* decodeTranscript(yield* Effect.promise(() => emptyResponse.json()))).items,
     ).toEqual([]);
     yield* eventSink.write({
-      events: items.map((item) => ({
+      // Clients before M3 would fail to decode the move row, so it stays out.
+      events: [...items, moveItem].map((item) => ({
         id: EventId.make(`create-${item.id}`),
         type: "turn-item.updated" as const,
         threadId: thread.id,

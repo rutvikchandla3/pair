@@ -46,6 +46,7 @@ import {
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { ScopedThreadRef } from "./environment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
@@ -111,8 +112,16 @@ export const OrchestrationV2CreationSource = Schema.Literals([
 ]);
 export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
 
-export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
+export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals([
+  "native",
+  "v1_import",
+  "context_export",
+]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
+
+/** Runless conversation items on such a thread are history that came from elsewhere. */
+export const threadHasImportedHistory = (origin: OrchestrationV2ThreadHistoryOrigin | undefined) =>
+  origin === "v1_import" || origin === "context_export";
 
 const OrchestrationV2CreationFields = {
   createdBy: OrchestrationV2Actor,
@@ -269,6 +278,37 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   consumedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ContextTransfer = typeof OrchestrationV2ContextTransfer.Type;
+
+export const CONTEXT_EXPORT_MAX_BYTES = 2 * 1024 * 1024;
+export const CONTEXT_EXPORT_MAX_MESSAGES = 1_000;
+export const CONTEXT_EXPORT_MAX_MESSAGE_CHARS = 64 * 1024;
+
+export const OrchestrationV2ContextExportMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String.check(Schema.isMaxLength(CONTEXT_EXPORT_MAX_MESSAGE_CHARS)),
+  createdAt: Schema.DateTimeUtcFromString,
+});
+export type OrchestrationV2ContextExportMessage = typeof OrchestrationV2ContextExportMessage.Type;
+
+/** A thread's conversation for another server, which cannot name the thread by id alone. */
+export const OrchestrationV2ContextExport = Schema.Struct({
+  version: Schema.Literal(1),
+  source: Schema.Struct({
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    title: TrimmedNonEmptyString,
+    /** The exporting server's label, for the row that links back. */
+    environmentLabel: TrimmedNonEmptyString,
+  }),
+  exportedAt: Schema.DateTimeUtcFromString,
+  /** The first user message, then the newest that fit, oldest first. */
+  messages: Schema.Array(OrchestrationV2ContextExportMessage).check(
+    Schema.isMaxLength(CONTEXT_EXPORT_MAX_MESSAGES),
+  ),
+  /** Messages left out to fit: the oldest after the first user message. */
+  omittedMessageCount: NonNegativeInt,
+});
+export type OrchestrationV2ContextExport = typeof OrchestrationV2ContextExport.Type;
 
 export const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsMultipleProviderThreadsPerSession: Schema.Boolean,
@@ -1718,6 +1758,18 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/** `to`: this thread continued as `thread`. `from`: this thread continues `thread`. */
+const OrchestrationV2MoveFields = {
+  type: Schema.Literal("move"),
+  direction: Schema.Literals(["to", "from"]),
+  thread: ScopedThreadRef,
+  /** A non-holder's bring-back: the other thread is a copy, and the cloud one stays live. */
+  copy: Schema.optional(Schema.Literal(true)),
+  /** Written by the recording server, so MCP reads and every client show the same words. */
+  message: TrimmedNonEmptyString,
+  actorId: Schema.optional(MemberId),
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1921,6 +1973,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2MoveFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2874,6 +2930,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2MoveFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("subagent"),
     subagentId: NodeId,
     origin: Schema.Literals(["provider_native", "app_owned"]),
@@ -3759,6 +3819,26 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     message: TrimmedNonEmptyString,
+  }),
+  /** Writes an export as this empty thread's runless history, ending with a `from` move row. */
+  Schema.Struct({
+    type: Schema.Literal("thread.history.import"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    contextExport: OrchestrationV2ContextExport,
+    fromMessage: TrimmedNonEmptyString,
+    copy: Schema.optional(Schema.Literal(true)),
+    actorId: Schema.optional(MemberId),
+  }),
+  /** A `to` move row: this thread continued as `to`. */
+  Schema.Struct({
+    type: Schema.Literal("thread.move.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    to: ScopedThreadRef,
+    message: TrimmedNonEmptyString,
+    copy: Schema.optional(Schema.Literal(true)),
+    actorId: Schema.optional(MemberId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

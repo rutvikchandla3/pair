@@ -9,6 +9,7 @@ import {
   type RunId,
   type ServerSettingsError,
   type ThreadId,
+  threadHasImportedHistory,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -81,7 +82,7 @@ const make = Effect.gen(function* () {
       const forkOrdinal = ordinals.get(runId) ?? -1;
       const messages = source.messages.filter((message) => {
         if (message.streaming) return false;
-        if (message.runId === null) return source.thread.historyOrigin === "v1_import";
+        if (message.runId === null) return threadHasImportedHistory(source.thread.historyOrigin);
         return (ordinals.get(message.runId) ?? Infinity) <= forkOrdinal;
       });
       return { thread: source.thread, messages };

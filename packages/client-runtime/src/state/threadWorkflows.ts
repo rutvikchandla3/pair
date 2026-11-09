@@ -3,6 +3,7 @@ import {
   isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  threadHasImportedHistory,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -99,7 +100,9 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
     return session.capabilities.sessions.supportsProviderSwitchingViaHandoff;
   }
   if (resolveActiveThreadRun(projection) !== null) return false;
-  if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
+  if (threadHasImportedHistory(projection.thread.historyOrigin) || projection.runs.length === 0) {
+    return true;
+  }
 
   // Detaching a stopped session removes it from the projection, but its native
   // provider thread remains available for the next turn's portable handoff.

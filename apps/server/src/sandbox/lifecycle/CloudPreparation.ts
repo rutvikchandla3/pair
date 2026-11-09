@@ -55,6 +55,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "not-cloud-only",
     "seed-on-base",
     "seed-unavailable",
+    "export-unavailable",
   ]),
   baseRef: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.String),
@@ -96,6 +97,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return `${this.branch} is Pair Cloud's base branch. Create a new branch for this work, then try again.`;
       case "seed-unavailable":
         return "The work uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
+      case "export-unavailable":
+        return "The conversation uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
     }
   }
 }

@@ -783,7 +783,8 @@ const make = Effect.gen(function* () {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
+        // Clients before M3 decode a transcript's items strictly.
+        items: projection.visibleTurnItems.filter((row) => row.item.type !== "move"),
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),

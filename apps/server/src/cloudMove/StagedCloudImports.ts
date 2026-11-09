@@ -2,7 +2,9 @@ import {
   CLOUD_SEED_MAX_BYTES,
   CloudStagingKey,
   cloudSeedRefs,
+  CONTEXT_EXPORT_MAX_BYTES,
   MemberId,
+  OrchestrationV2ContextExport,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -29,8 +31,8 @@ import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 
-/** What a staging key carries; 3.22 adds `context-export`. */
-export type StagedCloudImportKind = "seed";
+/** What a staging key carries: a seed in the mirror, or a context export on disk. */
+export type StagedCloudImportKind = "seed" | "context-export";
 
 export class StagedCloudImportError extends Schema.TaggedError<StagedCloudImportError>()(
   "StagedCloudImportError",
@@ -40,6 +42,7 @@ export class StagedCloudImportError extends Schema.TaggedError<StagedCloudImport
       "unknown-project",
       "too-large",
       "invalid-seed",
+      "invalid-export",
       "missing-prerequisite",
       "claimed",
       "key-in-use",
@@ -79,6 +82,12 @@ export class StagedCloudImports extends Context.Service<
     readonly claim: (
       input: StagedImportRef & { readonly threadId: ThreadId },
     ) => Effect.Effect<void, StagedCloudImportError>;
+    /** The staged export, decoded; a launch reads it after claiming it. */
+    readonly readContextExport: (input: {
+      readonly key: CloudStagingKey;
+    }) => Effect.Effect<OrchestrationV2ContextExport, StagedCloudImportError>;
+    /** Removes the staged export once imported; a failure is only logged. */
+    readonly dropContextExport: (input: { readonly key: CloudStagingKey }) => Effect.Effect<void>;
     /** Drops unclaimed imports past their TTL; claimed rows stay. Returns how many it dropped. */
     readonly sweep: Effect.Effect<number, StagedCloudImportError | PersistenceSqlError>;
   }
@@ -96,6 +105,11 @@ const DueRow = Schema.Struct({ key: CloudStagingKey, kind: Schema.String, projec
 const sqlError = (operation: string) => (cause: unknown) =>
   new PersistenceSqlError({ operation, cause });
 
+const decodeContextExport = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextExport),
+);
+const CONTEXT_EXPORT_FILE = "context-export.json";
+
 export const make = Effect.fn("StagedCloudImports.make")(function* (
   options: { readonly maxSeedBytes?: number; readonly unclaimedTtl?: Duration.Duration } = {},
 ) {
@@ -107,6 +121,8 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
   const pairCloudProjects = yield* PairCloudProjects.PairCloudProjects;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const tmpDir = path.join(stateDir, "sandbox", "tmp");
+  const exportDir = (key: CloudStagingKey) => path.join(stateDir, "cloud-moves", key);
+  const exportFile = (key: CloudStagingKey) => path.join(exportDir(key), CONTEXT_EXPORT_FILE);
   const maxSeedBytes = options.maxSeedBytes ?? CLOUD_SEED_MAX_BYTES;
   const unclaimedTtl = options.unclaimedTtl ?? Duration.hours(24);
   const keyLocks = yield* KeyedLock.make<CloudStagingKey>();
@@ -234,13 +250,14 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
     key: CloudStagingKey,
     body: Stream.Stream<Uint8Array, unknown>,
     file: string,
+    maxBytes: number,
   ) {
     let written = 0;
     yield* body.pipe(
       Stream.mapError(failWith(key, "upload-failed")),
       Stream.mapEffect((chunk) => {
         written += chunk.length;
-        return written > maxSeedBytes
+        return written > maxBytes
           ? Effect.fail(failWith(key, "too-large")())
           : Effect.succeed(chunk);
       }),
@@ -273,7 +290,7 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
       `${yield* Effect.sync(() => SecureRandom.uuidV4Unsafe())}.bundle`,
     );
     yield* Effect.addFinalizer(() => fs.remove(file, { force: true }).pipe(Effect.ignore));
-    yield* writeBody(key, body, file);
+    yield* writeBody(key, body, file, maxSeedBytes);
 
     // Written before any import, so a crash leaves a row the sweep finds.
     yield* upsertRow({
@@ -328,9 +345,48 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
     }
   }, Effect.scoped);
 
+  const stageContextExport = Effect.fn("StagedCloudImports.stageContextExport")(function* (
+    input: StagedImportRef & { readonly body: Stream.Stream<Uint8Array, unknown> },
+  ) {
+    const { key, projectId, memberId, body } = input;
+    const failed = failWith(key, "failed");
+    const project = yield* projects.get(projectId).pipe(Effect.mapError(failed));
+    if (Option.isNone(project)) return yield* failWith(key, "unknown-project")();
+    const row = yield* ownedRow(input);
+    if (Option.isSome(row) && row.value.claimedThreadId !== null) {
+      return yield* failWith(key, "claimed")();
+    }
+
+    // From here on any failure leaves no export under the key, so no retry finds an older one.
+    const dir = exportDir(key);
+    yield* fs.remove(dir, { recursive: true, force: true }).pipe(Effect.mapError(failed));
+    yield* upsertRow({
+      key,
+      kind: "context-export",
+      projectId,
+      memberId,
+      now: DateTime.formatIso(yield* DateTime.now),
+    }).pipe(Effect.mapError(failed));
+    yield* due.invalidate;
+    yield* Effect.gen(function* () {
+      yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 }).pipe(Effect.mapError(failed));
+      const part = `${exportFile(key)}.part`;
+      // Counted while it streams, so nothing past the cap is kept or decoded.
+      yield* writeBody(key, body, part, CONTEXT_EXPORT_MAX_BYTES);
+      const text = yield* fs.readFileString(part).pipe(Effect.mapError(failed));
+      yield* decodeContextExport(text).pipe(Effect.mapError(failWith(key, "invalid-export")));
+      yield* fs.rename(part, exportFile(key)).pipe(Effect.mapError(failed));
+    }).pipe(
+      Effect.onError(() => fs.remove(dir, { recursive: true, force: true }).pipe(Effect.ignore)),
+    );
+  });
+
   const stage: StagedCloudImports["Service"]["stage"] = Effect.fn("StagedCloudImports.stage")(
     function* (input) {
-      yield* keyLocks.withLock(input.key, stageSeed(input));
+      yield* keyLocks.withLock(
+        input.key,
+        input.kind === "seed" ? stageSeed(input) : stageContextExport(input),
+      );
     },
   );
 
@@ -355,11 +411,17 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
       const row = yield* ownedRow(input);
       if (Option.isNone(row)) return yield* failWith(input.key, "not-found")();
       if (row.value.claimedThreadId !== null) return yield* failWith(input.key, "claimed")();
-      yield* stagedTips(input.key, input.projectId);
+      if (input.kind === "seed") {
+        yield* stagedTips(input.key, input.projectId);
+      } else if (
+        !(yield* fs.exists(exportFile(input.key)).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* failWith(input.key, "not-found")();
+      }
     },
   );
 
-  const claimSeed = Effect.fn("StagedCloudImports.claimSeed")(function* (
+  const claimImport = Effect.fn("StagedCloudImports.claimImport")(function* (
     input: StagedImportRef & { readonly threadId: ThreadId },
   ) {
     const { key, kind, projectId, threadId } = input;
@@ -367,6 +429,10 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
     if (Option.isNone(row)) return yield* failWith(key, "not-found")();
     if (row.value.claimedThreadId === threadId) return;
     if (row.value.claimedThreadId !== null) return yield* failWith(key, "claimed")();
+    if (kind === "context-export") {
+      yield* markClaimed({ key, kind, threadId }).pipe(Effect.mapError(failWith(key, "failed")));
+      return;
+    }
     const tips = yield* stagedTips(key, projectId);
     // The thread's refs first: a crash before the row update is redone by the replayed claim.
     yield* mirror
@@ -391,7 +457,7 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
 
   const claim: StagedCloudImports["Service"]["claim"] = Effect.fn("StagedCloudImports.claim")(
     function* (input) {
-      yield* keyLocks.withLock(input.key, claimSeed(input));
+      yield* keyLocks.withLock(input.key, claimImport(input));
     },
   );
 
@@ -414,6 +480,8 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
           if (kind === "seed") {
             const refs = cloudSeedRefs(key);
             yield* mirror.deleteRefs(projectId, [refs.branch, refs.snapshot]);
+          } else if (kind === "context-export") {
+            yield* fs.remove(exportDir(key), { recursive: true, force: true });
           }
           return (yield* deleteDue({ key, kind, cutoff })).length;
         }).pipe(Effect.mapError(failWith(key, "failed"))),
@@ -430,7 +498,34 @@ export const make = Effect.fn("StagedCloudImports.make")(function* (
     return dropped;
   }).pipe(Effect.withSpan("StagedCloudImports.sweep"));
 
-  return StagedCloudImports.of({ stage, check, claim, sweep });
+  const readContextExport: StagedCloudImports["Service"]["readContextExport"] = Effect.fn(
+    "StagedCloudImports.readContextExport",
+  )(function* ({ key }) {
+    const text = yield* fs.readFileString(exportFile(key)).pipe(
+      Effect.catchReason("PlatformError", "NotFound", failWith(key, "not-found")),
+      Effect.mapError((error) =>
+        error._tag === "StagedCloudImportError" ? error : failWith(key, "failed")(error),
+      ),
+    );
+    return yield* decodeContextExport(text).pipe(Effect.mapError(failWith(key, "failed")));
+  });
+
+  const dropContextExport: StagedCloudImports["Service"]["dropContextExport"] = ({ key }) =>
+    fs.remove(exportDir(key), { recursive: true, force: true }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to drop an imported context export", { key, cause }),
+      ),
+      Effect.withSpan("StagedCloudImports.dropContextExport"),
+    );
+
+  return StagedCloudImports.of({
+    stage,
+    check,
+    claim,
+    readContextExport,
+    dropContextExport,
+    sweep,
+  });
 });
 
 /** Also sweeps unclaimed imports on a cloud-only server, the only kind that takes them. */

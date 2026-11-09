@@ -25,6 +25,7 @@ export const CloudMoveFailureReason = Schema.Literals([
   "unknown-project",
   "too-large",
   "invalid-seed",
+  "invalid-export",
   "missing-prerequisite",
   "claimed",
   "key-in-use",

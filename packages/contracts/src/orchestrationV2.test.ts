@@ -4,10 +4,12 @@ import * as Schema from "effect/Schema";
 
 import { NodeId, RunAttemptId, SandboxId, TrimmedNonEmptyString } from "./index.ts";
 import {
+  CONTEXT_EXPORT_MAX_MESSAGE_CHARS,
   isKnownOrchestrationV2EventType,
   latestProviderTurnForAttempt,
   OrchestrationV2AppThreadJson,
   OrchestrationV2Command,
+  OrchestrationV2ContextExport,
   OrchestrationV2DomainEventJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
@@ -185,6 +187,11 @@ describe("orchestration V2 contracts", () => {
     });
     const known = item("item-known", "system_notice", { message: "Hello" });
     const future = item("item-future", "hologram", { beam: "ref-1" });
+    const move = item("item-move", "move", {
+      direction: "from",
+      thread: { environmentId: "environment-laptop", threadId: "thread-laptop" },
+      message: "Continued from “Fix the flaky test” on Kim's MacBook Pro",
+    });
     const projected = (position: number, turnItem: { readonly id: string }) => ({
       position,
       visibility: "local",
@@ -223,12 +230,12 @@ describe("orchestration V2 contracts", () => {
       runtimeRequests: [],
       messages: [],
       plans: [],
-      turnItems: [future, known],
+      turnItems: [future, known, move],
       checkpointScopes: [],
       checkpoints: [],
       contextHandoffs: [],
       contextTransfers: [],
-      visibleTurnItems: [projected(0, future), projected(1, known)],
+      visibleTurnItems: [projected(0, future), projected(1, known), projected(2, move)],
       updatedAt: DateTime.formatIso(now),
     };
     const turnItemEvent = (sequence: number, payload: unknown) => ({
@@ -243,16 +250,29 @@ describe("orchestration V2 contracts", () => {
       },
     });
 
-    const [snapshot, futureEvent, knownEvent] = decodeWireItems([
+    const [snapshot, futureEvent, knownEvent, moveEvent] = decodeWireItems([
       { kind: "snapshot", snapshotSequence: 1, projection },
       turnItemEvent(2, future),
       turnItemEvent(3, known),
+      turnItemEvent(6, move),
     ]);
 
     expect(snapshot).toMatchObject({ kind: "snapshot" });
     if (snapshot?.kind !== "snapshot") throw new Error("expected a snapshot");
-    expect(snapshot.projection.turnItems.map((turnItem) => turnItem.id)).toEqual(["item-known"]);
-    expect(snapshot.projection.visibleTurnItems.map((row) => row.item.id)).toEqual(["item-known"]);
+    expect(snapshot.projection.turnItems.map((turnItem) => turnItem.id)).toEqual([
+      "item-known",
+      "item-move",
+    ]);
+    expect(snapshot.projection.visibleTurnItems.map((row) => row.item.id)).toEqual([
+      "item-known",
+      "item-move",
+    ]);
+    expect(moveEvent).toMatchObject({
+      kind: "event",
+      event: {
+        payload: { type: "move", direction: "from", thread: { threadId: "thread-laptop" } },
+      },
+    });
     // The same snapshot with an ID table: refs resolve before unknown items are skipped.
     const tabled = (turnItem: { readonly id: string }, ref: number) => ({ ...turnItem, id: ref });
     const [tabledSnapshot] = decodeWireItems([
@@ -261,13 +281,14 @@ describe("orchestration V2 contracts", () => {
         snapshotSequence: 1,
         projection: {
           ...projection,
-          turnItems: [tabled(future, 0), tabled(known, 1)],
+          turnItems: [tabled(future, 0), tabled(known, 1), tabled(move, 2)],
           visibleTurnItems: [
             { ...projected(0, future), sourceItemId: 0, item: tabled(future, 0) },
             { ...projected(1, known), sourceItemId: 1, item: tabled(known, 1) },
+            { ...projected(2, move), sourceItemId: 2, item: tabled(move, 2) },
           ],
         },
-        ids: ["item-future", "item-known"],
+        ids: ["item-future", "item-known", "item-move"],
       },
     ]);
     expect(tabledSnapshot).toEqual(snapshot);
@@ -296,6 +317,11 @@ describe("orchestration V2 contracts", () => {
 
     const broken = item("item-broken", "system_notice", {});
     expect(() => decodeWireItems([turnItemEvent(4, broken)])).toThrow();
+    const moveWithoutThread = item("item-move", "move", {
+      direction: "from",
+      message: "Continued from “Fix the flaky test” on Kim's MacBook Pro",
+    });
+    expect(() => decodeWireItems([turnItemEvent(7, moveWithoutThread)])).toThrow();
     expect(() =>
       decodeWireItems([
         {
@@ -305,6 +331,44 @@ describe("orchestration V2 contracts", () => {
         },
       ]),
     ).toThrow();
+  });
+
+  const decodeContextExport = Schema.decodeUnknownSync(
+    Schema.fromJsonString(OrchestrationV2ContextExport),
+  );
+  const exportMessage = { role: "user", text: "Why?", createdAt: "2026-11-09T10:00:00.000Z" };
+  const contextExport = {
+    version: 1,
+    source: {
+      environmentId: "environment-laptop",
+      threadId: "thread-laptop",
+      title: "Fix the flaky test",
+      environmentLabel: "Kim's MacBook Pro",
+    },
+    exportedAt: "2026-11-09T10:05:00.000Z",
+    messages: [exportMessage],
+    omittedMessageCount: 0,
+  };
+
+  it("decodes a context export from another server", () => {
+    expect(decodeContextExport(JSON.stringify(contextExport)).messages[0]?.text).toBe("Why?");
+  });
+
+  it.each([
+    { name: "a newer version", change: { version: 2 } },
+    { name: "a system message", change: { messages: [{ ...exportMessage, role: "system" }] } },
+    {
+      name: "a message over the character cap",
+      change: {
+        messages: [{ ...exportMessage, text: "x".repeat(CONTEXT_EXPORT_MAX_MESSAGE_CHARS + 1) }],
+      },
+    },
+    {
+      name: "1,001 messages",
+      change: { messages: Array.from({ length: 1_001 }, () => exportMessage) },
+    },
+  ])("refuses an export it can't take: $name", ({ change }) => {
+    expect(() => decodeContextExport(JSON.stringify({ ...contextExport, ...change }))).toThrow();
   });
 
   it("decodes persisted capability snapshots that predate runtimePolicy", () => {
@@ -820,12 +884,10 @@ describe("cloud threads on older clients", () => {
     expect(decodeAppThreadJson({ ...thread, historyOrigin: "cloud_import" }).historyOrigin).toBe(
       undefined,
     );
-    expect(decodeThreadShellJson({ ...shell, historyOrigin: "v1_import" }).historyOrigin).toBe(
-      "v1_import",
-    );
-    expect(decodeAppThreadJson({ ...thread, historyOrigin: "v1_import" }).historyOrigin).toBe(
-      "v1_import",
-    );
+    for (const historyOrigin of ["v1_import", "context_export"]) {
+      expect(decodeThreadShellJson({ ...shell, historyOrigin }).historyOrigin).toBe(historyOrigin);
+      expect(decodeAppThreadJson({ ...thread, historyOrigin }).historyOrigin).toBe(historyOrigin);
+    }
   });
 
   it("streams and stores sandbox.updated as a known thread event", () => {

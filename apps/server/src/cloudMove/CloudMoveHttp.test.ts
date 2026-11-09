@@ -25,6 +25,7 @@ import * as StagedCloudImports from "./StagedCloudImports.ts";
 
 const KEY = `mv_${"a".repeat(32)}`;
 const SEED_PATH = `/api/cloud-moves/staged/${KEY}/seed?projectId=project-1`;
+const EXPORT_PATH = `/api/cloud-moves/staged/${KEY}/context-export?projectId=project-1`;
 const linkMember = MemberId.make("member:approver");
 
 /** Bearer tokens the mocked auth knows, by what kind of session they are. */
@@ -106,41 +107,44 @@ const put = (port: number, path: string, headers: Record<string, string>, body?:
 const decodeFailure = Schema.decodeUnknownSync(Schema.fromJsonString(CloudMoveFailure));
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
+const routeCases = (route: "seed" | "context-export", maxBytes: number) => {
+  const path = `/api/cloud-moves/staged/${KEY}/${route}?projectId=project-1`;
+  return [
+    { name: "401 with no bearer", path, headers: {}, status: 401 },
+    { name: "401 to a browser credential", path, headers: bearer("cookie"), status: 401 },
+    { name: "403 to an API token", path, headers: bearer("api-token"), status: 403 },
+    { name: "403 to a read-only link", path, headers: bearer("read-only-link"), status: 403 },
+    {
+      name: "400 to a bad key",
+      path: `/api/cloud-moves/staged/mv_../${route}?projectId=project-1`,
+      headers: bearer("link"),
+      status: 400,
+    },
+    {
+      name: "400 without a project",
+      path: `/api/cloud-moves/staged/${KEY}/${route}`,
+      headers: bearer("link"),
+      status: 400,
+    },
+    {
+      name: "413 to a content-length over the cap",
+      path,
+      headers: { ...bearer("link"), "content-length": String(maxBytes + 1) },
+      status: 413,
+    },
+    {
+      name: "404 with an empty body off a cloud-only server",
+      path,
+      headers: bearer("link"),
+      status: 404,
+      cloudOnly: false,
+    },
+  ].map((testCase) => ({ ...testCase, name: `${route}: ${testCase.name}` }));
+};
+
 it.live.each([
-  { name: "401 with no bearer", path: SEED_PATH, headers: {}, status: 401 },
-  { name: "401 to a browser credential", path: SEED_PATH, headers: bearer("cookie"), status: 401 },
-  { name: "403 to an API token", path: SEED_PATH, headers: bearer("api-token"), status: 403 },
-  {
-    name: "403 to a read-only link",
-    path: SEED_PATH,
-    headers: bearer("read-only-link"),
-    status: 403,
-  },
-  {
-    name: "400 to a bad key",
-    path: "/api/cloud-moves/staged/mv_../seed?projectId=project-1",
-    headers: bearer("link"),
-    status: 400,
-  },
-  {
-    name: "400 without a project",
-    path: `/api/cloud-moves/staged/${KEY}/seed`,
-    headers: bearer("link"),
-    status: 400,
-  },
-  {
-    name: "413 to a content-length over the cap",
-    path: SEED_PATH,
-    headers: { ...bearer("link"), "content-length": String(512 * 1024 * 1024 + 1) },
-    status: 413,
-  },
-  {
-    name: "404 with an empty body off a cloud-only server",
-    path: SEED_PATH,
-    headers: bearer("link"),
-    status: 404,
-    cloudOnly: false,
-  },
+  ...routeCases("seed", 512 * 1024 * 1024),
+  ...routeCases("context-export", 2 * 1024 * 1024),
 ])("answers $name", ({ path, headers, status, cloudOnly = true }) =>
   Effect.gen(function* () {
     let staged = 0;
@@ -181,28 +185,37 @@ it.live("stages a linked member's upload and maps the staging refusals", () =>
     });
     const bytes = new Uint8Array([1, 2, 3, 250]);
 
-    const accepted = yield* put(port, SEED_PATH, bearer("link"), bytes);
-    assert.equal(accepted.status, 204);
-    assert.deepEqual(calls, [
-      {
+    for (const path of [SEED_PATH, EXPORT_PATH]) {
+      const accepted = yield* put(port, path, bearer("link"), bytes);
+      assert.equal(accepted.status, 204);
+    }
+    assert.deepEqual(
+      calls,
+      (["seed", "context-export"] as const).map((kind) => ({
         key: KEY,
-        kind: "seed",
+        kind,
         projectId: ProjectId.make("project-1"),
         memberId: linkMember,
         bytes: [...bytes],
-      },
-    ] as never);
+      })) as never,
+    );
 
     const answers = [];
-    for (const reason of ["missing-prerequisite", "invalid-seed", "claimed"] as const) {
+    for (const [path, reason] of [
+      [SEED_PATH, "missing-prerequisite"],
+      [SEED_PATH, "invalid-seed"],
+      [SEED_PATH, "claimed"],
+      [EXPORT_PATH, "invalid-export"],
+    ] as const) {
       refusal = reason;
-      const response = yield* put(port, SEED_PATH, bearer("link"), bytes);
+      const response = yield* put(port, path, bearer("link"), bytes);
       answers.push({ status: response.status, reason: decodeFailure(response.body).reason });
     }
     assert.deepEqual(answers, [
       { status: 409, reason: "missing-prerequisite" },
       { status: 422, reason: "invalid-seed" },
       { status: 409, reason: "claimed" },
+      { status: 422, reason: "invalid-export" },
     ]);
   }).pipe(Effect.scoped),
 );

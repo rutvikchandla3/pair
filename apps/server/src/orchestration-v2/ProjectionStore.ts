@@ -1,5 +1,5 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { pendingGuestMessageCount, threadHasImportedHistory } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1511,7 +1511,7 @@ function isTurnItemAtOrBeforeRun(input: {
   readonly sourceRunOrdinal: number;
 }): boolean {
   if (input.itemRunId === null) {
-    return input.historyOrigin === "v1_import";
+    return threadHasImportedHistory(input.historyOrigin);
   }
   const ordinal = input.runOrdinalById.get(input.itemRunId);
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
@@ -1963,7 +1963,9 @@ function itemCountThroughRun(input: {
     return 0;
   }
 
-  let count = input.state.thread.historyOrigin === "v1_import" ? input.state.runlessItemCount : 0;
+  let count = threadHasImportedHistory(input.state.thread.historyOrigin)
+    ? input.state.runlessItemCount
+    : 0;
   for (const [runId, itemCount] of input.state.itemCountByRunId) {
     const itemRunOrdinal = input.state.runOrdinalById.get(runId);
     if (itemRunOrdinal !== undefined && itemRunOrdinal <= runOrdinal) {
@@ -3206,7 +3208,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           SELECT 1
                           FROM orchestration_v2_projection_threads AS source_thread
                           WHERE source_thread.thread_id = item.thread_id
-                            AND json_extract(source_thread.payload_json, '$.historyOrigin') = 'v1_import'
+                            AND json_extract(source_thread.payload_json, '$.historyOrigin') IN ('v1_import', 'context_export')
                         )
                       )
                       OR run.ordinal <= (

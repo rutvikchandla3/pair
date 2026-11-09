@@ -77,6 +77,7 @@ import {
   SandboxId,
   ThreadLinkedPullRequest,
   ThreadId,
+  threadHasImportedHistory,
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
@@ -692,6 +693,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.title.regeneration.complete":
     case "thread.project.adopt-folder":
     case "thread.notice.record":
+    case "thread.history.import":
+    case "thread.move.record":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
@@ -1133,9 +1136,14 @@ export function shouldPrepareLegacyImportHandoff(input: {
   readonly legacyImportItemCount: number;
 }): boolean {
   return (
-    input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
+    threadHasImportedHistory(input.historyOrigin) &&
+    !input.hasCompletedRun &&
+    input.legacyImportItemCount > 0
   );
 }
+
+const importedHistoryOrigin = (origin: OrchestrationV2AppThread["historyOrigin"]) =>
+  origin === "context_export" ? ("context_export" as const) : ("v1_import" as const);
 
 function appendContextHandoffId(
   handoffIds: OrchestrationV2ProviderThread["handoffIds"],
@@ -2307,10 +2315,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal <= latestHandoffRun.ordinal,
             );
       const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
-      const legacyImportItems =
-        projection.thread.historyOrigin === "v1_import"
-          ? yield* readHandoffItems(threadId, [null])
-          : [];
+      const legacyImportItems = threadHasImportedHistory(projection.thread.historyOrigin)
+        ? yield* readHandoffItems(threadId, [null])
+        : [];
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
         : ("delta_since_target_last_seen" as const);
@@ -2392,6 +2399,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId,
+                historyOrigin: importedHistoryOrigin(projection.thread.historyOrigin),
                 targetRunId: queuedRun.id,
                 toProviderThreadId: queuedProviderThread.id,
                 toProviderInstanceId: queuedRun.providerInstanceId,
@@ -5014,6 +5022,211 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  /** Ids derive from the command id, so a replay through the receipt can't duplicate a row. */
+  const dispatchThreadHistoryImport = Effect.fn("orchestrationV2.dispatch.threadHistoryImport")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.history.import" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const threadId = command.threadId;
+      const mapProjectionError = Effect.mapError(
+        (cause: unknown) => new OrchestratorProjectionError({ threadId, cause }),
+      );
+      const thread = yield* projectionStore.getThread(threadId).pipe(mapProjectionError);
+      const reject = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (thread.deletedAt !== null) return yield* reject("The thread was deleted.");
+      const { runs } = yield* projectionStore
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(mapProjectionError);
+      const messageCount = yield* projectionStore
+        .getMessageCount(threadId)
+        .pipe(mapProjectionError);
+      if (runs.length > 0 || messageCount > 0) {
+        return yield* reject("History is imported only into a thread without messages or runs.");
+      }
+      const now = yield* DateTime.now;
+      const emitEvent = emit(events, command);
+      const firstOrdinal = yield* nextTurnItemOrdinal({ thread });
+      let ordinal = firstOrdinal;
+      const runless = {
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+      } as const;
+      const { source, omittedMessageCount } = command.contextExport;
+      const emitGapNotice = Effect.suspend(() =>
+        emitEvent({
+          type: "turn-item.updated",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...runless,
+            id: TurnItemId.make(`${command.commandId}:omitted`),
+            ordinal: ordinal++,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: `${omittedMessageCount === 1 ? "1 earlier message" : `${omittedMessageCount} earlier messages`} stayed on the original thread on ${source.environmentLabel}.`,
+          },
+        }),
+      );
+
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, historyOrigin: "context_export", updatedAt: now },
+      });
+      for (const [index, message] of command.contextExport.messages.entries()) {
+        const messageId = MessageId.make(`${command.commandId}:m:${index}`);
+        yield* emitEvent({
+          type: "message.updated",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            createdBy: message.role === "user" ? "user" : "agent",
+            creationSource: "server",
+            id: messageId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: message.role,
+            text: message.text,
+            attachments: [],
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          },
+        });
+        const item = {
+          ...runless,
+          id: TurnItemId.make(`${command.commandId}:i:${index}`),
+          ordinal: ordinal++,
+          startedAt: message.createdAt,
+          completedAt: message.createdAt,
+          updatedAt: message.createdAt,
+          messageId,
+          text: message.text,
+        };
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload:
+            message.role === "user"
+              ? {
+                  ...item,
+                  createdBy: "user",
+                  creationSource: "server",
+                  type: "user_message",
+                  inputIntent: "turn_start",
+                  attachments: [],
+                }
+              : { ...item, type: "assistant_message", streaming: false },
+        });
+        if (index === 0 && omittedMessageCount > 0) yield* emitGapNotice;
+      }
+      if (command.contextExport.messages.length === 0 && omittedMessageCount > 0) {
+        yield* emitGapNotice;
+      }
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...runless,
+          id: TurnItemId.make(`${command.commandId}:from`),
+          ordinal: ordinal++,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "move",
+          direction: "from",
+          thread: { environmentId: source.environmentId, threadId: source.threadId },
+          message: command.fromMessage,
+          ...(command.copy === undefined ? {} : { copy: command.copy }),
+          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
+        },
+      });
+    },
+  );
+
+  /** A runless row would sort above run 1, so the row rides the newest run that still shows. */
+  const dispatchThreadMoveRecord = Effect.fn("orchestrationV2.dispatch.threadMoveRecord")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.move.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const threadId = command.threadId;
+      const mapProjectionError = Effect.mapError(
+        (cause: unknown) => new OrchestratorProjectionError({ threadId, cause }),
+      );
+      const thread = yield* projectionStore.getThread(threadId).pipe(mapProjectionError);
+      if (thread.deletedAt !== null) return;
+      const { runs } = yield* projectionStore
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(mapProjectionError);
+      const run = runs
+        .filter(
+          (candidate) => candidate.status !== "rolled_back" && candidate.status !== "cancelled",
+        )
+        .reduce<OrchestrationV2Run | undefined>(
+          (newest, candidate) =>
+            newest === undefined || candidate.ordinal > newest.ordinal ? candidate : newest,
+          undefined,
+        );
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.lifecycleNoticeTurnItem({ commandId: command.commandId }),
+          threadId,
+          runId: run?.id ?? null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread }),
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "move",
+          direction: "to",
+          thread: command.to,
+          message: command.message,
+          ...(command.copy === undefined ? {} : { copy: command.copy }),
+          ...(command.actorId === undefined ? {} : { actorId: command.actorId }),
+        },
+      });
+    },
+  );
+
   const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -7037,10 +7250,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
     const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
     const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
-    const legacyImportItems =
-      projection.thread.historyOrigin === "v1_import"
-        ? yield* readHandoffItems(command.threadId, [null])
-        : [];
+    const legacyImportItems = threadHasImportedHistory(projection.thread.historyOrigin)
+      ? yield* readHandoffItems(command.threadId, [null])
+      : [];
     const isProviderSwitch =
       activeProviderThread !== undefined &&
       activeProviderThread.providerInstanceId !== modelSelection.instanceId;
@@ -7123,6 +7335,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? yield* contextHandoffService
             .prepareLegacyImport({
               threadId: command.threadId,
+              historyOrigin: importedHistoryOrigin(projection.thread.historyOrigin),
               targetRunId: runId,
               toProviderThreadId: providerThreadId,
               toProviderInstanceId: modelSelection.instanceId,
@@ -7651,7 +7864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const sideChatParentRunIds = [
       // Queued messages have not reached the main thread yet.
       ...sourceRunsAfterFork.filter((run) => run.status !== "queued").map((run) => run.id),
-      ...(sourceRun === null && sourceProjection?.thread.historyOrigin === "v1_import"
+      ...(sourceRun === null && threadHasImportedHistory(sourceProjection?.thread.historyOrigin)
         ? [null]
         : []),
     ];
@@ -7787,6 +8000,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? yield* contextHandoffService
             .prepareLegacyImport({
               threadId: command.threadId,
+              historyOrigin: importedHistoryOrigin(projection.thread.historyOrigin),
               targetRunId: runId,
               toProviderThreadId: ensuredProviderThread.id,
               toProviderInstanceId: modelSelection.instanceId,
@@ -14513,6 +14727,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.notice.record":
         yield* dispatchThreadNotice(command, events);
+        break;
+      case "thread.history.import":
+        yield* dispatchThreadHistoryImport(command, events);
+        break;
+      case "thread.move.record":
+        yield* dispatchThreadMoveRecord(command, events);
         break;
       case "message.dispatch": {
         // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.

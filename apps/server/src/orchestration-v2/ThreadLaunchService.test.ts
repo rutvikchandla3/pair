@@ -67,6 +67,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ContextExports from "./ContextExports.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -264,9 +265,21 @@ function makeHarness(options: HarnessOptions = {}) {
       }),
   );
   const layerProjections = ProjectionStore.layer.pipe(Layer.provide(layerDatabase));
+  const layerContextExports = ContextExports.layer.pipe(
+    Layer.provide(layerThreadManagement),
+    Layer.provide(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("environment:launch-test"),
+          label: "Launch test",
+        } as never),
+      }),
+    ),
+  );
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerContextExports,
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
@@ -320,6 +333,7 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(
       layerLaunch,
+      layerContextExports,
       layerRegistry,
       layerThreadManagement,
       layerTitleRegeneration,
@@ -2779,6 +2793,125 @@ it.effect("launches a seeded cloud thread from its claimed seed and never asks o
   }).pipe(Effect.provide(harness.layer));
 });
 
+const laptopExport = {
+  version: 1,
+  source: {
+    environmentId: EnvironmentId.make("environment:laptop"),
+    threadId: ThreadId.make("thread:laptop"),
+    title: "Fix the flaky test",
+    environmentLabel: "Kim's MacBook Pro",
+  },
+  exportedAt: DateTime.makeUnsafe("2026-11-09T10:05:00.000Z"),
+  messages: [
+    {
+      role: "user",
+      text: "Why does it flake?",
+      createdAt: DateTime.makeUnsafe("2026-11-09T10:00:00.000Z"),
+    },
+    {
+      role: "assistant",
+      text: "A race in the setup.",
+      createdAt: DateTime.makeUnsafe("2026-11-09T10:01:00.000Z"),
+    },
+  ],
+  omittedMessageCount: 0,
+} as const;
+
+/** The conversation and move rows as `type: text`, in timeline order, marked when on a run. */
+const timelineOf = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const projection = yield* threads.getThreadProjection(threadId);
+    return projection.visibleTurnItems.flatMap(({ item }) => {
+      const text =
+        item.type === "user_message" || item.type === "assistant_message"
+          ? item.text
+          : item.type === "move"
+            ? item.message
+            : null;
+      return text === null ? [] : [`${item.runId === null ? "" : "run "}${item.type}: ${text}`];
+    });
+  });
+
+it.effect("imports a staged context export before the first message, once", () => {
+  const exportRef = CloudStagingKey.make(`mv_${"1".repeat(32)}`);
+  const claim = vi.fn(
+    (_input: Parameters<StagedCloudImports.StagedCloudImports["Service"]["claim"]>[0]) =>
+      Effect.void,
+  );
+  const readContextExport = vi.fn(() => Effect.succeed(laptopExport));
+  const dropContextExport = vi.fn(() => Effect.void);
+  const harness = cloudHarness(
+    { currentBranch: () => Effect.succeed("main") },
+    {
+      stagedImports: {
+        check: () => Effect.void,
+        claim,
+        readContextExport,
+        dropContextExport,
+      },
+    },
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const input = {
+      ...launchInput({
+        command: "command:launch:cloud-export",
+        thread: "thread:launch:cloud-export",
+        message: "Keep going",
+        workspace: cloudWorkspace,
+      }),
+      actorId: seedMember,
+      contextExportRef: exportRef,
+    };
+    const launched = yield* launches.launch(input);
+    const expected = [
+      "user_message: Why does it flake?",
+      "assistant_message: A race in the setup.",
+      "move: Continued from “Fix the flaky test” on Kim's MacBook Pro",
+      "run user_message: Keep going",
+    ];
+    assert.deepEqual(yield* timelineOf(launched.threadId), expected);
+    assert.deepEqual(claim.mock.calls, [
+      [
+        {
+          key: exportRef,
+          kind: "context-export",
+          projectId,
+          memberId: seedMember,
+          threadId: launched.threadId,
+        },
+      ],
+    ]);
+    assert.deepEqual(dropContextExport.mock.calls, [[{ key: exportRef }]] as never);
+
+    // A replay claims again for the same thread but finds the history already there.
+    yield* launches.launch(input);
+    assert.equal(claim.mock.calls.length, 2);
+    assert.equal(readContextExport.mock.calls.length, 1);
+    assert.deepEqual(yield* timelineOf(launched.threadId), expected);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("imports an export in hand on a local launch, as a copy", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: "command:launch:local-copy",
+        thread: "thread:launch:local-copy",
+        message: "Keep going",
+      }),
+      contextExport: { value: laptopExport, copy: true },
+    });
+    assert.deepEqual((yield* timelineOf(launched.threadId)).slice(-2), [
+      "move: Copy of “Fix the flaky test” from Kim's MacBook Pro",
+      "run user_message: Keep going",
+    ]);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each([
   { name: "a kept disk", kept: true, mirrored: true, restoredFrom: "disk" },
   {
@@ -3228,6 +3361,16 @@ it.effect.each([
       ),
     refusal: { _tag: "CloudLaunchError", reason: "seed-unavailable" },
   },
+  {
+    name: "a context export staged by someone else",
+    settings: cloudSettings,
+    contextExportRef: seedRef,
+    check: () =>
+      Effect.fail(
+        new StagedCloudImports.StagedCloudImportError({ key: seedRef, reason: "key-in-use" }),
+      ),
+    refusal: { _tag: "CloudLaunchError", reason: "export-unavailable" },
+  },
 ])(
   "refuses a cloud launch for $name before any thread or machine",
   ({ settings, git, workspace, cloudOnly = true, refusal, ...row }) => {
@@ -3247,7 +3390,13 @@ it.effect.each([
         message: "Fix the build",
         workspace: workspace ?? cloudWorkspace,
       });
-      const error = yield* Effect.flip(launches.launch({ ...input, actorId: seedMember }));
+      const error = yield* Effect.flip(
+        launches.launch({
+          ...input,
+          actorId: seedMember,
+          ...("contextExportRef" in row ? { contextExportRef: row.contextExportRef } : {}),
+        }),
+      );
       assert.equal(error._tag, "ThreadLaunchError");
       const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
       assert.include(cause ?? {}, refusal);

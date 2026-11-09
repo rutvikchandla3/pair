@@ -2,6 +2,7 @@ import {
   CLOUD_MOVE_ROUTE_PREFIX,
   CLOUD_SEED_MAX_BYTES,
   type CloudMoveFailure,
+  CONTEXT_EXPORT_MAX_BYTES,
   CloudMoveFailureReason,
   CloudStagingKey,
   ProjectId,
@@ -30,8 +31,10 @@ const FAILURE_MESSAGES: Record<CloudMoveFailureReason, string> = {
   forbidden: "This link can't move threads to Pair Cloud. Link it again with more access.",
   "bad-request": "Pair Cloud couldn't read the upload. Try again.",
   "unknown-project": "This project isn't on Pair Cloud.",
-  "too-large": "The upload is over 512 MB.",
+  "too-large":
+    "The upload is over Pair Cloud's limit: 512 MB for a branch, 2 MB for a conversation.",
   "invalid-seed": "Pair Cloud couldn't read the uploaded branch. Try again.",
+  "invalid-export": "Pair Cloud couldn't read the uploaded conversation. Try again.",
   "missing-prerequisite":
     "Pair Cloud is missing earlier commits on this branch. Send its full history.",
   claimed: "This move already started on Pair Cloud.",
@@ -55,6 +58,7 @@ const STAGE_REFUSALS: Record<
   "unknown-project": [404, "unknown-project"],
   "too-large": [413, "too-large"],
   "invalid-seed": [422, "invalid-seed"],
+  "invalid-export": [422, "invalid-export"],
   "missing-prerequisite": [409, "missing-prerequisite"],
   claimed: [409, "claimed"],
   "key-in-use": [409, "key-in-use"],
@@ -118,51 +122,52 @@ export const layer = Layer.unwrap(
     const { cloudOnly } = yield* ServerConfig.ServerConfig;
     const budget = makeByteBudget(TRANSFER_BYTES_PER_SECOND, TRANSFER_BURST_BYTES);
 
-    const seedUpload = HttpRouter.add(
-      "PUT",
-      `${CLOUD_MOVE_ROUTE_PREFIX}/staged/:key/seed`,
-      Effect.gen(function* () {
-        if (!cloudOnly) return HttpServerResponse.empty({ status: 404 });
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const { memberId } = yield* authenticateLinkMember(request);
-        const key = decodeKey((yield* HttpRouter.params).key);
-        const projectId = requestUrl(request).pipe(
-          Option.flatMap((url) => decodeProjectId(url.searchParams.get("projectId"))),
-        );
-        if (Option.isNone(key) || Option.isNone(projectId)) {
-          return yield* refuse(400, "bad-request")();
-        }
-        const length = request.headers["content-length"];
-        if (
-          length !== undefined &&
-          (!/^\d+$/.test(length) || Number(length) > CLOUD_SEED_MAX_BYTES)
-        ) {
-          return yield* refuse(413, "too-large")();
-        }
-
-        // Keep the request stream in the route scope until the response is sent.
-        const bodyPull = yield* Stream.toPull(request.stream);
-        const staged = yield* StagedCloudImports.StagedCloudImports;
-        yield* staged
-          .stage({
-            key: key.value,
-            kind: "seed",
-            projectId: projectId.value,
-            memberId,
-            body: Stream.fromPull(Effect.succeed(bodyPull)).pipe(
-              Stream.tap((chunk) => budget.take(chunk.length)),
-            ),
-          })
-          .pipe(
-            Effect.mapError((error) => {
-              const [status, reason] = STAGE_REFUSALS[error.reason];
-              return refuse(status, reason)(error);
-            }),
+    const stagedUpload = (kind: StagedCloudImports.StagedCloudImportKind, maxBytes: number) =>
+      HttpRouter.add(
+        "PUT",
+        `${CLOUD_MOVE_ROUTE_PREFIX}/staged/:key/${kind}`,
+        Effect.gen(function* () {
+          if (!cloudOnly) return HttpServerResponse.empty({ status: 404 });
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const { memberId } = yield* authenticateLinkMember(request);
+          const key = decodeKey((yield* HttpRouter.params).key);
+          const projectId = requestUrl(request).pipe(
+            Option.flatMap((url) => decodeProjectId(url.searchParams.get("projectId"))),
           );
-        return HttpServerResponse.empty({ status: 204 });
-      }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
-    );
+          if (Option.isNone(key) || Option.isNone(projectId)) {
+            return yield* refuse(400, "bad-request")();
+          }
+          const length = request.headers["content-length"];
+          if (length !== undefined && (!/^\d+$/.test(length) || Number(length) > maxBytes)) {
+            return yield* refuse(413, "too-large")();
+          }
 
-    return Layer.mergeAll(seedUpload);
+          // Keep the request stream in the route scope until the response is sent.
+          const bodyPull = yield* Stream.toPull(request.stream);
+          const staged = yield* StagedCloudImports.StagedCloudImports;
+          yield* staged
+            .stage({
+              key: key.value,
+              kind,
+              projectId: projectId.value,
+              memberId,
+              body: Stream.fromPull(Effect.succeed(bodyPull)).pipe(
+                Stream.tap((chunk) => budget.take(chunk.length)),
+              ),
+            })
+            .pipe(
+              Effect.mapError((error) => {
+                const [status, reason] = STAGE_REFUSALS[error.reason];
+                return refuse(status, reason)(error);
+              }),
+            );
+          return HttpServerResponse.empty({ status: 204 });
+        }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
+      );
+
+    return Layer.mergeAll(
+      stagedUpload("seed", CLOUD_SEED_MAX_BYTES),
+      stagedUpload("context-export", CONTEXT_EXPORT_MAX_BYTES),
+    );
   }),
 );

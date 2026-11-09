@@ -3,11 +3,13 @@ import {
   OrchestrationV2ContextHandoff,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadHistoryOrigin,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
   ThreadId,
+  threadHasImportedHistory,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +28,8 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+
+type ImportedHistoryOrigin = Exclude<OrchestrationV2ThreadHistoryOrigin, "native">;
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -48,6 +52,7 @@ export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.T
 export interface ContextHandoffServiceV2Shape {
   readonly prepareLegacyImport: (input: {
     readonly threadId: ThreadId;
+    readonly historyOrigin: ImportedHistoryOrigin;
     readonly targetRunId: RunId;
     readonly toProviderThreadId: ProviderThreadId;
     readonly toProviderInstanceId: ProviderInstanceId;
@@ -155,7 +160,7 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
       turnItemRunIds: [
         ...source.runs.filter((run) => run.ordinal <= throughRun.ordinal).map((run) => run.id),
-        ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
+        ...(threadHasImportedHistory(source.thread.historyOrigin) ? [null] : []),
       ],
     });
     return visibleConversationItems(source, turnItems);
@@ -284,7 +289,17 @@ export function makeSideChatContext(input: {
 export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
   handoff.strategy === "manual_context" && handoff.transferId != null;
 
-function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
+const IMPORTED_HISTORY_HEADERS: Record<ImportedHistoryOrigin, string> = {
+  v1_import:
+    "Imported conversation history from the previous T3 Code orchestrator. Use it as context; do not repeat it unless the user asks.",
+  context_export:
+    "Conversation carried over from the thread this one continues, in another T3 Code environment. Use it as context; do not repeat it unless the user asks.",
+};
+
+function makeLegacyImportSummary(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  historyOrigin: ImportedHistoryOrigin,
+): string {
   const sections = items.flatMap((item) => {
     switch (item.type) {
       case "user_message":
@@ -295,8 +310,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
         return [];
     }
   });
-  const header =
-    "Imported conversation history from the previous T3 Code orchestrator. Use it as context; do not repeat it unless the user asks.";
+  const header = IMPORTED_HISTORY_HEADERS[historyOrigin];
   const maxChars = 32_000;
   const selected: Array<string> = [];
   let remaining = maxChars - header.length - 2;
@@ -355,6 +369,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
     const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
       function* (input: {
         readonly threadId: ThreadId;
+        readonly historyOrigin: ImportedHistoryOrigin;
         readonly targetRunId: RunId;
         readonly toProviderThreadId: ProviderThreadId;
         readonly toProviderInstanceId: ProviderInstanceId;
@@ -399,7 +414,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           strategy: "manual_context",
           status: "ready",
           summaryMessageId: null,
-          summaryText: makeLegacyImportSummary(input.items),
+          summaryText: makeLegacyImportSummary(input.items, input.historyOrigin),
           history: {
             messages: selected.messages,
             coverage,

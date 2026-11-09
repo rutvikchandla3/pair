@@ -12,6 +12,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
+  type OrchestrationV2ContextExport,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2LinkOrigin,
@@ -58,6 +59,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ContextExports from "./ContextExports.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -138,6 +140,13 @@ export interface ThreadLaunchInput {
   readonly cloudPlacement?: true;
   /** The cloud launch's machine is discarded once its threads settle. */
   readonly discardOnSettle?: boolean;
+  /** A context export staged on this server; only 3.23's move launch route sets it. */
+  readonly contextExportRef?: CloudStagingKey;
+  /** An export already in hand; only `CloudMoves.continueLocally` sets it (3.25). */
+  readonly contextExport?: {
+    readonly value: OrchestrationV2ContextExport;
+    readonly copy?: true;
+  };
 }
 
 type PreparationInput = Pick<
@@ -186,6 +195,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
       "dispatch-message",
       "release-run",
       "fail-run",
+      "import-history",
     ]),
     commandId: CommandId,
     projectId: ProjectId,
@@ -308,6 +318,7 @@ const make = Effect.gen(function* () {
   // The server provides it; on a cloud-only server it fetches and authenticates the checkout.
   const pairCloudProjects = yield* Effect.serviceOption(PairCloudProjects.PairCloudProjects);
   const stagedImports = yield* Effect.serviceOption(StagedCloudImports.StagedCloudImports);
+  const contextExports = yield* ContextExports.ContextExports;
   const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
     Context.add(ProjectionStore.ProjectionStoreV2, projections),
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
@@ -439,6 +450,78 @@ const make = Effect.gen(function* () {
       size: input.placement.size,
       ...(input.discardOnSettle ? { discardOnSettle: true } : {}),
     });
+  });
+
+  /** Checks the launch's staged export, or claims it for `threadId`; refusals name the move. */
+  const stagedContextExport = Effect.fn("ThreadLaunchService.stagedContextExport")(function* (
+    input: ThreadLaunchInput,
+    key: CloudStagingKey,
+    threadId?: ThreadId,
+  ) {
+    const unavailable = new CloudPreparation.CloudLaunchError({
+      projectId: input.projectId,
+      reason: "export-unavailable",
+    });
+    const memberId = input.actorId ?? input.ownerId;
+    if (Option.isNone(stagedImports) || memberId === undefined) return yield* unavailable;
+    const ref = { key, kind: "context-export" as const, projectId: input.projectId, memberId };
+    yield* (
+      threadId === undefined
+        ? stagedImports.value.check(ref)
+        : stagedImports.value.claim({ ...ref, threadId })
+    ).pipe(Effect.mapError((error) => (error.reason === "failed" ? error : unavailable)));
+    return stagedImports.value;
+  });
+
+  /**
+   * Writes the export as the new thread's history before its first message, so run 1's handoff
+   * carries it. A replay claims again and finds the history already there.
+   */
+  const importContextExport = Effect.fn("ThreadLaunchService.importContextExport")(function* (
+    input: ThreadLaunchInput,
+    threadId: ThreadId,
+  ) {
+    const key = input.contextExportRef;
+    const staged =
+      key === undefined
+        ? undefined
+        : yield* stagedContextExport(input, key, threadId).pipe(
+            Effect.mapError(mapError(input, "create-thread", threadId)),
+          );
+    if (input.reuseExistingThread !== true) {
+      const shell = yield* threads
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+      if (shell?.historyOrigin !== "context_export") {
+        const contextExport =
+          input.contextExport?.value ??
+          (yield* (
+            staged === undefined || key === undefined
+              ? Effect.die("A context export launch carries an export or a staged key.")
+              : staged.readContextExport({ key })
+          ).pipe(
+            Effect.mapError((error) =>
+              error.reason === "not-found"
+                ? new CloudPreparation.CloudLaunchError({
+                    projectId: input.projectId,
+                    reason: "export-unavailable",
+                  })
+                : error,
+            ),
+            Effect.mapError(mapError(input, "import-history", threadId)),
+          ));
+        yield* contextExports
+          .import({
+            commandId: CommandId.make(`${input.commandId}:history`),
+            threadId,
+            contextExport,
+            ...(input.contextExport?.copy === undefined ? {} : { copy: input.contextExport.copy }),
+            ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+          })
+          .pipe(Effect.mapError(mapError(input, "import-history", threadId)));
+      }
+    }
+    if (staged !== undefined && key !== undefined) yield* staged.dropContextExport({ key });
   });
 
   /**
@@ -1267,6 +1350,12 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.mapError(mapError(input, "resolve-project")));
         }
       }
+      // Only a new launch checks: a replay's claim finds the export already claimed for it.
+      if (input.contextExportRef !== undefined && Option.isNone(launchReceipt)) {
+        yield* stagedContextExport(input, input.contextExportRef).pipe(
+          Effect.mapError(mapError(input, "resolve-project")),
+        );
+      }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
         commandId: input.commandId,
@@ -1404,6 +1493,9 @@ const make = Effect.gen(function* () {
               threadId,
             }),
           ).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        }
+        if (input.contextExportRef !== undefined || input.contextExport !== undefined) {
+          yield* importContextExport(input, threadId);
         }
         if (cloud !== null) {
           yield* provisionCloud({

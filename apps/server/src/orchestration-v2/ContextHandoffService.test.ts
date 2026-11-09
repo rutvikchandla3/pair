@@ -72,11 +72,22 @@ function importedItem(
 }
 
 it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
-  it.effect("prepares imported history for the first native v2 turn", () =>
+  it.effect.each([
+    {
+      historyOrigin: "v1_import" as const,
+      header: "Imported conversation history from the previous T3 Code orchestrator.",
+    },
+    {
+      historyOrigin: "context_export" as const,
+      header:
+        "Conversation carried over from the thread this one continues, in another T3 Code environment.",
+    },
+  ])("prepares $historyOrigin history for the first native v2 turn", ({ historyOrigin, header }) =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
+        historyOrigin,
         targetRunId: RunId.make("run:first-v2"),
         toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
         toProviderInstanceId: ProviderInstanceId.make("codex"),
@@ -94,6 +105,7 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
 
       assert.equal(handoff.strategy, "manual_context");
       assert.deepStrictEqual(handoff.fromProviderThreadIds, []);
+      assert.isTrue(handoff.summaryText.startsWith(header));
       assert.include(handoff.summaryText, "What did we decide?");
       assert.include(handoff.summaryText, "keep the migration lightweight");
     }),
@@ -104,6 +116,7 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
+        historyOrigin: "v1_import",
         targetRunId: RunId.make("run:first-v2"),
         toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
         toProviderInstanceId: ProviderInstanceId.make("codex"),
@@ -129,6 +142,7 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
+        historyOrigin: "v1_import",
         targetRunId: RunId.make("run:first-v2"),
         toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
         toProviderInstanceId: ProviderInstanceId.make("codex"),
