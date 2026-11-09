@@ -1,3 +1,4 @@
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import {
@@ -45,10 +46,14 @@ function summarizeLoadPreferences(
 }
 
 export function LoadBalancingSettings({
-  environments,
+  environments: switchedOn,
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  // Pair Cloud runs only cloud threads, so auto balance never picks it.
+  const environments = switchedOn.filter(
+    (environment) => !isCloudLaunchEnvironment(environment.serverConfig),
+  );
   const settings = useClientSettings((current) => ({
     loadBalancingEnabled: current.loadBalancingEnabled,
     loadBalancingWeights: current.loadBalancingWeights,
