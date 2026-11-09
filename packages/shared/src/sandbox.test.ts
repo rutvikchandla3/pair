@@ -23,50 +23,66 @@ const configured = (
 
 describe("cloudAvailability", () => {
   it.each([
-    ["no settings", null, "not-configured"],
-    ["no sandbox key", DEFAULT_SERVER_SETTINGS, "not-configured"],
+    ["a server that is not cloud-only", configured(), false, "not-cloud-only"],
+    ["no settings", null, true, "not-configured"],
+    ["no sandbox key", DEFAULT_SERVER_SETTINGS, true, "not-configured"],
     [
       "a sandbox with no drivers",
       { ...DEFAULT_SERVER_SETTINGS, sandbox: { drivers: [] } },
+      true,
       "not-configured",
     ],
     [
       "a project that disallows cloud",
       configured({ [projectId]: { sandboxAllowed: false } }),
+      true,
       "project-disallowed",
     ],
-    ["a configured driver", configured(), null],
-    ["a project that allows cloud", configured({ [projectId]: { sandboxAllowed: true } }), null],
-  ] as const)("%s", (_name, settings, reason) => {
-    const result = cloudAvailability(settings, projectId);
+    ["a configured driver", configured(), true, null],
+    [
+      "a project that allows cloud",
+      configured({ [projectId]: { sandboxAllowed: true } }),
+      true,
+      null,
+    ],
+  ] as const)("%s", (_name, settings, cloudLaunch, reason) => {
+    const result = cloudAvailability(settings, projectId, cloudLaunch);
     expect(result.available ? null : result.reason).toBe(reason);
   });
 
   it("ignores project overrides without a project", () => {
     expect(
-      cloudAvailability(configured({ [projectId]: { sandboxAllowed: false } }), null).available,
+      cloudAvailability(configured({ [projectId]: { sandboxAllowed: false } }), null, true)
+        .available,
     ).toBe(true);
   });
 });
 
 describe("newThreadPrefersCloud", () => {
   it.each([
-    ["the project defaults to cloud", configured({ [projectId]: { defaultsToCloud: true } }), true],
-    ["no project default", configured(), false],
+    ["prefers Cloud on a cloud-launch server without the old default", configured(), true, true],
+    [
+      "never on another server",
+      configured({ [projectId]: { defaultsToCloud: true } }),
+      false,
+      false,
+    ],
     [
       "cloud is not configured",
       {
         ...DEFAULT_SERVER_SETTINGS,
         projectSettingsOverrides: { [projectId]: { defaultsToCloud: true } },
       },
+      true,
       false,
     ],
     [
       "the project disallows cloud",
-      configured({ [projectId]: { defaultsToCloud: true, sandboxAllowed: false } }),
+      configured({ [projectId]: { sandboxAllowed: false } }),
+      true,
       false,
     ],
-  ] as const)("%s", (_name, settings, expected) => {
-    expect(newThreadPrefersCloud(settings, projectId)).toBe(expected);
+  ] as const)("%s", (_name, settings, cloudLaunch, expected) => {
+    expect(newThreadPrefersCloud(settings, projectId, cloudLaunch)).toBe(expected);
   });
 });

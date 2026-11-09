@@ -10,6 +10,7 @@ import { usePeerLinkHosts } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { useIsTeamMode, useTeamGitHub, useTeamSettingsVisible } from "~/state/team";
+import { cloudSettingsVisible } from "./CloudSettings.logic";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import type { SettingsScopeSearch } from "./settingsScope";
@@ -41,8 +42,13 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         }),
     ) === true;
   const hasSandbox =
-    environments.some((environment) => environment.serverConfig?.settings.sandbox !== undefined) ===
-    true;
+    environments.some(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.cloudLaunch === true &&
+        environment.serverConfig.settings.sandbox !== undefined,
+    ) === true;
+  const hasCloudSettings =
+    environments.some((environment) => cloudSettingsVisible(environment.serverConfig)) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -80,5 +86,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     isTeamMode,
     hasTeamGitHub,
     hasSandbox,
+    hasCloudSettings,
   });
 }

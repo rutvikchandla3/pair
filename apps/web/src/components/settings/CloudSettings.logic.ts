@@ -1,4 +1,13 @@
 import { ComputeDriverId, type SandboxDriverInstance } from "@t3tools/contracts";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+
+/** Settings → Cloud exists on a cloud-only server, and elsewhere while drivers remain to remove. */
+export function cloudSettingsVisible(serverConfig: EnvironmentServerConfig | null): boolean {
+  return (
+    serverConfig?.environment.capabilities.cloudLaunch === true ||
+    (serverConfig?.settings.sandbox?.drivers.length ?? 0) > 0
+  );
+}
 
 /** A Docker host other than a local socket cannot reach this server's disk (03 §3.2). */
 export function isRemoteDockerHost(dockerHost: string): boolean {

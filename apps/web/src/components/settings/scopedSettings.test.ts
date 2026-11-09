@@ -645,7 +645,7 @@ describe("null patches at project scope", () => {
         },
       },
     });
-    // Cloud's project-only keys share the entry, so one write moves the workspace off Cloud.
+    // Cloud's project-only keys share the entry, so one write changes them with the workspace.
     expect(
       planProjectOverridePatch(scope, environments, {
         defaultThreadEnvMode: "local",

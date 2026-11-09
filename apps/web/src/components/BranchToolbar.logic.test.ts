@@ -93,6 +93,7 @@ describe("resolveEffectiveEnvMode", () => {
     draftThreadEnvMode: undefined,
     sandboxId: undefined,
     cloudAvailable: true,
+    cloudLaunch: false,
   } as const;
 
   it.each([
@@ -118,6 +119,16 @@ describe("resolveEffectiveEnvMode", () => {
       { draftThreadEnvMode: "cloud", cloudAvailable: false },
       "worktree",
     ],
+    [
+      "any draft on a cloud-launch server",
+      { draftThreadEnvMode: "local", cloudLaunch: true },
+      "cloud",
+    ],
+    [
+      "a local thread on a cloud-launch server",
+      { hasServerThread: true, cloudLaunch: true },
+      "local",
+    ],
   ] as const)("%s", (_name, overrides, expected) => {
     expect(resolveEffectiveEnvMode({ ...base, ...overrides })).toBe(expected);
   });
@@ -130,27 +141,49 @@ describe("resolveCloudEnvModeItem", () => {
     reason: "project-disallowed",
     message: "Cloud threads are turned off for this project.",
   } as const;
-  const notConfigured = { ...disallowed, reason: "not-configured", message: "" } as const;
+  const notConfigured = {
+    ...disallowed,
+    reason: "not-configured",
+    message: "Cloud is not set up on this environment.",
+  } as const;
+  const notCloudOnly = { ...disallowed, reason: "not-cloud-only", message: "" } as const;
   const draft = {
-    effectiveEnvMode: "worktree",
+    effectiveEnvMode: "cloud",
     isServerThread: false,
     forceNewWorktree: false,
   } as const;
 
   it.each([
-    ["hidden without a driver", { cloud: notConfigured }, null],
-    ["offered on a draft", { cloud: available }, { disabledReason: null }],
-    ["disabled by the project", { cloud: disallowed }, { disabledReason: disallowed.message }],
+    [
+      "hidden on a server that isn't cloud-only",
+      { cloud: notCloudOnly, effectiveEnvMode: "worktree" },
+      null,
+    ],
+    [
+      "the only choice without a driver",
+      { cloud: notConfigured },
+      { disabledReason: notConfigured.message, only: true },
+    ],
+    ["the only choice on a draft", { cloud: available }, { disabledReason: null, only: true }],
+    [
+      "disabled by the project",
+      { cloud: disallowed },
+      { disabledReason: disallowed.message, only: true },
+    ],
     [
       "disabled for a multi-model send",
-      { cloud: available, forceNewWorktree: true },
-      { disabledReason: "Each model starts in its own worktree." },
+      { cloud: available, forceNewWorktree: true, effectiveEnvMode: "worktree" },
+      { disabledReason: "Each model starts in its own worktree.", only: true },
     ],
-    ["hidden on a started local thread", { cloud: available, isServerThread: true }, null],
     [
-      "shown on a cloud thread after its driver went away",
-      { cloud: notConfigured, isServerThread: true, effectiveEnvMode: "cloud" },
-      { disabledReason: null },
+      "hidden on a started local thread",
+      { cloud: available, isServerThread: true, effectiveEnvMode: "local" },
+      null,
+    ],
+    [
+      "shown on a cloud thread after its server stopped launching cloud work",
+      { cloud: notCloudOnly, isServerThread: true },
+      { disabledReason: null, only: false },
     ],
   ] as const)("%s", (_name, overrides, expected) => {
     expect(resolveCloudEnvModeItem({ ...draft, ...overrides })).toEqual(expected);

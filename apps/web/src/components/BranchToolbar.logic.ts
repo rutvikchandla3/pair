@@ -108,20 +108,25 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
 
 export interface CloudEnvModeItem {
   readonly disabledReason: string | null;
+  /** A draft on a cloud-launch server: Cloud is its only workspace. */
+  readonly only: boolean;
 }
 
-/** Cloud's row in both workspace pickers: null hides it, so servers without a driver look as before. */
+/** Cloud's row in both workspace pickers: null hides it, so servers that aren't cloud-only look as before. */
 export function resolveCloudEnvModeItem(input: {
   cloud: CloudAvailability;
   effectiveEnvMode: EnvMode;
   isServerThread: boolean;
   forceNewWorktree: boolean;
 }): CloudEnvModeItem | null {
-  if (input.effectiveEnvMode === "cloud") return { disabledReason: null };
-  if (input.isServerThread) return null;
-  if (!input.cloud.available && input.cloud.reason === "not-configured") return null;
-  if (input.forceNewWorktree) return { disabledReason: "Each model starts in its own worktree." };
-  return { disabledReason: input.cloud.available ? null : input.cloud.message };
+  if (input.isServerThread) {
+    return input.effectiveEnvMode === "cloud" ? { disabledReason: null, only: false } : null;
+  }
+  if (!input.cloud.available && input.cloud.reason === "not-cloud-only") return null;
+  if (input.forceNewWorktree) {
+    return { disabledReason: "Each model starts in its own worktree.", only: true };
+  }
+  return { disabledReason: input.cloud.available ? null : input.cloud.message, only: true };
 }
 
 /** The built-in workspace default once the environment has a second member. */
@@ -198,9 +203,12 @@ export function resolveEffectiveEnvMode(input: {
   preparingWorktree?: boolean;
   sandboxId: SandboxId | undefined;
   cloudAvailable: boolean;
+  /** The environment's `capabilities.cloudLaunch`: every draft there is cloud. */
+  cloudLaunch: boolean;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
   if (hasServerThread && input.sandboxId !== undefined) return "cloud";
+  if (!hasServerThread && input.cloudLaunch) return "cloud";
   // A cloud draft falls back in render when Cloud goes away; the stored draft keeps its choice.
   if (!hasServerThread && draftThreadEnvMode === "cloud") {
     return input.cloudAvailable ? "cloud" : "worktree";

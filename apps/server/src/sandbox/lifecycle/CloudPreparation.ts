@@ -104,19 +104,17 @@ export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch
   projectId: ProjectId,
   instanceId: ProviderInstanceId,
 ) {
-  if (!(yield* ServerConfig.ServerConfig).cloudOnly) {
-    return yield* new CloudLaunchError({ projectId, reason: "not-cloud-only" });
-  }
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
-  const availability = cloudAvailability(settings, projectId);
+  const availability = cloudAvailability(settings, projectId, cloudOnly);
   const sandbox = settings.sandbox;
   if (!availability.available || sandbox === undefined) {
     return yield* new CloudLaunchError({
       projectId,
       reason:
-        !availability.available && availability.reason === "project-disallowed"
-          ? "project-disallowed"
-          : "no-driver",
+        availability.available || availability.reason === "not-configured"
+          ? "no-driver"
+          : availability.reason,
     });
   }
   const instance = sandboxInstanceConfig(settings, instanceId);

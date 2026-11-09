@@ -57,7 +57,9 @@ import {
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
+import { useEnvironments } from "~/state/environments";
 import { useTeamSettingsVisible } from "~/state/team";
+import { cloudSettingsVisible } from "./CloudSettings.logic";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
@@ -139,9 +141,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const teamVisible = useTeamSettingsVisible();
+  const cloudVisible = useEnvironments().environments.some((environment) =>
+    cloudSettingsVisible(environment.serverConfig),
+  );
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
-    paths: group.paths.filter((to) => to !== "/settings/team" || teamVisible),
+    paths: group.paths.filter(
+      (to) =>
+        (to !== "/settings/team" || teamVisible) && (to !== "/settings/cloud" || cloudVisible),
+    ),
   }));
   const navPaths = navGroups.flatMap((group) => group.paths);
   const sectionNavigation = useSettingsSectionNavigation(

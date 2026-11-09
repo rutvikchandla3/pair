@@ -73,8 +73,10 @@ export interface SettingsSearchItem {
   readonly teamOnly?: boolean;
   readonly teamModeOnly?: boolean;
   readonly teamGitHubOnly?: boolean;
-  /** Rows that exist once an environment has Cloud set up (`ServerSettings.sandbox`). */
+  /** Rows that exist once a cloud-launch environment has Cloud set up (`ServerSettings.sandbox`). */
   readonly sandboxOnly?: boolean;
+  /** Settings → Cloud's rows that stay while a server that isn't cloud-only still has drivers. */
+  readonly cloudSettingsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -94,6 +96,7 @@ export interface SettingsSearchAvailability {
   readonly isTeamMode?: boolean;
   readonly hasTeamGitHub?: boolean;
   readonly hasSandbox?: boolean;
+  readonly hasCloudSettings?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -158,7 +161,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/connections",
       "/settings/team",
-      // Shown on solo servers too: Cloud is about machines, not people.
+      // SettingsSidebarNav shows it only where cloudSettingsVisible.
       "/settings/cloud",
       "/settings/access",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
@@ -1230,6 +1233,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/cloud",
     searchTerms: ["cloud machines sandboxes running asleep failed waiting status mirror size"],
     environmentOnly: true,
+    cloudSettingsOnly: true,
   },
   {
     id: "cloud-docker-driver",
@@ -1239,6 +1243,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       "docker host DOCKER_HOST rootless gvisor runc isolation machine compute driver runner url size add remove",
     ],
     environmentOnly: true,
+    cloudSettingsOnly: true,
   },
   {
     id: "cloud-base-image",
@@ -1246,6 +1251,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/cloud",
     searchTerms: ["cloud machine image t3-sandbox pair base override registry mirror"],
     environmentOnly: true,
+    sandboxOnly: true,
   },
   {
     id: "cloud-caps",
@@ -1253,6 +1259,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/cloud",
     searchTerms: ["cloud caps team cap starts per minute rate member cap vcpus"],
     environmentOnly: true,
+    sandboxOnly: true,
   },
   {
     id: "cloud-env",
@@ -1260,6 +1267,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/cloud",
     searchTerms: ["cloud env variables secrets api keys machines sandbox team reserved"],
     environmentOnly: true,
+    sandboxOnly: true,
   },
   {
     id: "cloud-test",
@@ -1267,6 +1275,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/cloud",
     searchTerms: ["cloud check boot runner git docker driver verify"],
     environmentOnly: true,
+    sandboxOnly: true,
   },
   {
     id: "project-cloud-allowed",
@@ -1274,15 +1283,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/projects",
     scope: "project",
     searchTerms: ["cloud machines sandbox project turn off disallow"],
-    sandboxOnly: true,
-  },
-  {
-    id: "project-defaults-to-cloud",
-    title: "Cloud as default workspace",
-    to: "/settings/projects",
-    targetId: "new-threads",
-    scope: "project",
-    searchTerms: ["cloud new threads start machine default workspace mode"],
     sandboxOnly: true,
   },
   {
@@ -1472,7 +1472,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.teamOnly || availability.hasTeamSettings === true) &&
       (!item.teamModeOnly || availability.isTeamMode === true) &&
       (!item.teamGitHubOnly || availability.hasTeamGitHub === true) &&
-      (!item.sandboxOnly || availability.hasSandbox === true),
+      (!item.sandboxOnly || availability.hasSandbox === true) &&
+      (!item.cloudSettingsOnly || availability.hasCloudSettings === true),
   );
 }
 

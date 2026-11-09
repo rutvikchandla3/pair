@@ -64,10 +64,11 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
   const projectHasThreads = useProjectHasThreads(project);
   const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
   const settings = serverConfig?.settings ?? null;
-  const cloud = cloudAvailability(settings, project?.id ?? null);
+  const cloudLaunch = serverConfig?.environment.capabilities.cloudLaunch === true;
+  const cloud = cloudAvailability(settings, project?.id ?? null, cloudLaunch);
   const defaultWorkspaceMode: NewTaskWorkspaceMode = isScratch
     ? "local"
-    : newThreadPrefersCloud(settings, project?.id ?? null)
+    : newThreadPrefersCloud(settings, project?.id ?? null, cloudLaunch)
       ? "cloud"
       : resolveNewThreadEnvMode({
           teamDefault: isTeamMode,
@@ -86,7 +87,8 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     projectSettings,
     defaultWorkspaceMode,
     defaultWorkspaceModeSettled,
-    /** Hidden when not-configured; disabled with its message when project-disallowed. */
+    /** Hidden when not-cloud-only; otherwise Cloud is the only mode, disabled with its message. */
     cloud,
+    cloudLaunch,
   };
 }

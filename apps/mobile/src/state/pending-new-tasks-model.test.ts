@@ -14,6 +14,7 @@ const localDefault: PendingDraftProjectDefaults = {
   defaultMode: "local",
   defaultModeSettled: true,
   cloudAvailable: false,
+  cloudLaunch: false,
 };
 const worktreeDefault: PendingDraftProjectDefaults = { ...localDefault, defaultMode: "worktree" };
 const resolve = (

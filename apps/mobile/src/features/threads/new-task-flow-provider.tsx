@@ -146,7 +146,7 @@ type NewTaskFlowContextValue = {
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
-  /** The selected project's Cloud entry: hidden when not-configured, disabled when disallowed. */
+  /** The selected project's Cloud entry: hidden when not-cloud-only, else the only mode. */
   readonly cloud: CloudAvailability;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
@@ -413,6 +413,7 @@ export function NewTaskFlowProvider(
       defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
       isGitRepo,
       cloudAvailable: projectDefaults.cloud.available,
+      cloudLaunch: projectDefaults.cloudLaunch,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });

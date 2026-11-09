@@ -55,13 +55,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     useAtomValue(primaryServerKeybindingsAtom),
     "composer.workspace",
   );
-  const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
+  const cloudOnly = cloudItem?.only === true;
+  const showPreviousWorktree =
+    Boolean(previousWorktreeLabel && onUsePreviousWorktree) && !cloudOnly;
   const envModeItems = [
-    {
-      value: "local",
-      label: resolveCurrentWorkspaceLabel(activeWorktreePath),
-    },
-    { value: "worktree", label: resolveEnvModeLabel("worktree") },
+    ...(cloudOnly
+      ? []
+      : [
+          { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
+          { value: "worktree", label: resolveEnvModeLabel("worktree") },
+        ]),
     ...(cloudItem ? [{ value: "cloud", label: resolveEnvModeLabel("cloud") }] : []),
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
@@ -162,22 +165,26 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       >
         <SelectGroup>
           <SelectGroupLabel>Workspace</SelectGroupLabel>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
-              ) : (
-                <FolderIcon className="size-3" />
-              )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
-            </span>
-          </SelectItem>
+          {cloudOnly ? null : (
+            <>
+              <SelectItem value="local">
+                <span className="inline-flex items-center gap-1.5">
+                  {activeWorktreePath ? (
+                    <FolderGitIcon className="size-3" />
+                  ) : (
+                    <FolderIcon className="size-3" />
+                  )}
+                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                </span>
+              </SelectItem>
+              <SelectItem value="worktree">
+                <span className="inline-flex items-center gap-1.5">
+                  <FolderGit2Icon className="size-3" />
+                  {resolveEnvModeLabel("worktree")}
+                </span>
+              </SelectItem>
+            </>
+          )}
           {cloudItem ? (
             <CloudEnvModeTooltip reason={cloudItem.disabledReason}>
               <SelectItem value="cloud" disabled={cloudItem.disabledReason !== null}>

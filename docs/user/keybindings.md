@@ -27,8 +27,8 @@ To step a new thread to the next machine instead of opening the menu, bind
 **Composer: Cycle Host** in Keybindings. It has no default shortcut.
 Use `mod+shift+e` for effort, `mod+shift+a` for permissions, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
-current checkout, a new worktree, the previous worktree when available, and
-[Cloud](./cloud.md) once Cloud is set up.
+current checkout, a new worktree, and the previous worktree when available. On your team's
+[Pair Cloud](./cloud.md) it shows only Cloud.
 Use `mod+shift+l` to reuse the previous worktree directly.
 
 To change effort one step without opening the picker, bind

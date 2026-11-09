@@ -207,7 +207,6 @@ describe("searchSettings", () => {
       ["Machine limits", "cloud-caps"],
       ["Environment variables", "cloud-env"],
       ["Allow cloud threads", "project-cloud-allowed"],
-      ["Cloud as default workspace", "project-defaults-to-cloud"],
       ["Cloud variables", "project-cloud-env"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
@@ -264,7 +263,7 @@ describe("settings search targets", () => {
         isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "project"),
       ).toBe(false);
     }
-    for (const id of ["project-cloud-allowed", "project-defaults-to-cloud", "project-cloud-env"]) {
+    for (const id of ["project-cloud-allowed", "project-cloud-env"]) {
       expect(
         isSettingsSearchScopeAvailable(getSettingsSearchTargetScope(id)!.scope, "project"),
       ).toBe(true);

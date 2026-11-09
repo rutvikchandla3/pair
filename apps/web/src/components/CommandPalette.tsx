@@ -1296,6 +1296,8 @@ function OpenCommandPaletteDialog(props: {
         cloudAvailability(
           serverConfigs.get(contextualProjectRef.environmentId)?.settings ?? null,
           contextualProjectRef.projectId,
+          serverConfigs.get(contextualProjectRef.environmentId)?.environment.capabilities
+            .cloudLaunch === true,
         ).available
       ) {
         actionItems.push({

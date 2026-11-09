@@ -4,17 +4,16 @@ A cloud thread runs its agent, terminals and setup script on its own machine ins
 server's checkout. Many agents can work at once without sharing files or ports, and the
 transcript, diffs and approvals stay on your Pair server like any other thread.
 
-Cloud turns keep running while your laptop is closed, as long as the Pair server itself is always
-on. A server running inside the desktop app stops cloud turns when that computer sleeps or shuts
-down, and **Settings → Cloud** says so. Put Cloud on an always-on team server, such as one running
-as a [background service](./background-service.md).
+Cloud turns keep running while your laptop is closed, because Cloud runs only on a server started
+with `--cloud-only`, your team's Pair Cloud. Run it on an always-on machine, such as a
+[background service](./background-service.md); the desktop app can't be one.
 
-Cloud works on servers with one member too. Nothing changes for anyone until an admin adds a
-driver.
+Cloud works on servers with one member too. On Pair Cloud every new thread is a cloud thread.
 
-New cloud machines start only on a server started with `--cloud-only`, your team's Pair Cloud. On
-any other server, cloud threads made earlier keep their machines: they sleep, wake from their kept
-disk and can be discarded, but a discarded machine is not replaced.
+On any other server, Cloud leaves the composer, the command palette and the settings. Cloud
+threads made earlier keep their machines: they sleep, wake from their kept disk and can be
+discarded, but a discarded machine is not replaced. **Settings → Cloud** stays while drivers
+remain, so an admin can remove them.
 
 ## Turn on Cloud
 
@@ -51,25 +50,22 @@ Removing a driver stops the cloud threads on its machines.
 Once a driver is saved, every project allows cloud threads. To change that, open
 **Settings → Projects**, choose the project, and look under **New threads**:
 
-- **Allow cloud threads** off keeps new threads in that project on this server. Cloud threads it
-  already has keep running.
-- **Workspace** set to **Cloud** makes new threads in that project start in Cloud.
+- **Allow cloud threads** off stops new cloud threads in that project. Cloud threads it already
+  has keep running.
 - **Project cloud variables** are set on that project's machines, over the team's variables.
 
 The machine clones the project's `origin` remote, so a project needs one.
 
 ## Start a cloud thread
 
-In a new thread, choose **Cloud** in the composer's workspace menu, then a base branch that exists
-on `origin`: Pair refuses a branch you have not pushed yet. You choose Cloud when a thread starts;
-an existing thread stays where it is.
+A new thread on Pair Cloud starts in **Cloud**, the only choice in the composer's workspace menu.
+Pick a base branch that exists on `origin`: Pair refuses a branch you have not pushed yet.
 
 You can also run **New cloud thread** from the command palette. It has no default shortcut; bind
 `chat.newCloud` in [Keybindings](./keybindings.md). **New thread on branch** from a cloud thread
 opens another cloud thread.
 
-On a phone, choose **Cloud** in the new thread screen's workspace menu. It appears once the
-environment has a driver.
+On a phone, new threads on Pair Cloud start in Cloud too.
 
 Scripts and agents start cloud threads too: see `--cloud` in
 [Scripts and CI](./outside-agents.md#scripts-and-ci) and
@@ -160,8 +156,8 @@ Cloud's settings on the web or desktop app.
 
 ## Coming from Conductor Cloud
 
-1. Install Pair as a team server on an always-on machine with Docker, and [invite](./team.md) your
-   team.
+1. Install Pair as a team server on an always-on machine with Docker, start it with
+   `--cloud-only`, and [invite](./team.md) your team.
 2. Add a Docker driver as above.
 3. Have members [connect GitHub](./team.md#connect-your-account) or paste a token, or add the
    GitHub App key.

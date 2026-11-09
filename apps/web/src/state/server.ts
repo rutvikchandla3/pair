@@ -42,6 +42,14 @@ export const environmentUpdateStatesAtom = environmentAtomList(
   serverEnvironment.updateStateAtom,
 );
 export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
+/** `capabilities.cloudLaunch`: only a cloud-only server offers Cloud (D12). */
+export const environmentCloudLaunchAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+        .cloudLaunch === true,
+  ).pipe(Atom.withLabel(`web-environment-cloud-launch:${environmentId}`)),
+);
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,

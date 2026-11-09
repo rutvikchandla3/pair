@@ -200,7 +200,12 @@ export function createNewThreadHandler(router: AnyRouter) {
       );
     };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-      if (newThreadPrefersCloud(targetServerSettings, project?.id ?? null)) return "cloud";
+      const cloudLaunch =
+        environmentServerConfigs.get(projectRef.environmentId)?.environment.capabilities
+          .cloudLaunch === true;
+      if (newThreadPrefersCloud(targetServerSettings, project?.id ?? null, cloudLaunch)) {
+        return "cloud";
+      }
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
       const consultProjectFile =

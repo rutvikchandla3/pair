@@ -22,6 +22,8 @@ import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
 import { useEnvironmentQuery } from "~/state/query";
@@ -103,7 +105,10 @@ function CloudEnvironmentSettings({
   const sandbox = serverConfig.settings.sandbox;
   const drivers = sandbox?.drivers ?? [];
   const configured = drivers.length > 0;
-  const canEdit = useAtomValue(sandboxEnvironment.checkDriver.permissionAtom(environmentId));
+  const cloudLaunch = serverConfig.environment.capabilities.cloudLaunch === true;
+  const canAdmin = useAtomValue(sandboxEnvironment.checkDriver.permissionAtom(environmentId));
+  // Off cloud-only, admins only remove drivers and leave restore mode; existing machines keep working.
+  const canEdit = canAdmin && cloudLaunch;
   const overview = useEnvironmentQuery(
     configured ? sandboxEnvironment.overview({ environmentId, input: {} }) : null,
   );
@@ -163,8 +168,6 @@ function CloudEnvironmentSettings({
 
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
   const plainDocker = drivers.filter((driver) => healths.get(driver.id)?.isolation === "runc");
-  const desktopServer =
-    serverConfig.environment.capabilities.serverSelfUpdate === "desktop-managed";
   const editing = form?.mode === "edit" ? drivers.find((driver) => driver.id === form.id) : null;
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const formatTime = (time: DateTime.Utc) =>
@@ -203,12 +206,11 @@ function CloudEnvironmentSettings({
           ) : null}
         </Alert>
       ) : null}
-      {desktopServer ? (
-        <Alert variant="warning">
-          <TriangleAlertIcon aria-hidden />
+      {!cloudLaunch && configured ? (
+        <Alert variant="info">
+          <InfoIcon aria-hidden />
           <AlertDescription>
-            This server runs inside the desktop app. Closing this computer stops cloud turns. Use an
-            always-on team server.
+            Cloud moved to Pair Cloud. Existing machines here keep working until you discard them.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -217,7 +219,7 @@ function CloudEnvironmentSettings({
         <SettingsSection
           title="Restore mode"
           headerAction={
-            canEdit ? (
+            canAdmin ? (
               <Button size="xs" variant="outline" onClick={() => void leaveRestoreMode()}>
                 Leave restore mode
               </Button>
@@ -228,7 +230,7 @@ function CloudEnvironmentSettings({
             title={`Restore mode since ${formatTime(sandbox.restoreModeSince)}`}
             description="Nothing is destroyed while it is on."
           />
-          {canEdit
+          {canAdmin
             ? overview.data?.restoreMode?.machines.map((machine) => (
                 <SettingsRow
                   key={machine.sandboxId}
@@ -256,7 +258,9 @@ function CloudEnvironmentSettings({
           ) : undefined
         }
       >
-        {!configured ? (
+        {!configured && !cloudLaunch ? (
+          <SettingsRow title="Cloud threads" description={NOT_CLOUD_ONLY_MESSAGE} />
+        ) : !configured ? (
           <SettingsRow
             title="Cloud threads"
             description="Cloud runs each cloud thread on its own machine. Nothing changes until you add a driver."
@@ -317,12 +321,12 @@ function CloudEnvironmentSettings({
         )}
       </SettingsSection>
 
-      {canEdit && (configured || form !== null) ? (
+      {canAdmin && (configured || form !== null) ? (
         <SettingsSection
           {...searchableSetting("cloud-docker-driver")}
           title="Compute"
           headerAction={
-            configured && form === null ? (
+            canEdit && configured && form === null ? (
               <Button size="xs" variant="outline" onClick={() => setForm({ mode: "add" })}>
                 Add Docker driver
               </Button>
@@ -354,21 +358,25 @@ function CloudEnvironmentSettings({
                   .join(" · ")}
                 control={
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={check === "running"}
-                      onClick={() => void runCheck(driver.id)}
-                    >
-                      {check === "running" ? "Testing…" : "Test"}
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => setForm({ mode: "edit", id: driver.id })}
-                    >
-                      Edit
-                    </Button>
+                    {canEdit ? (
+                      <>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={check === "running"}
+                          onClick={() => void runCheck(driver.id)}
+                        >
+                          {check === "running" ? "Testing…" : "Test"}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setForm({ mode: "edit", id: driver.id })}
+                        >
+                          Edit
+                        </Button>
+                      </>
+                    ) : null}
                     <Button
                       size="xs"
                       variant="ghost-destructive"
@@ -383,7 +391,7 @@ function CloudEnvironmentSettings({
               </SettingsRow>
             );
           })}
-          {configured ? (
+          {canEdit && configured ? (
             <>
               <SettingsRow
                 {...searchableSetting("cloud-base-image")}

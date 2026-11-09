@@ -79,7 +79,7 @@ import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
-import { serverEnvironment } from "~/state/server";
+import { environmentCloudLaunchAtom, serverEnvironment } from "~/state/server";
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
@@ -422,22 +422,30 @@ const RunContextSelector = memo(function RunContextSelector({
               onEnvModeChange(value as EnvMode);
             }}
           >
-            <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
-              <span className="flex min-w-0 items-center gap-1.5">
-                {activeWorktreePath ? (
-                  <FolderGitIcon className="size-3" />
-                ) : (
-                  <FolderIcon className="size-3" />
-                )}
-                <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
-              </span>
-            </MenuRadioItem>
-            <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
-              <span className="flex min-w-0 items-center gap-1.5">
-                <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
-              </span>
-            </MenuRadioItem>
+            {cloudItem?.only ? null : (
+              <>
+                <MenuRadioItem
+                  disabled={envModeLocked || forceNewWorktree}
+                  value="local"
+                  closeOnClick
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {activeWorktreePath ? (
+                      <FolderGitIcon className="size-3" />
+                    ) : (
+                      <FolderIcon className="size-3" />
+                    )}
+                    <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
+                  </span>
+                </MenuRadioItem>
+                <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <FolderGit2Icon className="size-3" />
+                    <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                  </span>
+                </MenuRadioItem>
+              </>
+            )}
             {cloudItem ? (
               <CloudEnvModeTooltip reason={cloudItem.disabledReason}>
                 <MenuRadioItem
@@ -452,7 +460,7 @@ const RunContextSelector = memo(function RunContextSelector({
                 </MenuRadioItem>
               </CloudEnvModeTooltip>
             ) : null}
-            {previousWorktreeLabel ? (
+            {previousWorktreeLabel && !cloudItem?.only ? (
               <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
                 <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
               </MenuRadioItem>
@@ -663,8 +671,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   const envModeLocked =
     envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
   const environmentSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const cloudLaunch = useAtomValue(environmentCloudLaunchAtom(environmentId));
   const cloudItem = resolveCloudEnvModeItem({
-    cloud: cloudAvailability(environmentSettings, projectId),
+    cloud: cloudAvailability(environmentSettings, projectId, cloudLaunch),
     effectiveEnvMode,
     isServerThread,
     forceNewWorktree,

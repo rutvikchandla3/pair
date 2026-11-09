@@ -2199,13 +2199,16 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const cloudLaunch =
+    environmentById.get(environmentId)?.serverConfig?.environment.capabilities.cloudLaunch === true;
   const derivedEnvMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
     hasServerThread: isServerThread,
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
     preparingWorktree: isPreparingWorktree,
     sandboxId: serverThread?.source.sandboxId,
-    cloudAvailable: cloudAvailability(settings, activeProject?.id ?? null).available,
+    cloudAvailable: cloudAvailability(settings, activeProject?.id ?? null, cloudLaunch).available,
+    cloudLaunch,
   });
   const canOverrideServerThreadEnvMode = Boolean(
     isServerThread &&

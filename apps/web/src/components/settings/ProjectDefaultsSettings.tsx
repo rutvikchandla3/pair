@@ -133,24 +133,27 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     target?.sources.defaultThreadEnvMode === "environment" &&
     representative?.serverConfig?.settings.defaultThreadEnvMode === null;
 
-  // Cloud's project rows exist once an environment of the project has Cloud set up (08 §2).
+  // Cloud's project rows exist once a cloud-only environment of the project has Cloud set up (08 §2).
   const projectOverrides = (candidate: (typeof targets)[number]): ProjectSettingsOverrides =>
     candidate.projectId === null
       ? {}
       : (candidate.settings.projectSettingsOverrides[candidate.projectId] ?? {});
   const cloudTargets = isProjectScope
-    ? targets.filter((candidate) => candidate.settings.sandbox !== undefined)
+    ? targets.filter(
+        (candidate) =>
+          candidate.settings.sandbox !== undefined &&
+          environments.find((environment) => environment.environmentId === candidate.environmentId)
+            ?.serverConfig?.environment.capabilities.cloudLaunch === true,
+      )
     : [];
   const showCloud = cloudTargets.length > 0;
   const cloudAllowed = cloudTargets.map(
     (candidate) => projectOverrides(candidate).sandboxAllowed !== false,
   );
-  const prefersCloud = cloudTargets.map(
-    (candidate) => projectOverrides(candidate).defaultsToCloud === true,
-  );
   const mixedCloudAllowed = new Set(cloudAllowed).size > 1;
-  const mixedPrefersCloud = new Set(prefersCloud).size > 1;
-  const workspaceIsCloud = showCloud && !mixedPrefersCloud && prefersCloud[0] === true;
+  // Nothing reads M1's `defaultsToCloud` now; choosing a workspace clears it in the same write.
+  const staleCloudDefault =
+    isProjectScope && targets.some((candidate) => projectOverrides(candidate).defaultsToCloud);
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
@@ -262,18 +265,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       control={
         <Select
           value={
-            mixedWorkspace || mixedPrefersCloud
+            mixedWorkspace
               ? null
-              : workspaceIsCloud
-                ? "cloud"
-                : teamWorkspaceDefault
-                  ? "worktree"
-                  : (effective?.defaultThreadEnvMode ?? null)
+              : teamWorkspaceDefault
+                ? "worktree"
+                : (effective?.defaultThreadEnvMode ?? null)
           }
           onValueChange={(value) => {
-            if (value === "cloud") updateProjectOverrides({ defaultsToCloud: true });
-            else if ((value === "local" || value === "worktree") && showCloud)
-              // One write, so the entry never holds the new mode with Cloud still on.
+            if ((value === "local" || value === "worktree") && staleCloudDefault)
               updateProjectOverrides({ defaultThreadEnvMode: value, defaultsToCloud: undefined });
             else if (value === "local" || value === "worktree")
               updateSettings({ defaultThreadEnvMode: value });
@@ -282,26 +281,19 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           <SelectTrigger size="sm" aria-label="Default workspace">
             <SelectValue>
               {(value: string | null) =>
-                value === "cloud"
-                  ? "Cloud"
-                  : value === "local" || value === "worktree"
-                    ? teamWorkspaceDefault
-                      ? TEAM_DEFAULT_ENV_MODE_LABEL
-                      : resolveEnvModeLabel(value)
-                    : unavailable
-                      ? "Unavailable"
-                      : "Mixed"
+                value === "local" || value === "worktree"
+                  ? teamWorkspaceDefault
+                    ? TEAM_DEFAULT_ENV_MODE_LABEL
+                    : resolveEnvModeLabel(value)
+                  : unavailable
+                    ? "Unavailable"
+                    : "Mixed"
               }
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
             <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-            {showCloud ? (
-              <SelectItem value="cloud" disabled={!cloudAllowed.some(Boolean)}>
-                Cloud
-              </SelectItem>
-            ) : null}
           </SelectPopup>
         </Select>
       }

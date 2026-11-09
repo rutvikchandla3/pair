@@ -10,10 +10,17 @@ export function resolveNewTaskWorkspaceSelection(input: {
   readonly isGitRepo: boolean;
   /** cloudAvailability(...).available for the draft's project. */
   readonly cloudAvailable: boolean;
+  /** The environment's `capabilities.cloudLaunch`: every new task there is cloud. */
+  readonly cloudLaunch: boolean;
 }): ComposerDraftWorkspaceSelection {
   const selection = input.selection ?? input.fallback;
   const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
   if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
+  if (input.cloudLaunch) {
+    return selection.mode === "cloud"
+      ? selection
+      : { ...selection, mode: "cloud", worktreePath: null };
+  }
   // A cloud draft starts a new worktree once Cloud goes away; the stored draft keeps its choice.
   return selection.mode === "cloud" && !input.cloudAvailable
     ? { ...selection, mode: "worktree" }
@@ -187,6 +194,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly defaultModeSettled: boolean;
   readonly isGitRepo: boolean;
   readonly cloudAvailable: boolean;
+  readonly cloudLaunch: boolean;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
@@ -197,6 +205,7 @@ export function resolveNewTaskDraftWorkspace(input: {
       fallback: { mode: input.defaultMode, branch: null, worktreePath: null },
       isGitRepo: input.isGitRepo,
       cloudAvailable: input.cloudAvailable,
+      cloudLaunch: input.cloudLaunch,
     }),
     branches: input.branches,
     projectCwd: input.projectCwd,

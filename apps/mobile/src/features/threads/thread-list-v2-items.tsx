@@ -429,6 +429,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     defaultMode: projectDefaults.defaultWorkspaceMode,
     defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
     cloudAvailable: projectDefaults.cloud.available,
+    cloudLaunch: projectDefaults.cloudLaunch,
   };
   const draftBranchRefs = useBranches({
     environmentId: pendingTask.environmentId,

@@ -2066,7 +2066,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
         ),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-        Layer.provide(layerServerConfig()),
+        Layer.provide(layerServerConfig(true)),
       );
 
       yield* Effect.gen(function* () {

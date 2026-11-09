@@ -268,6 +268,7 @@ export const make = Effect.gen(function* () {
       ignoredFileListing: true,
       triage: true,
       oneTimeSchedules: true,
+      ...(serverConfig.cloudOnly ? { cloudLaunch: true } : {}),
       npmReleaseLookup: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),

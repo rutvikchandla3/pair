@@ -103,23 +103,16 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
 const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
 
-/** Cloud on the toggle's menu: hidden until the environment has a driver. */
-function workspaceModeMenuActions(
-  current: NewTaskWorkspaceMode,
-  cloud: CloudAvailability,
-): MenuAction[] {
-  const entry = (mode: NewTaskWorkspaceMode, image: string): MenuAction => ({
-    id: `${WORKSPACE_MODE_MENU_ID}${mode}`,
-    title: resolveNewTaskWorkspaceLabel({ workspaceMode: mode, worktreePath: null }),
-    image,
-    state: mode === current ? "on" : "off",
-  });
+/** A cloud-launch environment's only mode, disabled with its reason when Cloud can't start. */
+function workspaceModeMenuActions(cloud: CloudAvailability): MenuAction[] {
+  const entry: MenuAction = {
+    id: `${WORKSPACE_MODE_MENU_ID}cloud`,
+    title: resolveNewTaskWorkspaceLabel({ workspaceMode: "cloud", worktreePath: null }),
+    image: "cloud",
+    state: "on",
+  };
   return [
-    entry("local", "folder"),
-    entry("worktree", "arrow.triangle.branch"),
-    cloud.available
-      ? entry("cloud", "cloud")
-      : { ...entry("cloud", "cloud"), subtitle: cloud.message, attributes: { disabled: true } },
+    cloud.available ? entry : { ...entry, subtitle: cloud.message, attributes: { disabled: true } },
   ];
 }
 
@@ -859,8 +852,8 @@ export function NewTaskDraftScreen(props: {
     );
 
   const workspaceDisabled = isComposerInteractionLocked || !flow.isGitRepo;
-  // Without a sandbox driver the control stays the two-way toggle it always was.
-  const offersCloud = flow.cloud.available || flow.cloud.reason !== "not-configured";
+  // Off a cloud-only server the control stays the two-way toggle it always was.
+  const offersCloud = flow.cloud.available || flow.cloud.reason !== "not-cloud-only";
   const workspaceControl = (
     <ComposerInlineControl
       accessibilityHint={
@@ -892,15 +885,10 @@ export function NewTaskDraftScreen(props: {
       {offersCloud && !workspaceDisabled ? (
         <Menu
           accessibilityLabel={workspaceLabel}
-          actions={workspaceModeMenuActions(flow.workspaceMode, flow.cloud)}
+          actions={workspaceModeMenuActions(flow.cloud)}
           onPressAction={({ nativeEvent }) => {
             const mode = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
-            if (
-              mode === "local" ||
-              mode === "worktree" ||
-              (mode === "cloud" && flow.cloud.available)
-            )
-              flow.setWorkspaceMode(mode);
+            if (mode === "cloud" && flow.cloud.available) flow.setWorkspaceMode(mode);
           }}
         >
           {workspaceControl}

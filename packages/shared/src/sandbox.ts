@@ -9,15 +9,22 @@ export type CloudAvailability =
   | { readonly available: true }
   | {
       readonly available: false;
-      readonly reason: "not-configured" | "project-disallowed";
+      readonly reason: "not-cloud-only" | "not-configured" | "project-disallowed";
       readonly message: string;
     };
 
-/** Hidden when not-configured (solo stays T3 Code); disabled with `message` when project-disallowed. */
+/**
+ * Hidden when not-cloud-only or not-configured; disabled with `message` when project-disallowed.
+ * `cloudLaunch` is the server's `capabilities.cloudLaunch` (or `ServerConfig.cloudOnly`).
+ */
 export function cloudAvailability(
   settings: CloudSettings | null,
   projectId: ProjectId | null,
+  cloudLaunch: boolean,
 ): CloudAvailability {
+  if (!cloudLaunch) {
+    return { available: false, reason: "not-cloud-only", message: NOT_CLOUD_ONLY_MESSAGE };
+  }
   if (!settings?.sandbox?.drivers.length) {
     return {
       available: false,
@@ -38,14 +45,11 @@ export function cloudAvailability(
   return { available: true };
 }
 
-/** The project's Cloud default, only while Cloud is available. Callers fall back to resolveNewThreadEnvMode. */
+/** On a cloud-launch server every new thread is cloud while Cloud is available. */
 export function newThreadPrefersCloud(
   settings: CloudSettings | null,
   projectId: ProjectId | null,
+  cloudLaunch: boolean,
 ): boolean {
-  return (
-    projectId !== null &&
-    cloudAvailability(settings, projectId).available &&
-    settings?.projectSettingsOverrides[projectId]?.defaultsToCloud === true
-  );
+  return projectId !== null && cloudAvailability(settings, projectId, cloudLaunch).available;
 }

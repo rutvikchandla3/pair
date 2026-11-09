@@ -2376,7 +2376,8 @@ const make = Effect.gen(function* () {
           threadManagement: true,
           incrementalThreadRead: true,
           scheduledTasks: true,
-          cloudThreads: cloudAvailability(settings, parent?.thread.projectId ?? null).available,
+          cloudThreads: cloudAvailability(settings, parent?.thread.projectId ?? null, cloudOnly)
+            .available,
           maxBatchThreads: 20,
         },
       };

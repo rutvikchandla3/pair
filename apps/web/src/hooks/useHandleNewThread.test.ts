@@ -120,13 +120,14 @@ const testServerConfigs = () =>
     [
       "environment-primary",
       {
+        environment: { capabilities: {} },
         settings: {
           ...testState.targetSettings,
           newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
         },
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    ["environment-ssh", { environment: { capabilities: {} }, settings: testState.targetSettings }],
   ]);
 
 vi.mock("../rpc/atomRegistry", () => ({

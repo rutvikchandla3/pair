@@ -54,6 +54,7 @@ export interface PendingDraftProjectDefaults {
   readonly defaultMode: NewTaskWorkspaceMode;
   readonly defaultModeSettled: boolean;
   readonly cloudAvailable: boolean;
+  readonly cloudLaunch: boolean;
 }
 
 /**
@@ -83,6 +84,7 @@ export function resolvePendingDraftBranch(input: {
     defaultModeSettled: input.defaults.defaultModeSettled,
     isGitRepo: input.isGitRepo,
     cloudAvailable: input.defaults.cloudAvailable,
+    cloudLaunch: input.defaults.cloudLaunch,
     branches: input.branches,
     projectCwd: input.projectCwd,
   }).branch;

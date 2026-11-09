@@ -15,8 +15,10 @@ export const sandboxEnvironment = createSandboxEnvironmentAtoms(connectionAtomRu
 
 /** Read at event time, for shortcuts. */
 export function readCloudAvailable(projectRef: ScopedProjectRef): boolean {
-  const settings =
-    appAtomRegistry.get(environmentServerConfigsAtom).get(projectRef.environmentId)?.settings ??
-    null;
-  return cloudAvailability(settings, projectRef.projectId).available;
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(projectRef.environmentId);
+  return cloudAvailability(
+    config?.settings ?? null,
+    projectRef.projectId,
+    config?.environment.capabilities.cloudLaunch === true,
+  ).available;
 }

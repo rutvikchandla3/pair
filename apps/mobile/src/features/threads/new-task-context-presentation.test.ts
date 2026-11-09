@@ -10,7 +10,7 @@ import {
 
 describe("resolveNewTaskWorkspaceSelection", () => {
   const fallback = { mode: "worktree", branch: null, worktreePath: null } as const;
-  const base = { fallback, isGitRepo: true, cloudAvailable: true };
+  const base = { fallback, isGitRepo: true, cloudAvailable: true, cloudLaunch: false };
   const cloud = { mode: "cloud", branch: "main", worktreePath: null } as const;
 
   it("falls back to the current checkout when a non-git project defaults to worktree", () => {
@@ -50,6 +50,21 @@ describe("resolveNewTaskWorkspaceSelection", () => {
     expect(
       resolveNewTaskWorkspaceSelection({ ...base, selection: cloud, cloudAvailable: false }),
     ).toEqual({ ...cloud, mode: "worktree" });
+  });
+
+  it("starts every task in the cloud on a cloud-launch server", () => {
+    const cloudLaunch = { ...base, cloudLaunch: true, cloudAvailable: false };
+    expect(resolveNewTaskWorkspaceSelection({ ...cloudLaunch, selection: cloud })).toBe(cloud);
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        ...cloudLaunch,
+        selection: { mode: "local", branch: "feature", worktreePath: "/worktree" },
+      }),
+    ).toEqual({ mode: "cloud", branch: "feature", worktreePath: null });
+    expect(resolveNewTaskWorkspaceSelection({ ...cloudLaunch, selection: undefined })).toEqual({
+      ...fallback,
+      mode: "cloud",
+    });
   });
 });
 

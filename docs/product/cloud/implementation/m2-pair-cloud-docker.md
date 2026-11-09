@@ -1869,10 +1869,11 @@ is its own PR because it is the contract every client keys on (D12), and Track B
     - useHandleNewThread.ts 203;
     - `readCloudAvailable` (state/sandbox.ts 17–22, used by chatRouteCommands.ts 120).
   - Mode picker:
-    - `BranchToolbar.logic.ts` `resolveCloudEnvModeItem` (114–125) hides `"not-cloud-only"` like
-      `"not-configured"` (121).
-    - On a `cloudLaunch` environment, the picker shows Cloud alone, and `resolveEffectiveEnvMode`
-      (194–215) returns `"cloud"` for a draft.
+    - `BranchToolbar.logic.ts` `resolveCloudEnvModeItem` (114–125) hides only `"not-cloud-only"`.
+      `"not-configured"` now occurs only on a cloud-only server, where local modes are refused, so
+      Cloud shows there disabled with its message instead of hiding (as landed).
+    - On a `cloudLaunch` environment, the picker shows Cloud alone (`CloudEnvModeItem.only`), and
+      `resolveEffectiveEnvMode` (194–215) returns `"cloud"` for a draft.
   - Project defaults: the `defaultsToCloud` toggle leaves `ProjectDefaultsSettings`, and its search
     row `project-defaults-to-cloud` leaves `settingsSearch.ts` (1279).
   - `CloudSettings.tsx`:
@@ -1881,6 +1882,8 @@ is its own PR because it is the contract every client keys on (D12), and Track B
       when `cloudLaunch` or drivers remain.
     - Without `cloudLaunch`, show a notice "Cloud moved to Pair Cloud. Existing machines here keep
       working until you discard them.", keep Overview read-only, and keep **Remove** on driver rows.
+      As landed, Add, Test, Edit, base image, limits and environment variables go too; Leave
+      restore mode stays. With no drivers either, Overview shows `NOT_CLOUD_ONLY_MESSAGE`.
   - Mobile:
     - `use-new-task-project-defaults.ts` (67, 70) passes the environment's `cloudLaunch`, and the
       draft screens follow through `new-task-flow-provider.tsx` and `NewTaskDraftScreen.tsx`.
