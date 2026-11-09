@@ -5628,6 +5628,40 @@ V2 and every later release with no new state. The prune and the mount layout sta
 - **Surfaces:** server only (Docker driver). No contract, client or provider change. Remote Docker
   daemons never bind-mount the bundle, so they're unaffected.
 
+### 2.58 (new) `fix(contracts): read back the restore mode a server saved`
+
+`SandboxSettings.restoreModeSince` is `Schema.DateTimeUtc` (`packages/contracts/src/settings.ts`
+1235), whose encoded side is a `DateTime.Utc`. The server writes settings with
+`Schema.fromJsonString(ServerSettings)`, so the file holds the ISO string, but it reads the file
+back with `PersistedServerSettings` (`serverSettings.ts` 509) on parsed JSON, which expects a
+`DateTime.Utc`. Every read of a file with restore mode on fails ("Expected DateTime.Utc at
+["sandbox"]["restoreModeSince"]"), and the server falls back to default settings: no driver, no
+GitHub App, no provider instances. Settings → Cloud then offers **Add Docker driver** and hides
+**Leave restore mode**, so an admin can't get out without editing `settings.json`. The file stays
+on disk unchanged. G2 step 11 hit this the moment the reconciler saved restore mode (finding 30).
+Restore mode also turns itself on, so any unrecorded machine causes it.
+
+- **Needs:** none. **Unblocks:** G2 step 11 rerun on V3.
+- **Files:** `packages/contracts/src/settings.ts`: `restoreModeSince` becomes
+  `Schema.optionalKey(Schema.DateTimeUtcFromString)` (1235), and the patch field (1801)
+  `Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString))`, as `orchestrationV2.ts` 495
+  does. The type stays `DateTime.Utc`, and the wire and the file both carry the same ISO string as
+  today, so older clients and existing files read it unchanged.
+- **Types and services:** none new.
+- **Tests:** `apps/server/src/serverSettings.test.ts`, one `it.effect` beside "migrates saved
+  token delivery…" (222): write a `settings.json` with a Docker driver and `restoreModeSince:
+  "2026-11-09T13:33:42.057Z"` (what the server writes), then `getSettings` keeps the driver and
+  `restoreModeSince`. It fails on `feat/pair` (defaults, no `sandbox`). Fix any test that builds
+  settings by decoding a `DateTime.Utc` for this field (`SandboxReconciler.test.ts`,
+  `SandboxDecisions.test.ts`) to pass the ISO string.
+- **Docs:** none.
+- **Verify:** the new test and the sandbox lifecycle tests, `vp run typecheck` in
+  `packages/contracts`, `apps/server`, `apps/web` and `apps/mobile`. G2 step 11 rerun on V3:
+  Settings → Cloud shows **Restore mode** with the stopped machine, and **Leave restore mode**
+  works.
+- **Surfaces:** contracts, so server, web and mobile follow. The encoded form and the client types
+  don't change, so no client code changes.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
