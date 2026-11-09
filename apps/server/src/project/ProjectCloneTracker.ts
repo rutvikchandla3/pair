@@ -63,6 +63,12 @@ export interface ProjectCloneHooks {
     readonly projectId: ProjectId;
     readonly workspaceRoot: string;
   }) => Effect.Effect<void>;
+  /** Run on every attempt, so a retry gets fresh credentials. */
+  readonly cloneOptions?: Effect.Effect<
+    Pick<SourceControlRepositoryService.SourceControlCloneOptions, "config" | "env">
+  >;
+  /** Shown for a clone whose repository was not looked up. */
+  readonly repository?: SourceControlRepositoryInfo;
 }
 
 const DONE_RETENTION = "30 seconds";
@@ -217,6 +223,7 @@ export const make = Effect.gen(function* () {
   ) {
     const pulses = yield* Queue.sliding<void>(1);
     yield* watchForStall(projectId, pulses).pipe(Effect.forkScoped);
+    const cloneOptions = tracked.hooks.cloneOptions ? yield* tracked.hooks.cloneOptions : {};
     return yield* repositories.cloneRepository(
       {
         remoteUrl: tracked.input.cloneUrl,
@@ -224,6 +231,7 @@ export const make = Effect.gen(function* () {
         protocol: tracked.input.protocol,
       },
       {
+        ...cloneOptions,
         onProgress: (update) =>
           Queue.offer(pulses, undefined).pipe(Effect.andThen(progress(projectId, update))),
         timeoutMs: null,
@@ -269,12 +277,13 @@ export const make = Effect.gen(function* () {
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
       const prepared = yield* repositories.prepareClone(input);
+      const repository = prepared.repository ?? hooks.repository ?? null;
       const startedAt = yield* nowIso;
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
         remoteUrl: prepared.remoteUrl,
         destinationPath: prepared.destinationPath,
-        repository: prepared.repository,
+        repository,
         phase: "running",
         stage: "connecting",
         percent: null,
@@ -300,7 +309,7 @@ export const make = Effect.gen(function* () {
           input: {
             cloneUrl: prepared.cloneUrl,
             destinationPath: prepared.destinationPath,
-            repository: prepared.repository,
+            repository,
             protocol: input.protocol ?? "auto",
           },
         });
@@ -332,7 +341,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         cwd: prepared.destinationPath,
         remoteUrl: prepared.remoteUrl,
-        repository: prepared.repository,
+        repository,
       };
     },
   );

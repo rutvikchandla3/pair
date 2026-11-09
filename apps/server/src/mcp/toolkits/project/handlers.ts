@@ -16,11 +16,13 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as PairCloudProjects from "../../../project/PairCloudProjects.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { isCloudLaunchRefusal } from "../../../sandbox/lifecycle/CloudPreparation.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -30,13 +32,23 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  loadCaller,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 function projectFailure(error: Project.ProjectServiceError) {
-  if (error._tag === "ProjectOperationError") return unavailable();
+  if (error._tag === "ProjectOperationError") {
+    return error.operation === "pair-cloud-workspace"
+      ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+      : unavailable();
+  }
   const message =
     error._tag === "ProjectNotFoundError"
       ? "The project was not found."
@@ -388,6 +400,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_clone: McpToolAccess.writesEnvironment(
     (input) =>
       Effect.gen(function* () {
+        const { cloudOnly } = yield* ServerConfig.ServerConfig;
+        if (cloudOnly) {
+          const pairCloud = yield* PairCloudProjects.PairCloudProjects;
+          const { scope, caller } = yield* loadCaller();
+          const repository = PairCloudProjects.requestedRepository(input);
+          const projectId = ProjectId.make(yield* newCommandId());
+          return yield* pairCloud
+            .add(
+              {
+                ...input,
+                projectId,
+                title: repository?.split("/")[1] ?? "Repository",
+                createdAt: DateTime.formatIso(yield* DateTime.now),
+              },
+              {
+                memberId: (caller === undefined ? scope.client?.memberId : caller.ownerId) ?? null,
+              },
+            )
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code:
+                      error._tag === "PairCloudProjectError"
+                        ? "invalid_request"
+                        : "orchestration_error",
+                    message:
+                      error._tag === "SourceControlRepositoryError" ? error.detail : error.message,
+                  }),
+              ),
+            );
+        }
         const repositories = yield* Repositories.SourceControlRepositoryService;
         return yield* repositories.cloneRepository(input).pipe(
           Effect.mapError(

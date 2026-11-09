@@ -204,7 +204,13 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     const environment = environments.find((entry) => entry.environmentId === environmentId);
     const serverConfig = environment?.serverConfig ?? null;
     const newProjectsRoot = serverConfig?.newProjectsRoot ?? null;
-    if (environmentId === null || serverConfig === null || newProjectsRoot === null) {
+    // Pair Cloud picks the checkout folder itself.
+    const cloudLaunch = serverConfig?.environment.capabilities.cloudLaunch === true;
+    if (
+      environmentId === null ||
+      serverConfig === null ||
+      (newProjectsRoot === null && !cloudLaunch)
+    ) {
       setState({
         status: "failed",
         message:
@@ -223,12 +229,16 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         title: repository.name,
         createdAt: new Date().toISOString(),
         remoteUrl,
-        destinationPath: getCloneDestinationPath(
-          settings.ghqCloneLayout
-            ? getAddProjectInitialQuery(settings.addProjectBaseDirectory)
-            : newProjectsRoot,
-          getCloneDirectoryPath(remoteUrl, settings.ghqCloneLayout === true),
-        ),
+        ...(cloudLaunch || newProjectsRoot === null
+          ? {}
+          : {
+              destinationPath: getCloneDestinationPath(
+                settings.ghqCloneLayout
+                  ? getAddProjectInitialQuery(settings.addProjectBaseDirectory)
+                  : newProjectsRoot,
+                getCloneDirectoryPath(remoteUrl, settings.ghqCloneLayout === true),
+              ),
+            }),
       },
     });
     if (result._tag === "Failure") {

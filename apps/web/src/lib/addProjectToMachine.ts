@@ -37,7 +37,8 @@ export interface AddProjectToMachineInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly remoteUrl: string;
-  readonly destinationPath: string;
+  /** Left out for a Pair Cloud target, which picks the folder itself. */
+  readonly destinationPath?: string;
   readonly files: ReadonlyArray<string>;
 }
 
@@ -135,7 +136,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         title: input.title,
         createdAt: new Date().toISOString(),
         remoteUrl: input.remoteUrl,
-        destinationPath: input.destinationPath,
+        ...(input.destinationPath === undefined ? {} : { destinationPath: input.destinationPath }),
       },
     },
     { label: "Add project to machine", reportFailure: false },

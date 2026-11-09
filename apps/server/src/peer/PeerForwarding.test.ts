@@ -27,6 +27,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as PairCloudProjects from "../project/PairCloudProjects.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -188,7 +189,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
       cloneRepository: (input) =>
         Ref.update(seen, (current) => ({ ...current, clones: [...current.clones, input] })).pipe(
           Effect.as({
-            cwd: input.destinationPath,
+            cwd: input.destinationPath ?? "",
             remoteUrl: "https://github.com/pingdotgg/t3code.git",
             repository: null,
           }),
@@ -230,7 +231,12 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-      Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+          Layer.mock(PairCloudProjects.PairCloudProjects)({}),
+        ),
+      ),
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(ServerSettings.layerTest()),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
@@ -312,6 +318,7 @@ const makeLaptop = Effect.gen(function* () {
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        Layer.mock(PairCloudProjects.PairCloudProjects)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         ServerSettings.layerTest(),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),

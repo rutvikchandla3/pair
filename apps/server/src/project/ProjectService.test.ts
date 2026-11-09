@@ -96,6 +96,7 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  options?: { readonly cloudOnly?: boolean },
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
@@ -103,8 +104,18 @@ const layerTestFor = (
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
-    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          return { ...config, cloudOnly: options?.cloudOnly ?? false };
+        }),
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
+      ),
+    ),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerEnrichmentCompletions),
   );
 
@@ -205,8 +216,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -726,6 +737,51 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
       );
     }).pipe(Effect.provide(layerTestFor(layerVersionedMetadata)));
   }),
+);
+
+it.effect("refuses a workspace outside the Pair Cloud checkouts on a cloud-only server", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const { checkoutsDir } = yield* ServerConfig.ServerConfig;
+    const projectId = ProjectId.make("project:pair-cloud");
+    const create = (id: ProjectId, workspaceRoot: string) =>
+      service.create({
+        commandId: CommandId.make(`command:create:${id}`),
+        projectId: id,
+        title: "App",
+        workspaceRoot,
+      });
+    const refusal = <A>(effect: Effect.Effect<A, ProjectService.ProjectServiceError>) =>
+      effect.pipe(
+        Effect.flip,
+        Effect.map((error) => (error._tag === "ProjectOperationError" ? error.operation : error)),
+      );
+
+    assert.equal((yield* create(projectId, `${checkoutsDir}/${projectId}`)).id, projectId);
+    assert.equal(
+      yield* refusal(create(ProjectId.make("project:host"), "/work/app")),
+      "pair-cloud-workspace",
+    );
+    // Another project's checkout, and a path that climbs out of its own.
+    assert.equal(
+      yield* refusal(create(ProjectId.make("project:other"), `${checkoutsDir}/${projectId}`)),
+      "pair-cloud-workspace",
+    );
+    assert.equal(
+      yield* refusal(create(ProjectId.make("project:a/../b"), `${checkoutsDir}/project:a/../b`)),
+      "pair-cloud-workspace",
+    );
+    assert.equal(
+      yield* refusal(
+        service.update({
+          commandId: CommandId.make("command:move"),
+          projectId,
+          workspaceRoot: "/work/app",
+        }),
+      ),
+      "pair-cloud-workspace",
+    );
+  }).pipe(Effect.provide(layerTestFor(layerMetadata, { cloudOnly: true }))),
 );
 
 it.effect("serializes two projects claiming the same workspace root", () =>

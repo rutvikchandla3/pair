@@ -14,9 +14,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -85,10 +87,22 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
   }
 }
 
+export const PAIR_CLOUD_WORKSPACE_MESSAGE = "On Pair Cloud, add a project by its GitHub URL.";
+
+/** `<checkoutsDir>/<projectId>`, or null for an id that is not one plain folder name. */
+export function pairCloudCheckoutPath(
+  path: Path.Path,
+  checkoutsDir: string,
+  projectId: ProjectId,
+): string | null {
+  return /^\w[\w.:-]*$/.test(projectId) ? path.resolve(checkoutsDir, projectId) : null;
+}
+
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {
     operation: Schema.Literals([
+      "pair-cloud-workspace",
       "normalize-workspace",
       "read-project",
       "list-projects",
@@ -102,6 +116,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
   },
 ) {
   override get message(): string {
+    if (this.operation === "pair-cloud-workspace") return PAIR_CLOUD_WORKSPACE_MESSAGE;
     return `Project operation '${this.operation}' failed${this.projectId === undefined ? "" : ` for ${this.projectId}`}.`;
   }
 }
@@ -167,6 +182,22 @@ export const make = Effect.gen(function* () {
   const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
+  const { cloudOnly, checkoutsDir } = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+
+  /** A cloud-only server's only projects are the checkouts Pair Cloud cloned itself. */
+  const refuseOutsideCheckouts = (projectId: ProjectId, workspaceRoot: string) =>
+    cloudOnly &&
+    path.resolve(workspaceRoot.trim()) !== pairCloudCheckoutPath(path, checkoutsDir, projectId)
+      ? Effect.fail(
+          new ProjectOperationError({
+            operation: "pair-cloud-workspace",
+            projectId,
+            workspaceRoot,
+            cause: PAIR_CLOUD_WORKSPACE_MESSAGE,
+          }),
+        )
+      : Effect.void;
 
   const toProject = (
     row: ProjectStore.ProjectRow,
@@ -343,6 +374,7 @@ export const make = Effect.gen(function* () {
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      yield* refuseOutsideCheckouts(input.projectId, input.workspaceRoot);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
@@ -375,6 +407,9 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
+      if (workspaceRoot !== previousRoot) {
+        yield* refuseOutsideCheckouts(input.projectId, workspaceRoot);
+      }
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,

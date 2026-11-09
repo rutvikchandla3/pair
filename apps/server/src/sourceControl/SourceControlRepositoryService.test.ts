@@ -196,6 +196,50 @@ it.effect("clones a looked-up repository after creating missing parent directori
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("passes clone config before the URL and env over the defaults", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-config-" });
+    const calls: Array<{ args: ReadonlyArray<string>; env: NodeJS.ProcessEnv | undefined }> = [];
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const missing = yield* service
+        .cloneRepository({ remoteUrl: CLONE_URLS.url })
+        .pipe(Effect.flip);
+      assert.equal(missing.detail, "Choose where to clone.");
+      yield* service.cloneRepository(
+        { remoteUrl: CLONE_URLS.url, destinationPath: path.join(parent, "t3code") },
+        {
+          config: { "core.hooksPath": "/dev/null" },
+          env: { GIT_TERMINAL_PROMPT: "1", GIT_CONFIG_COUNT: "1" },
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                calls.push({ args: input.args, env: input.env });
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+    assert.deepStrictEqual(
+      calls.map((call) => call.args),
+      [["clone", "--progress", "-c", "core.hooksPath=/dev/null", "--", CLONE_URLS.url, "t3code"]],
+    );
+    assert.include(calls[0]?.env, {
+      GIT_TERMINAL_PROMPT: "1",
+      GIT_CONFIG_COUNT: "1",
+      GIT_PROGRESS_DELAY: "0",
+    });
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect.each(["--bare", "source.git"])(
   "clones a local repository named %s as a working tree",
   (repositoryName) =>

@@ -118,6 +118,8 @@ interface EnvironmentOption {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly ghqCloneLayout: boolean;
+  /** Pair Cloud picks a clone's folder itself. */
+  readonly cloudLaunch: boolean;
 }
 
 const environmentOptionOrder = Order.mapInput(
@@ -413,6 +415,7 @@ function useEnvironmentOptions(
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
         ghqCloneLayout: config?.settings.ghqCloneLayout === true,
+        cloudLaunch: config?.environment.capabilities.cloudLaunch === true,
       };
     });
     return Arr.sort(
@@ -873,7 +876,8 @@ export function AddProjectRepositoryScreen(props: {
         StackActions.push("AddProjectDestination", {
           environmentId: environment.environmentId,
           source,
-          remoteUrl: getDefaultCloneUrl(repository),
+          // Pair Cloud clones only over https.
+          remoteUrl: environment.cloudLaunch ? repository.url : getDefaultCloneUrl(repository),
           repositoryTitle: repository.nameWithOwner,
           repositoryName: getCloneDirectoryName(repository.nameWithOwner),
         }),
@@ -1412,20 +1416,27 @@ export function AddProjectDestinationScreen(props: {
       return;
     }
     setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
-    if (!resolved.ok) {
-      setError(resolved.error);
-      return;
+    let destinationPath: string | undefined;
+    if (!environment.cloudLaunch) {
+      const resolved = resolveAddProjectPath({
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      });
+      if (!resolved.ok) {
+        setError(resolved.error);
+        return;
+      }
+      destinationPath = resolved.path;
     }
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
     const projectId = ProjectId.make(uuidv4());
-    const title = inferProjectTitleFromPath(resolved.path);
+    const title =
+      destinationPath === undefined
+        ? repositoryName || inferProjectTitleFromPath(remoteUrl)
+        : inferProjectTitleFromPath(destinationPath);
     const startResult = await startProjectClone({
       environmentId: environment.environmentId,
       input: {
@@ -1433,7 +1444,7 @@ export function AddProjectDestinationScreen(props: {
         title,
         createdAt: new Date().toISOString(),
         remoteUrl,
-        destinationPath: resolved.path,
+        ...(destinationPath === undefined ? {} : { destinationPath }),
       },
     });
     if (AsyncResult.isFailure(startResult)) {
@@ -1483,7 +1494,9 @@ export function AddProjectDestinationScreen(props: {
       ) : null}
       {environment ? (
         <>
-          <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          {environment.cloudLaunch ? null : (
+            <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          )}
           <PrimaryActionButton
             label="Clone project"
             disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
@@ -1495,14 +1508,16 @@ export function AddProjectDestinationScreen(props: {
               This connection cannot clone projects.
             </Text>
           ) : null}
-          <FolderBrowser
-            environment={environment}
-            navigateToBrowsePath={navigateToBrowsePath}
-            pathInput={pathInput}
-            setPathInput={setPathInput}
-            pinnedDirectoryName={cloneDirectoryName}
-            cloning={Boolean(remoteUrl)}
-          />
+          {environment.cloudLaunch ? null : (
+            <FolderBrowser
+              environment={environment}
+              navigateToBrowsePath={navigateToBrowsePath}
+              pathInput={pathInput}
+              setPathInput={setPathInput}
+              pinnedDirectoryName={cloneDirectoryName}
+              cloning={Boolean(remoteUrl)}
+            />
+          )}
         </>
       ) : (
         <EmptyEnvironmentState />

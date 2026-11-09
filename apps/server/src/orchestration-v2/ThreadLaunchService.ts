@@ -47,6 +47,7 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as PairCloudProjects from "../project/PairCloudProjects.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -135,7 +136,10 @@ export interface ThreadLaunchInput {
   readonly discardOnSettle?: boolean;
 }
 
-type PreparationInput = Pick<ThreadLaunchInput, "commandId" | "projectId" | "initialMessage"> & {
+type PreparationInput = Pick<
+  ThreadLaunchInput,
+  "commandId" | "projectId" | "initialMessage" | "actorId" | "ownerId"
+> & {
   readonly workspaceStrategy: RunWorkspaceStrategy;
   readonly reusedWorktree?: { readonly baseRef: string };
   /** A cloud thread's `worktree` is made in this sandbox, from the project's remote. */
@@ -293,6 +297,8 @@ const make = Effect.gen(function* () {
   const mirrorSync = yield* Effect.serviceOption(MirrorSync.MirrorSync);
   // One checkout at a time per machine: threads on it share a clone.
   const sandboxCheckouts = yield* KeyedLock.make<SandboxId>();
+  // The server provides it; on a cloud-only server it fetches and authenticates the checkout.
+  const pairCloudProjects = yield* Effect.serviceOption(PairCloudProjects.PairCloudProjects);
   const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
     Context.add(ProjectionStore.ProjectionStoreV2, projections),
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
@@ -352,10 +358,23 @@ const make = Effect.gen(function* () {
       readonly projectId: ProjectId;
       readonly workspaceRoot: string;
       readonly branch: string;
+      readonly memberId: MemberId | undefined;
     }) {
       const origin = { cwd: input.workspaceRoot, remoteName: "origin" };
       const url = yield* git.readRemoteUrl(origin);
-      if (url === null || (yield* git.remoteHasBranch({ ...origin, refName: input.branch }))) {
+      if (url === null) return;
+      const repository = PairCloudProjects.parsePairCloudRemote(url);
+      const env =
+        Option.isSome(pairCloudProjects) && repository !== null
+          ? yield* pairCloudProjects.value.gitEnvFor({ repository, memberId: input.memberId })
+          : undefined;
+      if (
+        yield* git.remoteHasBranch({
+          ...origin,
+          refName: input.branch,
+          ...(env === undefined ? {} : { env }),
+        })
+      ) {
         return;
       }
       return yield* new CloudPreparation.CloudLaunchError({
@@ -593,9 +612,23 @@ const make = Effect.gen(function* () {
               })
               .pipe(Effect.asVoid, Effect.mapError(mapError(input, "update-thread", threadId)));
       if (input.workspaceStrategy.type === "worktree" && sandboxId !== undefined) {
-        yield* CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
-          Effect.provide(cloudServices),
-          Effect.mapError(mapError(input, "provision-worktree", threadId)),
+        const fetchCheckout = Option.isSome(pairCloudProjects)
+          ? pairCloudProjects.value.fetchCheckout({
+              projectId: input.projectId,
+              workspaceRoot: project.workspaceRoot,
+              memberId: input.actorId ?? input.ownerId,
+            })
+          : Effect.void;
+        // The machine starts while the checkout fetches; the mirror reads it after both.
+        yield* Effect.all(
+          [
+            fetchCheckout,
+            CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: progress }).pipe(
+              Effect.provide(cloudServices),
+              Effect.mapError(mapError(input, "provision-worktree", threadId)),
+            ),
+          ],
+          { concurrency: "unbounded", discard: true },
         );
         yield* progress("clone");
         yield* setupTracker.stageStatus(threadId, "fetch", "running");
@@ -1161,6 +1194,7 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             workspaceRoot: project.workspaceRoot,
             branch: strategy.branch,
+            memberId: input.actorId ?? input.ownerId,
           }).pipe(Effect.mapError(mapError(input, "resolve-project")));
         }
       }
@@ -1615,6 +1649,9 @@ const make = Effect.gen(function* () {
       {
         commandId: input.commandId,
         projectId: thread.projectId,
+        ...(thread.ownerId === undefined || thread.ownerId === null
+          ? {}
+          : { ownerId: thread.ownerId }),
         workspaceStrategy: reuse?.strategy ?? workspacePreparation,
         ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
         ...cloud,

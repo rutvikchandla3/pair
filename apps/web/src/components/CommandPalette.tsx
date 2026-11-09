@@ -2089,6 +2089,77 @@ function OpenCommandPaletteDialog(props: {
     );
   }
 
+  /** Pair Cloud picks the checkout folder itself, so the palette skips the destination step. */
+  function clonesWithoutDestination(environmentId: EnvironmentId): boolean {
+    return (
+      environments.find((candidate) => candidate.environmentId === environmentId)?.serverConfig
+        ?.environment.capabilities.cloudLaunch === true
+    );
+  }
+
+  async function runProjectClone(input: {
+    readonly environmentId: EnvironmentId;
+    readonly remoteUrl: string;
+    readonly title: string;
+    readonly destinationPath?: string;
+  }): Promise<void> {
+    if (
+      !readEnvironmentScope(input.environmentId, AuthSourceControlWriteScope) ||
+      !readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Clone unavailable",
+          description: "This connection needs permission to write source control and add projects.",
+        }),
+      );
+      return;
+    }
+    if (isRemoteProjectCloning) return;
+    const projectId = newProjectId();
+    setIsRemoteProjectCloning(true);
+    const startResult = await startProjectClone({
+      environmentId: input.environmentId,
+      input: {
+        projectId,
+        title: input.title,
+        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+        createdAt: new Date().toISOString(),
+        remoteUrl: input.remoteUrl,
+        ...(input.destinationPath === undefined ? {} : { destinationPath: input.destinationPath }),
+      },
+    });
+    setIsRemoteProjectCloning(false);
+    if (startResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(startResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Clone failed",
+            description: errorMessage(squashAtomCommandFailure(startResult)),
+          }),
+        );
+      }
+      return;
+    }
+    setOpen(false);
+    void suggestAppAccessForRemote(input.environmentId, input.remoteUrl);
+    const projectRef = scopeProjectRef(input.environmentId, projectId);
+    await waitForProject(projectRef, 3_000).catch(() => null);
+    const navigationResult = await settlePromise(() => handleNewThread(projectRef));
+    if (navigationResult._tag === "Failure") {
+      const error = squashAtomCommandFailure(navigationResult);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to open project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }
+
   async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
     if (!addProjectCloneFlow) {
       return;
@@ -2128,6 +2199,14 @@ function OpenCommandPaletteDialog(props: {
       const provider = addProjectRemoteSourceProvider(addProjectCloneFlow.source);
       if (!provider) {
         const remoteUrl = normalizePastedCloneUrl(rawRepository);
+        if (clonesWithoutDestination(addProjectCloneFlow.environmentId)) {
+          await runProjectClone({
+            environmentId: addProjectCloneFlow.environmentId,
+            remoteUrl,
+            title: getCloneDirectoryLeafName(remoteUrl, false, rawRepository),
+          });
+          return;
+        }
         const destinationPath = getDefaultCloneDestination(
           addProjectCloneFlow.environmentId,
           remoteUrl,
@@ -2171,6 +2250,16 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
+      if (clonesWithoutDestination(addProjectCloneFlow.environmentId)) {
+        // Pair Cloud clones only over https, whatever the provider's default.
+        const remoteUrl = repository.url;
+        await runProjectClone({
+          environmentId: addProjectCloneFlow.environmentId,
+          remoteUrl,
+          title: getCloneDirectoryLeafName(remoteUrl, false, repository.nameWithOwner),
+        });
+        return;
+      }
       const remoteUrl = getDefaultCloneUrl(repository);
       const destinationPath = getDefaultCloneDestination(
         addProjectCloneFlow.environmentId,
@@ -2192,19 +2281,6 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const rawDestination = (destinationPathInput ?? query).trim();
-    if (
-      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthSourceControlWriteScope) ||
-      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthOrchestrationOperateScope)
-    ) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Clone unavailable",
-          description: "This connection needs permission to write source control and add projects.",
-        }),
-      );
-      return;
-    }
     if (rawDestination.length === 0 || isRemoteProjectCloning) return;
 
     if (isUnsupportedWindowsProjectPath(rawDestination, browseEnvironmentPlatform)) {
@@ -2237,50 +2313,12 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    const projectId = newProjectId();
-    setIsRemoteProjectCloning(true);
-    const startResult = await startProjectClone({
+    await runProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
-      input: {
-        projectId,
-        title: inferProjectTitleFromPath(destinationPath),
-        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
-        createdAt: new Date().toISOString(),
-        remoteUrl: addProjectCloneFlow.remoteUrl,
-        destinationPath,
-      },
+      remoteUrl: addProjectCloneFlow.remoteUrl,
+      title: inferProjectTitleFromPath(destinationPath),
+      destinationPath,
     });
-    setIsRemoteProjectCloning(false);
-    if (startResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(startResult)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Clone failed",
-            description: errorMessage(squashAtomCommandFailure(startResult)),
-          }),
-        );
-      }
-      return;
-    }
-    setOpen(false);
-    void suggestAppAccessForRemote(
-      addProjectCloneFlow.environmentId,
-      addProjectCloneFlow.remoteUrl,
-    );
-    const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
-    await waitForProject(projectRef, 3_000).catch(() => null);
-    const navigationResult = await settlePromise(() => handleNewThread(projectRef));
-    if (navigationResult._tag === "Failure") {
-      const error = squashAtomCommandFailure(navigationResult);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to open project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
   }
 
   const browseTo = async (name: string): Promise<void> => {

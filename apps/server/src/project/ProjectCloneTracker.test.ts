@@ -45,7 +45,7 @@ function makeHarness(options?: {
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
         prepareClone: (input) =>
           Effect.succeed({
-            destinationPath: input.destinationPath,
+            destinationPath: input.destinationPath ?? "",
             remoteUrl: input.remoteUrl ?? "",
             cloneUrl: input.remoteUrl ?? "",
             repository: null,
@@ -54,7 +54,7 @@ function makeHarness(options?: {
           options?.clone ??
           ((input) =>
             Effect.succeed({
-              cwd: input.destinationPath,
+              cwd: input.destinationPath ?? "",
               remoteUrl: input.remoteUrl ?? "",
               repository: null,
             })),
@@ -76,7 +76,11 @@ describe("ProjectCloneTracker", () => {
               Effect.void
           );
           yield* Deferred.await(release);
-          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+          return {
+            cwd: input.destinationPath ?? "",
+            remoteUrl: input.remoteUrl ?? "",
+            repository: null,
+          };
         }),
     });
     return Effect.gen(function* () {
@@ -118,7 +122,11 @@ describe("ProjectCloneTracker", () => {
           yield* Deferred.await(resumed);
           yield* report({ stage: "receiving", percent: 25, detail: "170.00 MiB | 1.00 MiB/s" });
           yield* Deferred.await(release);
-          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+          return {
+            cwd: input.destinationPath ?? "",
+            remoteUrl: input.remoteUrl ?? "",
+            repository: null,
+          };
         }),
     });
     return Effect.gen(function* () {
@@ -148,10 +156,13 @@ describe("ProjectCloneTracker", () => {
 
   it.effect("keeps a failed clone with git's own explanation and retries it", () => {
     const protocols: Array<SourceControlCloneProtocol | undefined> = [];
+    const envs: Array<NodeJS.ProcessEnv | undefined> = [];
+    let attempts = 0;
     const harness = makeHarness({
-      clone: (input) =>
+      clone: (input, options) =>
         Effect.suspend(() => {
           protocols.push(input.protocol);
+          envs.push(options?.env);
           return protocols.length === 1
             ? Effect.fail(
                 new SourceControlRepositoryError({
@@ -161,7 +172,7 @@ describe("ProjectCloneTracker", () => {
                 }),
               )
             : Effect.succeed({
-                cwd: input.destinationPath,
+                cwd: input.destinationPath ?? "",
                 remoteUrl: input.remoteUrl ?? "",
                 repository: null,
               });
@@ -169,7 +180,13 @@ describe("ProjectCloneTracker", () => {
     });
     return Effect.gen(function* () {
       const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
-      yield* tracker.start({ ...startInput, protocol: "ssh" }, harness.hooks);
+      yield* tracker.start(
+        { ...startInput, protocol: "ssh" },
+        {
+          ...harness.hooks,
+          cloneOptions: Effect.sync(() => ({ env: { TOKEN: `attempt-${++attempts}` } })),
+        },
+      );
       yield* Effect.yieldNow;
       const failed = yield* tracker.get(projectId);
       expect(failed).toMatchObject({ phase: "failed", error: "fatal: repository not found" });
@@ -179,6 +196,7 @@ describe("ProjectCloneTracker", () => {
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
       expect(protocols).toEqual(["ssh", "ssh"]);
+      expect(envs).toEqual([{ TOKEN: "attempt-1" }, { TOKEN: "attempt-2" }]);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -221,7 +239,7 @@ describe("ProjectCloneTracker", () => {
       clone: (input) =>
         Effect.sync(() => {
           cloneUrls.push(input.remoteUrl ?? "");
-          return { cwd: input.destinationPath, remoteUrl: "", repository: null };
+          return { cwd: input.destinationPath ?? "", remoteUrl: "", repository: null };
         }),
     });
     const layer = ProjectCloneTracker.layer.pipe(
@@ -229,7 +247,7 @@ describe("ProjectCloneTracker", () => {
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           prepareClone: (input) =>
             Effect.succeed({
-              destinationPath: input.destinationPath,
+              destinationPath: input.destinationPath ?? "",
               remoteUrl: "https://github.com/octocat/t3code.git",
               cloneUrl: "https://user:s3cret@github.com/octocat/t3code.git",
               repository: null,
@@ -237,7 +255,7 @@ describe("ProjectCloneTracker", () => {
           cloneRepository: (input) =>
             Effect.sync(() => {
               cloneUrls.push(input.remoteUrl ?? "");
-              return { cwd: input.destinationPath, remoteUrl: "", repository: null };
+              return { cwd: input.destinationPath ?? "", remoteUrl: "", repository: null };
             }),
           discardClone: () => Effect.void,
         }),

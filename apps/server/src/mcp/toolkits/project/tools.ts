@@ -23,6 +23,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as PairCloudProjects from "../../../project/PairCloudProjects.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -108,7 +109,7 @@ const ProjectDeleteTool = Tool.make("t3_project_delete", {
 const ProjectCloneTool = Tool.make("t3_project_clone", {
   ...shared,
   description:
-    "Clone a repository (`destinationPath` new or empty). Register after with `t3_project_create`, with the same `environmentId`.",
+    "Clone a repository (`destinationPath` new or empty). Register after with `t3_project_create`, with the same `environmentId`. On Pair Cloud, pass only the https GitHub URL: it picks the folder and registers the project.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...SourceControlCloneRepositoryInput.fields,
@@ -117,6 +118,8 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
   dependencies: [
     ...shared.dependencies,
     SourceControlRepositoryService.SourceControlRepositoryService,
+    PairCloudProjects.PairCloudProjects,
+    ServerConfig.ServerConfig,
   ],
 })
   .annotate(Tool.Destructive, true)

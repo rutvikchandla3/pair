@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 /** Accept unknown hosts so clients can fall back to generic presentation. */
@@ -70,7 +70,8 @@ export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
-  destinationPath: TrimmedNonEmptyString,
+  /** Required off Pair Cloud; a cloud-only server picks the folder and ignores this. */
+  destinationPath: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
 });
 export type SourceControlCloneRepositoryInput = typeof SourceControlCloneRepositoryInput.Type;
@@ -79,6 +80,8 @@ export const SourceControlCloneRepositoryResult = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   repository: Schema.NullOr(SourceControlRepositoryInfo),
+  /** Set when the clone also registered a project, as Pair Cloud does. */
+  projectId: Schema.optionalKey(ProjectId),
 });
 export type SourceControlCloneRepositoryResult = typeof SourceControlCloneRepositoryResult.Type;
 

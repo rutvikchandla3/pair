@@ -2039,10 +2039,13 @@ because it is the server half of decision 16 and the only thing that puts a proj
     `projectCloneTracker.start(input, yield* makeProjectCloneHooks)` as today. A
     `PairCloudProjectError` maps to `SourceControlRepositoryError({ provider: "github", operation:
     "add-pair-cloud-project", detail: error.message })`, so the RPC's error union (rpc.ts 1325–1332)
-    and old clients' decode stay as they are.
+    and old clients' decode stay as they are. `sourceControlCloneRepository`, which clones to any
+    host path, is refused on cloud-only with the same "On Pair Cloud…" detail; no client calls it.
   - `apps/server/src/project/ProjectService.ts`: on a cloud-only server, `create` (344) and an
-    `update` that moves `workspaceRoot` refuse a root outside `checkoutsDir` with
-    `ProjectOperationError` "On Pair Cloud, add a project by its GitHub URL." That one guard covers
+    `update` that moves `workspaceRoot` refuse any root but exactly `<checkoutsDir>/<projectId>`
+    (`pairCloudCheckoutPath`; an id that is not one plain folder name has none) with
+    `ProjectOperationError` "On Pair Cloud, add a project by its GitHub URL." So no project adopts
+    another's checkout or a deleted project's leftover one. That one guard covers
     `projectsMutate`, `projectsCreateNew`, `projectsCreateFromThread`, CLI `project create` and
     `t3_project_create`. Scratch is already refused on cloud-only by 2.22 (`projectsEnsureScratch`).
   - `apps/server/src/mcp/toolkits/project/handlers.ts`: `t3_project_clone` (388) on a cloud-only
@@ -2062,10 +2065,12 @@ because it is the server half of decision 16 and the only thing that puts a proj
     `READ_TOKEN_PERMISSIONS` (contents, metadata, pull requests, checks and statuses, all read),
     cached per repository and never revoked.
   - `apps/server/src/orchestration-v2/ThreadLaunchService.ts`: `PreparationInput` (122) picks
-    `actorId` and `ownerId` too. In the cloud branch (467), before `awaitSandboxReady`, call
-    `pairCloudProjects.fetchCheckout({ projectId, workspaceRoot: project.workspaceRoot, memberId:
-    input.actorId ?? input.ownerId })`; failures are logged and ignored. 2.31's launch-time
-    `remoteHasBranch` passes `env: yield* pairCloudProjects.gitEnvFor(...)` with the same member.
+    `actorId` and `ownerId` too; a re-armed run takes the thread's `ownerId`. It reads
+    `PairCloudProjects` with `Effect.serviceOption`, as it does `RunnerHub`. In the cloud branch
+    (467), alongside `awaitSandboxReady`, call `pairCloudProjects.fetchCheckout({ projectId,
+    workspaceRoot: project.workspaceRoot, memberId: input.actorId ?? input.ownerId })`; failures are
+    logged and ignored. 2.31's launch-time `remoteHasBranch` passes `env: yield*
+    pairCloudProjects.gitEnvFor(...)` with the same member.
   - Web: `CommandPalette.tsx` clone flow (2240) and `promptLinks/NewThreadLinkView.tsx` (219) skip
     the destination step and omit `destinationPath` when the target's
     `serverConfig.environment.capabilities.cloudLaunch === true`. `lib/addProjectToMachine.ts`:
@@ -2116,23 +2121,26 @@ because it is the server half of decision 16 and the only thing that puts a proj
 
   `add`, in order:
   1. URL: `input.remoteUrl`, or `https://github.com/<repository>.git` when `provider` is GitHub and
-     `repository` is set. `parseGitRemoteRepository` (shared/git.ts 137) must give host
-     `github.com`, the scheme must be `https:`, and there must be no userinfo. Otherwise
-     `unsupported-remote`: "Pair Cloud clones only https://github.com repositories."
+     `repository` is set. `parsePairCloudRemote` parses it with `URL`: scheme `https:`, host
+     `github.com`, no port, userinfo, query or fragment, and a path of exactly `owner/name` (an
+     optional `.git`). Otherwise `unsupported-remote`: "Pair Cloud clones only https://github.com
+     repositories." Steps 2–4 hold one lock, so two adds of a repository cannot both pass.
   2. Origin key `sourceControlDefinitions.repositoryKeyFromRemote(url)`, the function persisted
      keys come from (RepositoryIdentityResolver.ts 99, 111; `normalizeGitRemoteUrl`'s own doc at
      shared/git.ts 163 says not to use it for them). If a live project from `ProjectService.listShells`
-     (150) has `repositoryGroupingKeyOf(identity)` equal to it, or a running clone's `remoteUrl`
-     normalizes to it: `already-added`, "<owner/name> is already on Pair Cloud."
+     (150) has `repositoryGroupingKeyOf(identity)` equal to it, or an unfinished clone's
+     `remoteUrl` gives it: `already-added`, "<owner/name> is already on Pair Cloud."
   3. Access: `GET https://api.github.com/repos/<owner>/<name>` with `MemberGitHub.credentialFor`
      (MemberGitHub.ts 72) when the member has one, unauthenticated otherwise, using the request
      shape of `isForkOf` (GitCredentialService.ts 198). 200 passes. 404 or 403 with a credential is
      `no-access`, "Your GitHub account can't read <owner/name>." 404 with none is
      `github-not-connected`, "Connect GitHub to clone private repos, in Settings → Team." A
-     network failure fails the add with git-style detail; it never skips the check.
+     network failure or any other status fails the add; it never skips the check.
   4. `projectCloneTracker.start({ ...input, remoteUrl: url, destinationPath:
-     `${checkoutsDir}/${projectId}` }, { ...(yield* makeProjectCloneHooks), cloneOptions })`, where `cloneOptions` gives
+     `${checkoutsDir}/${projectId}` }, { ...(yield* makeProjectCloneHooks), cloneOptions, repository })`, where `cloneOptions` gives
      `config` (`HARDENED_CHECKOUT_CONFIG`) and `env: yield* gitEnvFor({ repository, memberId })`.
+     The input drops `repository`, so the server's provider CLI is never asked; the hooks'
+     `repository` (new, optional) names it in the clone's snapshot instead.
 
   `HARDENED_CHECKOUT_CONFIG` (proposed, in `PairCloudProjects.ts`): `core.hooksPath=/dev/null`,
   `core.fsmonitor=false`, `protocol.allow=never`, `protocol.https.allow=always`,
@@ -2140,8 +2148,10 @@ because it is the server half of decision 16 and the only thing that puts a proj
   adds, through `gitConfigEnv` (VcsProcess.ts 105), `http.https://github.com/.extraHeader` =
   `Authorization: Basic base64("x-access-token:<token>")`, plus `GIT_CONFIG_NOSYSTEM=1` and
   `GIT_CONFIG_GLOBAL=/dev/null`, so no filter or diff driver from the host's config runs. The token
-  rides in the environment, never in the URL or in the repo's config. `fetchCheckout` runs `git
-  fetch --prune origin` in the checkout with that env. It is a no-op off cloud-only.
+  rides in the environment, never in the URL or in the repo's config. Off cloud-only `gitEnvFor` is
+  `{}`, so a host's own credential helpers keep working. `fetchCheckout` runs `git fetch --prune
+  origin` in the checkout with that env, only for a root at `<checkoutsDir>/<projectId>` whose origin
+  passes step 1. It is a no-op off cloud-only.
 
 - **Commands and events:** none new. `project.create` / `project.update` as the clone tracker issues
   them today.

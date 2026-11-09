@@ -53,7 +53,8 @@ export const ProjectCloneStartInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
-  destinationPath: TrimmedNonEmptyString,
+  /** Required off Pair Cloud; a cloud-only server picks the folder and ignores this. */
+  destinationPath: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
 });
 export type ProjectCloneStartInput = typeof ProjectCloneStartInput.Type;

@@ -71,6 +71,10 @@ export interface SourceControlCloneOptions {
   readonly onProgress?: (line: GitCloneProgressLine) => Effect.Effect<void>;
   /** Overrides the default clone budget; `null` disables the deadline. */
   readonly timeoutMs?: number | null;
+  /** Passed as `git clone -c`, so the new repository keeps it. */
+  readonly config?: Readonly<Record<string, string>>;
+  /** Merged over the clone's defaults; never written to the repository. */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 // Older/mobile synchronous RPCs need deadlines; tracked clones use progress and Cancel instead.
@@ -295,6 +299,13 @@ export const make = Effect.gen(function* () {
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
   ) {
+    if (input.destinationPath === undefined) {
+      return yield* new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+        detail: "Choose where to clone.",
+      });
+    }
     const preparedDestination = yield* prepareDestination(input.destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
@@ -349,17 +360,28 @@ export const make = Effect.gen(function* () {
     };
     // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
     const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
+    const config = Object.entries(options?.config ?? {}).flatMap(([key, value]) => [
+      "-c",
+      `${key}=${value}`,
+    ]);
     yield* git
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(destinationPath),
-        args: ["clone", "--progress", "--", normalizedCloneUrl, path.basename(destinationPath)],
+        args: [
+          "clone",
+          "--progress",
+          ...config,
+          "--",
+          normalizedCloneUrl,
+          path.basename(destinationPath),
+        ],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Buffered output is unused and progress can be huge; cap it while retaining line callbacks.
         maxOutputBytes: 256 * 1024,
         appendTruncationMarker: true,
         keepLineCallbacksAfterTruncation: true,
-        env: CLONE_ENV,
+        env: { ...CLONE_ENV, ...options?.env },
         progress: { onStderrLine },
       })
       .pipe(

@@ -96,6 +96,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
+  SourceControlProviderKind,
+  SourceControlRepositoryError,
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
@@ -243,12 +245,14 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
+import { makeProjectCloneHooks } from "./project/ProjectCloneHooks.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
-import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as PairCloudProjects from "./project/PairCloudProjects.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
@@ -1507,7 +1511,8 @@ export const layerWsRpc = (
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const projectCloneHooks = yield* makeProjectCloneHooks;
+      const pairCloudProjects = yield* PairCloudProjects.PairCloudProjects;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -3027,7 +3032,15 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
-          sourceControlRepositories.cloneRepository(input),
+          config.cloudOnly
+            ? Effect.fail(
+                new SourceControlRepositoryError({
+                  provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+                  operation: "cloneRepository",
+                  detail: ProjectService.PAIR_CLOUD_WORKSPACE_MESSAGE,
+                }),
+              )
+            : sourceControlRepositories.cloneRepository(input),
         [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
         [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
         [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
@@ -3035,42 +3048,19 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.sourceControlStar]: (input) => sourceControlSignIn.star(input),
         [WS_METHODS.projectCloneStart]: (input) =>
-          projectCloneTracker.start(input, {
-            createProject: (project) =>
-              projectService
-                .create({
-                  commandId: CommandId.make(`project-clone-create:${project.projectId}`),
-                  projectId: project.projectId,
-                  title: project.title,
-                  workspaceRoot: project.workspaceRoot,
-                  createWorkspaceRootIfMissing: true,
-                })
-                .pipe(
-                  Effect.asVoid,
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationDispatchCommandError({
-                        message: "Failed to create clone project.",
-                        cause,
-                      }),
-                  ),
+          config.cloudOnly
+            ? pairCloudProjects.add(input, { memberId: currentSession.memberId ?? null }).pipe(
+                Effect.mapError((error) =>
+                  error._tag === "PairCloudProjectError"
+                    ? new SourceControlRepositoryError({
+                        provider: SourceControlProviderKind.make("github"),
+                        operation: "add-pair-cloud-project",
+                        detail: error.message,
+                      })
+                    : error,
                 ),
-            onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
-                Effect.andThen(
-                  projectService.update({
-                    commandId: CommandId.make(`project-clone-done:${project.projectId}`),
-                    projectId: project.projectId,
-                  }),
-                ),
-                Effect.andThen(refreshGitStatus(project.workspaceRoot)),
-                // The folder was empty when the project was created, so the cached
-                // enrichment says "no repository" and clients cannot group it yet.
-                Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
-                Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
-                Effect.ignoreCause({ log: true }),
-              ),
-          }),
+              )
+            : projectCloneTracker.start(input, projectCloneHooks),
         [WS_METHODS.projectsEnsureScratch]: () =>
           managedFolders.ensureScratchProject.pipe(
             Effect.mapError(
@@ -3181,7 +3171,9 @@ export const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message:
-                    cause._tag === "ProjectNotEmptyError"
+                    cause._tag === "ProjectNotEmptyError" ||
+                    (cause._tag === "ProjectOperationError" &&
+                      cause.operation === "pair-cloud-workspace")
                       ? cause.message
                       : "Failed to mutate project.",
                   cause,

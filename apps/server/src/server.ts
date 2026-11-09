@@ -155,6 +155,7 @@ import * as WorkspaceHosts from "./workspaceHost/WorkspaceHosts.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as PairCloudProjects from "./project/PairCloudProjects.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -640,7 +641,13 @@ const layerSandboxSleepHooks = Layer.effect(
   }),
 );
 
+const layerPairCloudProjects = PairCloudProjects.layer.pipe(
+  Layer.provide(RuntimeLayer.layerProjectService),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  // Merged, so launches fetch Pair Cloud checkouts and ws.ts and MCP add projects with it.
+  Layer.provideMerge(layerPairCloudProjects),
   Layer.provide(layerMirrorSync),
   Layer.provide(layerSandboxSleepHooks),
   Layer.provide(layerScheduledTaskWebhookOrigin),
