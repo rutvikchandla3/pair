@@ -5662,6 +5662,48 @@ Restore mode also turns itself on, so any unrecorded machine causes it.
 - **Surfaces:** contracts, so server, web and mobile follow. The encoded form and the client types
   don't change, so no client code changes.
 
+### 2.59 (new) `perf(server): runner bundle downloads share one budget`
+
+G2 step 12's `vp run bench:runner --load` failed on the VM: the 28 quiet runners' stdout p95 rose
+from 1.66 to 5.80 ms against a 2.66 ms limit, with event loop utilization 0.25 → 0.80 (finding 31).
+Isolation runs from the same build split it: the PTY hog alone, held at its 16 MiB/s ingress
+budget, passes (1.59 → 2.21 ms, ELU 0.40). The bundle download loop alone fails (1.51 → 4.93 ms,
+ELU 0.80 at 183 MB/s). Downloads have no budget: `RunnerRoute.ts` (88–108) answers with
+`HttpServerResponse.file`, a raw `fs.createReadStream` pipe, so one machine fetching back to back
+takes the event loop from every other machine. So the framing stays on the event loop (03 §9 moves
+it to workers only when the test fails with the budget in place), and downloads get a budget like
+output has. A machine fetches the bundle whenever its release's runner tree isn't mounted, which
+after 2.57 includes every wake of a machine from an older release, so an upgrade makes many
+machines fetch at once.
+
+- **Needs:** none. **Unblocks:** the G2 step 12 load test rerun.
+- **Files:**
+  - `apps/server/src/sandbox/runnerHub/RunnerConnection.ts`: `makeIngressBudget` (146) moves to a
+    small module, `ByteBudget.ts` beside it, as `makeByteBudget(bytesPerSecond, burstBytes)`. The
+    ingress budget keeps a sixteenth of a second of burst and its `Infinity` = off rule.
+  - `apps/server/src/sandbox/runnerHub/RunnerRoute.ts`: one budget per layer, shared by every
+    download: 32 MiB/s with a 16 MiB burst (`DOWNLOAD_BYTES_PER_SECOND`,
+    `DOWNLOAD_BURST_BYTES`). The burst holds a whole bundle (about 9 MB gzipped for the release
+    tree), so a lone fetch runs at full speed and only back-to-back or concurrent fetches wait. The
+    tarball response streams the file (`FileSystem.stream`) through `take(chunk.length)` with its
+    `content-length` and `application/gzip` kept. The layer takes the rate as an option for tests
+    and the bench, `Infinity` = off.
+  - `apps/server/scripts/runner-benchmark.ts`: nothing to change; its load test already drives a
+    download loop through `RunnerRoute`.
+- **Types and services:** none new beyond `ByteBudget`.
+- **Tests:** `RunnerRoute.test.ts`, one `it.effect` on `TestClock`: with a tiny budget (for
+  example 1 KiB/s, 1 KiB burst) and a bundle a few KiB long, two downloads together finish only
+  after the clock moves past the bytes over the burst divided by the rate, and a lone download
+  inside the burst finishes without moving it. It fails on `feat/pair` (no budget). The existing
+  route cases (sha256, 404 with the build header, 401, 503) keep passing.
+- **Docs:** 03 §9 "Capacity": one sentence that bundle downloads share one server-wide budget,
+  with the rate.
+- **Verify:** `vp test run apps/server/src/sandbox/runnerHub/`, `vp run typecheck` in
+  `apps/server`. On the VM, from a checkout of this commit: `vp run bench:runner --load
+  --runner-dir ~/.t3/runtime/versions/$V3/runner` passes the load test, and the Docker startup rows
+  don't get slower.
+- **Surfaces:** server only. The runner's bootstrap and the wire don't change.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
