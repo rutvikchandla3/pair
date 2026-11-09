@@ -65,6 +65,8 @@ const STOP_GRACE_SECONDS = 10;
 const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as const;
 /** Where a local server's runner socket directory is mounted. */
 const SERVER_SOCKET_MOUNT = "/run/pair-host";
+/** Where a local server's runner bundles are mounted, one directory per build. */
+const RUNNER_BUNDLE_MOUNT = "/opt/pair-runner";
 const RUNNING_STATES = new Set(["running", "restarting", "paused"]);
 
 const SIZES: ComputeCapabilities["sizes"] = [
@@ -195,7 +197,7 @@ export const containerCreateBody = (input: {
               {
                 Type: "bind",
                 Source: bundle.path,
-                Target: `/opt/pair-runner/${bundle.runnerBuildId}`,
+                Target: `${RUNNER_BUNDLE_MOUNT}/${bundle.runnerBuildId}`,
                 ReadOnly: true,
               },
             ],
@@ -342,6 +344,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
   },
 ) {
   const settings = yield* ServerSettingsService;
+  const fs = yield* FileSystem.FileSystem;
   const driverId = config.id;
   const installKey = installId.slice(0, 8);
   const networkName = `pair-${installKey}`;
@@ -750,6 +753,14 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     const { engine } = yield* engineFor("start");
     const container = yield* engine.inspectContainer(driverRef);
     if (container === null) return yield* failure("start", "not-found");
+    // An update prunes the release this machine mounted; the bootstrap fetches the server's build.
+    for (const mount of container.Mounts ?? []) {
+      if (mount.Type === "bind" && mount.Destination.startsWith(`${RUNNER_BUNDLE_MOUNT}/`)) {
+        yield* fs
+          .makeDirectory(mount.Source, { recursive: true })
+          .pipe(Effect.mapError((cause) => failure("start", "not-found", cause)));
+      }
+    }
     yield* boot("start", engine, container, bootstrap);
   }, run("start"));
 

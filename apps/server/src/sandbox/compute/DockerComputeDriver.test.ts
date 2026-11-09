@@ -1,6 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ComputeDriverId, EnvironmentId, SandboxId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -219,6 +221,7 @@ interface FakeContainer {
   status: string;
   generation: number;
   runtime?: string;
+  mounts?: ReadonlyArray<{ Type: string; Source: string; Destination: string }>;
 }
 
 interface FakeImages {
@@ -297,6 +300,7 @@ const fakeEngine = (
           State: { Status: existing.status },
           Config: { Labels: existing.labels },
           HostConfig: { Runtime: existing.runtime },
+          Mounts: existing.mounts,
         });
       }
       if (path.endsWith("/archive") && request.method === "GET") {
@@ -334,7 +338,7 @@ const withDriver = <A, E>(
   use: (
     driver: Effect.Success<ReturnType<typeof makeWithEngine>>,
     fake: ReturnType<typeof fakeEngine>,
-  ) => Effect.Effect<A, E, ServerSettingsService>,
+  ) => Effect.Effect<A, E, ServerSettingsService | FileSystem.FileSystem>,
   options: {
     readonly images?: FakeImages;
     readonly fromSource?: boolean;
@@ -353,7 +357,7 @@ const withDriver = <A, E>(
     { version: "1.2.3", fromSource: options.fromSource ?? false },
   ).pipe(
     Effect.flatMap((driver) => use(driver, fake)),
-    Effect.provide(ServerSettingsService.layerTest()),
+    Effect.provide([ServerSettingsService.layerTest(), NodeServices.layer]),
   );
 };
 
@@ -452,6 +456,38 @@ describe("DockerComputeDriver", () => {
         assert.include(env, "PAIR_RUNNER_ENROLL='enroll'\n");
         assert.notInclude(env, "PAIR_DNS");
       }),
+    );
+  });
+
+  it.effect("start recreates the runner tree an update removed, and no other bind source", () => {
+    const containers = new Map<string, FakeContainer>();
+    return withDriver(containers, (driver, fake) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-docker-runner-" });
+          const runnerTree = `${root}/runtime/versions/1.2.2/runner`;
+          const socketDir = `${root}/runner`;
+          containers.set(name, {
+            labels: { ...tags },
+            status: "exited",
+            generation: 1,
+            mounts: [
+              { Type: "bind", Source: socketDir, Destination: "/run/pair-host" },
+              { Type: "bind", Source: runnerTree, Destination: "/opt/pair-runner/b0" },
+            ],
+          });
+          fake.calls.length = 0;
+          yield* driver.start(name, bootstrap(2));
+          assert.isTrue(yield* fs.exists(runnerTree));
+          assert.isFalse(yield* fs.exists(socketDir));
+          assert.deepStrictEqual(fake.calls, [
+            `GET /containers/${name}/json`,
+            `PUT /containers/${name}/archive`,
+            `POST /containers/${name}/start`,
+          ]);
+        }),
+      ),
     );
   });
 
