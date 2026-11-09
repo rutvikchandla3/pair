@@ -5582,6 +5582,52 @@ Commits, in order:
     The lookup runs on the Pair Cloud server whatever the transport, and the member comes from the
     session.
 
+### 2.57 (new) `fix(server): start machines whose release's runner tree an update removed`
+
+After `t3 update`, the new server's start prune (`pruneRuntimesOnStart`, `cloud/selfUpdate.ts` 83) removes the old release under `~/.t3/runtime/versions/`. A machine on a local Docker daemon
+bind-mounts its release's `runner` tree at `/opt/pair-runner/<runnerBuildId>`
+(`DockerComputeDriver.ts` 192–200), and Docker cannot mount a bind source that no longer exists.
+`PUT /containers/{id}/archive` then answers 404 ("Could not find the file /"), `boot` maps it to
+`not-found`, and the machine fails as `missing`: "The machine and its disk are gone", with its
+volume intact. G2 step 10 hit this for every machine created on V1 (finding 29).
+
+The bootstrap (`infra/sandbox-image/pair-bootstrap.sh`) already fetches the server's build when
+`/opt/pair-runner/$PAIR_RUNNER_BUILD` is absent, and a started machine always gets the server's
+current build id. So the stale mount only has to exist, not hold anything: `start` recreates a
+missing runner bind source as an empty directory before it boots. That covers machines from V1,
+V2 and every later release with no new state. The prune and the mount layout stay as they are.
+
+- **Needs:** none. **Unblocks:** G2 step 10 rerun (V2 → V3) and the V1 machines on
+  `pair-cloud-pass`.
+- **Files:**
+  - `apps/server/src/sandbox/compute/DockerEngineApi.ts` `EngineContainer` (234): add
+    `Mounts: Schema.optionalKey(Schema.Array(Schema.Struct({ Type: Schema.String, Source:
+    Schema.String, Destination: Schema.String })))`. `GET /containers/{id}/json` already returns it.
+  - `apps/server/src/sandbox/compute/DockerComputeDriver.ts`:
+    - Name the mount root: `const RUNNER_BUNDLE_MOUNT = "/opt/pair-runner"` beside
+      `SERVER_SOCKET_MOUNT` (67), and use it in the bind target (198).
+    - `start` (746): after the `not-found` check, for each `container.Mounts` entry with `Type ===
+      "bind"` whose `Destination` is under `RUNNER_BUNDLE_MOUNT/` and whose `Source` does not exist,
+      `fs.makeDirectory(source, { recursive: true })`. One comment line: an update prunes the
+      release this machine mounted; the bootstrap fetches the server's build. Only a local daemon
+      creates these mounts, so the source is on this host. A failure to create it fails `start` as
+      today (no new reason).
+    - `create` needs nothing: it mounts the server's own tree, which exists.
+- **Types and services:** none new. `FileSystem.FileSystem` is already in the driver's context
+  (909).
+- **Tests:** `DockerComputeDriver.test.ts`, extend the fake engine's container record with
+  `Mounts` and add one `it.effect` beside "start leaves a runner of the same generation alone…"
+  (428): a stopped container whose runner bind source is a path under a scoped temp dir that
+  doesn't exist. `driver.start` creates the directory, then `PUT …/archive` and `POST …/start`
+  run. It fails on `feat/pair` (the directory is never created). A bind mount elsewhere
+  (`/run/pair-host`) with a missing source is left alone.
+- **Docs:** none. The comment carries the reason.
+- **Verify:** `vp test run apps/server/src/sandbox/compute/DockerComputeDriver.test.ts`,
+  `vp run typecheck` in `apps/server`. G2 step 10 rerun on the VM: machines created on V2 wake on
+  V3 after the prune.
+- **Surfaces:** server only (Docker driver). No contract, client or provider change. Remote Docker
+  daemons never bind-mount the bundle, so they're unaffected.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
