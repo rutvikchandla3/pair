@@ -2587,6 +2587,39 @@ it.effect("refuses a worktree launch on a cloud-only server before creating a th
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("places a scheduled worktree launch in the cloud on a cloud-only server", () => {
+  const harness = cloudHarness({ currentBranch: () => Effect.succeed("main") });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    // MCP stores the remote's base (`origin/main`); the editor stores a branch.
+    for (const workspace of [
+      { type: "worktree" as const, baseRef: "origin/main", startFromOrigin: true },
+      { type: "root" as const },
+    ]) {
+      const commandId = CommandId.make(`command:launch:scheduled-cloud:${workspace.type}`);
+      const launched = yield* launches.launch({
+        ...launchInput({
+          command: commandId,
+          thread: `thread:launch:scheduled-cloud:${workspace.type}`,
+          message: "Run the suite",
+          workspace,
+        }),
+        cloudPlacement: true,
+        discardOnSettle: workspace.type === "worktree",
+      });
+      const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+      assert.equal(launched.projection.thread.sandboxId, sandboxId);
+      assert.deepInclude(launched.projection.runs[0] ?? {}, {
+        workspacePreparation: { type: "worktree", baseRef: "main" },
+      });
+      const sandbox = yield* projections.getSandbox(sandboxId);
+      assert.equal(sandbox?.state, "provisioning");
+      assert.equal(sandbox?.discardOnSettle, workspace.type === "worktree" ? true : undefined);
+    }
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("launches a cloud thread and releases it on runner hello", () => {
   const harness = cloudHarness();
   return Effect.gen(function* () {

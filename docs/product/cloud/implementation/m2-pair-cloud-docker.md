@@ -1339,8 +1339,9 @@ the scheduled-task half of 01 J7, with one migration.
   - `apps/server/src/orchestration-v2/ThreadLaunchService.ts`: `ThreadLaunchInput` (90) gains
     `discardOnSettle?: boolean`; `provisionCloud` (282) passes it on `sandbox.provision`.
     `ThreadLaunchInput` also gains `cloudPlacement?: true`, which only `ScheduledTaskService` sets.
-    On a cloud-only server, `launch` (960) first turns such an input's `worktree` strategy into
-    `{ type: "cloud", baseRef: <the strategy's base or the project default>, branch }`. This runs
+    On a cloud-only server, `launch` (960) first turns such an input's strategy into
+    `{ type: "cloud", baseRef, branch }`: a `worktree` base without its `origin/` prefix (MCP stores
+    `origin/main`), else the strategy's branch, the checkout's current branch or `main`. This runs
     ahead of 2.22's `local-launch` check, so scheduled and webhook runs pass it and take the same
     `checkCloudLaunch` and `resolveCloudLaunch` path as a client launch. On a server that isn't
     cloud-only the key does nothing, and tasks keep M1 behavior.
@@ -1411,8 +1412,8 @@ for the editor.
 - Discard keeps the mirror and the thread's reads.
 - Hit every surface: web and mobile editors; MCP and agents (scheduled tasks are agent-created
   too); contracts; providers (the owner's account goes through `resolveCloudLaunch`); reverse
-  state (a discarded run's thread wakes and rebuilds, 2.13); docs (`docs/user/project-settings.md`
-  scheduled tasks section: one sentence on Cloud runs and discard).
+  state (a discarded run's thread wakes and rebuilds, 2.13); docs (`docs/user/cloud.md` "Start a cloud
+  thread": Cloud runs and discard).
 
 ### 2.21 `docs: add the Pair Cloud install guide and update the cloud guide`
 

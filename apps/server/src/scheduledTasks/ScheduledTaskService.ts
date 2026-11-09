@@ -230,6 +230,8 @@ interface ScheduledTaskRow {
   readonly run_count: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
+  readonly discard_on_settle: number;
+  readonly last_run_thread_id: string | null;
 }
 
 interface WebhookDeliveryRow {
@@ -405,6 +407,8 @@ const decodeRow = Effect.fnUntraced(
       lastRunError: row.last_run_error,
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
+      ...(row.discard_on_settle === 1 ? { discardOnSettle: true } : {}),
+      ...(row.last_run_thread_id === null ? {} : { lastRunThreadId: row.last_run_thread_id }),
     });
   },
   (effect, row, _origin?) =>
@@ -527,7 +531,9 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        discard_on_settle,
+        last_run_thread_id
       FROM scheduled_tasks
       -- Not updated_at: toggles, runs and edits rewrite it, and clients render
       -- this order as-is, so rows would move under the pointer.
@@ -568,7 +574,9 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        discard_on_settle,
+        last_run_thread_id
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `.pipe(NodeSqliteClient.readOnly);
@@ -662,7 +670,8 @@ export const layer = Layer.effect(
           run_count,
           webhook_token,
           webhook_secret,
-          created_by_member_id
+          created_by_member_id,
+          discard_on_settle
         )
         SELECT
           ${task.id},
@@ -687,7 +696,8 @@ export const layer = Layer.effect(
           ${task.runCount},
           ${webhook.token},
           ${webhook.secret},
-          ${createdByMemberId}
+          ${createdByMemberId},
+          ${task.discardOnSettle === true ? 1 : 0}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -729,7 +739,8 @@ export const layer = Layer.effect(
           created_by_member_id = COALESCE(
             scheduled_tasks.created_by_member_id,
             excluded.created_by_member_id
-          )
+          ),
+          discard_on_settle = excluded.discard_on_settle
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -781,6 +792,7 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly threadId: ThreadId | null;
     }) =>
       sql`
         UPDATE scheduled_tasks
@@ -788,6 +800,7 @@ export const layer = Layer.effect(
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
+            last_run_thread_id = ${input.threadId},
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -986,6 +999,8 @@ export const layer = Layer.effect(
                       createdBy: active.createdBy,
                       creationSource: active.creationSource,
                       ...(ownerId === null ? {} : { ownerId }),
+                      cloudPlacement: true,
+                      ...(active.discardOnSettle === true ? { discardOnSettle: true } : {}),
                     }),
                   ),
                   Effect.map((launched) => launched.threadId),
@@ -1013,8 +1028,9 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          const { lastRunThreadId: _previousThreadId, ...sourceFields } = scheduleSource;
           const completed: ScheduledTask = {
-            ...scheduleSource,
+            ...sourceFields,
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
@@ -1024,6 +1040,7 @@ export const layer = Layer.effect(
             ),
             lastRunStatus,
             lastRunError,
+            ...(threadId === null ? {} : { lastRunThreadId: threadId }),
             runCount: scheduleSource.runCount + 1,
           };
           if (current === null) return { recorded: completed, written: false };
@@ -1037,6 +1054,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            threadId,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
@@ -1388,6 +1406,9 @@ export const layer = Layer.effect(
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
+        ...((input.discardOnSettle ?? existingTask?.discardOnSettle) === true
+          ? { discardOnSettle: true }
+          : {}),
       };
       yield* saveTask(
         task,

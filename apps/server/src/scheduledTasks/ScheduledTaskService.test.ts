@@ -622,3 +622,63 @@ it.effect("a run interrupted right after it reserves the task does not block the
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("a cloud task's run launches with discardOnSettle and records its thread", () =>
+  Effect.gen(function* () {
+    const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchInput>>([]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.update(launches, (all) => [...all, input]).pipe(
+                Effect.as({ threadId: ThreadId.make("thread:cloud-run"), resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = {
+        id: ScheduledTaskId.make("task:cloud"),
+        title: "Nightly",
+        prompt: "Run the suite",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      } as const;
+      const { task } = yield* service.upsert({ ...input, discardOnSettle: true });
+      assert.equal(task.discardOnSettle, true);
+      // A client that predates the field re-saves without it and keeps the stored value.
+      const resaved = yield* service.upsert(input);
+      assert.equal(resaved.task.discardOnSettle, true);
+
+      yield* service.runNow({ id: task.id });
+      const [launch] = yield* Ref.get(launches);
+      assert.equal(launch?.cloudPlacement, true);
+      assert.equal(launch?.discardOnSettle, true);
+      // The stored strategy stays local; the launch places each run.
+      assert.deepEqual(launch?.workspaceStrategy, { type: "worktree", baseRef: "main" });
+      const [stored] = (yield* service.list()).tasks;
+      assert.equal(stored?.lastRunStatus, "succeeded");
+      assert.equal(stored?.lastRunThreadId, ThreadId.make("thread:cloud-run"));
+
+      const cleared = yield* service.upsert({ ...input, discardOnSettle: false });
+      assert.isUndefined(cleared.task.discardOnSettle);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

@@ -328,6 +328,7 @@ const makeSnapshotFakes = Effect.fn("SandboxLifecycleTest.makeSnapshotFakes")(fu
 ) {
   const captures = yield* Ref.make<ReadonlyArray<readonly [string, CheckpointRef]>>([]);
   const synced = yield* Ref.make<ReadonlyArray<CheckpointRef>>([]);
+  const flushes = yield* Ref.make<ReadonlyArray<SandboxId>>([]);
   const layer = Layer.mergeAll(
     Layer.mock(CheckpointService.CheckpointServiceV2)({
       captureSnapshot: ({ cwd, ref }) =>
@@ -336,12 +337,12 @@ const makeSnapshotFakes = Effect.fn("SandboxLifecycleTest.makeSnapshotFakes")(fu
         ),
     }),
     Layer.mock(MirrorSyncWorker.MirrorSyncWorker)({
-      flush: () => Effect.void,
+      flush: (sandboxId) => Ref.update(flushes, (all) => [...all, sandboxId]),
       syncRefs: ({ checkpointRefs }) =>
         Ref.update(synced, (all) => [...all, ...checkpointRefs]).pipe(Effect.as(true)),
     }),
   );
-  return { captures, synced, layer };
+  return { captures, synced, flushes, layer };
 });
 
 const setWorktree = (threadId: ThreadId, worktreePath: string) =>
@@ -379,6 +380,7 @@ const runAnswering = (
 const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
   key: string,
   beforeProvision: Effect.Effect<void> = Effect.void,
+  discardOnSettle = false,
 ) {
   const threadId = ThreadId.make(`thread:${key}`);
   const sandboxId = SandboxId.make(
@@ -410,6 +412,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
     projectId: ProjectId.make("project:sandbox-lifecycle"),
     driverId: ComputeDriverId.make("docker"),
     size: "default",
+    ...(discardOnSettle ? { discardOnSettle: true } : {}),
   });
   return { threadId, sandboxId };
 });
@@ -1460,6 +1463,40 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       yield* sweep();
       assert.deepInclude(yield* getSandbox(sandboxId), { state: "sleeping", sleepReason: "idle" });
       yield* runAnswering(runtime, answerStop);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("discards a scheduled run's machine once it settles, after the mirror flush", () =>
+    Effect.gen(function* () {
+      const snapshots = yield* makeSnapshotFakes();
+      const runtime = yield* makeSandboxRuntime(undefined, snapshots.layer);
+      const { threadId, sandboxId } = yield* provisioned("discard-settle", Effect.void, true);
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+
+      yield* dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("settle:discard"),
+        threadId,
+      });
+      yield* sweep();
+      assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
+      yield* runAnswering(runtime, (call) =>
+        call._tag === "destroy"
+          ? Ref.get(snapshots.flushes).pipe(
+              Effect.flatMap((flushed) => {
+                assert.deepEqual(flushed, [sandboxId]);
+                return Deferred.succeed(call.reply, undefined);
+              }),
+            )
+          : Effect.die(call._tag),
+      );
+      // A discard is not a sleep: nothing was snapshotted or stopped.
+      assert.deepEqual(yield* Ref.get(snapshots.captures), []);
+      assert.equal((yield* getSandbox(sandboxId))?.state, "destroyed");
     }).pipe(Effect.scoped),
   );
 

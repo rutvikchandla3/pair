@@ -70,6 +70,7 @@ describe("V2 preview upgrade", () => {
         [88, "SandboxProjections"],
         [89, "SandboxRunnerGrants"],
         [90, "MemberGitHubSource"],
+        [91, "ScheduledTaskCloudRuns"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -183,6 +184,7 @@ describe("V2 preview upgrade", () => {
         [88, "SandboxProjections"],
         [89, "SandboxRunnerGrants"],
         [90, "MemberGitHubSource"],
+        [91, "ScheduledTaskCloudRuns"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

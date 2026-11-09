@@ -12,6 +12,7 @@ import type {
   ProjectId,
   ScheduledTask,
   ScheduledTaskUpsertInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -54,10 +55,12 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { sandboxWaitingLabel } from "@t3tools/client-runtime/state/sandbox";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
-import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
+import { useEnvironmentServerConfig, useProjects, useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -719,6 +722,8 @@ function TaskForm({
     }
   };
 
+  const cloudLaunch = config?.environment.capabilities.cloudLaunch === true;
+  const workspace = cloudLaunch ? "worktree" : draft.workspace;
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
@@ -774,7 +779,7 @@ function TaskForm({
       !draft.projectId ||
       !draft.modelSelection ||
       !schedule ||
-      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
+      (workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
         "Incomplete task",
@@ -796,9 +801,9 @@ function TaskForm({
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
       workspaceStrategy:
-        draft.workspace === "root"
+        workspace === "root"
           ? { type: "root" }
-          : draft.workspace === "existing_worktree"
+          : workspace === "existing_worktree"
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
             : {
                 type: "worktree",
@@ -810,6 +815,7 @@ function TaskForm({
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
+      ...(cloudLaunch ? { discardOnSettle: draft.discardOnSettle } : {}),
     };
     submissionPending.current = true;
     setSaving(true);
@@ -933,38 +939,47 @@ function TaskForm({
         </SettingsSection>
 
         <SettingsSection title="Workspace">
-          <SelectRow
-            label="Run in"
-            value={
-              draft.workspace === "worktree"
-                ? "New worktree"
-                : draft.workspace === "root"
-                  ? "Project checkout"
-                  : "Specific checkout"
-            }
-            actions={[
-              {
-                id: "worktree",
-                title: "New worktree",
-                state: draft.workspace === "worktree" ? "on" : undefined,
-              },
-              {
-                id: "root",
-                title: "Project checkout",
-                state: draft.workspace === "root" ? "on" : undefined,
-              },
-              {
-                id: "existing_worktree",
-                title: "Specific checkout",
-                state: draft.workspace === "existing_worktree" ? "on" : undefined,
-              },
-            ]}
-            onSelect={(id) => {
-              if (id === "worktree" || id === "root" || id === "existing_worktree")
-                setDraft({ ...draft, workspace: id });
-            }}
-          />
-          {draft.workspace === "worktree" ? (
+          {cloudLaunch ? (
+            <View className="min-h-14 flex-row items-center gap-3 px-4 py-3">
+              <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                Run in
+              </Text>
+              <Text className="text-base text-foreground-muted">Cloud</Text>
+            </View>
+          ) : (
+            <SelectRow
+              label="Run in"
+              value={
+                draft.workspace === "worktree"
+                  ? "New worktree"
+                  : draft.workspace === "root"
+                    ? "Project checkout"
+                    : "Specific checkout"
+              }
+              actions={[
+                {
+                  id: "worktree",
+                  title: "New worktree",
+                  state: draft.workspace === "worktree" ? "on" : undefined,
+                },
+                {
+                  id: "root",
+                  title: "Project checkout",
+                  state: draft.workspace === "root" ? "on" : undefined,
+                },
+                {
+                  id: "existing_worktree",
+                  title: "Specific checkout",
+                  state: draft.workspace === "existing_worktree" ? "on" : undefined,
+                },
+              ]}
+              onSelect={(id) => {
+                if (id === "worktree" || id === "root" || id === "existing_worktree")
+                  setDraft({ ...draft, workspace: id });
+              }}
+            />
+          )}
+          {workspace === "worktree" ? (
             <PickerRow
               label="Base branch"
               value={resolveNewTaskBranchLabel({
@@ -977,7 +992,7 @@ function TaskForm({
               onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
             />
           ) : null}
-          {draft.workspace === "existing_worktree" ? (
+          {workspace === "existing_worktree" ? (
             <FormField
               label="Checkout path"
               disabled={saving}
@@ -990,6 +1005,23 @@ function TaskForm({
                 })
               }
             />
+          ) : null}
+          {cloudLaunch && !draft.task?.threadId ? (
+            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text textRole="body" className="text-foreground">
+                  Discard the machine when the run settles
+                </Text>
+                <Text className="text-sm text-foreground-muted">
+                  Each run starts its own machine. Its transcript and diffs stay.
+                </Text>
+              </View>
+              <ThemedSwitch
+                accessibilityLabel="Discard the machine when the run settles"
+                value={draft.discardOnSettle}
+                onValueChange={(discardOnSettle) => setDraft({ ...draft, discardOnSettle })}
+              />
+            </View>
           ) : null}
         </SettingsSection>
 
@@ -1377,6 +1409,22 @@ function WebhookScheduleDetails({
   );
 }
 
+function ScheduledTaskRunMachine({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const shell = useQuietThreadShell(scopeThreadRef(environmentId, threadId));
+  const label = sandboxWaitingLabel(shell?.source.sandbox);
+  return label === null ? null : (
+    <Text className="text-sm text-warning-foreground" numberOfLines={1}>
+      {label}
+    </Text>
+  );
+}
+
 function EnvironmentTasks({
   environment,
   now,
@@ -1481,6 +1529,12 @@ function EnvironmentTasks({
                 <Text className="text-sm text-foreground-muted" numberOfLines={2}>
                   {task.blockedByPolicy}
                 </Text>
+              ) : null}
+              {task.lastRunStatus === "succeeded" && task.lastRunThreadId ? (
+                <ScheduledTaskRunMachine
+                  environmentId={environmentId}
+                  threadId={task.lastRunThreadId}
+                />
               ) : null}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>

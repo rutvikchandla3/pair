@@ -225,7 +225,10 @@ export const idleDecision = (input: IdleInput): IdleDecision => {
     };
   }
   const readySinceMs = DateTime.toEpochMillis(input.record.updatedAt);
-  const settled = policy.sleepOnSettle ? decideAutoSleep(threads, readySinceMs) : null;
+  const settled =
+    policy.sleepOnSettle || input.record.discardOnSettle === true
+      ? decideAutoSleep(threads, readySinceMs)
+      : null;
   if (settled !== null) return sleep(settled);
 
   const next = activity.nextScheduledAt;
@@ -449,6 +452,7 @@ const decideProvision = (
       runnerLostAt: null,
       sleepReason: null,
       failure: null,
+      ...(command.discardOnSettle === true ? { discardOnSettle: true } : {}),
       createdAt: now,
       updatedAt: now,
     },
@@ -550,6 +554,10 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
       if (command.reason === "settled" || command.reason === "archived") {
         if (decideAutoSleep(input.attachedThreads, readySinceMs) !== command.reason) {
           return refuse("in-use");
+        }
+        // Destroy stops a running sandbox too, so no separate stop effect.
+        if (record.discardOnSettle === true) {
+          return update({ state: "destroyed" }, ["sandbox.destroy"]);
         }
       } else {
         // Used since the worker read it, so its idle clock restarted.

@@ -59,8 +59,9 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects, useThreadShell } from "../../state/entities";
+import { useProjects, useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { sandboxWaitingLabel } from "@t3tools/client-runtime/state/sandbox";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -153,6 +154,7 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "main",
   startFromOrigin: true,
   existingWorktreePath: "",
+  discardOnSettle: false,
   modelKey: "",
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -785,6 +787,12 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
+          {task.lastRunStatus === "succeeded" && task.lastRunThreadId !== undefined ? (
+            <ScheduledTaskRunMachine
+              environmentId={environmentId}
+              threadId={task.lastRunThreadId}
+            />
+          ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
         </div>
       }
@@ -1144,6 +1152,19 @@ function ScheduledTaskEditorDialog({
   );
 }
 
+/** A run counts as launched once its thread exists; its machine may still wait for a slot. */
+function ScheduledTaskRunMachine({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const shell = useQuietThreadShell(scopeThreadRef(environmentId, threadId));
+  const label = sandboxWaitingLabel(shell?.source.sandbox);
+  return label === null ? null : <Badge variant="warning">{label}</Badge>;
+}
+
 function ScheduledTaskDestination({
   environmentId,
   threadId,
@@ -1192,6 +1213,8 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  // A cloud-only server places every run in the cloud, from a worktree's base.
+  const cloudLaunch = environment?.serverConfig?.environment.capabilities.cloudLaunch === true;
   // Older servers reject one-time schedules, so offer Once only where it can save.
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
@@ -1225,6 +1248,8 @@ function ScheduledTaskEditorForm({
           projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
         },
   );
+  // The task stores a worktree; the server places each of its runs in the cloud.
+  const workspaceMode: WorkspaceMode = cloudLaunch ? "worktree" : draft.workspaceMode;
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
     .filter(
@@ -1331,7 +1356,7 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
+    if (workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
@@ -1342,9 +1367,9 @@ function ScheduledTaskEditorForm({
         ? draft.baseModelSelection
         : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
-      draft.workspaceMode === "root"
+      workspaceMode === "root"
         ? { type: "root" }
-        : draft.workspaceMode === "existing_worktree"
+        : workspaceMode === "existing_worktree"
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
           : {
               type: "worktree",
@@ -1367,6 +1392,7 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
+      ...(cloudLaunch ? { discardOnSettle: draft.discardOnSettle } : {}),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1518,26 +1544,32 @@ function ScheduledTaskEditorForm({
               </Select>
             </Field>
 
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+            {cloudLaunch ? (
+              <Field label="Workspace">
+                <p className="text-sm">Cloud</p>
+              </Field>
+            ) : (
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
+            )}
           </div>
 
-          {draft.workspaceMode === "worktree" ? (
+          {workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -1554,7 +1586,30 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
+          {cloudLaunch && !draft.threadId ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="scheduled-task-discard">
+                  Discard the machine when the run settles
+                </Label>
+                <p
+                  id="scheduled-task-discard-description"
+                  className="text-sm text-muted-foreground"
+                >
+                  Each run starts its own machine. Its transcript and diffs stay.
+                </p>
+              </div>
+              <Switch
+                id="scheduled-task-discard"
+                aria-describedby="scheduled-task-discard-description"
+                checked={draft.discardOnSettle}
+                onCheckedChange={(discardOnSettle) =>
+                  setDraft((current) => ({ ...current, discardOnSettle }))
+                }
+              />
+            </div>
+          ) : null}
+          {workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"

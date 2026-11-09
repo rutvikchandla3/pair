@@ -519,6 +519,8 @@ const make = Effect.gen(function* () {
       effect: Effect.Effect<void, ComputeDriverError>,
     ) => Effect.Effect<void, SandboxEffectError>,
   ) {
+    // The thread's reads outlive the disk, so its last diff goes to the mirror first.
+    if (Option.isSome(mirrorSync)) yield* mirrorSync.value.flush(record.id);
     if (record.driverRef !== null) yield* callIgnoringMissing(driver.destroy(record.driverRef));
     yield* revokeCredentials(record, "destroy");
     return yield* report(record, {

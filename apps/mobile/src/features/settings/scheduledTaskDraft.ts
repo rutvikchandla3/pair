@@ -209,6 +209,7 @@ export type ScheduledTaskDraft = {
   readonly checkoutPath: string;
   readonly enabled: boolean;
   readonly startFromOrigin: boolean;
+  readonly discardOnSettle: boolean;
   readonly runtimeMode: RuntimeMode;
 };
 
@@ -237,6 +238,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.checkoutPath,
     draft.enabled,
     draft.startFromOrigin,
+    draft.discardOnSettle,
     draft.runtimeMode,
   ]);
 }
@@ -265,6 +267,7 @@ export function createDraft(
     checkoutPath: "",
     enabled: true,
     startFromOrigin: true,
+    discardOnSettle: false,
     runtimeMode: "full-access",
   };
 }
@@ -289,6 +292,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
+    discardOnSettle: task.discardOnSettle === true,
     runtimeMode: task.runtimeMode,
   };
 }

@@ -284,6 +284,15 @@ export function terminalStoppedLabel(
 
 export const TERMINAL_ASLEEP_LABEL = "This machine is asleep";
 
+/** A scheduled run's thread whose new machine waits for a slot, as its task shows it; else null. */
+export function sandboxWaitingLabel(
+  summary: OrchestrationV2ThreadShellSandbox | undefined,
+): string | null {
+  return summary?.state === "provisioning" && summary.admission !== undefined
+    ? sandboxStatePresentation(summary, { hasActiveRun: false }).label
+    : null;
+}
+
 /** A cloud thread's machine as every surface shows it: one rule for its line, notice and menus. */
 export interface SandboxThreadMachine {
   readonly sandboxId: SandboxId;

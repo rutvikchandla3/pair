@@ -140,6 +140,12 @@ const rows: ReadonlyArray<Row> = [
       effects: ["sandbox.create"],
     },
   ],
+  [
+    "provision copies a scheduled run's discardOnSettle",
+    { ...provision, discardOnSettle: true },
+    null,
+    { next: { state: "provisioning", discardOnSettle: true }, effects: ["sandbox.create"] },
+  ],
   ["provision over a live record", provision, record(), "wrong-state"],
   [
     "provision at a full cap waits without a create",
@@ -377,6 +383,27 @@ const rows: ReadonlyArray<Row> = [
       effects: ["sandbox.stop"],
     },
     [attached(owner, { settled: true }), attached(fork, { archived: true })],
+  ],
+  [
+    "auto-sleep settled discards a discardOnSettle machine instead",
+    autoSleep(),
+    record({ discardOnSettle: true }),
+    { next: { state: "destroyed", sleepReason: null }, effects: ["sandbox.destroy"] },
+    [attached(owner, { settled: true })],
+  ],
+  [
+    "auto-sleep archived discards a discardOnSettle machine instead",
+    autoSleep("archived"),
+    record({ discardOnSettle: true }),
+    { next: { state: "destroyed" }, effects: ["sandbox.destroy"] },
+    [attached(owner, { archived: true })],
+  ],
+  [
+    "auto-sleep idle still sleeps a discardOnSettle machine",
+    autoSleep("idle"),
+    record({ discardOnSettle: true }),
+    { next: { state: "sleeping", sleepReason: "idle" }, effects: ["sandbox.stop"] },
+    [attached(owner)],
   ],
   [
     "auto-sleep once every thread is archived",
@@ -757,6 +784,15 @@ describe("idleDecision", () => {
         policy: { idleMs: minutes(60), sleepOnSettle: false },
       }),
       awake(60),
+    ],
+    [
+      "a discardOnSettle machine settles even on a driver without sleepOnSettle",
+      input(1, {
+        record: record({ discardOnSettle: true }),
+        threads: [thread({ settled: true, restingAt: readyAt })],
+        policy: { idleMs: minutes(60), sleepOnSettle: false },
+      }),
+      sleeps("settled"),
     ],
     [
       "terminal output inside the window keeps it awake",

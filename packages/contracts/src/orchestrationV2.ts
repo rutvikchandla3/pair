@@ -480,6 +480,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   baseImage: Schema.optionalKey(SandboxBaseImageInfo),
   /** When this sleep's working-tree snapshot reached the mirror; null until it does. */
   sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
+  /** A scheduled run's machine: its disk is destroyed instead of kept once its threads settle. */
+  discardOnSettle: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -3908,6 +3910,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     projectId: ProjectId,
     driverId: ComputeDriverId,
     size: SandboxSize,
+    discardOnSettle: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("sandbox.admit"), ...SandboxGenerationCommandFields }),
   Schema.Struct({

@@ -124,6 +124,10 @@ export interface ThreadLaunchInput {
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
+  /** A scheduled or webhook run: on a cloud-only server its workspace becomes a cloud checkout. */
+  readonly cloudPlacement?: true;
+  /** The cloud launch's machine is discarded once its threads settle. */
+  readonly discardOnSettle?: boolean;
 }
 
 type PreparationInput = Pick<ThreadLaunchInput, "commandId" | "projectId" | "initialMessage"> & {
@@ -321,6 +325,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly projectId: ProjectId;
     readonly placement: CloudPlacement;
+    readonly discardOnSettle: boolean;
   }) {
     yield* threads.dispatch({
       type: "sandbox.provision",
@@ -330,7 +335,41 @@ const make = Effect.gen(function* () {
       projectId: input.projectId,
       driverId: input.placement.driverId,
       size: input.placement.size,
+      ...(input.discardOnSettle ? { discardOnSettle: true } : {}),
     });
+  });
+
+  /**
+   * A task stores a local strategy; on a cloud-only server each run checks out from origin. A
+   * worktree keeps its base, and any other strategy starts from the project checkout's branch.
+   */
+  const placeInCloud = Effect.fn("ThreadLaunchService.placeInCloud")(function* (
+    request: ThreadLaunchInput,
+  ) {
+    const strategy = request.workspaceStrategy;
+    if (!cloudOnly || request.cloudPlacement !== true || strategy.type === "cloud") return request;
+    const baseRef =
+      strategy.type === "worktree"
+        ? strategy.baseRef.replace(/^origin\//, "")
+        : (strategy.branch ??
+          (yield* projects.getById(request.projectId).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeed(null),
+                onSome: (project) => git.currentBranch(project.workspaceRoot),
+              }),
+            ),
+            Effect.orElseSucceed(() => null),
+          )) ??
+          "main");
+    const workspaceStrategy: ThreadLaunchWorkspaceStrategy = {
+      type: "cloud",
+      baseRef,
+      ...(strategy.type === "worktree" && strategy.branch !== undefined
+        ? { branch: strategy.branch }
+        : {}),
+    };
+    return { ...request, workspaceStrategy };
   });
 
   const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
@@ -996,7 +1035,8 @@ const make = Effect.gen(function* () {
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
-    function* (request) {
+    function* (requested) {
+      const request = yield* placeInCloud(requested);
       if (cloudOnly && request.workspaceStrategy.type !== "cloud") {
         return yield* mapError(
           request,
@@ -1199,6 +1239,7 @@ const make = Effect.gen(function* () {
             threadId,
             projectId: input.projectId,
             placement: cloud,
+            discardOnSettle: input.discardOnSettle === true,
           }).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         }
         let runId: RunId | null = null;

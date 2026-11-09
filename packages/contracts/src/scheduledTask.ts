@@ -250,6 +250,10 @@ export const ScheduledTask = Schema.Struct({
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
+  /** On a cloud-only server, each run's own machine is discarded once its thread settles. */
+  discardOnSettle: Schema.optionalKey(Schema.Boolean),
+  /** The thread the last run started or sent to; a cloud run's machine state is read from it. */
+  lastRunThreadId: Schema.optionalKey(ThreadId),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -279,6 +283,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  /** Absent keeps the stored value, so a client that predates it does not reset it. */
+  discardOnSettle: Schema.optionalKey(Schema.Boolean),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 

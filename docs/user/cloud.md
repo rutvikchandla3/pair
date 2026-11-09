@@ -74,6 +74,11 @@ Scripts and agents start cloud threads too: see `--cloud` in
 Side chats and forks of a cloud thread run on the same machine. A fork of a teammate's cloud thread
 says so, because its agent can read that teammate's credentials there.
 
+On a Cloud server, scheduled and webhook tasks that start a new thread run in Cloud too, from the
+task's base branch on `origin`. Turn on **Discard the machine when the run settles** in the task to
+give each run a machine that is deleted once the run settles; the transcript and diffs stay. A run
+that cannot get a machine fails with the reason in the task list, and never runs on the server.
+
 ## What the status means
 
 The thread header, the sidebar row and the status line above the composer show the machine's

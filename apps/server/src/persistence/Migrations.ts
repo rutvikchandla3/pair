@@ -94,6 +94,7 @@ import Migration0087 from "./Migrations/087_MemberPushDevices.ts";
 import Migration0088 from "./Migrations/088_SandboxProjections.ts";
 import Migration0089 from "./Migrations/089_SandboxRunnerGrants.ts";
 import Migration0090 from "./Migrations/090_MemberGitHubSource.ts";
+import Migration0091 from "./Migrations/091_ScheduledTaskCloudRuns.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -187,6 +188,7 @@ const migrationEntries = [
   [88, "SandboxProjections", Migration0088],
   [89, "SandboxRunnerGrants", Migration0089],
   [90, "MemberGitHubSource", Migration0090],
+  [91, "ScheduledTaskCloudRuns", Migration0091],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
