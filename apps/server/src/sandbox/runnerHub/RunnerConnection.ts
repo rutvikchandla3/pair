@@ -11,6 +11,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Queue from "effect/Queue";
@@ -132,6 +133,35 @@ const markFirstByte = (handle: RunnerHandleId, stream: RunnerOutputKey) =>
     Effect.ignore,
   );
 
+/** One sandbox's output allowance, shared by every output stream of its connection. */
+interface IngressBudget {
+  /** Waits on `Clock` while the bucket is overdrawn, so the stream's next pull waits too. */
+  readonly take: (bytes: number) => Effect.Effect<void>;
+}
+
+/**
+ * A token bucket that refills at `bytesPerSecond` and holds a sixteenth of a second of burst. A
+ * take may overdraw it and waits out its own debt, so a chunk larger than the burst still passes.
+ */
+const makeIngressBudget = (bytesPerSecond: number): IngressBudget => {
+  if (bytesPerSecond === Number.POSITIVE_INFINITY) return { take: () => Effect.void };
+  const burst = bytesPerSecond / 16;
+  let tokens = burst;
+  let refilledAt: bigint | undefined;
+  return {
+    take: (bytes) =>
+      Effect.clockWith((clock) => {
+        const now = clock.monotonicTimeNanosUnsafe();
+        const elapsedSeconds = refilledAt === undefined ? 0 : Number(now - refilledAt) / 1e9;
+        refilledAt = now;
+        tokens = Math.min(burst, tokens + elapsedSeconds * bytesPerSecond) - bytes;
+        return tokens >= 0
+          ? Effect.void
+          : Effect.sleep(Duration.millis(Math.ceil((-tokens * 1000) / bytesPerSecond)));
+      }),
+  };
+};
+
 const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number): A =>
   (typeof data === "string" ? data.slice(offset) : data.subarray(offset)) as A;
 
@@ -198,7 +228,10 @@ export const makeRunnerConnection = (
     readonly scope: Scope.Scope;
     readonly ended: Effect.Effect<void>;
   },
+  ingressBytesPerSecond: number,
 ): RunnerConnection => {
+  const ingress = makeIngressBudget(ingressBytesPerSecond);
+
   /** Runs `call` on the live client, again on the next socket after a transport failure. */
   const onLiveClient = <A, E>(
     call: (client: RunnerClient) => Effect.Effect<A, E | RpcClientError>,
@@ -255,9 +288,11 @@ export const makeRunnerConnection = (
                   // A resubscribe can repeat what the dropped socket already delivered.
                   const data = sliceFrom(chunk.data, next - chunk.seq);
                   next = Math.max(next, chunk.seq + chunk.data.length);
-                  if (firstByte || data.length === 0) return Effect.succeed(data);
+                  if (data.length === 0) return Effect.succeed(data);
+                  const taken = ingress.take(data.length).pipe(Effect.as(data));
+                  if (firstByte) return taken;
                   firstByte = true;
-                  return markFirstByte(handle, stream).pipe(Effect.as(data));
+                  return markFirstByte(handle, stream).pipe(Effect.andThen(taken));
                 }),
                 Stream.filter((data) => data.length > 0),
                 Stream.catchCause((cause) =>

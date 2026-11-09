@@ -41,8 +41,11 @@ const limitsWith = (overrides: Partial<RunnerLimits> = {}): RunnerLimits => ({
   ...overrides,
 });
 
-const layerFor = (limits: RunnerLimits) =>
-  RunnerHub.layerWith({ limits }).pipe(
+const layerFor = (
+  limits: RunnerLimits,
+  ingressBytesPerSecond = RunnerHub.DEFAULT_INGRESS_BYTES_PER_SECOND,
+) =>
+  RunnerHub.layerWith({ limits, ingressBytesPerSecond }).pipe(
     Layer.provideMerge(WorkspaceHostTesting.layerFromContext),
     Layer.provideMerge(RunnerGrants.layer),
     Layer.provide(SqlitePersistence.layerMemory),
@@ -52,9 +55,9 @@ const layerFor = (limits: RunnerLimits) =>
 type Services = Layer.Success<ReturnType<typeof layerFor>> | Scope.Scope;
 
 const run =
-  (limits: RunnerLimits = limitsWith()) =>
+  (limits: RunnerLimits = limitsWith(), ingressBytesPerSecond?: number) =>
   <A, E>(effect: Effect.Effect<A, E, Services>) =>
-    effect.pipe(Effect.scoped, Effect.provide(layerFor(limits)));
+    effect.pipe(Effect.scoped, Effect.provide(layerFor(limits, ingressBytesPerSecond)));
 
 const shell = (script: string, extra: Partial<RunnerProcessSpawnInput> = {}) =>
   ({
@@ -232,7 +235,11 @@ it.effect("a drop during hello neither attaches nor loses the boot", () =>
 );
 
 it.effect("a stalled reader pauses the source at its buffer limit and resumes it", () =>
-  run(limitsWith({ handleBufferBytes: 64 * KiB }))(
+  // `yes` outruns any ingress budget on a clock that never moves.
+  run(
+    limitsWith({ handleBufferBytes: 64 * KiB }),
+    Number.POSITIVE_INFINITY,
+  )(
     Effect.gen(function* () {
       const { runner, first, connection } = yield* boot();
       const { handle } = yield* spawn(connection, shell("exec yes", { stdin: "ignore" }));
@@ -266,6 +273,51 @@ it.effect("the sandbox cap pauses every source at once", () =>
       yield* spawn(connection, shell("exec yes", { stdin: "ignore" }));
       yield* awaitPressure(runner.table, (pressure) => pressure.pausedHandles === 2);
       assert.isAtLeast((yield* runner.table.stats).bufferedBytes, 64 * KiB);
+    }),
+  ),
+);
+
+it.effect("a sandbox past its ingress budget waits, and another sandbox's output still flows", () =>
+  // 64 KiB/s holds a 4 KiB burst.
+  run(
+    limitsWith({ handleBufferBytes: 64 * KiB }),
+    64 * KiB,
+  )(
+    Effect.gen(function* () {
+      const hub = yield* RunnerHub.RunnerHub;
+      const attach = Effect.fnUntraced(function* (sandboxId: SandboxId) {
+        const runner = yield* RunnerHubTesting.makeRunner(yield* hub.mintEnrollment(sandboxId, 1));
+        yield* runner.connect();
+        return { runner, connection: yield* hub.connection(sandboxId) };
+      });
+      const a = yield* attach(sandbox);
+      const b = yield* attach(SandboxId.make("sbx_000000000000000000e9"));
+
+      // Endless, so A's source fills past the chunks the hub's client queues before it acks.
+      const { handle: hog } = yield* spawn(a.connection, shell("exec yes", { stdin: "ignore" }));
+      const arrived = yield* Queue.unbounded<number>();
+      let delivered = 0;
+      yield* a.connection.output(hog, "fd:1").pipe(
+        Stream.runForEach((chunk) => {
+          delivered += chunk.length;
+          return Queue.offer(arrived, chunk.length);
+        }),
+        Effect.forkChild,
+      );
+      const { handle: quiet } = yield* spawn(
+        b.connection,
+        shell(`head -c ${KiB} /dev/zero`, { stdin: "ignore" }),
+      );
+      assert.equal((yield* readText(b.connection, quiet)).length, KiB);
+      assert.isAtMost(delivered, 4 * KiB);
+
+      // The hub stopped pulling, so the runner pauses A's source at its own buffer limit.
+      yield* awaitPressure(a.runner.table, (pressure) => pressure.pausedHandles === 1);
+      assert.isTrue(Option.isNone(yield* Queue.poll(arrived)));
+      yield* TestClock.adjust("1 second");
+      assert.isAbove(yield* Queue.take(arrived), 0);
+      // What `t3_runner_source_paused_ms_total` counts from the runner's pressure reports.
+      assert.isAtLeast((yield* a.runner.table.stats).pausedMsTotal, 1000);
     }),
   ),
 );

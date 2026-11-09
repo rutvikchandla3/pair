@@ -582,13 +582,13 @@ as today and swaps only the endpoint for the `mcp` forward address.
 
 Budgets, measured from bytes leaving the child to bytes entering the adapter or terminal manager:
 
-| Path                                      | Docker, same machine         | Across a network, RTT r                    | Measured, Docker (M1)              |
-| ----------------------------------------- | ---------------------------- | ------------------------------------------ | ---------------------------------- |
-| Provider stdout, added latency p50 / p99  | 1 ms / 5 ms                  | r/2 + 2 ms / r/2 + 10 ms                   | Within budget                      |
-| Keystroke to echo in the terminal manager | 2 ms                         | r + 3 ms                                   | Within budget                      |
-| PTY throughput (`cat` of a large file)    | 50 MB/s                      | Link speed, window permitting: 256 KiB / r | 41 MB/s                            |
-| Server CPU per MB of runner output        | Under 5 ms (compression off) | Under 15 ms (compression on)               | 25 ms; the local baseline, 17.6 ms |
-| Server memory per sandbox                 | Under 8 MiB steady           | Same                                       | Within budget                      |
+| Path                                           | Docker, same machine                          | Across a network, RTT r                    | Measured, Docker (M1)              | Measured, Docker (M2) |
+| ---------------------------------------------- | --------------------------------------------- | ------------------------------------------ | ---------------------------------- | --------------------- |
+| Provider stdout, added latency p50 / p99       | 1 ms / 5 ms                                   | r/2 + 2 ms / r/2 + 10 ms                   | Within budget                      | G2 step 12            |
+| Keystroke to echo in the terminal manager      | 2 ms                                          | r + 3 ms                                   | Within budget                      | G2 step 12            |
+| PTY throughput (`cat` of a large file)         | 50 MB/s, up to the per-sandbox ingress budget | Link speed, window permitting: 256 KiB / r | 41 MB/s                            | G2 step 12            |
+| Server CPU per MB of runner output, over local | Under 5 ms (compression off)                  | Under 15 ms (compression on)               | 25 ms; the local baseline, 17.6 ms | G2 step 12            |
+| Server memory per sandbox                      | Under 8 MiB steady                            | Same                                       | Within budget                      | G2 step 12            |
 
 Measure with spans for `runner.hello`, spawn and first byte; metrics in
 [Metrics.ts](../../../apps/server/src/observability/Metrics.ts) for bytes by channel and direction,
@@ -598,15 +598,30 @@ for runner startup; and `vp run bench:runner` (not in CI,
 over loopback and in Docker and compares both with `LocalWorkspaceHost`
 ([performance regressions](../../internals/performance-regressions.md#runner)).
 
-The last column is M1's integrated pass on an idle 8-CPU VM. Two misses stay open. The CPU budget is
-below what the local baseline spends on its own, so as written it can't pass; restate it as
-overhead over local. The throughput gap is in the hub.
+The M1 column is M1's integrated pass on an idle 8-CPU VM; G2 step 12 fills the M2 column on the
+same VM, since a shared machine's numbers say little. CPU counts only what the hub adds over local
+work: the local baseline spends 17.6 ms per MB on its own PTY, so an absolute 5 ms could never pass.
+A machine's throughput stops at its ingress budget (below), so the PTY row reads 50 MB/s only when
+the budget is above that; at the default, `cat` reaches about 16 MB/s. `vp run bench:runner
+--ingress 0` measures the pipeline without the budget. Profiled that way, the hub's own per-frame
+work is negligible: about a third of the event loop's time is garbage collection after the copies
+in `ws`'s frame assembly and the binary decoder, then UTF-8 decoding of terminal text. The 256 KiB
+window is not the limit on loopback.
 
 **Capacity.** One Pair Cloud server carries the whole team's machines, so M2 states a target of 30
-concurrent machines per server and proves it with a load test before it ships: N runners over
-loopback, one saturating a PTY and one streaming a bundle at the same time. The hub gets
-per-sandbox byte budgets, so one machine's output can't starve the others. Framing stays on the
-server's event loop and moves to worker threads only if the load test fails.
+concurrent machines per server. The hub gives each sandbox an ingress budget, 16 MiB/s with a
+1 MiB burst (`DEFAULT_INGRESS_BYTES_PER_SECOND` in
+[RunnerHub.ts](../../../apps/server/src/sandbox/runnerHub/RunnerHub.ts)), shared by every output
+stream of its connection. Past it the hub stops pulling that sandbox's output, so its window acks
+wait and the runner pauses its sources at their buffer caps, where
+`t3_runner_source_paused_ms_total` counts the time. It is a fixed per-sandbox rate, not a fair
+share: the smallest model that stops one machine's output from taking the event loop from the rest.
+`vp run bench:runner --load` proves the target: 30 loopback runners, one `cat`ing a large file in a
+PTY and one downloading the runner bundle back to back, while 28 print a stamped line every 50 ms.
+It passes when those 28 runners' p95 latency rises at most `max(1 ms, 10%)` over an all-quiet
+baseline from the same run, and memory per sandbox stays under 8 MiB. The result is G2 step 12's.
+Framing stays on the server's event loop and moves to worker threads only if the load test fails
+with the budget in place.
 
 Runner traffic stays off the client wire. Clients never subscribe to runner streams. Adapters
 consume provider stdio and emit the same normalized events as today. Terminal output enters the

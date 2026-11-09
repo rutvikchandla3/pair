@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off - the benchmark needs hrtime, a plain HTTP server and a forced GC.
+// @effect-diagnostics nodeBuiltinImport:off - the benchmark needs hrtime, a plain HTTP server, a forced GC and loop delay.
 /**
  * Measures runner latency, throughput, memory and startup against 03 section 9 and 2.3, over a
- * local baseline, a `runner.mjs` subprocess and a sandbox-image container. Exits 1 when a Docker
- * figure misses its budget. Not CI: timings belong in a script, never in tests.
+ * local baseline, a `runner.mjs` subprocess and a sandbox-image container. `--load` adds 30
+ * loopback runners on one hub, with one hogging a PTY. Exits 1 when a Docker figure misses its
+ * budget or the load test fails. Not CI: timings belong in a script, never in tests.
  */
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
+import * as NodePerfHooks from "node:perf_hooks";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 
@@ -23,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
@@ -50,10 +53,19 @@ const BUDGET = {
   stdoutP50Ms: 1,
   stdoutP99Ms: 5,
   echoP50Ms: 2,
+  /** Per machine, up to the hub's per-sandbox ingress budget (03 section 9). */
   throughputMBps: 50,
-  cpuMsPerMB: 5,
+  /** Runner minus the local baseline: what the hub adds over local work (03 section 9). */
+  cpuOverheadMsPerMB: 5,
   memoryMiBPerSandbox: 8,
 } as const;
+
+/** The load test (03 section 9 "Capacity"): one hog, one bundle download, 28 quiet runners. */
+const LOAD_RUNNERS = 30;
+const LOAD_LINE_INTERVAL_MS = 50;
+const LOAD_PHASE_SECONDS = 20;
+/** Quiet p95 under load may rise at most this much over the all-quiet baseline. */
+const loadP95Limit = (baselineMs: number) => baselineMs + Math.max(1, baselineMs * 0.1);
 
 const MiB = 1024 * 1024;
 const MB = 1_000_000;
@@ -205,8 +217,26 @@ for (let i = 0; i < ${count}; i++) {
   fs.writeSync(1, (process.hrtime.bigint() + "").padEnd(63) + "\\n");
 }`;
 
-const stdoutLatency = Effect.fn("stdoutLatency")(function* (target: Target, lines: number) {
-  const output = yield* target.stdout(stampedLines(lines));
+/** A child that prints `count` stamped lines `intervalMs` apart, sleeping in between. */
+const pacedLines = (count: number, intervalMs: number) => `
+const fs = require("node:fs");
+const start = process.hrtime.bigint();
+let i = 0;
+const tick = () => {
+  fs.writeSync(1, (process.hrtime.bigint() + "").padEnd(63) + "\\n");
+  if (++i === ${count}) return;
+  const due = start + BigInt(i) * ${intervalMs * 1_000_000}n;
+  setTimeout(tick, Math.max(0, Number(due - process.hrtime.bigint()) / 1e6));
+};
+tick();`;
+
+/** Receipt minus child stamp of every line `source` prints, in nanoseconds. */
+const lineLatencies = Effect.fn("lineLatencies")(function* (
+  target: Target,
+  source: string,
+  lines: number,
+) {
+  const output = yield* target.stdout(source);
   const latencies: Array<number> = [];
   let pending = "";
   yield* output.pipe(
@@ -224,8 +254,11 @@ const stdoutLatency = Effect.fn("stdoutLatency")(function* (target: Target, line
   if (latencies.length !== lines) {
     return yield* Effect.die(new Error(`expected ${lines} lines, received ${latencies.length}`));
   }
-  return percentiles(latencies);
+  return latencies;
 }, Effect.scoped);
+
+const stdoutLatency = (target: Target, lines: number) =>
+  lineLatencies(target, stampedLines(lines), lines).pipe(Effect.map(percentiles));
 
 /** One byte at a time through `cat` in raw mode, each sent after the previous echo arrived. */
 const keystrokeEcho = Effect.fn("keystrokeEcho")(function* (target: Target, keystrokes: number) {
@@ -325,6 +358,11 @@ const docker = Effect.fn("docker")(
   Effect.orDie,
 );
 
+const nextSandbox = (harness: Harness) => {
+  const boot = harness.bootCounter.next++;
+  return { boot, sandboxId: SandboxId.make(`sbx_${boot.toString(16).padStart(20, "0")}`) };
+};
+
 /**
  * Starts one runner for a new sandbox and returns when `start` has returned, with a fiber that
  * resolves to the connection and the instant the hub answered its `runner.hello`.
@@ -337,8 +375,7 @@ const startRunner = Effect.fn("startRunner")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const boot = harness.bootCounter.next++;
-  const sandboxId = SandboxId.make(`sbx_${boot.toString(16).padStart(20, "0")}`);
+  const { boot, sandboxId } = nextSandbox(harness);
   const secret = Redacted.value(yield* harness.hub.mintEnrollment(sandboxId, 1).pipe(Effect.orDie));
   const url = `http://127.0.0.1:${harness.port}`;
   const arrived = yield* harness.hub.connection(sandboxId).pipe(
@@ -428,27 +465,46 @@ const startupFigure = Effect.fn("startupFigure")(function* (
   return toMs(percentile(times, 0.5));
 });
 
-/** Heap and RSS the server gains per attached idle runner, after a forced GC. */
-const memoryPerSandbox = Effect.fn("memoryPerSandbox")(function* (
+interface MemorySnapshot {
+  readonly heap: number;
+  readonly rss: number;
+}
+
+const settleMemory = Effect.sync((): MemorySnapshot => {
+  forceGc();
+  return { heap: process.memoryUsage().heapUsed, rss: process.memoryUsage().rss };
+});
+
+const perSandbox = (before: MemorySnapshot, after: MemorySnapshot, runners: number) => ({
+  heapMiB: (after.heap - before.heap) / runners / MiB,
+  rssMiB: (after.rss - before.rss) / runners / MiB,
+});
+
+/**
+ * Attaches `runners` idle runners for the caller's scope, with the heap and RSS the server gained
+ * per runner after a forced GC, and the snapshot from before them for later comparisons.
+ */
+const attachMeasured = Effect.fn("attachMeasured")(function* (
   harness: Harness,
   kind: RunnerKind,
   runners: number,
 ) {
-  const settle = Effect.sync(() => {
-    forceGc();
-    return { heap: process.memoryUsage().heapUsed, rss: process.memoryUsage().rss };
-  });
   // The first attach pays for lazily loaded code, which is not per-sandbox cost.
   yield* Effect.scoped(attachedRunner(harness, kind));
-  const before = yield* settle;
-  yield* Effect.forEach(Array.from({ length: runners }), () => attachedRunner(harness, kind));
+  const before = yield* settleMemory;
+  const connections = yield* Effect.forEach(Array.from({ length: runners }), () =>
+    attachedRunner(harness, kind),
+  );
   yield* Effect.sleep("2 seconds");
-  const after = yield* settle;
-  return {
-    heapMiB: (after.heap - before.heap) / runners / MiB,
-    rssMiB: (after.rss - before.rss) / runners / MiB,
-  };
-}, Effect.scoped);
+  return { connections, before, memory: perSandbox(before, yield* settleMemory, runners) };
+});
+
+/** Heap and RSS the server gains per attached idle runner, after a forced GC. */
+const memoryPerSandbox = (harness: Harness, kind: RunnerKind, runners: number) =>
+  attachMeasured(harness, kind, runners).pipe(
+    Effect.map(({ memory }) => memory),
+    Effect.scoped,
+  );
 
 interface Column {
   readonly startupMountedMs?: number;
@@ -457,6 +513,7 @@ interface Column {
   readonly stdoutP99Ms: number;
   readonly echoP50Ms: number;
   readonly throughputMBps: number;
+  /** Absolute for the local baseline, over it for the two runners. */
   readonly cpuMsPerMB: number;
   readonly heapMiB?: number;
   readonly rssMiB?: number;
@@ -515,7 +572,7 @@ interface Row {
   readonly digits?: number;
 }
 
-const ROWS: ReadonlyArray<Row> = [
+const rows = (throughputFloorMBps: number): ReadonlyArray<Row> => [
   {
     figure: "Startup, bundle mounted, p50 (ms)",
     pick: (c) => c.startupMountedMs,
@@ -551,15 +608,15 @@ const ROWS: ReadonlyArray<Row> = [
   {
     figure: "PTY throughput (MB/s)",
     pick: (c) => c.throughputMBps,
-    budget: `>= ${BUDGET.throughputMBps}`,
-    fails: (v) => v < BUDGET.throughputMBps,
+    budget: `>= ${throughputFloorMBps.toFixed(0)}`,
+    fails: (v) => v < throughputFloorMBps,
     digits: 0,
   },
   {
-    figure: "Server CPU per MB (ms)",
+    figure: "Server CPU per MB, over local (ms)",
     pick: (c) => c.cpuMsPerMB,
-    budget: `<= ${BUDGET.cpuMsPerMB}`,
-    fails: (v) => v > BUDGET.cpuMsPerMB,
+    budget: `<= ${BUDGET.cpuOverheadMsPerMB}`,
+    fails: (v) => v > BUDGET.cpuOverheadMsPerMB,
   },
   {
     figure: "Server heap per sandbox (MiB)",
@@ -575,23 +632,27 @@ const ROWS: ReadonlyArray<Row> = [
   },
 ];
 
-const withAddedLatency = (column: Column, local: Column): Column => ({
+const overLocal = (column: Column, local: Column): Column => ({
   ...column,
   stdoutP50Ms: Math.max(0, column.stdoutP50Ms - local.stdoutP50Ms),
   stdoutP99Ms: Math.max(0, column.stdoutP99Ms - local.stdoutP99Ms),
+  cpuMsPerMB: column.cpuMsPerMB - local.cpuMsPerMB,
 });
 
-const renderTable = (columns: {
-  readonly local: Column;
-  readonly loopback: Column;
-  readonly docker: Column | undefined;
-}) => {
+const renderTable = (
+  columns: {
+    readonly local: Column;
+    readonly loopback: Column;
+    readonly docker: Column | undefined;
+  },
+  throughputFloorMBps: number,
+) => {
   const failures: Array<string> = [];
   const lines = [
     "| Figure | Local | Loopback | Docker | Budget (Docker) | Pass |",
     "| --- | ---: | ---: | ---: | --- | :---: |",
   ];
-  for (const row of ROWS) {
+  for (const row of rows(throughputFloorMBps)) {
     const [local, loopback, docker] = [columns.local, columns.loopback, columns.docker].map(
       (column) => (column === undefined ? undefined : row.pick(column)),
     );
@@ -604,13 +665,201 @@ const renderTable = (columns: {
   return { table: lines.join("\n"), failures };
 };
 
+/** `cat` of `file` in a PTY over and over, counting what arrives, until the scope closes. */
+const ptyHog = Effect.fn("ptyHog")(function* (
+  target: Target,
+  file: string,
+  received: { bytes: number },
+) {
+  const pty = yield* target.pty(`while :; do cat ${file}; done`);
+  yield* pty.output.pipe(
+    Stream.runForEach((text) =>
+      Effect.sync(() => {
+        received.bytes += text.length;
+      }),
+    ),
+  );
+}, Effect.scoped);
+
+/** A child that downloads `url` back to back, printing each body's size. */
+const bundleDownloads = (url: string, authorization: string) => `
+const fs = require("node:fs");
+const headers = { authorization: ${JSON.stringify(authorization)} };
+(async () => {
+  for (;;) {
+    const response = await fetch(${JSON.stringify(url)}, { headers });
+    if (!response.ok) throw new Error("bundle download answered " + response.status);
+    fs.writeSync(1, (await response.arrayBuffer()).byteLength + "\\n");
+  }
+})();`;
+
+const downloadLoop = Effect.fn("downloadLoop")(function* (
+  target: Target,
+  url: string,
+  authorization: string,
+  received: { bytes: number },
+) {
+  const output = yield* target.stdout(bundleDownloads(url, authorization));
+  yield* output.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) =>
+      Effect.sync(() => {
+        received.bytes += Number(line);
+      }),
+    ),
+  );
+  return yield* Effect.die(new Error("the bundle download loop ended"));
+}, Effect.scoped);
+
+interface LoadPhase {
+  readonly p50Ms: number;
+  readonly p95Ms: number;
+  readonly loopDelayP99Ms: number;
+  readonly elu: number;
+  readonly cpuPercent: number;
+  /** MB/s of each counter passed in, over the measured window. */
+  readonly rates: ReadonlyArray<number>;
+}
+
+/**
+ * Stamped lines from every `quiet` target for `LOAD_PHASE_SECONDS`, while `background` runs, with
+ * the server process's event loop delay, utilization and CPU over the same window.
+ */
+const loadPhase = Effect.fn("loadPhase")(function* (
+  quiet: ReadonlyArray<Target>,
+  background: ReadonlyArray<Effect.Effect<void>>,
+  counters: ReadonlyArray<{ readonly bytes: number }> = [],
+) {
+  const lines = (LOAD_PHASE_SECONDS * 1000) / LOAD_LINE_INTERVAL_MS;
+  for (const effect of background) yield* Effect.forkScoped(effect);
+  const delay = NodePerfHooks.monitorEventLoopDelay({ resolution: 10 });
+  delay.enable();
+  const elu = NodePerfHooks.performance.eventLoopUtilization();
+  const cpu = process.cpuUsage();
+  const counted = counters.map((counter) => counter.bytes);
+  const startedAt = nowNs();
+  const samples = yield* Effect.forEach(
+    quiet,
+    (target) => lineLatencies(target, pacedLines(lines, LOAD_LINE_INTERVAL_MS), lines),
+    { concurrency: "unbounded" },
+  );
+  const seconds = Number(nowNs() - startedAt) / 1e9;
+  delay.disable();
+  const used = process.cpuUsage(cpu);
+  const latencies = samples.flat();
+  return {
+    p50Ms: toMs(percentile(latencies, 0.5)),
+    p95Ms: toMs(percentile(latencies, 0.95)),
+    loopDelayP99Ms: delay.percentile(99) / 1e6,
+    elu: NodePerfHooks.performance.eventLoopUtilization(elu).utilization,
+    cpuPercent: (used.user + used.system) / 1e4 / seconds,
+    rates: counters.map((counter, index) => (counter.bytes - counted[index]!) / MB / seconds),
+  } satisfies LoadPhase;
+}, Effect.scoped);
+
+/**
+ * 30 loopback runners on this hub. Baseline: all of them print a stamped line every 50 ms. Load:
+ * runner 1 `cat`s a large file in a PTY on a loop, runner 2 downloads the runner bundle back to
+ * back, and runners 3 to 30 keep printing. Both phases measure runners 3 to 30 only.
+ */
+const loadTest = Effect.fn("loadTest")(function* (harness: Harness, sizes: Sizes) {
+  yield* Console.error(`[load] attaching ${LOAD_RUNNERS} runners`);
+  const { connections, before, memory } = yield* attachMeasured(harness, "loopback", LOAD_RUNNERS);
+  const [hog, downloader, ...quiet] = connections.map((connection) =>
+    remoteTarget(connection, process.execPath),
+  );
+  if (hog === undefined || downloader === undefined)
+    return yield* Effect.die(new Error("too few runners"));
+  const lines = (LOAD_PHASE_SECONDS * 1000) / LOAD_LINE_INTERVAL_MS;
+  const paced = (target: Target) =>
+    lineLatencies(target, pacedLines(lines, LOAD_LINE_INTERVAL_MS), lines).pipe(Effect.asVoid);
+
+  yield* Console.error("[load] baseline: all quiet");
+  const baseline = yield* loadPhase(quiet, [paced(hog), paced(downloader)]);
+
+  const file = `/tmp/pair-bench-hog-${process.pid}.bin`;
+  yield* hog.exec(`yes ${"x".repeat(63)} | head -c ${sizes.fileMiB * MiB} > ${file}`);
+  yield* Effect.addFinalizer(() => hog.exec(`rm -f ${file}`));
+  // A sandbox that never boots: its unspent enrollment is a download credential.
+  const secret = yield* harness.hub.mintEnrollment(nextSandbox(harness).sandboxId, 1);
+  const url = `http://127.0.0.1:${harness.port}/runner/v1/bundle/${harness.bundle.runnerBuildId}.tar.gz`;
+  const hogBytes = { bytes: 0 };
+  const downloadBytes = { bytes: 0 };
+  yield* Console.error("[load] a PTY hog, a bundle download loop, and 28 quiet runners");
+  const load = yield* loadPhase(
+    quiet,
+    [
+      ptyHog(hog, file, hogBytes),
+      downloadLoop(downloader, url, `Enroll ${Redacted.value(secret)}`, downloadBytes),
+    ],
+    [hogBytes, downloadBytes],
+  );
+  return {
+    baseline,
+    load,
+    idleMemory: memory,
+    loadedMemory: perSandbox(before, yield* settleMemory, LOAD_RUNNERS),
+  };
+}, Effect.scoped);
+
+const renderLoadTable = (result: Effect.Success<ReturnType<typeof loadTest>>) => {
+  const { baseline, load, idleMemory, loadedMemory } = result;
+  const failures: Array<string> = [];
+  const lines = [
+    "| Figure | Baseline | Load | Limit | Pass |",
+    "| --- | ---: | ---: | --- | :---: |",
+  ];
+  const row = (
+    figure: string,
+    values: readonly [number | undefined, number | undefined],
+    limit?: { readonly text: string; readonly fails: (value: number) => boolean },
+    digits = 2,
+  ) => {
+    const failed =
+      limit !== undefined && values.some((value) => value !== undefined && limit.fails(value));
+    if (failed) failures.push(figure);
+    lines.push(
+      `| ${figure} | ${fmt(values[0], digits)} | ${fmt(values[1], digits)} | ${limit?.text ?? ""} | ${limit === undefined ? "" : failed ? "FAIL" : "pass"} |`,
+    );
+  };
+  const p95Limit = loadP95Limit(baseline.p95Ms);
+  const memoryLimit = {
+    text: `<= ${BUDGET.memoryMiBPerSandbox}`,
+    fails: (value: number) => value > BUDGET.memoryMiBPerSandbox,
+  };
+  row("Quiet stdout latency, p50 (ms)", [baseline.p50Ms, load.p50Ms]);
+  row("Quiet stdout latency, p95 (ms)", [baseline.p95Ms, load.p95Ms], {
+    text: `<= ${p95Limit.toFixed(2)}`,
+    fails: (value) => value > p95Limit,
+  });
+  row("Event loop delay, p99 (ms)", [baseline.loopDelayP99Ms, load.loopDelayP99Ms]);
+  row("Event loop utilization", [baseline.elu, load.elu]);
+  row("Server CPU (% of a core)", [baseline.cpuPercent, load.cpuPercent], undefined, 0);
+  row("Server heap per sandbox (MiB)", [idleMemory.heapMiB, loadedMemory.heapMiB], memoryLimit);
+  row("Server RSS per sandbox (MiB)", [idleMemory.rssMiB, loadedMemory.rssMiB], memoryLimit);
+  row("Hog PTY throughput (MB/s)", [undefined, load.rates[0]], undefined, 1);
+  row("Bundle downloads (MB/s)", [undefined, load.rates[1]], undefined, 1);
+  return { table: lines.join("\n"), failures };
+};
+
 const program = Effect.fn("runnerBenchmark")(
   function* (options: {
     readonly image: string;
     readonly skipDocker: boolean;
     readonly quick: boolean;
+    readonly load: boolean;
+    readonly runnerDir: Option.Option<string>;
+    readonly ingressMiBps: number;
   }) {
     const sizes = options.quick ? QUICK : FULL;
+    const ingressBytesPerSecond =
+      options.ingressMiBps === 0 ? Number.POSITIVE_INFINITY : options.ingressMiBps * MiB;
+    // A hog alone is capped too: a machine streams up to its ingress budget, short of 5% slack.
+    const throughputFloorMBps = Math.min(
+      BUDGET.throughputMBps,
+      (ingressBytesPerSecond / MB) * 0.95,
+    );
     const useDocker = !options.skipDocker && (yield* HostProcess.Platform) === "linux";
     const services = yield* Layer.build(
       HttpRouter.serve(RunnerRoute.layer, { disableListenLog: true, disableLogger: true }).pipe(
@@ -619,7 +868,7 @@ const program = Effect.fn("runnerBenchmark")(
         ),
         Layer.provideMerge(
           Layer.mergeAll(
-            RunnerHub.layer.pipe(
+            RunnerHub.layerWith({ ingressBytesPerSecond }).pipe(
               // A benchmark registers nothing anywhere a server would route to.
               Layer.provide(WorkspaceHosts.layer.pipe(Layer.provide(NodePtyAdapter.layer))),
               Layer.provideMerge(RunnerGrants.layer),
@@ -627,7 +876,11 @@ const program = Effect.fn("runnerBenchmark")(
               Layer.provide(NodeCrypto.layer),
             ),
             // A source build packs a dev bundle once; the temp state dir goes with the run.
-            RunnerBundle.layer.pipe(
+            // `--runner-dir` serves a release's own tree instead.
+            Option.match(options.runnerDir, {
+              onNone: () => RunnerBundle.layer,
+              onSome: RunnerBundle.layerFromTree,
+            }).pipe(
               Layer.provide(
                 ServerConfig.layerTest(process.cwd(), { prefix: "t3-runner-benchmark-" }),
               ),
@@ -654,27 +907,44 @@ const program = Effect.fn("runnerBenchmark")(
       Effect.flatMap((target) => runCases(target, sizes)),
       Effect.provide(NodePtyAdapter.layer),
     );
-    const loopback = withAddedLatency(
-      yield* runnerColumn(harness, "loopback", sizes, false),
-      local,
-    );
+    const loopback = overLocal(yield* runnerColumn(harness, "loopback", sizes, false), local);
     const dockerColumn = useDocker
-      ? withAddedLatency(yield* runnerColumn(harness, "docker", sizes, true), local)
+      ? overLocal(yield* runnerColumn(harness, "docker", sizes, true), local)
       : undefined;
 
-    const { table, failures } = renderTable({ local, loopback, docker: dockerColumn });
+    const { table, failures } = renderTable(
+      { local, loopback, docker: dockerColumn },
+      throughputFloorMBps,
+    );
     yield* Console.log(
       [
         table,
         "",
         `Runner build ${harness.bundle.runnerBuildId.slice(0, 12)}, ${NodeOS.cpus().length} CPUs, ` +
-          `image ${useDocker ? options.image : "not run"}${options.quick ? ", QUICK sizes (not comparable)" : ""}.`,
-        "Stdout latency is receipt minus child stamp, minus the local baseline (local itself is absolute).",
+          `image ${useDocker ? options.image : "not run"}${options.quick ? ", QUICK sizes (not comparable)" : ""}, ` +
+          `ingress budget ${options.ingressMiBps === 0 ? "off" : `${options.ingressMiBps} MiB/s per sandbox`}.`,
+        "Stdout latency and CPU per MB are the runner's minus the local baseline (local itself is absolute).",
       ].join("\n"),
     );
     if (failures.length > 0) {
       yield* Console.error(`Over budget on Docker: ${failures.join("; ")}`);
       process.exitCode = 1;
+    }
+    if (options.load) {
+      const loaded = renderLoadTable(yield* loadTest(harness, sizes));
+      yield* Console.log(
+        [
+          "",
+          loaded.table,
+          "",
+          `Load test: ${LOAD_RUNNERS} loopback runners, a line every ${LOAD_LINE_INTERVAL_MS} ms for ${LOAD_PHASE_SECONDS} s.`,
+          "Latency is receipt minus child stamp over runners 3 to 30 in both phases. Memory: baseline is attached and idle, load is after the load phase.",
+        ].join("\n"),
+      );
+      if (loaded.failures.length > 0) {
+        yield* Console.error(`Load test failed: ${loaded.failures.join("; ")}`);
+        process.exitCode = 1;
+      }
     }
   },
   Effect.scoped,
@@ -694,6 +964,20 @@ const cli = Command.make(
     quick: Flag.Boolean("quick").pipe(
       Flag.withDefault(false),
       Flag.withDescription("Small sizes for a smoke run; the figures are not comparable."),
+    ),
+    load: Flag.Boolean("load").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription(
+        `After the table, load-test ${LOAD_RUNNERS} loopback runners with one hogging a PTY.`,
+      ),
+    ),
+    runnerDir: Flag.Directory("runner-dir", { mustExist: true }).pipe(
+      Flag.optional,
+      Flag.withDescription("Serve this runner tree (a release's runner/) instead of building one."),
+    ),
+    ingressMiBps: Flag.Finite("ingress").pipe(
+      Flag.withDefault(RunnerHub.DEFAULT_INGRESS_BYTES_PER_SECOND / MiB),
+      Flag.withDescription("The hub's per-sandbox ingress budget in MiB/s; 0 turns it off."),
     ),
   },
   program,

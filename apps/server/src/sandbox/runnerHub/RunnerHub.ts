@@ -70,6 +70,11 @@ const DEFAULT_LIMITS: RunnerLimits = {
   ptyBufferBytes: 1024 * 1024,
   sandboxBufferBytes: 64 * 1024 * 1024,
 };
+/**
+ * Runner output one sandbox may feed the hub, across all its streams, so one machine's output
+ * can't take the event loop from the rest (03 §9 "Capacity"). G2's 30-machine load test checks it.
+ */
+export const DEFAULT_INGRESS_BYTES_PER_SECOND = 16 * 1024 * 1024;
 /** The runner's own cap (runner/main.ts): a 256 KiB chunk plus its envelope. */
 const MAX_FRAME_BYTES = 256 * 1024 + 1024;
 const isRunnerLost = Schema.is(RunnerLostError);
@@ -211,7 +216,7 @@ const absent: SlotState = {
   lostReason: "lease-expired",
 };
 
-const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
+const make = Effect.fnUntraced(function* (limits: RunnerLimits, ingressBytesPerSecond: number) {
   const grants = yield* RunnerGrants;
   const hosts = yield* WorkspaceHosts;
   const random = yield* SecureRandom.SecureRandom;
@@ -369,7 +374,13 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
       Stream.runHead,
       Effect.asVoid,
     );
-    const connection = makeRunnerConnection(info, liveClient, ops, { scope, ended });
+    const connection = makeRunnerConnection(
+      info,
+      liveClient,
+      ops,
+      { scope, ended },
+      ingressBytesPerSecond,
+    );
     const host = yield* SandboxWorkspaceHost.make(
       slot.sandboxId,
       connection,
@@ -687,8 +698,19 @@ const make = Effect.fnUntraced(function* (limits: RunnerLimits) {
   });
 });
 
-/** `limits` reach the runner in `runner.hello`; tests pass tiny ones. */
-export const layerWith = (options: { readonly limits?: RunnerLimits } = {}) =>
-  Layer.effect(RunnerHub, make(options.limits ?? DEFAULT_LIMITS));
+/**
+ * `limits` reach the runner in `runner.hello`; tests pass tiny ones. `ingressBytesPerSecond` is
+ * per sandbox; `Infinity` turns the budget off.
+ */
+export const layerWith = (
+  options: { readonly limits?: RunnerLimits; readonly ingressBytesPerSecond?: number } = {},
+) =>
+  Layer.effect(
+    RunnerHub,
+    make(
+      options.limits ?? DEFAULT_LIMITS,
+      options.ingressBytesPerSecond ?? DEFAULT_INGRESS_BYTES_PER_SECOND,
+    ),
+  );
 
 export const layer = layerWith();

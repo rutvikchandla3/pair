@@ -147,7 +147,7 @@ updates views without commits, not Reanimated's `withRepeat`. The running-thread
 ## Runner
 
 ```bash
-vp run bench:runner [--image <ref>] [--skip-docker] [--quick]
+vp run bench:runner [--image <ref>] [--skip-docker] [--quick] [--load] [--ingress <MiB/s>] [--runner-dir <dir>]
 ```
 
 It serves the real `RunnerRoute` and `RunnerHub` on loopback and prints one table: a local baseline
@@ -158,8 +158,14 @@ on the same Linux machine. It exits 1 when a Docker figure misses its budget fro
 
 - Startup to the answered `runner.hello`, p50: 500 ms with the bundle mounted, 700 ms fetched.
 - Provider stdout added over the local baseline: p50 1 ms, p99 5 ms. Keystroke to echo p50: 2 ms.
-- PTY throughput at least 50 MB/s; server CPU at most 5 ms per MB of output.
+- PTY throughput at least 50 MB/s, or 95% of the per-sandbox ingress budget when that is lower
+  (`--ingress 0` turns the budget off); server CPU at most 5 ms per MB over the local baseline.
 - Server heap and RSS at most 8 MiB per attached idle sandbox.
+
+`--load` then load-tests 30 loopback runners on the same hub, one hogging a PTY and one downloading
+the bundle, and fails when the other 28 runners' p95 stdout latency rises more than `max(1 ms, 10%)`
+over their all-quiet baseline or memory per sandbox passes 8 MiB. `--runner-dir` serves a release's
+`runner/` tree instead of building one.
 
 Run it on an idle machine: the figures are CPU-bound, and other processes move them. `--image` must
 hold the current `pair-bootstrap.sh` (`vp run sandbox-image:build` refreshes `t3-sandbox:dev`); an
