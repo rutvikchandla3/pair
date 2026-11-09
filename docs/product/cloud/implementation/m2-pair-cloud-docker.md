@@ -5117,6 +5117,267 @@ the Claude instance.
 - Review guides on a cloud-only server still hit `confinedCwd`'s refusal (94–99) before any
   fallback.
 
+### 2.54 (new) `fix(server): a message whose machine stops says so`
+
+A message that has started on a machine that then disappears fails with the machine's own error
+instead of "Restore the folder at this path before retrying." This closes 23(b). Part 23(a) is 2.51
+commit 4 part a and needs no new code. This is its own row because it changes the provider-session
+path, not the lifecycle files that 2.51 edits.
+
+How 23 happens on `feat/pair`:
+
+1. `docker rm -f` drops the runner's socket.
+   - `startReconnecting` (RunnerHub 318) starts the 120 s lease (`LEASE` 65).
+   - The record stays `ready`, so `decideCloudPrompt` (SandboxDecisions 395) sends the prompt
+     (408–412).
+2. The turn's worktree check (ProviderTurnStartService 649–654) calls the machine. It waits in
+   `awaitClient` (RunnerHub 342) for the rest of the lease.
+3. `expire` (295) runs `endBoot` (281). That unregisters `/t3-sandbox/<id>`, which `newBoot`
+   registered (395). The check's `RunnerLostError` is then swallowed by
+   `Effect.orElseSucceed(() => true)` (653).
+4. `providerSessions.open` (809) reaches `ProviderSessionManager.open` (2165).
+   - It maps every `hosts.forPath` failure to `ProviderWorkspaceMissingError` (2172–2178), whose
+     text is `provider/Errors.ts` 52.
+   - The effect worker tries 5 times (EffectWorker 753, backoff 52). The last attempt settles the
+     run as "Provider session failed to open" (836–840).
+   - The message stays in the transcript, but nothing runs it.
+
+With 2.51 (commit 69341e48f on `wt/2.51`), the drop is checked after 5 s and a stopped, missing or
+failed backend reports lost. `reportStatus` revokes the hub (SandboxEffects 583), and the record
+fails with `SANDBOX_BACKEND_MISSING`. G2's message, sent about 25 s after the rm, therefore meets a
+`failed` machine with no disk. `decideCloudPrompt` defers it with a rebuild (453–465), so it waits
+in `preparing` and runs once the machine is back. What remains is a turn that is already in
+`provider-turn.start` when the boot ends. That is a send inside the 5 s settle and the status call,
+or a status call that errored, which leaves only the lease to end it.
+
+Pick: fail with the machine's text. Waiting in `preparing` would need a way back from `starting` to
+`preparing`, and none exists: every `prepared-run.*` command requires `preparing`, or a failed
+preparation (Orchestrator 10863). It would also race `releaseWaiters` (SandboxEffects 331), which
+may already have run for the failed record, so a re-parked run could wait forever. With 2.51 the
+window is seconds, so a new reverse transition is not worth it.
+
+- **Needs:** none to build. 2.51 is what makes the failure prompt. **Unblocks:** G2 step 8 re-run.
+- **Files:**
+  - `apps/server/src/orchestration-v2/ProviderSessionManager.ts`
+    - `ProviderSessionManagerV2Error` (153) adds `WorkspaceHostUnavailableError`
+      (`workspaceHost/WorkspaceHost.ts` 246). Import it as a value next to the type import (63).
+    - `open` (2165): drop the `Effect.mapError` on `hosts.forPath(cwd)` (2172–2178), so
+      `WorkspaceHostUnavailableError` passes through.
+    - The stat check (2179–2189) keeps `ProviderWorkspaceMissingError` for a folder that is really
+      gone.
+    - `forPath` fails only for an unregistered `/t3-sandbox/` path (WorkspaceHosts 52–67), so local
+      threads are unchanged.
+  - `apps/server/src/orchestration-v2/ProviderTurnStartService.ts` `start` (348), in the
+    session-open failure branch (829–841), after the `willRetry` return (835):
+
+    ```ts
+    if (failure._tag === "WorkspaceHostUnavailableError") {
+      const sandboxId = projection.thread.sandboxId;
+      const sandbox =
+        sandboxId === undefined
+          ? null
+          : yield * projectionStore.getSandbox(sandboxId).pipe(Effect.orElseSucceed(() => null));
+      yield *
+        settleStartFailure({
+          signal: "machine-unavailable",
+          title: "This message didn't run",
+          error: failure,
+          message:
+            sandbox?.state === "failed" && sandbox.failure !== null
+              ? sandbox.failure.message
+              : "The machine stopped. Send your message again.",
+        });
+      return;
+    }
+    ```
+
+    - `projectionStore` is at 167, `getSandbox` at ProjectionStore 610, and
+      `OrchestrationV2AppThread.sandboxId` at contracts `orchestrationV2.ts` 593.
+    - Retries stay. The roughly 1.5 s of backoff usually lets the record turn `failed` first,
+      because `reportStatus` revokes the hub just before it reports.
+- **Types and services:** `ProviderSessionManagerV2Error` gains `WorkspaceHostUnavailableError`.
+  No contracts change.
+- **Copy:**
+  - Where it shows:
+    - Web and desktop label the error row with the item title (`apps/web/src/session-logic.ts`
+      372).
+    - Mobile labels every error "Provider error" and shows the detail
+      (`apps/mobile/src/lib/threadActivity.ts` 616).
+  - Title: "Provider session failed to open" → "This message didn't run". This case only.
+  - Detail, old: "This thread's workspace folder no longer exists or is not a directory:
+    /t3-sandbox/…. Restore the folder at this path before retrying."
+  - Detail, new: the machine's failure. For example:
+    - "The machine and its disk are gone. Retry starts a new one." (SandboxEffects 561)
+    - "The machine stopped and its runner did not come back." (593)
+  - Detail, new, before the record has failed: "The machine stopped. Send your message again."
+- **Proposed gap answer(s).** The title, the fallback text and the signal name
+  `"machine-unavailable"` are **proposed**.
+
+**Tests.**
+
+- `apps/server/src/orchestration-v2/ProviderSessionManager.test.ts`: new `it.effect` after "rejects
+  a %s workspace before opening a provider session" (3841).
+  - Name: "fails with the machine's error when a sandbox workspace has no connected machine".
+  - cwd is `/t3-sandbox/sbx_00000000000000000123/worktrees/thread-a` with nothing registered. The
+    default `WorkspaceHostTesting.layerFromContext` is the real `WorkspaceHosts.make`.
+  - Asserts the error's `_tag` is `"WorkspaceHostUnavailableError"`, `openCount` is 0, and there
+    are no provider sessions.
+  - Fails on `feat/pair`, which returns `ProviderWorkspaceMissingError`. It is not a row of that
+    `.each` because the expected error differs.
+- `apps/server/src/orchestration-v2/ProviderTurnStartService.test.ts`:
+  - `makeLocalCommandHarness` (282) gains two options:
+    - `openError?: unknown`: `open` fails with this error as-is, unlike `openFailure`, which wraps
+      its error (833–845).
+    - `sandbox?: OrchestrationV2Sandbox`: sets `thread.sandboxId` and adds `getSandbox` to the
+      ProjectionStore mock (999).
+  - New case beside "terminalizes a starting run when its provider session cannot open" (1669):
+    "fails the run with its machine's failure when the machine is not connected". It uses two
+    harnesses, like "fails the run, or leaves it to retry, when attachments cannot be staged"
+    (1750).
+    - A `failed` record with the missing-disk failure gives the run `failed` and an error item
+      `{ title: "This message didn't run", failure: { message: "The machine and its disk are gone.
+      Retry starts a new one." } }`.
+    - A `ready` record gives the message "The machine stopped. Send your message again."
+  - Fails on `feat/pair`, which gives the title "Provider session failed to open" and the message
+    "This thread's machine is not connected."
+
+**Verify.**
+
+- `vp test run apps/server/src/orchestration-v2/ProviderSessionManager.test.ts
+  apps/server/src/orchestration-v2/ProviderTurnStartService.test.ts`
+- `vp run typecheck` for `apps/server`.
+- `vp run check:changed`.
+- The lead, on a cloud-only server with the Docker driver and 2.51:
+  - Send a Replay prompt and `docker rm -f` the container within 2 s.
+  - The thread shows "This message didn't run" with the machine's text within about 10 s.
+  - Sending again rebuilds the machine and runs the message.
+  - Capture the web error row before and after.
+
+**Reviewer checks.**
+
+- A local thread whose folder is missing still gets `ProviderWorkspaceMissingError`. Only an
+  unconnected `/t3-sandbox/` path changes.
+- Attempts that will retry still return the failure. Only the last attempt settles.
+- A failed record read never fails the settle (`orElseSucceed`).
+- No new command, event or state. The run fails like any other session-open failure.
+- Surfaces:
+  - Server only. Web and desktop show the new title; mobile shows the new detail.
+  - Contracts: none. Docs: none.
+  - Providers: all of them, since this runs before any adapter opens.
+
+### 2.55 (new) `fix(server): Claude on a rebuilt machine starts fresh with the thread so far`
+
+After a machine is rebuilt on a new disk, a Claude thread's next message runs in a new Claude
+session that carries a summary of the thread, instead of failing with "No conversation found with
+session ID". This closes 24. It is its own row because it is a provider-adapter fix, separate from
+lifecycle.
+
+One commit: `fix(server): Claude on a rebuilt Pair Cloud machine starts a new session with the
+thread so far` (24).
+
+How the orchestrator decides (ProviderTurnStartService):
+
+- A provider thread with no `nativeThreadRef` gets `ensureThread` and no handoff (1285).
+- Otherwise it calls `session.resumeThread` (1315).
+- If the resume fails with anything other than `ProviderAdapterThreadInUseError` (1379–1384):
+  - It logs "Recovering provider context in a fresh native session" (1386).
+  - It starts a new native thread (`forceNewNativeThread` 1406).
+  - It hands off runs 1 to n−1 as `full_thread_summary` (`prepareRecoveryHandoff` 1114).
+- That fallback is upstream and tested for the Claude driver ("starts a replacement native thread
+  as new after the resume fallback with %s attempts", `testkit/ProviderSwitch.integration.test.ts`
+  1230; also 1355).
+
+Nothing on the rebuild path clears the native ref or adds a handoff. Retry (SandboxDecisions 602),
+the no-disk Defer (`decideCloudPrompt` 453–465) and the re-armed run (`releaseWaiters` 349–356) all
+leave the provider thread as it was. So the no-disk Defer path does not get a handoff either. Both
+paths count on the resume failing, and the adapters differ:
+
+- **Codex** already fails. `thread/resume` errors for a thread its empty `CODEX_HOME` does not
+  have, and only an archived session is retried (`resumeNativeThread` 6850; "preserves
+  missing-thread errors", `CodexAdapterV2.test.ts` 3022). So the fallback runs. This is inferred
+  from the code; confirm it on the re-run.
+- **Claude** does not fail.
+  - `resumeThread` (11981) checks the transcript with `claudeTranscriptState` (11853).
+  - On a new disk the home has no `projects` folder, so `readDirectory` (11868) fails, and the
+    call site reads any failure as "missing" (11990–11993), which resumes.
+  - A clean scan that finds no transcript also returns "missing" (11896).
+  - The CLI then fails with "No conversation found with session ID".
+
+On a machine, Pair sets `CLAUDE_CONFIG_DIR` to the machine's own home (`openSession` 5193–5207). A
+clean scan that finds no transcript there means the session is not on this disk. The fix fails the
+resume in that case and lets the upstream fallback do the rest. Local hosts keep upstream's
+behavior, where a missing transcript is left to the CLI.
+
+An orchestrator fix was rejected: it would need new state (which disk a native session lives on)
+and writes to every attached thread on a rebuild. The adapter already knows about transcripts.
+
+- **Needs:** none. **Unblocks:** G2 step 8 re-run.
+- **Files:**
+  - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`
+    - `claudeTranscriptState` (11853):
+      - Treat a `NotFound` from `readDirectory(projectsDir)` (11868) as no entries. That is a home
+        that never ran Claude.
+      - Return `unreadable ? "missing" : found ? "empty" : "absent"` (replaces 11896).
+      - Other read errors still fail the scan, and the call site still reads them as "missing".
+    - `resumeThread` (11981), after the "empty" check (11994):
+      - When `transcript === "absent" && sessionHost.kind === "sandbox"`, fail with
+        `ProviderAdapterProtocolError({ driver: CLAUDE_PROVIDER, detail: \`Claude session
+        ${nativeThreadId} is not on this machine.\` })`.
+      - Add the comment `// A machine's home is Pair's, so no transcript there means a new disk.`
+      - The live-process check (11988) still skips the scan.
+  - `docs/user/cloud.md` (116–119): after "waking one rebuilds the machine from the server's copy
+    of its work.", add "The agent starts a new session there with a summary of the thread so far
+    ([handoffs](./portable-handoffs.md))." (**proposed**)
+- **Types and services:** none (`"absent"` is a local literal).
+- **Copy:**
+  - "Provider error: No conversation found with session ID: …" no longer shows. The thread shows
+    the upstream handoff item, and the message runs.
+  - The adapter's detail is log-only, because the fallback swallows it.
+  - Docs: the one sentence above.
+- **Proposed gap answer(s).** The `"absent"` state name and the docs sentence are **proposed**.
+
+**Tests.** `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts`, describe
+"ClaudeAdapterV2 in a sandbox" (1044):
+
+- Move the fake host out of "starts the CLI with its account's credential in env and writes
+  nothing" (1045; `sandboxHost` 1055) into a helper inside the describe.
+  - The helper takes a temp root and keeps the write recorder.
+  - Its `readDirectory`, `exists` and `stream` map `/t3-sandbox/…` to `<root>/t3-sandbox/…`.
+- New `it.effect.each`: "resumes a session only when its transcript is on the machine: $name".
+  - "a new disk": no file under the home. `resumeThread` fails with
+    `ProviderAdapterResumeThreadError`. This fails on `feat/pair`, which resumes.
+  - "a kept disk": write
+    `<root>/t3-sandbox/sbx_00000000000000000123/homes/claude_member-ada/projects/-workspace/native-thread-claude-sandbox.jsonl`
+    with one user line, as at 1624. `resumeThread` resumes with the same native id.
+- No orchestrator test: the step from a failed resume to a fresh session with a summary is already
+  covered by ProviderSwitch.integration.test.ts 1230.
+
+**Verify.**
+
+- `vp test run apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts`
+- `vp run typecheck` for `apps/server`.
+- `vp run check:changed`.
+- The lead runs G2 step 8 with one Claude thread on Haiku and one Codex thread on Luna:
+  `docker rm -f`, Retry, send.
+  - Both turns run.
+  - The server log shows "Recovering provider context in a fresh native session" with reason
+    `resume_failed`.
+  - The reply knows the earlier turns.
+
+**Reviewer checks.**
+
+- Local hosts are unchanged: the "native-thread-missing" assertion in "fails for a transcript
+  without messages so a fresh session replaces it" (1604, 1677) still resumes.
+- A machine with its transcript on disk still resumes, so there is no handoff on every turn.
+- A read error other than `NotFound` still resumes on both hosts, leaving it to the CLI as today.
+- The live-process check runs before the scan, so a session in the middle of a turn is never
+  failed.
+- Surfaces:
+  - Server (Claude adapter) and docs (one user sentence).
+  - Web, desktop, mobile and contracts: none.
+  - Providers: Codex and Replay (dev) unchanged. The other providers are refused on machines
+    (`ProviderCloudUnsupportedError`, `provider/Errors.ts` 18).
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
