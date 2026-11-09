@@ -26,21 +26,23 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (8 of 8, plus fix row 3.27), G3 running:** full specs in
+**M3 (8 of 8, plus fix rows 3.27–3.29), G3 passed on 2026-11-10 without its phone step:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
 (78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7) and 3.23
 (cea3b8942), 3.26 (13ab74753), 3.24 (63e12b0e3) and the eval fix 3.27 (529fd4920). Release
-`0.1.7-pair.4` (V4) is published as a prerelease. G3 is running by the spec's
-[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass) without its phone step: see
-[G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4).
+Releases `0.1.7-pair.4` (V4) and `0.1.7-pair.5` (V5, with 3.27–3.29) are published as
+prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
+[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass): see
+[G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
+5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (0 of 12), specs written 2026-11-10:** full specs in
+**M4 (3 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
-under that page's "What the code changed in 10 §2". M4's rows are built while G3 runs. They are
-integrated on the local branch `m4` (checkout `../pair-wt/m4`, pushed as `wip/m4`) and
-`feat/pair` fast-forwards to it once G3 passes: 4.11 (e8ad2d5c0) and 4.12 (86d84b583) are there,
-4.13 is in flight. `land.sh` and `mkwt.sh` take `BASE=m4` (and `LEAD=../pair-wt/m4`) for that.
+under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
+(52233856a) and 4.13 (109a0876b). Next: 4.14 (Docker builds, critical; its real-daemon tests
+need colima running), then waves 4–6 and the M4 integrated pass (G4 step 1) on a release with M4.
+`land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
 
@@ -364,7 +366,8 @@ Follow-ups from G2:
 
 ### G3 on real hardware (2026-11-10, Mac → `pair-cloud-pass`, release V4)
 
-In progress. Pair Cloud runs [v0.1.7-pair.4](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.4)
+**Passed for steps 1–4; step 5 (phone) set aside.** The two bugs it found are fixed in V5 and their
+steps re-ran there (below). Pair Cloud ran [v0.1.7-pair.4](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.4)
 (prerelease, tagged at `e231e566f`: every M3 row but 3.27). The Mac runs two worktrees at the tag,
 `../pair-wt/g3-a` (member A, seeded) and `../pair-wt/g3-b` (member B), each with a clone of
 `pair-cloud-test` under `../pair-wt/g3-repos/`. Evidence is in `../pair-wt/g3-evidence/` (not
@@ -413,7 +416,21 @@ committed). The VM has a `shutdown -h` timer as a guard while the maintainer is 
    that skips the seed (the branch was pushed without an upstream, so it was seeded).
 5. **Phone: set aside** (maintainer, 2026-11-10).
 
-Findings so far:
+**Re-run on V5** ([v0.1.7-pair.5](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.5),
+tag `8975a54de`; VM upgraded with `t3 drain` and `t3 update`, transcript `upgrade-v5.txt`; both
+worktrees moved to the tag and restarted):
+
+- Finding 1: Continue locally on a cloud session right after both servers restarted (the cold
+  cache that failed before), then again on the same session asleep. Both worked on the first try,
+  and `CloudMoveSource.seed` succeeded on the VM both times.
+- Finding 2: a thread in the project's own checkout on `main` delegated to Pair Cloud with
+  `isolation: cloud` and got "delegated-from-main" back. Its first try failed for another reason:
+  the VM was still pulling V5's base image, and the agent reported "retry in a few minutes".
+
+Left on the test repo: the branch `g3/step4-delegate` on `pair-cloud-test`. The VM is stopped;
+three G3 machines were running when it stopped.
+
+Findings:
 
 - **Finding 1 (fix row 3.28, in flight): Continue locally fails about every other try.** The
   laptop refuses with "The cloud thread's origin, github.com/…, doesn't match this project's.",
@@ -426,7 +443,9 @@ Findings so far:
   checkout is refused.** `delegate_task` with `isolation: cloud` answered "A cloud task starts
   from a pushed branch; this thread has none." for a thread started without a worktree, on `main`,
   which is on origin: `RemoteDelegation.pushedBranch` reads only the thread's recorded branch,
-  which is null there. The agent then offered to push a new branch.
+  which is null there. The agent then offered to push a new branch. Fixed by 3.29 (f0eda3d4b).
+  The same read is in the local `delegate_task` with `isolation: cloud`
+  (`OrchestratorMcpService.ts`, with a test that expects the old message): left for its own row.
 - A failed Continue locally showed no toast in captures taken 2 s and 9 s after the click. The
   code updates the "Continuing locally…" toast to an error; check that it stays long enough to read.
 - Both local servers on this Mac are labeled "Rutvik Chandla" (the host's name), so the move rows
@@ -436,7 +455,7 @@ Findings so far:
 - The live evals (Sonnet 5.5 and Opus 5.5, nine cloud cases, `m3-sonnet/`, `m3-opus/`): seven pass
   on both, including both Continue in cloud cases. `agent-link-laptop-can-sleep` failed 0 of 2 on
   both (the launch left out `projectId`) and `agent-link-vps-stays-vps` failed on a missing mock.
-  Fixed by 3.27 (529fd4920), which is after the V4 tag; its two cases are still to re-run live.
+  Fixed by 3.27 (529fd4920), in V5; its two cases are still to re-run live.
 
 ## How to resume
 
@@ -1978,14 +1997,14 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Same hole, left: `t3_thread_search` with `environmentId` and no `projectId` searches every
   project there.
 
-## 4.12 team image contracts (on `m4`, 86d84b583)
+## 4.12 team image contracts (landed 52233856a)
 
 - `packages/contracts/src/sandboxImage.ts`: schemas only. No RPC methods or scopes yet: 4.13 adds
   them with their handlers. `TeamImageBuildId` and `SandboxImageBuildRef` are in `sandbox.ts`;
   `ExecutionEnvironmentCapabilities.teamImages`, `sandbox.teamImage.keepSucceeded` and
   `ServerDrainStatus.runningBuilds` exist as schema.
 
-## 4.11 outbox aggregate key (on `m4`, e8ad2d5c0)
+## 4.11 outbox aggregate key (landed 4ea5eddd1)
 
 - Migration 094. `aggregate_id` is a generated column (`COALESCE(thread_id, aggregate_kind)`) and
   `aggregate_kind` defaults to `'thread'`, so raw-row thread tests stand unedited.
@@ -1995,6 +2014,35 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   bounded at 60 s, capture at 20 min, run-program is unbounded and cancelled on process loss.
 - `OrchestrationEffectExecutionError.retryable: false` skips the remaining attempts. 4.14 ships
   the live `TeamImageEffects` layer.
+
+## 3.28 moves read the project's origin (landed c7cb8f63e)
+
+- `ProjectService.getResolvedShell` awaits `ProjectEnrichmentService.readRepositoryIdentity` when
+  the shell's peeked identity is null. `CloudMoves.continueLocally`, `readThread` (so `move` and
+  `preview`) and `CloudMoveSource.seed` use it. `getShell` stays a peek.
+- Left: `CloudMoveLaunch.findProject` reads `projects.snapshot`, which also peeks, so the first
+  check after a restart can answer "Add X to Pair Cloud first".
+
+## 3.29 a cloud task from the project's checkout (landed f0eda3d4b)
+
+- `RemoteDelegation.pushedBranch` reads `git.currentBranch(cwd)` when the thread has no recorded
+  branch; a detached checkout is refused with "this thread's checkout isn't on a branch".
+
+## 4.13 team-image aggregate (landed 109a0876b)
+
+- Migration 095. `sandbox/image/`: `TeamImageCommands` (decider), `TeamImageStore`,
+  `LiveTeamImageBuild`, `TeamImageService` (`dispatch`, `snapshot`, `changes`, `saveRecipe`,
+  `startBuild`, `cancelBuild`, `readRecipeRevision`) and `TeamImageWorker`, wired in
+  `runtimeLayer.ts`'s `layerProduction`.
+- Commands `team-image.recipe.save` and `team-image.build.{request, launched, attached, phase,
+  program-finished, captured, fail, cancel, machine-destroyed}`; events `team-image.recipe-saved`
+  and `team-image.build-updated` (which also carries the build machine).
+- Five `teamImage.*` RPCs: subscribe and readRecipe need orchestration read; save, start and
+  cancel need settings write. A live build takes a machine slot in admission, and `t3 drain` waits
+  for it ("Waiting for N team image build(s)").
+- `startBuild` sets `activateOnSuccess: false` until 4.16. 4.14 must delete the
+  `Effect.serviceOption(TeamImageEffects)` gate in `TeamImageService` (its live layer depends on
+  the service). The snapshot has no `currentBase` yet.
 
 ## Open follow-ups and risks
 
