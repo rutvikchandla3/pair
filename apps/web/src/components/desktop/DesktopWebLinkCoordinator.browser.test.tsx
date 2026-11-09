@@ -277,14 +277,14 @@ it("opens a plain commit the workspace lacks like any other delivered link", asy
   expect(useRightPanelStore.getState().byThreadKey).toEqual({});
 });
 
-it("adds the backend from a pairing link after the user confirms its host", async () => {
+it("adds the environment from a pairing link after the user confirms its host", async () => {
   setup();
   await using _coordinator = await mount(pairLink);
   await vi.waitFor(() =>
     expect(state.connectPairing).toHaveBeenCalledExactlyOnceWith({ pairingUrl }),
   );
   expect(state.confirm).toHaveBeenCalledExactlyOnceWith(
-    "Add the backend at https://vps.example.com?",
+    "Add the environment at https://vps.example.com?",
   );
   expect(state.navigate).not.toHaveBeenCalled();
 });

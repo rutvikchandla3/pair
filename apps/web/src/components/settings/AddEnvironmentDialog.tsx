@@ -214,12 +214,12 @@ export function AddEnvironmentDialog({
         pairingCode: savedBackendPairingCode,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add backend.";
+      const message = error instanceof Error ? error.message : "Something went wrong. Try again.";
       onErrorChange(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not add backend",
+          title: "Could not add environment",
           description: message,
         }),
       );
@@ -234,12 +234,12 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        const message = error instanceof Error ? error.message : "Something went wrong. Try again.";
         onErrorChange(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add backend",
+            title: "Could not add environment",
             description: message,
           }),
         );
@@ -258,7 +258,7 @@ export function AddEnvironmentDialog({
           }
         : {
             type: "success",
-            title: "Backend added",
+            title: "Environment added",
             description: "The environment is saved and will reconnect on app startup.",
           },
     );
