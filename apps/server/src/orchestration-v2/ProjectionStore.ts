@@ -48,6 +48,7 @@ import type {
   ProviderTurnId,
   RunAttemptId,
   SandboxId,
+  TeamImageBuildId,
   TeamUsageRow,
 } from "@t3tools/contracts";
 import {
@@ -614,6 +615,11 @@ export interface ProjectionStoreV2Shape {
   readonly listSandboxThreads: (
     sandboxId: SandboxId,
   ) => Effect.Effect<ReadonlyArray<SandboxProjection.SandboxThreadRow>, ProjectionStoreV2Error>;
+  /** Build ids on sandbox records that are not destroyed. */
+  readonly listSandboxImageBuildIds: () => Effect.Effect<
+    ReadonlySet<TeamImageBuildId>,
+    ProjectionStoreV2Error
+  >;
   readonly countSandboxAdmission: (
     driverId: ComputeDriverId,
   ) => Effect.Effect<
@@ -7950,6 +7956,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
       );
+    const listSandboxImageBuildIds: ProjectionStoreV2Shape["listSandboxImageBuildIds"] = () =>
+      withSql(SandboxProjection.listImageBuildIds()).pipe(
+        Effect.mapError(
+          (cause) => new ProjectionStoreReadError({ threadId: ThreadId.make("sandboxes"), cause }),
+        ),
+      );
     const countSandboxAdmission: ProjectionStoreV2Shape["countSandboxAdmission"] = (driverId) =>
       withSql(SandboxProjection.countAdmission(driverId)).pipe(
         Effect.mapError(
@@ -8005,6 +8017,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
       getSandbox: readOnReader(getSandbox),
       listSandboxThreads: readOnReader(listSandboxThreads),
+      listSandboxImageBuildIds: readOnReader(listSandboxImageBuildIds),
       countSandboxAdmission: readOnReader(countSandboxAdmission),
       countSandboxStates: countSandboxStates.pipe(NodeSqliteClient.readOnly),
       countRunningRuns: readOnReader(countRunningRuns),

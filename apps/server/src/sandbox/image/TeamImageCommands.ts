@@ -1,11 +1,11 @@
 import {
   type CommandId,
   type ComputeDriverId,
-  type MemberId,
+  MemberId,
   SandboxId,
   TeamImageBuild,
   type TeamImageBuildFailure,
-  type TeamImageBuildId,
+  TeamImageBuildId,
   TeamImageBuildPhase,
   type TeamImageBuildStatus,
   TeamImageError,
@@ -38,6 +38,19 @@ export const TeamImageEvent = Schema.Union([
     type: Schema.Literal("team-image.build-updated"),
     build: TeamImageBuild,
     machine: TeamImageBuildMachine,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("team-image.active-changed"),
+    activeBuildId: TeamImageBuildId,
+    previousBuildId: Schema.NullOr(TeamImageBuildId),
+    /** Null when an agent's build activated itself; 4.16's agent builds never do. */
+    by: Schema.NullOr(MemberId),
+    at: Schema.DateTimeUtc,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("team-image.log-deleted"),
+    imageBuildId: TeamImageBuildId,
+    at: Schema.DateTimeUtc,
   }),
 ]);
 export type TeamImageEvent = typeof TeamImageEvent.Type;
@@ -92,6 +105,13 @@ export type TeamImageCommand = { readonly commandId: CommandId } & (
       readonly by: MemberId | null;
     }
   | { readonly type: "team-image.build.machine-destroyed"; readonly imageBuildId: TeamImageBuildId }
+  | {
+      readonly type: "team-image.build.activate";
+      readonly imageBuildId: TeamImageBuildId;
+      readonly by: MemberId;
+    }
+  | { readonly type: "team-image.build.collect"; readonly imageBuildId: TeamImageBuildId }
+  | { readonly type: "team-image.build.log-deleted"; readonly imageBuildId: TeamImageBuildId }
 );
 
 export interface TeamImageBuildRecord {
@@ -101,6 +121,7 @@ export interface TeamImageBuildRecord {
 
 export interface TeamImageState {
   readonly latestRevision: number | null;
+  readonly activeBuildId: TeamImageBuildId | null;
   readonly nextBuildNumber: number;
   /** At most one build is queued, launching, running or capturing. */
   readonly liveBuild: TeamImageBuildRecord | null;
@@ -137,6 +158,19 @@ const updated = (
   type: "team-image.build-updated",
   build: { ...record.build, ...build },
   machine: { ...record.machine, ...machine },
+});
+
+const activeChanged = (
+  state: TeamImageState,
+  activeBuildId: TeamImageBuildId,
+  by: MemberId | null,
+  at: DateTime.Utc,
+): TeamImageEvent => ({
+  type: "team-image.active-changed",
+  activeBuildId,
+  previousBuildId: state.activeBuildId,
+  by,
+  at,
 });
 
 const effect = (
@@ -272,6 +306,16 @@ export function decideTeamImageCommand(
               : { manifest: { ...build.manifest, sizeBytes: command.sizeBytes } }),
             finishedAt: now,
           }),
+          ...(build.activateOnSuccess
+            ? [
+                activeChanged(
+                  state,
+                  build.id,
+                  build.requestedBy.kind === "member" ? build.requestedBy.memberId : null,
+                  now,
+                ),
+              ]
+            : []),
         ],
         effects: [effect("team-image.build.destroy-machine", build.id)],
       });
@@ -303,6 +347,47 @@ export function decideTeamImageCommand(
       if (record.machine.destroyedAt !== null) return Result.succeed(NOTHING);
       return Result.succeed({
         events: [updated(record, {}, { destroyedAt: now })],
+        effects: [],
+      });
+    case "team-image.build.activate":
+      if (build.status !== "succeeded") {
+        return refuse("wrong-state", "Only a succeeded build can be activated.");
+      }
+      if (build.imageDeletedAt !== null) {
+        return refuse("image-deleted", "This build's image was removed. Build again.");
+      }
+      if (state.activeBuildId === build.id) return Result.succeed(NOTHING);
+      return Result.succeed({
+        events: [activeChanged(state, build.id, command.by, now)],
+        effects: [],
+      });
+    case "team-image.build.collect":
+      if (state.activeBuildId === build.id) {
+        return refuse("wrong-state", "The active build's image is never removed.");
+      }
+      if (
+        build.status !== "succeeded" ||
+        build.imageRef === undefined ||
+        build.imageDeletedAt !== null
+      ) {
+        return Result.succeed(NOTHING);
+      }
+      // Marked removed at once, so an activation racing the deletion is refused, not undone.
+      return Result.succeed({
+        events: [updated(record, { imageDeletedAt: now })],
+        effects: [
+          {
+            type: "team-image.build.delete-image",
+            imageBuildId: build.id,
+            driverId: build.driverId,
+            imageRef: build.imageRef,
+          },
+        ],
+      });
+    case "team-image.build.log-deleted":
+      if (isLiveTeamImageBuild(build.status)) return Result.succeed(NOTHING);
+      return Result.succeed({
+        events: [{ type: "team-image.log-deleted", imageBuildId: build.id, at: now }],
         effects: [],
       });
   }

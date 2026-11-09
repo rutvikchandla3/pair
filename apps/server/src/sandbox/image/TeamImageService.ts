@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -41,11 +42,17 @@ import {
   type TeamImageState,
 } from "./TeamImageCommands.ts";
 import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
+import { DEFAULT_KEEP_SUCCEEDED } from "./TeamImageCollection.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
 
 /** The snapshot's history: the newest builds, plus the active one when it is older. */
 const RECENT_BUILDS = 20;
-const DEFAULT_KEEP_SUCCEEDED = 5;
+
+/** A build reached succeeded, failed or cancelled; 4.18 and 4.21 tell the recipients. */
+export interface TeamImageBuildFinished {
+  readonly build: TeamImageBuild;
+  readonly recipients: ReadonlyArray<MemberId>;
+}
 
 export type TeamImageDispatchError =
   | TeamImageError
@@ -77,6 +84,13 @@ export class TeamImageService extends Context.Service<
       readonly actorId: MemberId;
       readonly imageBuildId: TeamImageBuildId;
     }) => Effect.Effect<void, TeamImageError>;
+    /** What new sandboxes boot from; never waits for a running build, and an older build is the rollback. */
+    readonly activateBuild: (input: {
+      readonly actorId: MemberId;
+      readonly imageBuildId: TeamImageBuildId;
+    }) => Effect.Effect<void, TeamImageError>;
+    /** Each build that ends from here on, with who should hear of it. */
+    readonly buildFinished: Stream.Stream<TeamImageBuildFinished>;
     readonly readRecipeRevision: (
       revision: number,
     ) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
@@ -121,6 +135,7 @@ const make = Effect.gen(function* () {
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const lock = yield* Semaphore.make(1);
   const version = yield* SubscriptionRef.make(0);
+  const finished = yield* PubSub.unbounded<TeamImageBuildFinished>();
 
   const seeded = yield* store.liveBuild.pipe(Effect.orDie);
   yield* liveBuild.set(
@@ -132,7 +147,7 @@ const make = Effect.gen(function* () {
     randomHex.pipe(Effect.map((hex) => CommandId.make(`server:${type}:${hex}`)));
 
   const readState = Effect.fnUntraced(function* (command: TeamImageCommand) {
-    const { nextBuildNumber } = yield* store.state;
+    const { activeBuildId, nextBuildNumber } = yield* store.state;
     const latest = yield* store.latestRevision;
     const named =
       command.type === "team-image.recipe.save" || command.type === "team-image.build.request"
@@ -140,6 +155,7 @@ const make = Effect.gen(function* () {
         : yield* store.build(command.imageBuildId);
     return {
       latestRevision: latest?.revision ?? null,
+      activeBuildId,
       nextBuildNumber,
       liveBuild: yield* store.liveBuild,
       build: Option.getOrNull(named),
@@ -155,7 +171,33 @@ const make = Effect.gen(function* () {
           ),
         );
 
-  const publish = Effect.fnUntraced(function* (events: ReadonlyArray<TeamImageEvent>) {
+  const isActiveAdmin = Effect.fnUntraced(function* (memberId: MemberId) {
+    if (!(yield* teamState.isTeamMode)) return true;
+    const member = (yield* Ref.get(teamState.members)).get(memberId);
+    return member?.role === "admin" && member.removedAt === null;
+  });
+
+  // Decision #10: an agent's build is announced to the admins among its run's authors.
+  const recipientsOf = Effect.fnUntraced(function* (
+    build: TeamImageBuild,
+    cancelledBy: MemberId | null,
+  ) {
+    const { requestedBy } = build;
+    const candidates =
+      requestedBy.kind === "member"
+        ? [requestedBy.memberId]
+        : yield* Effect.filter(requestedBy.authorIds, isActiveAdmin);
+    return candidates.filter((memberId) => memberId !== cancelledBy);
+  });
+
+  const publish = Effect.fnUntraced(function* (
+    command: TeamImageCommand,
+    events: ReadonlyArray<TeamImageEvent>,
+  ) {
+    const ends =
+      command.type === "team-image.build.captured" ||
+      command.type === "team-image.build.fail" ||
+      command.type === "team-image.build.cancel";
     for (const event of events) {
       if (event.type !== "team-image.build-updated") continue;
       const { build } = event;
@@ -163,6 +205,13 @@ const make = Effect.gen(function* () {
         yield* liveBuild.set({ imageBuildId: build.id, driverId: build.driverId });
       } else if ((yield* liveBuild.current)?.imageBuildId === build.id) {
         yield* liveBuild.set(null);
+      }
+      if (ends && !isLiveTeamImageBuild(build.status)) {
+        const cancelledBy = command.type === "team-image.build.cancel" ? command.by : null;
+        yield* PubSub.publish(finished, {
+          build,
+          recipients: yield* recipientsOf(build, cancelledBy),
+        });
       }
     }
     yield* SubscriptionRef.update(version, (current) => current + 1);
@@ -203,7 +252,7 @@ const make = Effect.gen(function* () {
       apply: () => store.apply(events),
     });
     if (!committed.committed) return yield* fromReceipt(committed.receipt);
-    yield* publish(events);
+    yield* publish(command, events);
     return events;
   });
 
@@ -303,7 +352,8 @@ const make = Effect.gen(function* () {
           recipeRevision: input.recipeRevision,
           driverId,
           requestedBy: { kind: "member", memberId: actorId },
-          activateOnSuccess: false,
+          // A build from the page goes live when it succeeds; 4.19's agent builds pass false.
+          activateOnSuccess: true,
         });
         yield* admission.takeStart;
         return committed;
@@ -322,6 +372,19 @@ const make = Effect.gen(function* () {
     yield* lockedDispatch({
       type: "team-image.build.cancel",
       commandId: yield* freshCommandId("team-image.build.cancel"),
+      imageBuildId,
+      by: actorId,
+    });
+  }, onlyTeamImageErrors);
+
+  const activateBuild: TeamImageService["Service"]["activateBuild"] = Effect.fn(
+    "TeamImageService.activateBuild",
+  )(function* ({ actorId, imageBuildId }) {
+    yield* ensureAvailable;
+    yield* ensureAdmin(actorId);
+    yield* lockedDispatch({
+      type: "team-image.build.activate",
+      commandId: yield* freshCommandId("team-image.build.activate"),
       imageBuildId,
       by: actorId,
     });
@@ -383,6 +446,8 @@ const make = Effect.gen(function* () {
     saveRecipe,
     startBuild,
     cancelBuild,
+    activateBuild,
+    buildFinished: Stream.fromPubSub(finished),
     readRecipeRevision,
     subscribeBuildLog,
   });

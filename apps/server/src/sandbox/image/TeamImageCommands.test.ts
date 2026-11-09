@@ -3,12 +3,15 @@ import {
   CommandId,
   ComputeDriverId,
   MemberId,
+  RunId,
   SandboxId,
   SecretProviderId,
   type TeamImageBuildStatus,
   TeamImageBuildId,
   type TeamImageError,
   type TeamImageRecipe,
+  type TeamImageRequester,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
@@ -69,6 +72,7 @@ const state = (status: TeamImageBuildStatus | null): TeamImageState => {
   const build = status === null ? null : record(status);
   return {
     latestRevision: 1,
+    activeBuildId: null,
     nextBuildNumber: 4,
     liveBuild:
       build !== null &&
@@ -291,6 +295,107 @@ describe("decideTeamImageCommand", () => {
     assert.deepStrictEqual(event.machine.destroyedAt, now);
     const done = { ...state("failed"), build: { ...record("failed"), machine: event.machine } };
     assert.deepStrictEqual(decided(decide(done, destroyed)).events, []);
+  });
+
+  it("activates only a succeeded build whose image remains, and the active build is a no-op", () => {
+    const activate: TeamImageCommand = {
+      type: "team-image.build.activate",
+      commandId,
+      imageBuildId,
+      by: admin,
+    };
+    const previous = TeamImageBuildId.make("tib_00000000000000000009");
+    const succeeded = { ...state("succeeded"), activeBuildId: previous };
+    assert.strictEqual(refused(decide(state("failed"), activate)), "wrong-state");
+    const deleted = {
+      ...record("succeeded"),
+      build: { ...record("succeeded").build, imageDeletedAt: now },
+    };
+    assert.strictEqual(
+      refused(decide({ ...succeeded, build: deleted }, activate)),
+      "image-deleted",
+    );
+    assert.deepStrictEqual(
+      decided(decide({ ...succeeded, activeBuildId: imageBuildId }, activate)),
+      {
+        events: [],
+        effects: [],
+      },
+    );
+    assert.deepStrictEqual(decided(decide(succeeded, activate)).events, [
+      {
+        type: "team-image.active-changed",
+        activeBuildId: imageBuildId,
+        previousBuildId: previous,
+        by: admin,
+        at: now,
+      },
+    ]);
+  });
+
+  it("activates a page build when it succeeds and leaves an agent's build ready", () => {
+    const captured: TeamImageCommand = {
+      type: "team-image.build.captured",
+      commandId,
+      imageBuildId,
+      imageRef: "image",
+      sizeBytes: 10,
+    };
+    const capturing = (activateOnSuccess: boolean, requestedBy: TeamImageRequester) => {
+      const current = state("capturing");
+      const build = { ...record("capturing").build, activateOnSuccess, requestedBy };
+      return { ...current, build: { ...record("capturing"), build } };
+    };
+    const page = decided(decide(capturing(true, { kind: "member", memberId: admin }), captured));
+    assert.deepStrictEqual(
+      page.events.map((event) => event.type),
+      ["team-image.build-updated", "team-image.active-changed"],
+    );
+    assert.deepInclude(page.events[1], { activeBuildId: imageBuildId, by: admin });
+    const agent = decided(
+      decide(
+        capturing(false, {
+          kind: "agent",
+          threadId: ThreadId.make("thread-1"),
+          runId: RunId.make("run-1"),
+          authorIds: [admin],
+        }),
+        captured,
+      ),
+    );
+    assert.deepStrictEqual(
+      agent.events.map((event) => event.type),
+      ["team-image.build-updated"],
+    );
+  });
+
+  it("collects a succeeded image other than the active one, marking it removed at once", () => {
+    const collect: TeamImageCommand = { type: "team-image.build.collect", commandId, imageBuildId };
+    const succeeded = {
+      ...state("succeeded"),
+      build: {
+        ...record("succeeded"),
+        build: { ...record("succeeded").build, imageRef: "sha256:a" },
+      },
+    };
+    assert.strictEqual(
+      refused(decide({ ...succeeded, activeBuildId: imageBuildId }, collect)),
+      "wrong-state",
+    );
+    const decision = decided(decide(succeeded, collect));
+    const [event] = decision.events;
+    assert(event?.type === "team-image.build-updated");
+    assert.deepStrictEqual(event.build.imageDeletedAt, now);
+    assert.deepStrictEqual(decision.effects, [
+      {
+        type: "team-image.build.delete-image",
+        imageBuildId,
+        driverId: ComputeDriverId.make("docker"),
+        imageRef: "sha256:a",
+      },
+    ]);
+    const removed = { ...succeeded, build: { ...succeeded.build, build: event.build } };
+    assert.deepStrictEqual(decided(decide(removed, collect)).events, []);
   });
 
   it("refuses a step for a build that does not exist", () => {

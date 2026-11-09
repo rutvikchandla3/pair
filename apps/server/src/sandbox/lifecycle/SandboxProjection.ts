@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ThreadShellSandbox,
   type SandboxId,
   SandboxSize,
+  TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -302,6 +303,17 @@ export const listSandboxThreads = Effect.fn("SandboxProjection.listSandboxThread
     attachedAt: DateTime.makeUnsafe(row.attached_at),
     archived: row.archived === 1,
   }));
+});
+
+/** The team-image builds that sandboxes not yet destroyed boot from; GC never removes these. */
+export const listImageBuildIds = Effect.fn("SandboxProjection.listImageBuildIds")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly image_build_id: string }>`
+    SELECT DISTINCT json_extract(payload_json, '$.imageBuild.id') AS image_build_id
+    FROM orchestration_v2_projection_sandboxes
+    WHERE state <> 'destroyed' AND json_extract(payload_json, '$.imageBuild.id') IS NOT NULL
+  `;
+  return new Set(rows.map((row) => TeamImageBuildId.make(row.image_build_id)));
 });
 
 /** Threads attached to a sandbox that is not destroyed. */

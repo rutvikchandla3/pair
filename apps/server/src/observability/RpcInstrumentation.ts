@@ -96,6 +96,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.teamImageSaveRecipe]: "sandbox",
   [WS_METHODS.teamImageStartBuild]: "sandbox",
   [WS_METHODS.teamImageCancelBuild]: "sandbox",
+  [WS_METHODS.teamImageActivateBuild]: "sandbox",
   [WS_METHODS.teamImageReadRecipe]: "sandbox",
   [WS_METHODS.teamImageSubscribeBuildLog]: "sandbox",
   [WS_METHODS.serverPrepareTriage]: "server",

@@ -506,7 +506,14 @@ export const layerProduction = Layer.mergeAll(
   layerServerDrainProvided,
   TeamImageWorker.layer.pipe(
     Layer.provideMerge(layerTeamImageServiceProvided),
-    Layer.provide(Layer.merge(TeamImageStore.layer, layerLiveTeamImageBuild)),
+    Layer.provide(
+      Layer.mergeAll(
+        TeamImageStore.layer,
+        layerLiveTeamImageBuild,
+        ProjectionStore.layer,
+        TeamImageBuildLog.layer,
+      ),
+    ),
   ),
   SandboxReconciler.layer.pipe(
     Layer.provide(

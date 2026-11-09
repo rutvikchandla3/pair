@@ -107,13 +107,22 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets members read Cloud's overview, hold a viewer lease and move a thread to cloud, and keeps the driver check, which boots a machine, admin only", () => {
+  it("lets members read Cloud's overview, hold a viewer lease and move a thread to cloud, and keeps the driver check, which boots a machine, and team image activation admin only", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver)).toBe(AuthSettingsWriteScope);
     expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
     expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
     expect(clientRpcRequiredScopes(WS_METHODS.sandboxCheckDriver, { driverId: "local" })).toEqual([
       AuthSettingsWriteScope,
     ]);
+    expect(requiredScopeForRpcMethod(WS_METHODS.teamImageActivateBuild)).toBe(
+      AuthSettingsWriteScope,
+    );
+    expect(MEMBER_SCOPES).not.toContain(
+      requiredScopeForRpcMethod(WS_METHODS.teamImageActivateBuild),
+    );
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.teamImageActivateBuild, { imageBuildId: "tib_x" }),
+    ).toEqual([AuthSettingsWriteScope]);
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxOverview));
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxViewing));
     expect(requiredScopeForRpcMethod(WS_METHODS.threadMovePreview)).toBe(

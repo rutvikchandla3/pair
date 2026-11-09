@@ -52,6 +52,8 @@ export class TeamImageStore extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<TeamImageBuild>, TeamImageStoreError>;
     readonly liveBuild: Effect.Effect<TeamImageBuildRecord | null, TeamImageStoreError>;
     readonly machines: Effect.Effect<ReadonlyArray<TeamImageBuildMachineRow>, TeamImageStoreError>;
+    /** Finished builds whose log is not deleted yet: every build garbage collection may touch. */
+    readonly collectable: Effect.Effect<ReadonlyArray<TeamImageBuild>, TeamImageStoreError>;
     readonly apply: (
       events: ReadonlyArray<TeamImageEvent>,
     ) => Effect.Effect<void, TeamImageStoreError>;
@@ -87,6 +89,7 @@ const toRecord = ({ build, ...machine }: typeof BuildRow.Type): TeamImageBuildRe
 });
 
 const LIVE_STATUSES = ["queued", "launching", "running", "capturing"] as const;
+const FINISHED_STATUSES = ["succeeded", "failed", "cancelled"] as const;
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -172,6 +175,16 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const findCollectable = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ build: BuildJson }),
+    execute: () => sql`
+      SELECT payload_json AS "build" FROM team_image_builds
+      WHERE log_deleted_at IS NULL AND ${sql.in("status", FINISHED_STATUSES)}
+      ORDER BY number DESC
+    `,
+  });
+
   const insertRevision = SqlSchema.void({
     Request: RevisionRow,
     execute: ({ revision, recipe, savedAt, savedBy }) => sql`
@@ -211,16 +224,40 @@ const make = Effect.gen(function* () {
     WHERE id = 1
   `;
 
-  const applyEvent = (event: TeamImageEvent) =>
-    event.type === "team-image.recipe-saved"
-      ? insertRevision(event.revision)
-      : upsertBuild({
+  const setActiveBuild = SqlSchema.void({
+    Request: TeamImageBuildId,
+    execute: (imageBuildId) => sql`
+      UPDATE team_image_state SET active_build_id = ${imageBuildId} WHERE id = 1
+    `,
+  });
+
+  const markLogDeleted = SqlSchema.void({
+    Request: Schema.Struct({ imageBuildId: TeamImageBuildId, at: Schema.DateTimeUtcFromString }),
+    execute: ({ imageBuildId, at }) => sql`
+      UPDATE team_image_builds
+      SET log_deleted_at = COALESCE(log_deleted_at, ${at})
+      WHERE image_build_id = ${imageBuildId}
+    `,
+  });
+
+  const applyEvent = (event: TeamImageEvent) => {
+    switch (event.type) {
+      case "team-image.recipe-saved":
+        return insertRevision(event.revision);
+      case "team-image.build-updated":
+        return upsertBuild({
           ...event.machine,
           build: event.build,
           imageBuildId: event.build.id,
           number: event.build.number,
           status: event.build.status,
         }).pipe(Effect.andThen(advanceBuildNumber(event.build.number)));
+      case "team-image.active-changed":
+        return setActiveBuild(event.activeBuildId);
+      case "team-image.log-deleted":
+        return markLogDeleted(event);
+    }
+  };
 
   return TeamImageStore.of({
     state: readState(undefined).pipe(
@@ -264,6 +301,11 @@ const make = Effect.gen(function* () {
       ),
       Effect.mapError(toStoreError("TeamImageStore.machines")),
       Effect.withSpan("TeamImageStore.machines"),
+    ),
+    collectable: findCollectable(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.build)),
+      Effect.mapError(toStoreError("TeamImageStore.collectable")),
+      Effect.withSpan("TeamImageStore.collectable"),
     ),
     apply: Effect.fn("TeamImageStore.apply")((events: ReadonlyArray<TeamImageEvent>) =>
       Effect.forEach(events, applyEvent, { discard: true }).pipe(

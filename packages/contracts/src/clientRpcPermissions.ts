@@ -28,6 +28,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamImageSaveRecipe]: AuthSettingsWriteScope,
   [WS_METHODS.teamImageStartBuild]: AuthSettingsWriteScope,
   [WS_METHODS.teamImageCancelBuild]: AuthSettingsWriteScope,
+  [WS_METHODS.teamImageActivateBuild]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
   // Creates a worktree and a thread here.

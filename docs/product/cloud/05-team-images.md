@@ -387,8 +387,8 @@ export const TeamImageBuild = Schema.Struct({
   rebuild. A stale build still works: its sandboxes fetch the server's runner bundle at boot.
 
 **Garbage collection** runs daily and after each successful build. It keeps the active build, every
-build a non-destroyed sandbox references, and the newest 5 succeeded builds (a setting, 1 to 20), and
-deletes the rest through `deleteImage`. Failed and cancelled builds have no image; their logs go after
+build a non-destroyed sandbox references, and the newest 5 other succeeded builds (a setting, 1 to
+20, so an older build to roll back to always survives), and deletes the rest through `deleteImage`. Failed and cancelled builds have no image; their logs go after
 30 days. A build holds the team's code, so it is treated like a sandbox disk (decision 10).
 
 | Driver                 | Cost of keeping a build                                                                                                             | Watch out for                                                                                                                                                                                             |

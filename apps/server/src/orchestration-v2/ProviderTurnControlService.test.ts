@@ -257,6 +257,7 @@ it.effect(
           listFollowedThreadIds: () => Effect.die("unused listFollowedThreadIds"),
           getSandbox: () => Effect.die("unused getSandbox"),
           listSandboxThreads: () => Effect.die("unused listSandboxThreads"),
+          listSandboxImageBuildIds: () => Effect.die("unused listSandboxImageBuildIds"),
           countSandboxAdmission: () => Effect.die("unused countSandboxAdmission"),
           countSandboxStates: Effect.die("unused countSandboxStates"),
           countRunningRuns: () => Effect.die("unused countRunningRuns"),

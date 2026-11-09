@@ -18,7 +18,12 @@ import * as SandboxRestoreMode from "./SandboxRestoreMode.ts";
 const driverId = ComputeDriverId.make("local");
 const local: DockerSandboxDriver = { kind: "docker", id: driverId, label: "This machine" };
 
-const seed = Effect.fnUntraced(function* (index: number, state: string, waiting = false) {
+const seed = Effect.fnUntraced(function* (
+  index: number,
+  state: string,
+  waiting = false,
+  payload = "{}",
+) {
   const sql = yield* SqlClient.SqlClient;
   const sandboxId = SandboxId.make(`sbx_${index.toString(16).padStart(20, "0")}`);
   yield* sql`
@@ -27,7 +32,7 @@ const seed = Effect.fnUntraced(function* (index: number, state: string, waiting 
       admission_since, updated_at, payload_json
     ) VALUES (
       ${sandboxId}, 'project:cloud', ${`thread:${index}`}, NULL, 'local', ${state}, 1,
-      ${waiting ? "2026-11-07T00:00:00.000Z" : null}, '2026-11-07T00:00:00.000Z', '{}'
+      ${waiting ? "2026-11-07T00:00:00.000Z" : null}, '2026-11-07T00:00:00.000Z', ${payload}
     )
   `;
 });
@@ -86,5 +91,19 @@ it.effect("counts machines by state and reads health, caps and the image from th
       baseImage: { ref: "ghcr.io/pair/t3-sandbox:1.2.3", label: "Pair base 1.2.3" },
       mirrorBytes: 4096,
     });
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("lists the team-image builds that machines not yet destroyed boot from", () =>
+  Effect.gen(function* () {
+    const booted = (id: string) => JSON.stringify({ imageBuild: { id, number: 1 } });
+    yield* seed(1, "ready", false, booted("tib_00000000000000000001"));
+    yield* seed(2, "sleeping", false, booted("tib_00000000000000000001"));
+    yield* seed(3, "destroyed", false, booted("tib_00000000000000000002"));
+    yield* seed(4, "ready");
+    const ids = yield* ProjectionStore.ProjectionStoreV2.use((store) =>
+      store.listSandboxImageBuildIds(),
+    ).pipe(Effect.provide(ProjectionStore.layer));
+    assert.deepStrictEqual([...ids], ["tib_00000000000000000001"]);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

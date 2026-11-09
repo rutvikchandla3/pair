@@ -51,6 +51,8 @@ export class TeamImageBuildLog extends Context.Service<
     readonly read: (
       number: number,
     ) => Stream.Stream<TeamImageBuildLogChunk, PlatformError.PlatformError>;
+    /** Removes a finished build's file; a missing one is already gone. */
+    readonly delete: (number: number) => Effect.Effect<void, PlatformError.PlatformError>;
   }
 >()("t3/sandbox/image/TeamImageBuildLog") {}
 
@@ -205,6 +207,9 @@ export const make = Effect.gen(function* () {
       ),
     ),
     read,
+    delete: Effect.fn("TeamImageBuildLog.delete")((number: number) =>
+      fs.remove(fileOf(number), { force: true }),
+    ),
   });
 });
 

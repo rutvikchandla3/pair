@@ -5,10 +5,17 @@ import {
   ComputeDriverId,
   type DockerSandboxDriver,
   MemberId,
+  RunId,
+  SandboxId,
+  type TeamImageBuildId,
+  TeamImageBuildId as TeamImageBuildIdSchema,
   type TeamImageRecipe,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
@@ -31,6 +38,7 @@ const docker = ComputeDriverId.make("docker");
 const dockerDriver: DockerSandboxDriver = { kind: "docker", id: docker, label: "Docker" };
 const admin = MemberId.make("member-owner");
 const member = MemberId.make("member-plain");
+const secondAdmin = MemberId.make("member-second-admin");
 const recipe: TeamImageRecipe = {
   base: { type: "pair" },
   projectIds: [],
@@ -77,7 +85,11 @@ const layerService = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
         }),
         Layer.mock(TeamImageBuildLog.TeamImageBuildLog)({}),
         ServerSettings.layerTest({ sandbox: { drivers: [dockerDriver], defaultDriverId: docker } }),
-        TeamState.layerTest([memberRecord(admin, "admin"), memberRecord(member, "member")]),
+        TeamState.layerTest([
+          memberRecord(admin, "admin"),
+          memberRecord(member, "member"),
+          memberRecord(secondAdmin, "admin"),
+        ]),
         NodeCrypto.layer,
         Layer.succeed(ServerConfig.ServerConfig, {
           cloudOnly: true,
@@ -225,4 +237,116 @@ it.effect("a restart fails a running build as interrupted", () =>
     });
     assert.isNull(restarted.live);
   }).pipe(Effect.provide(layerStorage)),
+);
+
+const manifest = {
+  base: { ref: "pair:1", digest: null, pairVersion: "1" },
+  providers: [],
+  repos: [],
+  serverVersion: "1",
+  imageEnv: {},
+  sizeBytes: null,
+};
+
+/** Drives a requested build through its program and capture, as the effects would. */
+const succeed = (imageBuildId: TeamImageBuildId) =>
+  Effect.gen(function* () {
+    const service = yield* TeamImageService.TeamImageService;
+    const step = (name: string) => CommandId.make(`${name}:${imageBuildId}`);
+    yield* service.dispatch({
+      type: "team-image.build.attached",
+      commandId: step("attached"),
+      imageBuildId,
+    });
+    yield* service.dispatch({
+      type: "team-image.build.program-finished",
+      commandId: step("program-finished"),
+      imageBuildId,
+      manifest,
+    });
+    yield* service.dispatch({
+      type: "team-image.build.captured",
+      commandId: step("captured"),
+      imageBuildId,
+      imageRef: `sha256:${imageBuildId}`,
+      sizeBytes: 1,
+    });
+  });
+
+it.effect("a page build goes live when it succeeds, and activating an older one rolls back", () =>
+  Effect.gen(function* () {
+    const { revision } = yield* saveFirstRecipe;
+    const service = yield* TeamImageService.TeamImageService;
+    const first = yield* service.startBuild({
+      actorId: admin,
+      input: { recipeRevision: revision },
+    });
+    yield* succeed(first.id);
+    assert.strictEqual((yield* service.snapshot).activeBuildId, first.id);
+    const second = yield* service.startBuild({
+      actorId: admin,
+      input: { recipeRevision: revision },
+    });
+    yield* succeed(second.id);
+    assert.strictEqual((yield* service.snapshot).activeBuildId, second.id);
+
+    const notAdmin = yield* service
+      .activateBuild({ actorId: member, imageBuildId: first.id })
+      .pipe(Effect.flip);
+    assert.strictEqual(notAdmin.reason, "not-admin");
+    yield* service.activateBuild({ actorId: admin, imageBuildId: first.id });
+    assert.strictEqual((yield* service.snapshot).activeBuildId, first.id);
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("a finished build is announced to its member, or to its agent run's admin authors", () =>
+  Effect.gen(function* () {
+    const { revision } = yield* saveFirstRecipe;
+    const service = yield* TeamImageService.TeamImageService;
+    const announced = yield* service.buildFinished.pipe(
+      Stream.take(2),
+      Stream.runCollect,
+      Effect.forkScoped({ startImmediately: true }),
+    );
+
+    const memberBuild = yield* service.startBuild({
+      actorId: admin,
+      input: { recipeRevision: revision },
+    });
+    yield* service.dispatch({
+      type: "team-image.build.fail",
+      commandId: CommandId.make("fail:member"),
+      imageBuildId: memberBuild.id,
+      failure: { phase: "install", detail: "exit 1", logTail: [] },
+    });
+
+    const agentBuild = TeamImageBuildIdSchema.make("tib_00000000000000000a9e");
+    yield* service.dispatch({
+      type: "team-image.build.request",
+      commandId: CommandId.make("request:agent"),
+      imageBuildId: agentBuild,
+      machineSandboxId: SandboxId.make("sbx_00000000000000000a9e"),
+      recipeRevision: revision,
+      driverId: docker,
+      // `member` was an admin when the run asked; a demoted author no longer hears of it.
+      requestedBy: {
+        kind: "agent",
+        threadId: ThreadId.make("thread-agent"),
+        runId: RunId.make("run-agent"),
+        authorIds: [admin, member, secondAdmin],
+      },
+      activateOnSuccess: false,
+    });
+    yield* service.cancelBuild({ actorId: admin, imageBuildId: agentBuild });
+
+    const [memberFinished, agentFinished] = yield* Fiber.join(announced);
+    assert.deepStrictEqual(
+      [memberFinished?.build.status, memberFinished?.recipients],
+      ["failed", [admin]],
+    );
+    assert.deepStrictEqual(
+      [agentFinished?.build.status, agentFinished?.recipients],
+      ["cancelled", [secondAdmin]],
+    );
+  }).pipe(Effect.provide(layerTest())),
 );

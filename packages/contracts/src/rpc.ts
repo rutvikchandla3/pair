@@ -595,6 +595,7 @@ export const WS_METHODS = {
   teamImageSaveRecipe: "teamImage.saveRecipe",
   teamImageStartBuild: "teamImage.startBuild",
   teamImageCancelBuild: "teamImage.cancelBuild",
+  teamImageActivateBuild: "teamImage.activateBuild",
   teamImageReadRecipe: "teamImage.readRecipe",
   teamImageSubscribeBuildLog: "teamImage.subscribeBuildLog",
   serverPrepareTriage: "server.prepareTriage",
@@ -1109,6 +1110,12 @@ const WsTeamImageStartBuildRpc = Rpc.make(WS_METHODS.teamImageStartBuild, {
 });
 
 const WsTeamImageCancelBuildRpc = Rpc.make(WS_METHODS.teamImageCancelBuild, {
+  payload: TeamImageBuildRef,
+  success: Schema.Void,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageActivateBuildRpc = Rpc.make(WS_METHODS.teamImageActivateBuild, {
   payload: TeamImageBuildRef,
   success: Schema.Void,
   error: TeamImageRpcError,
@@ -2382,6 +2389,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamImageSaveRecipeRpc,
   WsTeamImageStartBuildRpc,
   WsTeamImageCancelBuildRpc,
+  WsTeamImageActivateBuildRpc,
   WsTeamImageReadRecipeRpc,
   WsTeamImageSubscribeBuildLogRpc,
   WsServerPrepareTriageRpc,

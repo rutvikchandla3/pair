@@ -180,7 +180,7 @@ page builds on, and a reviewer can overrule it in the named row.
 - **The log (4.14).** 5 MiB per build: the first 1 MiB and the last 4 MiB, joined by a line saying
   how much was left out. A failed build keeps its last 30 lines on the record.
 - **Retention (4.16).** Keep the active build, every build a live sandbox uses and the newest 5
-  succeeded builds (setting, 1–20). Failed and cancelled builds' logs go after 30 days; a removed
+  other succeeded builds (setting, 1–20; "other" keeps a rollback target when the newest is active). Failed and cancelled builds' logs go after 30 days; a removed
   image's log goes with it.
 - **Who may call the image tools (4.19).** Every session sees all six; per-session tool lists (05
   §7's image threads) are Later, since they need a new MCP-server feature. Reads are open to any thread
@@ -236,14 +236,16 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
     adds `subscribeBuildLog`, 4.16 `activateBuild` and `buildFinished`, 4.20 `dismissProposal`),
     `TeamImageWorker` (scheduler source `"team-image"`).
   - Events: `team-image.recipe-saved`, `team-image.build-updated`; 4.16 adds
-    `team-image.active-changed`; 4.20 adds `team-image.proposal-updated`.
+    `team-image.active-changed` and `team-image.log-deleted`; 4.20 adds
+    `team-image.proposal-updated`.
 - **Builds (4.14).** `ComputeDriver.snapshot`, `DockerEngineApi.commit`, the image name
   `t3-team-image:<number>`, `TEAM_IMAGE_ROOT` (`/t3-sandbox/.image`; clones go to
   `clonePathFor(TEAM_IMAGE_ROOT, url, projectId)`), `BUILD_MANIFEST_PATH` (`/etc/t3/build.json`),
   `teamImageBuildProgram`, `TeamImageBuildLog`, `TeamImageEffectsLive.ts` (the layer for 4.11's
   tag), `CloudPreparation.clonePathFor` (now exported).
-- **Activation (4.16).** Commands `team-image.build.activate`, `.collect`, `.image-deleted`,
-  `.log-deleted`; `planTeamImageCollection`; `ProjectionStore.listSandboxImageBuildIds`.
+- **Activation (4.16).** Commands `team-image.build.activate`, `.collect`, `.log-deleted`;
+  `planTeamImageCollection`; `ProjectionStore.listSandboxImageBuildIds`;
+  `TeamImageService.buildFinished` (`TeamImageBuildFinished { build, recipients }`).
 - **Boot (4.17).** `CloudPreparation.resolveCloudLaunch`'s `imageBuild`, `checkoutInSandbox`'s
   `cloneSource`, the runner's `imageEnvironmentFrom`.
 - **Client (4.18).** client-runtime `createTeamImageAtoms` (the snapshot subscription, the log
@@ -962,9 +964,12 @@ Garbage collection keeps the active build, every build a live sandbox uses and t
       active build is a no-op. Emits `team-image.active-changed { activeBuildId, previousBuildId,
       by, at }`.
     - `captured` emits `active-changed` too when the build's `activateOnSuccess` is true.
-    - `team-image.build.image-deleted { imageBuildId }`: sets `imageDeletedAt`. The active build
-      can never reach it (GC skips it).
-    - `team-image.build.log-deleted { imageBuildId }`: sets `log_deleted_at`.
+    - `team-image.build.collect { imageBuildId }`: refused for the active build (`wrong-state`);
+      sets `imageDeletedAt` in the same commit and adds the `delete-image` effect. Marking the row
+      before the image goes means an activation that races the deletion is refused rather than
+      pointing new sessions at a vanishing image, so there is no separate `image-deleted` command.
+    - `team-image.build.log-deleted { imageBuildId }`: emits `team-image.log-deleted`, which sets
+      `log_deleted_at` (the build schema has no field for it).
   - `TeamImageStore.ts`: `apply` writes `team_image_state.active_build_id`; `snapshot` returns it.
   - `TeamImageService.ts`:
     - `startBuild` sets `activateOnSuccess: true` for a member request (the page); 4.19 passes
@@ -985,8 +990,10 @@ Garbage collection keeps the active build, every build a live sandbox uses and t
     memory; a restart runs it once at start) and the service triggers it after each success. Each
     image to delete goes through a `team-image.build.collect { imageBuildId }` command, whose
     `delete-image` effect calls `driver.deleteImage(imageRef)` (a missing image succeeds,
-    ComputeDriver.ts 183) and dispatches `image-deleted`. The decider refuses `collect` for the
-    active build, so a race with an activation loses safely. Docker refuses to remove an image a
+    ComputeDriver.ts 183). The decider refuses `collect` for the active build and marks the image
+    removed at commit, so a race with an activation loses safely either way. Planning keeps the
+    newest `keepSucceeded` succeeded builds besides the active and referenced ones (the setting's
+    own description), so a rollback target survives when the newest build is active. Docker refuses to remove an image a
     container uses; that error retries and is logged, and the referenced check means it should
     not happen.
   - `TeamImageBuildLog.delete(number)` for logs past 30 days, and for a deleted image's log.
@@ -994,8 +1001,8 @@ Garbage collection keeps the active build, every build a live sandbox uses and t
     (`AuthSettingsWriteScope`).
 - **Types and services:** `TeamImageService.activateBuild` and `buildFinished`;
   `planTeamImageCollection`; `ProjectionStore.listSandboxImageBuildIds`.
-- **Commands and events:** `activate`, `collect`, `image-deleted`, `log-deleted`;
-  `team-image.active-changed`.
+- **Commands and events:** `activate`, `collect`, `log-deleted`; `team-image.active-changed`,
+  `team-image.log-deleted`.
 - **Migrations:** none (095 has the columns).
 - **Tests:**
   - `TeamImageCommands.test.ts` rows: activate a failed build, a deleted image, the active build;
