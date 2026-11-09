@@ -5,8 +5,8 @@ server's checkout. Many agents can work at once without sharing files or ports, 
 transcript, diffs and approvals stay on your Pair server like any other thread.
 
 Cloud turns keep running while your laptop is closed, because Cloud runs only on a server started
-with `--cloud-only`, your team's Pair Cloud. Run it on an always-on machine, such as a
-[background service](./background-service.md); the desktop app can't be one.
+with `--cloud-only`, your team's Pair Cloud, on an always-on machine. To set one up, see
+[Install Pair Cloud](./pair-cloud.md). The desktop app's own server never offers Cloud.
 
 Cloud works on servers with one member too. On Pair Cloud every new thread is a cloud thread.
 
@@ -17,7 +17,8 @@ remain, so an admin can remove them.
 
 ## Turn on Cloud
 
-Cloud machines are Docker containers. Admins set them up in **Settings → Cloud**:
+Cloud machines are Docker containers. Once [Pair Cloud is installed](./pair-cloud.md), admins set
+them up in its **Settings → Cloud**:
 
 1. Choose **Add Docker driver**.
 2. Leave **Docker host** empty to use Docker on the server's own machine (or the server's
@@ -61,11 +62,19 @@ The machine clones the project's `origin` remote, so a project needs one.
 A new thread on Pair Cloud starts in **Cloud**, the only choice in the composer's workspace menu.
 Pick a base branch that exists on `origin`: Pair refuses a branch you have not pushed yet.
 
+From a project on your own machine, connect your app to Pair Cloud too and pick **Cloud** in the
+workspace menu. The thread starts on Pair Cloud, in the project with the same `origin` on
+github.com, from the branch you picked; with several Pair Clouds connected, the menu shows
+**Cloud on** each one. When Pair Cloud doesn't have the project yet, the menu offers
+**Add to Pair Cloud** instead. Push the branch first: Pair says "Push <branch> first." until
+`origin` has it, and warns that commits you haven't pushed won't be included.
+
 You can also run **New cloud thread** from the command palette. It has no default shortcut; bind
 `chat.newCloud` in [Keybindings](./keybindings.md). **New thread on branch** from a cloud thread
 opens another cloud thread.
 
-On a phone, new threads on Pair Cloud start in Cloud too.
+On a phone, new threads on Pair Cloud start in Cloud too, and the new thread screen offers Cloud
+for a project on your Mac the same way.
 
 Scripts and agents start cloud threads too: see `--cloud` in
 [Scripts and CI](./outside-agents.md#scripts-and-ci) and
@@ -95,6 +104,11 @@ state while it is not simply running:
 | **Machine discarded**       | The machine and its files are gone. Choose **Start a new machine**, or send a message, for a fresh one.     |
 
 A Docker machine goes to sleep once every thread on it is settled or archived and none is running.
+It also sleeps after an hour with no running turn, nobody viewing its threads, and no activity in
+its terminals, or after 5 minutes of that while another machine waits for a slot. A turn waiting
+for your answer keeps its machine awake for 2 hours, then stops. Sending a message, opening a
+thread that isn't settled or archived, typing in a terminal, or reverting wakes it.
+
 While it sleeps, its files, search and Changes are read-only and show as of the moment it slept
 (or its last turn, when nothing was saved at sleep). Its terminals stop and keep their output;
 after a wake, typing in one starts a new shell.
@@ -122,17 +136,22 @@ passwordless `sudo`, so install anything else in the setup script, for example
 
 ## Provider accounts
 
-A cloud thread signs its agent in without any login saved on the server:
+Cloud threads use accounts added on Pair Cloud. Your Mac's own sign-ins stay on your Mac. Add your
+own under **Your provider accounts** on your row in Pair Cloud's **Settings → Team** (see
+[Your own provider account](./team.md#your-own-provider-account)):
 
-- **Claude** needs a setup token from `claude setup-token` or an API key, set as
-  `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` in the instance's **Environment variables** in
-  **Settings → Providers**.
-- **Codex** works with a ChatGPT account connected in Pair, or an `OPENAI_API_KEY` in the
-  instance's environment variables. A `codex login` made on the server works there only.
+- **Claude** needs a setup token from `claude setup-token` or an API key.
+- **Codex** works with a ChatGPT account connected in Pair, or an API key.
 
-In a cloud thread, the model picker marks other accounts **Local only** and says what to add.
-Other providers are not supported in Cloud yet. Members can bring their own accounts too: see
-[Your own provider account](./team.md#your-own-provider-account).
+Admins can add a team account instead: a Claude instance with `CLAUDE_CODE_OAUTH_TOKEN` or
+`ANTHROPIC_API_KEY`, or a Codex instance with `OPENAI_API_KEY`, in its **Environment variables** in
+**Settings → Providers**. A login made in a terminal on the server works there only.
+
+When you pick Cloud with no account Pair Cloud can use, the composer says **Add an account on Pair
+Cloud**; without a GitHub connection it says **Connect GitHub on Pair Cloud**. **Open Settings**
+opens Pair Cloud's **Settings → Team**, and the phone's new thread screen shows the same notice. In
+a cloud thread, the model picker marks other accounts **Local only** and says what to
+add. Other providers are not supported in Cloud yet.
 
 ## Pushing and pull requests
 
@@ -149,6 +168,9 @@ read-only and the list's viewer is the App's bot, so the panel offers no write a
 **Authored** and **Reviewing** come back empty. Sign the server in to GitHub to comment, review or
 merge from Pair.
 
+When a machine can't clone a private repository, the thread says "Pair Cloud can't read
+<repository>. Connect GitHub to clone private repos, in Settings → Team."
+
 Cloud threads push only to github.com for now.
 
 ## What agents in a machine can read
@@ -161,20 +183,12 @@ those credentials.
 
 ## Phone
 
-The mobile app starts cloud threads, shows each thread's machine status, and offers the same
-machine actions. **Settings → Machines** shows each environment's drivers, running and waiting
-machines, base image and limits. It appears once a connected environment has a driver; change
+Install Pair's mobile app and add Pair Cloud to it with a sign-in link. Pair Cloud sends its
+notifications to the app itself, without T3 Connect. The app starts cloud threads, shows each
+thread's machine status, and offers the same machine actions. **Settings → Machines** shows each
+environment's drivers, running and waiting machines, base image and limits. It appears once a connected environment has a driver; change
 Cloud's settings on the web or desktop app.
 
 ## Coming from Conductor Cloud
 
-1. Install Pair as a team server on an always-on machine with Docker, start it with
-   `--cloud-only`, and [invite](./team.md) your team.
-2. Add a Docker driver as above.
-3. Have members [connect GitHub](./team.md#connect-your-account) or paste a token, or add the
-   GitHub App key.
-4. Paste your Conductor install script into each project's setup script, using `apt-get` where it
-   used `dnf`.
-5. Add Claude setup tokens or API keys, or Codex accounts, as in [Provider accounts](#provider-accounts).
-
-Conductor transcripts are not imported.
+See [Coming from Conductor Cloud](./pair-cloud.md#coming-from-conductor-cloud) in the install guide.

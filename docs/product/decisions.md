@@ -9,12 +9,16 @@ page says how it must behave. The decisions came from a product design review du
 
 - **Solo stays T3 Code.** A server with one member and no compute driver looks and behaves exactly
   like T3 Code, down to the wire. Team behavior turns on only with a second active member. Cloud is
-  not a team feature: it turns on when an admin adds a compute driver, on solo and team servers
-  alike, and changes nothing on the wire until then. Contract changes are additive, and the server
-  fills in "my" fields for whoever is looking, so older clients keep working.
-- **Membership is the trust boundary.** A member who can run agents or terminals has a shell as the
-  server's user and can read every file, credentials and the database included. Roles prevent
-  accidents, not malice. The invite dialog says so: "Invite only people you'd give SSH access to."
+  not a team feature: only a cloud-only server, a team's Pair Cloud, offers it, solo or not. A
+  desktop or other server never does. Contract changes are additive, and the server fills in "my"
+  fields for whoever is looking, so older clients keep working.
+- **Membership is the trust boundary.** A member who can run agents or terminals can read everything
+  the machine running them can read. On a server with local threads that is the server's user,
+  every file, credentials and the database included. On Pair Cloud it is the thread's machine, with
+  the thread's provider credential and git credential, and anyone can prompt any thread. Roles
+  prevent accidents, not malice. The invite dialog says so: "Invite only people you'd give SSH
+  access to.", or on Pair Cloud "Members can prompt any thread, which reaches its provider sign-in
+  and git token."
 - **Quiet UI.** Team features add little: static avatars, one-line timeline rows, no animation and
   no activity feed. Presence sends nothing while you're alone.
 
@@ -84,6 +88,8 @@ page says how it must behave. The decisions came from a product design review du
 - Members manage their own accounts on the web. Mobile only respects ownership.
 - Pair doesn't pool or rotate teammates' personal subscriptions: they are licensed per person.
   Point people at their own accounts, or API keys behind a proxy.
+- Members add their provider accounts and connect GitHub on Pair Cloud, separately from their Mac.
+  The Mac's own logins can't serve a cloud machine.
 - **In cloud,** a thread's machine gets only its own thread's account credential, in memory, from
   an allowlisted environment when the provider process starts, never another member's. Pair writes
   no credential to a machine's disk or image. Claude works there with a setup token or an API key,

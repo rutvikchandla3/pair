@@ -21,6 +21,7 @@
 - [Remote access](./user/remote-access.md)
 - [Team](./user/team.md)
 - [Cloud threads](./user/cloud.md)
+- [Install Pair Cloud](./user/pair-cloud.md)
 - [Guest links](./user/guest-links.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Agents and automation (MCP, API tokens, scripts)](./user/outside-agents.md)

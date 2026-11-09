@@ -1,6 +1,6 @@
 # Mobile notifications
 
-Sign in to T3 Connect, link your environments, and enable **Device Notifications** in **Settings → Notifications** to receive alerts when an agent finishes, fails, needs approval, or asks for input. Tap a notification to open its thread. Your environment must have agent activity publishing enabled. A team server with more than one member sends no alerts or live activity through T3 Connect; see [Team](./team.md#follow-threads-and-notifications).
+Sign in to T3 Connect, link your environments, and enable **Device Notifications** in **Settings → Notifications** to receive alerts when an agent finishes, fails, needs approval, or asks for input. Tap a notification to open its thread. Your environment must have agent activity publishing enabled. A team server with more than one member, and [Pair Cloud](./pair-cloud.md) from its first member, send no alerts or live activity through T3 Connect. They send alerts themselves to Pair's mobile app, which works with any Pair Cloud; see [Team](./team.md#follow-threads-and-notifications).
 
 Enable **Live Activity Updates** on iOS, **Agent Live Updates** on Android 16 and newer, or **Ongoing Agent Activity** on older Android versions to follow work without opening the app. Finished results remain visible for up to 15 minutes. You can dismiss an Android activity card without disabling alerts; turn off the same switch to stop future cards.
 

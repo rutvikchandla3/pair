@@ -1455,24 +1455,28 @@ no feature catalogs, a settings path where useful.
     4. **Reach it on your own domain.** A reverse proxy with TLS in front of the port, or
        Tailscale (remote-access.md). No T3 Connect. Webhook URLs use the public origin.
     5. **Set up Docker.** Install gVisor and register `runsc`. The driver prefers it
-       (`isolationFromInfo`, DockerComputeDriver.test.ts 167), and Settings → Cloud → **Test** shows
-       the isolation. Or point the driver at another host's daemon with `dockerHost`
-       (settings.ts 1207). Add the service user to the `docker` group, then log out and back in.
+       (`isolationFromInfo`, DockerComputeDriver.test.ts 167), and the driver's row under Settings →
+       Cloud → Overview shows the isolation (as landed; **Test** shows only its steps). Or point
+       the driver at another host's daemon with `dockerHost` (settings.ts 1207). Add the service
+       user to the `docker` group, then log out and back in. As landed, the guide does this before
+       the install, since the service keeps the groups it started with.
     6. **Connect GitHub.** One App: device flow for members, the App ID and key for pushes and
        clones, installed on the repositories. Permissions now include Checks and Commit statuses
        read (2.44). Link team.md "Set up the GitHub App" instead of repeating it. What PR reads use,
        per 2.44.
     7. **Invite the team.** `t3 member invite <name> --github <login>`, and the trust text: what a
        member can reach (D15), as 2.45 words it. Link team.md.
-    8. **Add projects.** Add each repository by its GitHub `owner/name` (2.26). Members then pick
-       **Cloud** on their own clone and land on the matching project (2.28, 2.29), on a pushed
+    8. **Add projects.** Add each repository by its GitHub `owner/name` (2.26), through **Add
+       Project → Git URL** (as landed: the GitHub picker still asks the server's `gh`). Members
+       then pick **Cloud** on their own clone and land on the matching project (2.28, 2.29), on a pushed
        branch (2.31). Each member adds a Claude setup token or API key, or a Codex account, on
        Pair Cloud (2.30).
     9. **Set the team cap and disk retention.** Settings → Cloud → Compute: machines at once
        (2.43), and archived and asleep disks deleted after 7 and 30 days by default (2.12).
     10. **Back up hourly.** Snapshot the disk that holds the T3 home every hour with the cloud's
         disk snapshot schedule, or a timer running `sqlite3 <home>/userdata/statev2.sqlite ".backup …"`
-        plus `secrets` and `settings.json`. Restore and start with restore mode (2.38,
+        plus `secrets` and `settings.json` (as landed, also `attachments` and `sandbox/mirrors`,
+        which rebuild lost machines). Restore and start with restore mode (2.38,
         `--restore-mode` or `T3CODE_RESTORE_MODE`). Machines started after the snapshot are
         stopped and listed for admins; none is destroyed.
     11. **Upgrade.** Drain first (2.37, `t3 drain`): new turns wait and running

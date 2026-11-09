@@ -39,6 +39,24 @@ mode but send reports only while another member is connected, and the server res
 member's connections so stale state never reaches the next arrival. Keep both halves of that
 handshake when changing either side. See [presence](../../apps/server/src/team/Presence.ts).
 
+## Pair Cloud and workspace hosts
+
+A Pair team runs two kinds of server: each member's local server, and the team's Pair Cloud, a
+server started with `--cloud-only`. Only a cloud-only server reports
+`ExecutionEnvironmentCapabilities.cloudLaunch`, and the server's own decisions refuse anything that
+creates a machine elsewhere (`decideSandboxCommand`, reason `not-cloud-only`), so one gate covers
+UI, MCP, scheduled tasks and older clients alike. A cloud-only server refuses work on its own host
+instead. Clients never launch Cloud on a local server: `resolveCloudTarget` in
+[client-runtime](../../packages/client-runtime/src/state/cloudTarget.ts) routes a Cloud pick on a
+local project to the connected Pair Cloud project with the same github.com origin.
+
+Thread-scoped code reaches a thread's files, processes and terminals through its
+[WorkspaceHost](../../apps/server/src/workspaceHost/WorkspaceHost.ts), local or a sandbox, and the
+`t3code/workspace-host-boundary` lint rule keeps it there. Paths under the reserved `/t3-sandbox/`
+root route to their machine and fail closed: they never fall back to the server's disk. Such code
+reads platform, home and environment from `host.info` per use, not from the server's process, and
+the host owns the base environment every process it starts inherits.
+
 ## Settings ownership
 
 Client preferences stay in the current client; environment defaults and project overrides stay

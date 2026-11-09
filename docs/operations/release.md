@@ -455,6 +455,9 @@ depends on npm, and it works once `publish_cli` finishes.
 Preserve these dependencies when changing the release graph. Publishing a client first would leave
 the **Update server** action targeting a package version that does not exist yet.
 
+Pair Cloud servers update the same way, but from the repository in their `T3CODE_RELEASE_BASE_URL`,
+which [Pair Cloud release](#pair-cloud-release) publishes.
+
 For a release smoke test, confirm `npm view t3@<version> version` returns the expected version, then
 connect the new client to a server on the previous version and verify that the update action
 reconnects to the matching server. When the release adds database migrations, verify that the
@@ -486,7 +489,7 @@ available.
     release job waits for the image tag, so no release exists before its image.
 - Install a release with
   `T3CODE_VERSION=<version> T3CODE_RELEASE_BASE_URL=https://github.com/<owner>/<repo>/releases/download`
-  in front of `install.sh`. `t3 update` reads `T3CODE_RELEASE_BASE_URL` from the shell or the
+  in front of `install.sh`, as in [Install Pair Cloud](../user/pair-cloud.md#install-the-release). `t3 update` reads `T3CODE_RELEASE_BASE_URL` from the shell or the
   service's `service.env`, and lists that repository's releases.
 - Image tags and releases are never replaced. The workflow refuses a version whose image tag or
   release already exists, so a bad release is fixed with a new version.

@@ -6,7 +6,7 @@ of the sidebar and **Settings → Environments** offer to update it.
 
 > Pair is a fork of T3 Code. `npx t3`, t3.codes downloads, package managers and the App Store and Play Store apps install upstream T3 Code, not Pair. Run Pair from this repository on your team server.
 >
-> Turn off in-app updates on the Pair server and desktop builds with the managed policy `updates.mode: "off"` (Linux: `/etc/t3code/policy.json`); otherwise an update installs upstream T3 Code over Pair.
+> Turn off in-app updates on the Pair server and desktop builds with the managed policy `updates.mode: "off"` (Linux: `/etc/t3code/policy.json`); otherwise an update installs upstream T3 Code over Pair. A [Pair Cloud](./pair-cloud.md#upgrade) server whose `service.env` sets `T3CODE_RELEASE_BASE_URL` updates from Pair Cloud's releases instead.
 
 ## Update everything at once
 

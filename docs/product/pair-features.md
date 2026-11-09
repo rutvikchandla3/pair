@@ -139,6 +139,22 @@ T3 Code throughout.
   **Settings → Machines** page.
 - User guide: [Cloud threads](../user/cloud.md).
 
+### Pair Cloud
+
+- **A team's own cloud-only server.** A Linux release with its runner, installed from the release's
+  `install.sh`, run as a background service on the team's domain. Only it offers Cloud; local
+  servers route a Cloud pick to the matching Pair Cloud project, from a pushed branch, on desktop,
+  web and mobile.
+- **Projects by repository.** Admins add `owner/name` from github.com; members' GitHub and provider
+  accounts live on Pair Cloud.
+- **Machines that sleep and come back.** Idle and settled machines sleep after a snapshot, wake on a
+  message, a viewer or a terminal key, and stay readable while asleep. Archived and unused disks go
+  after 7 and 30 days, and a lost disk rebuilds from the server's mirror.
+- **Running it.** Team cap per driver, `t3 drain` before upgrades, restore mode after restoring a
+  backup, webhook URLs on the public origin, scheduled and webhook runs in cloud, pushes to Pair's
+  one mobile app, and pull request reads through the team's GitHub App.
+- Install guide: [Install Pair Cloud](../user/pair-cloud.md).
+
 ## Not planned
 
 - **Pooling or rotating teammates' personal subscriptions.** They are licensed per person, and

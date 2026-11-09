@@ -107,7 +107,7 @@ the top of **Settings → Team**, and members can still
 2. Tick **Enable Device Flow** and leave the callback URL empty. Under **Webhook**, untick
    **Active**.
 3. Under **Repository permissions**, set **Contents** to read and write, **Pull requests** to read
-   and write, and **Metadata** to read-only.
+   and write, and **Checks**, **Commit statuses** and **Metadata** to read-only.
 4. Create the app and copy its **Client ID**. It is public: there is no secret to store.
 5. Choose **Install App** and install it on your organization. If you are not an owner of the
    organization, GitHub sends a request that an organization owner must approve.
@@ -119,6 +119,10 @@ Then give the client ID to the server as `T3CODE_GITHUB_APP_CLIENT_ID` and resta
   `t3 service restart`.
 - For `t3 serve` or the desktop app, set the variable in the shell environment that starts Pair,
   then start it again.
+
+On [Pair Cloud](./pair-cloud.md#connect-github), cloud threads also clone and push with the same
+App: generate a private key on its GitHub page and enter it with the App ID in
+[**Settings → Source control → GitHub**](./source-control.md#pushing-from-cloud-threads).
 
 ### Connect your account
 
@@ -203,7 +207,7 @@ Notifications go only to the people a thread concerns:
 
 You are never notified about your own actions, or about a thread you're looking at.
 
-On a team server, push notifications come from the server itself, not T3 Connect, and reach Pair's mobile app. **Settings → Notifications** on your phone shows whether each team server notifies it.
+On a team server, and on Pair Cloud from its first member, push notifications come from the server itself, not T3 Connect, and reach Pair's mobile app. **Settings → Notifications** on your phone shows whether each team server notifies it.
 A push carries the thread's title, which passes through Expo and Apple or Google on its way to your
 phone; it never includes messages or agent output.
 
