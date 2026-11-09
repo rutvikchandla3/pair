@@ -1262,6 +1262,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     sandboxOnly: true,
   },
   {
+    id: "cloud-disk-archived",
+    title: "Delete archived machines' disks",
+    to: "/settings/cloud",
+    searchTerms: ["cloud disk retention archived asleep destroy delete storage days"],
+    environmentOnly: true,
+    sandboxOnly: true,
+  },
+  {
+    id: "cloud-disk-inactive",
+    title: "Delete unused machines' disks",
+    to: "/settings/cloud",
+    searchTerms: ["cloud disk retention inactive idle asleep destroy delete storage days"],
+    environmentOnly: true,
+    sandboxOnly: true,
+  },
+  {
     id: "cloud-env",
     title: "Cloud environment variables",
     to: "/settings/cloud",

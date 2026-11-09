@@ -3968,6 +3968,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     snapshotAt: Schema.DateTimeUtc,
     reason: Schema.Literals(["idle", "settled", "archived", "cap-pressure"]),
   }),
+  /** The lifecycle sweep destroys a stopped machine's disk that outlived `diskRetention`. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.expire"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    sandboxId: SandboxId,
+    reason: Schema.Literals(["archived", "inactive"]),
+  }),
   Schema.Struct({
     type: Schema.Literal("sandbox.adopt"),
     commandId: CommandId,

@@ -296,7 +296,7 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     yield* mirror.ensure(projectId).pipe(Effect.mapError(importFailed));
 
     // The server picks every ref name; the sandbox only produces bytes (06 §7).
-    const branchTarget = `${CheckpointMirror.sandboxThreadRefPrefix(threadId)}branch`;
+    const branchTarget = CheckpointMirror.sandboxBranchRef(threadId);
     const targets = new Map<string, string>(checkpointRefs.map((ref) => [ref, ref]));
     if (thread.branch !== null) targets.set(`refs/heads/${thread.branch}`, branchTarget);
 
@@ -362,8 +362,7 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     branch,
   }) {
     const failed = failWith(threadId, "restore-failed");
-    const prefix = CheckpointMirror.sandboxThreadRefPrefix(threadId);
-    const branchRef = `${prefix}branch`;
+    const branchRef = CheckpointMirror.sandboxBranchRef(threadId);
     const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
     const mirrorTips = yield* mirror
       .tips(projectId, [branchRef, snapshotRef, SEED_HEAD_REF])

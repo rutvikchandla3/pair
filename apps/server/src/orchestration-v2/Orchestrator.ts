@@ -220,6 +220,7 @@ import {
   decideGitCredentialRecord,
   decideCloudPrompt,
   decideSandboxCommand,
+  diskRetentionOf,
   planSandboxOnDelete,
   type SandboxAttachedThread,
   sandboxOwnerMemberChange,
@@ -731,6 +732,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "sandbox.destroyed":
     case "sandbox.failed":
     case "sandbox.auto-sleep":
+    case "sandbox.expire":
     case "sandbox.adopt":
     case "sandbox.git-credential.record":
       return command.threadId;
@@ -10962,9 +10964,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       record !== null &&
       (command.type === "sandbox.sleep" ||
         command.type === "sandbox.discard" ||
-        command.type === "sandbox.auto-sleep")
+        command.type === "sandbox.auto-sleep" ||
+        command.type === "sandbox.expire")
         ? yield* listSandboxAttachedThreads(record.id).pipe(mapProjection)
         : [];
+    const diskRetention =
+      command.type === "sandbox.expire"
+        ? diskRetentionOf((yield* serverSettings.getSettings.pipe(mapProjection)).sandbox)
+        : undefined;
     const driverId = command.type === "sandbox.provision" ? command.driverId : record?.driverId;
     const admission =
       startsSandbox(command.type) && driverId !== undefined
@@ -10976,6 +10983,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       record,
       ownerMemberId: thread?.ownerId ?? null,
       attachedThreads,
+      ...(diskRetention === undefined ? {} : { diskRetention }),
       admission,
       cloudOnly,
       now,
@@ -14761,6 +14769,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.destroyed":
       case "sandbox.failed":
       case "sandbox.auto-sleep":
+      case "sandbox.expire":
       case "sandbox.adopt":
         yield* dispatchSandboxCommand(command, events, effects);
         break;

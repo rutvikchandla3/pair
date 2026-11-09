@@ -4,6 +4,7 @@ import {
   type DockerSandboxDriver,
   type EnvironmentId,
   isReservedSandboxEnvName,
+  type SandboxDiskRetention,
   type SandboxDriverCheckResult,
   type SandboxDriverCheckStep,
   type SandboxDriverInstance,
@@ -22,7 +23,7 @@ import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
@@ -39,6 +40,7 @@ import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { dockerDriverFormError, isRemoteDockerHost, nextDriverId } from "./CloudSettings.logic";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+import { RetentionControl } from "./RetentionControl";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
@@ -104,6 +106,7 @@ function CloudEnvironmentSettings({
 }) {
   const sandbox = serverConfig.settings.sandbox;
   const drivers = sandbox?.drivers ?? [];
+  const diskRetention = sandbox?.diskRetention ?? DEFAULT_DISK_RETENTION;
   const configured = drivers.length > 0;
   const cloudLaunch = serverConfig.environment.capabilities.cloudLaunch === true;
   const canAdmin = useAtomValue(sandboxEnvironment.checkDriver.permissionAtom(environmentId));
@@ -129,6 +132,12 @@ function CloudEnvironmentSettings({
     if (result._tag === "Success") overview.refresh();
     return result._tag === "Success";
   };
+
+  const saveDiskRetention = (patch: Partial<SandboxDiskRetention>) =>
+    void save(
+      { sandbox: { diskRetention: { ...diskRetention, ...patch } } },
+      "Disk retention not saved",
+    );
 
   const saveDriver = async (driver: DockerSandboxDriver) => {
     if (await save({ sandbox: { drivers: { [driver.id]: driver } } }, "Driver not saved"))
@@ -435,6 +444,30 @@ function CloudEnvironmentSettings({
                       {overview.data?.startsPerMinute ?? 10} starts a minute · No member cap
                     </span>
                   </span>
+                }
+              />
+              <SettingsRow
+                {...searchableSetting("cloud-disk-archived")}
+                description="Days a machine sleeps with every thread archived before its disk is deleted. Its threads stay readable, and waking one rebuilds the machine from this server's copy."
+                control={
+                  <RetentionControl
+                    label="Delete archived machines' disks"
+                    value={diskRetention.archivedAfterDays}
+                    enabledDays={DEFAULT_DISK_RETENTION.archivedAfterDays}
+                    onChange={(archivedAfterDays) => saveDiskRetention({ archivedAfterDays })}
+                  />
+                }
+              />
+              <SettingsRow
+                {...searchableSetting("cloud-disk-inactive")}
+                description="Days a stopped machine goes without activity on any of its threads before its disk is deleted."
+                control={
+                  <RetentionControl
+                    label="Delete unused machines' disks"
+                    value={diskRetention.asleepAfterDays}
+                    enabledDays={DEFAULT_DISK_RETENTION.asleepAfterDays}
+                    onChange={(asleepAfterDays) => saveDiskRetention({ asleepAfterDays })}
+                  />
                 }
               />
             </>

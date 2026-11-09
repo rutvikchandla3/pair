@@ -8,10 +8,12 @@ import type {
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
   RunId,
+  SandboxDiskRetention,
+  SandboxSettings,
   SandboxSleepReason,
   ThreadId,
 } from "@t3tools/contracts";
-import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
@@ -36,6 +38,7 @@ export type SandboxCommand = Extract<
       | "sandbox.destroyed"
       | "sandbox.failed"
       | "sandbox.auto-sleep"
+      | "sandbox.expire"
       | "sandbox.adopt";
   }
 >;
@@ -95,8 +98,10 @@ export interface SandboxDecisionInput {
   readonly record: OrchestrationV2Sandbox | null;
   /** The commanding thread's owner, for a record `sandbox.provision` creates or `sandbox.adopt` moves. */
   readonly ownerMemberId: MemberId | null;
-  /** Read only for sleep, discard and auto-sleep. */
+  /** Read only for sleep, discard, auto-sleep and expire. */
   readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
+  /** Read only for `sandbox.expire`; absent, nothing expires. */
+  readonly diskRetention?: SandboxDiskRetention;
   /** Read under the admission lock for commands that can start a machine; null for the rest. */
   readonly admission: AdmissionSnapshot | null;
   /** Only a cloud-only server makes new machines; others still wake, sleep and discard theirs. */
@@ -249,6 +254,71 @@ export const idleDecision = (input: IdleInput): IdleDecision => {
   }
   const idleAt = anchor + policy.idleMs;
   return nowMs >= idleAt ? sleep("idle") : { _tag: "Awake", untilMs: idleAt };
+};
+
+export type DiskExpiryReason = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "sandbox.expire" }
+>["reason"];
+
+const DAY_MS = 24 * 60 * 60_000;
+const NEVER_EXPIRE: SandboxDiskRetention = { archivedAfterDays: null, asleepAfterDays: null };
+
+/** The admin's retention, or the defaults; nothing expires in restore mode (04 §5). */
+export const diskRetentionOf = (sandbox: SandboxSettings | undefined): SandboxDiskRetention =>
+  sandbox?.restoreModeSince !== undefined
+    ? NEVER_EXPIRE
+    : (sandbox?.diskRetention ?? DEFAULT_DISK_RETENTION);
+
+/**
+ * No rule below comes due before this, so a sweep reads no threads for a machine stopped recently.
+ * Infinity when retention is off.
+ */
+export const diskExpiryFloorMs = (
+  record: OrchestrationV2Sandbox,
+  retention: SandboxDiskRetention,
+): number => {
+  const days = [retention.archivedAfterDays, retention.asleepAfterDays].filter(
+    (value) => value !== null,
+  );
+  return days.length === 0
+    ? Infinity
+    : DateTime.toEpochMillis(record.updatedAt) + Math.min(...days) * DAY_MS;
+};
+
+/**
+ * When a stopped machine's disk is due to be destroyed and why, or null while no rule can come due
+ * without an event. Both clocks also start no earlier than the record's last change (when it went
+ * to sleep or failed), so a machine woken and used without a message is not destroyed early.
+ */
+export const decideDiskExpiry = (input: {
+  readonly record: OrchestrationV2Sandbox;
+  readonly threads: ReadonlyArray<SandboxAttachedThread>;
+  readonly retention: SandboxDiskRetention;
+}): { readonly reason: DiskExpiryReason; readonly atMs: number } | null => {
+  const { record, threads, retention } = input;
+  const hasDisk =
+    record.state === "sleeping" || (record.state === "failed" && record.driverRef !== null);
+  if (!hasDisk || threads.some((thread) => thread.activeRun)) return null;
+  const sinceMs = DateTime.toEpochMillis(record.updatedAt);
+  const due: Array<{ readonly reason: DiskExpiryReason; readonly atMs: number }> = [];
+  if (
+    record.state === "sleeping" &&
+    retention.archivedAfterDays !== null &&
+    threads.length > 0 &&
+    threads.every((thread) => thread.archived)
+  ) {
+    const restingMs = Math.max(sinceMs, ...threads.map((thread) => thread.restingAt ?? sinceMs));
+    due.push({ reason: "archived", atMs: restingMs + retention.archivedAfterDays * DAY_MS });
+  }
+  if (retention.asleepAfterDays !== null) {
+    const activeMs = Math.max(sinceMs, ...threads.map((thread) => thread.activityAt));
+    due.push({ reason: "inactive", atMs: activeMs + retention.asleepAfterDays * DAY_MS });
+  }
+  return due.reduce<(typeof due)[number] | null>(
+    (first, next) => (first === null || next.atMs < first.atMs ? next : first),
+    null,
+  );
 };
 
 /**
@@ -573,6 +643,23 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
       return update({ state: "sleeping", sleepReason: command.reason, sleepSnapshotAt: null }, [
         "sandbox.stop",
       ]);
+    }
+    case "sandbox.expire": {
+      if (record.state !== "sleeping" && record.state !== "failed") return refuse("wrong-state");
+      // Waking it would make a new machine, which only a cloud-only server may do.
+      if (!input.cloudOnly) return refuse("not-cloud-only");
+      const expiry =
+        input.diskRetention === undefined
+          ? null
+          : decideDiskExpiry({
+              record,
+              threads: input.attachedThreads,
+              retention: input.diskRetention,
+            });
+      // The thread keeps its mirror refs, so it stays readable and a wake rebuilds from them.
+      return expiry !== null && expiry.atMs <= DateTime.toEpochMillis(now)
+        ? update({ state: "destroyed" }, ["sandbox.destroy"])
+        : refuse("in-use");
     }
   }
 

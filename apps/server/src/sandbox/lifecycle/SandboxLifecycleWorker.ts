@@ -6,14 +6,17 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   type RunId,
+  type SandboxDiskRetention,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../config.ts";
 import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -24,9 +27,16 @@ import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ComputeDriver } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as CheckpointMirror from "../mirror/CheckpointMirror.ts";
 import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
-import { idleDecision, sandboxAttachedThread } from "./SandboxDecisions.ts";
+import {
+  decideDiskExpiry,
+  diskExpiryFloorMs,
+  diskRetentionOf,
+  idleDecision,
+  sandboxAttachedThread,
+} from "./SandboxDecisions.ts";
 import { listLiveSandboxes } from "./SandboxProjection.ts";
 
 const APPROVAL_EXPIRED_MESSAGE =
@@ -93,6 +103,8 @@ export const makeSweep = Effect.gen(function* () {
   const activity = yield* SandboxActivity.SandboxActivity;
   const settings = yield* ServerSettingsService;
   const drain = yield* ServerDrain.ServerDrain;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const mirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
   const due = DueHint.make();
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
@@ -170,6 +182,57 @@ export const makeSweep = Effect.gen(function* () {
       capPressure,
       nowMs,
     });
+  });
+
+  /** Whether the mirror holds the branch of every thread with a checkout, which a wake rebuilds from. */
+  const mirrored = Effect.fn("SandboxLifecycleWorker.mirrored")(
+    function* (shells: ReadonlyArray<OrchestrationV2ThreadShell>) {
+      if (Option.isNone(mirror)) return false;
+      for (const shell of shells) {
+        if (shell.worktreePath === null) continue;
+        const ref = CheckpointMirror.sandboxBranchRef(shell.id);
+        if (!(yield* mirror.value.tips(shell.projectId, [ref])).has(ref)) return false;
+      }
+      return true;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not read the mirror before a disk expiry", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+
+  /** Destroys a stopped machine's disk that outlived retention, or says when to look again. */
+  const expireDue = Effect.fn("SandboxLifecycleWorker.expireDue")(function* (
+    sandbox: OrchestrationV2Sandbox,
+    retention: SandboxDiskRetention,
+    nowMs: number,
+  ) {
+    const floorMs = diskExpiryFloorMs(sandbox, retention);
+    if (floorMs > nowMs) return { expired: false, nextDueMs: floorMs };
+    const shells = yield* attachedShells(sandbox);
+    const expiry = decideDiskExpiry({
+      record: sandbox,
+      threads: shells.map(sandboxAttachedThread),
+      retention,
+    });
+    if (expiry === null) return { expired: false, nextDueMs: Infinity };
+    if (expiry.atMs > nowMs) return { expired: false, nextDueMs: expiry.atMs };
+    // Without the branch a wake could only check out from origin, losing unpushed work.
+    if (!(yield* mirrored(shells))) {
+      yield* Effect.logDebug("Kept a stopped machine's disk the mirror cannot rebuild", {
+        sandboxId: sandbox.id,
+      });
+      return { expired: false, nextDueMs: Infinity };
+    }
+    yield* dispatch(sandbox, {
+      type: "sandbox.expire",
+      commandId: yield* freshCommandId("expire", sandbox),
+      threadId: sandbox.ownerThreadId,
+      sandboxId: sandbox.id,
+      reason: expiry.reason,
+    });
+    return { expired: true, nextDueMs: Infinity };
   });
 
   /** Stops each run whose question outlived the hold; false if any could not be stopped. */
@@ -258,6 +321,7 @@ export const makeSweep = Effect.gen(function* () {
       ? new Map((yield* registry.list).map((driver) => [driver.driverId, driver]))
       : new Map<ComputeDriverId, ComputeDriver["Service"]>();
     const queues = admissionQueues(sandboxes);
+    const retention = diskRetentionOf((yield* settings.getSettings).sandbox);
     let acted = false;
     let nextDueMs = Infinity;
     for (const [driverId, queue] of queues) {
@@ -293,6 +357,13 @@ export const makeSweep = Effect.gen(function* () {
           snapshotAt: now,
           reason: decision.reason,
         });
+        continue;
+      }
+      if (sandbox.state === "sleeping" || sandbox.state === "failed") {
+        if (!cloudOnly) continue;
+        const expiry = yield* expireDue(sandbox, retention, nowMs);
+        if (expiry.expired) acted = true;
+        nextDueMs = Math.min(nextDueMs, expiry.nextDueMs);
         continue;
       }
       const deadlineMs = bootDeadlineMs(sandbox);

@@ -73,7 +73,11 @@ import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { GitHubAppInstallationTokens } from "../credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
-import { sandboxSnapshotRef } from "../mirror/CheckpointMirror.ts";
+import {
+  CheckpointMirror,
+  sandboxBranchRef,
+  sandboxSnapshotRef,
+} from "../mirror/CheckpointMirror.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as RunnerGrants from "../runnerHub/RunnerGrants.ts";
 import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
@@ -187,6 +191,10 @@ const layerAdmissionTest = (defaultRunningCap: number) => {
   return makeLayerTest(layerAdmission).pipe(Layer.provideMerge(layerDriver));
 };
 
+const layerCloudOnly = Layer.succeed(ServerConfig.ServerConfig, {
+  cloudOnly: true,
+} as ServerConfig.ServerConfig["Service"]);
+
 const installId = EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
 
 /** The real hub and MCP registry over the test database; installation tokens only record revokes. */
@@ -264,6 +272,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
       getEnvironmentId: Effect.succeed(installId),
     }),
     Layer.succeed(SandboxActivity.SandboxActivity, activity.service),
+    layerCloudOnly,
   );
   const credentials = yield* makeCredentials();
   const layerSandboxEffects = SandboxEffects.layer.pipe(
@@ -1516,6 +1525,99 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
   );
 
   it.effect(
+    "destroys an archived machine's disk after 7 days only once the mirror has its branch, and a wake rebuilds it",
+    () =>
+      Effect.gen(function* () {
+        const snapshots = yield* makeSnapshotFakes();
+        const restores = yield* Ref.make<ReadonlyArray<CommandId>>([]);
+        const runtime = yield* makeSandboxRuntime(
+          undefined,
+          snapshots.layer,
+          Layer.mock(ThreadLaunch.ThreadLaunchService)({
+            prepareRun: () => Effect.void,
+            restoreCheckout: ({ commandId }) => Ref.update(restores, (all) => [...all, commandId]),
+          }),
+        );
+        const { threadId, sandboxId } = yield* provisioned("expire-archived");
+        yield* setWorktree(threadId, `/t3-sandbox/${sandboxId}/expire`);
+        yield* runAnswering(runtime, answerCreate);
+        yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+        const mirrorHasBranch = yield* Ref.make(false);
+        const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtime.layerDriver,
+              Layer.mock(CheckpointMirror)({
+                gitDir: () => "/unused",
+                tips: (_projectId, refs) =>
+                  Ref.get(mirrorHasBranch).pipe(
+                    Effect.map(
+                      (held) =>
+                        new Map(
+                          refs.flatMap((ref) =>
+                            held && ref === sandboxBranchRef(threadId) ? [[ref, "oid"]] : [],
+                          ),
+                        ),
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        );
+
+        yield* dispatch({ type: "thread.archive", commandId: CommandId.make("archive"), threadId });
+        // Archiving's terminal cleanup goes first; it calls no driver.
+        assert.equal(yield* runtime.worker.drain(1), 1);
+        yield* sweep();
+        yield* runAnswering(runtime, answerStop);
+        const slept = yield* getSandbox(sandboxId);
+        assert.deepInclude(slept, { state: "sleeping", sleepReason: "archived" });
+        const sleepSnapshotAt = slept?.sleepSnapshotAt ?? null;
+        assert.isNotNull(sleepSnapshotAt);
+
+        yield* TestClock.adjust("6 days");
+        yield* sweep();
+        assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+        // Due, but a wake could only check the branch out from origin.
+        yield* TestClock.adjust("1 day");
+        yield* sweep();
+        assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+
+        yield* Ref.set(mirrorHasBranch, true);
+        // The held machine set no deadline; the sweep's backstop looks again.
+        yield* TestClock.adjust("10 minutes");
+        yield* sweep();
+        const expired = yield* getSandbox(sandboxId);
+        assert.deepInclude(expired, {
+          state: "destroyed",
+          sleepReason: "archived",
+          sleepSnapshotAt,
+        });
+        yield* runAnswering(runtime, (call) =>
+          call._tag === "destroy"
+            ? Ref.get(snapshots.flushes).pipe(
+                Effect.flatMap((flushed) => {
+                  assert.include(flushed, sandboxId);
+                  return Deferred.succeed(call.reply, undefined);
+                }),
+              )
+            : Effect.die(call._tag),
+        );
+
+        // The new disk is empty; its hello rebuilds the checkout (from the mirror, 2.13).
+        yield* dispatch({
+          type: "sandbox.wake",
+          commandId: CommandId.make("wake:expired"),
+          threadId,
+          sandboxId,
+        });
+        yield* runAnswering(runtime, answerCreate);
+        yield* attachAndRelease(runtime, threadId, sandboxId, 2);
+        assert.include(yield* Ref.get(restores), CommandId.make(`sandbox-restore:${threadId}:2`));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
     "a snapshot that fails or times out still stops the machine, with no sleepSnapshotAt",
     () =>
       Effect.gen(function* () {
@@ -1922,7 +2024,7 @@ it.layer(layerAdmissionTest(1))("sandbox admission after a cap edit", (it) => {
         Stream.concat(Stream.never),
       );
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
-        Effect.provide(FakeComputeDriver.layerRegistry(fake.driver)),
+        Effect.provide(Layer.merge(FakeComputeDriver.layerRegistry(fake.driver), layerCloudOnly)),
         Effect.provideServiceEffect(
           SandboxActivity.SandboxActivity,
           Effect.map(SandboxActivity.makeTest, (activity) => activity.service),
@@ -1991,7 +2093,12 @@ it.layer(layerAdmissionTest(100))("sandbox admission at the start rate", (it) =>
       assert.deepEqual(reasons, [...Array.from({ length: 10 }, () => null), "rate-limit"]);
 
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
-        Effect.provide(FakeComputeDriver.layerRegistry((yield* AdmissionDriver).fake.driver)),
+        Effect.provide(
+          Layer.merge(
+            FakeComputeDriver.layerRegistry((yield* AdmissionDriver).fake.driver),
+            layerCloudOnly,
+          ),
+        ),
         Effect.provideServiceEffect(
           SandboxActivity.SandboxActivity,
           Effect.map(SandboxActivity.makeTest, (activity) => activity.service),

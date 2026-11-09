@@ -68,6 +68,7 @@ const contextFor = (
 const layerReads = (
   contexts: ReadonlyMap<ThreadId, ProjectionCheckpointContext>,
   sleepSnapshotAt: DateTime.Utc | null = null,
+  state: OrchestrationV2Sandbox["state"] = "sleeping",
 ) =>
   StoppedSandboxReads.layer.pipe(
     Layer.provide(
@@ -76,7 +77,7 @@ const layerReads = (
           Effect.succeed({
             id: sandboxId,
             projectId,
-            state: "sleeping",
+            state,
             ownerThreadId: [...contexts.keys()][0],
             sleepSnapshotAt,
           } as OrchestrationV2Sandbox),
@@ -369,7 +370,7 @@ it.effect("reads the newest checkpoint among threads sharing the checkout", () =
   }).pipe(Effect.provide(layerBase), Effect.scoped),
 );
 
-it.effect("diffs the sleep snapshot against its branch tip", () =>
+it.effect("diffs the sleep snapshot against its branch tip, after its disk expired too", () =>
   Effect.gen(function* () {
     const tipRef = "refs/heads/main";
     const snapshotRef = CheckpointMirror.sandboxSnapshotRef(firstThread);
@@ -393,6 +394,7 @@ it.effect("diffs the sleep snapshot against its branch tip", () =>
         layerReads(
           new Map([[firstThread, contextFor([])]]),
           DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+          "destroyed",
         ),
       ),
     );

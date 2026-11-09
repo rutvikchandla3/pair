@@ -102,6 +102,9 @@ export const mirrorGitDir = (path: Path.Path, stateDir: string, projectId: Proje
 export const sandboxThreadRefPrefix = (threadId: ThreadId) =>
   `refs/t3/sandbox/${Base64Url.encode(threadId)}/`;
 
+/** The mirror's copy of a thread's branch, which a rebuilt disk is checked out from. */
+export const sandboxBranchRef = (threadId: ThreadId) => `${sandboxThreadRefPrefix(threadId)}branch`;
+
 /** A checkout's working tree when its machine last went to sleep; same name in clone and mirror. */
 export const sandboxSnapshotRef = (threadId: ThreadId) =>
   CheckpointRef.make(`${sandboxThreadRefPrefix(threadId)}snapshot`);

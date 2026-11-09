@@ -1192,10 +1192,10 @@ Its own PR because it is the first thing that deletes a disk on a timer.
     failed sandbox, read its attached shells (as `shouldSleep`, 98, does) and the settings, call
     `decideDiskExpiry`, dispatch `sandbox.expire` (`freshCommandId("expire", sandbox)`, 46) when
     due, and fold the due instant into `nextDueMs`. Track C's 2.1 rewrites this loop; land after it.
-  - Web: `apps/web/src/components/settings/CloudSettings.tsx` Compute section: two number fields,
-    "Delete archived threads' disks after N days" and "Delete asleep machines' disks after N days",
-    with a "Never" option; `CloudSettings.logic.ts` holds the parse. Mobile: none (Compute
-    settings are web and desktop only).
+  - Web: `apps/web/src/components/settings/CloudSettings.tsx` Compute section: two rows,
+    "Delete archived machines' disks" and "Delete unused machines' disks", each the Storage
+    page's day count with an off switch (`RetentionControl`, moved to its own file), so no parse.
+    Mobile: none (Compute settings are web and desktop only).
 - **Types and services:** `SandboxSettings.diskRetention`; `decideDiskExpiry`; `sandbox.expire`.
 - **Commands and events:** new command `sandbox.expire`; it emits the existing `sandbox.updated`.
 - **Migrations:** none.

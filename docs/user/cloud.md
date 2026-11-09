@@ -99,6 +99,11 @@ While it sleeps, its files, search and Changes are read-only and show as of the 
 (or its last turn, when nothing was saved at sleep). Its terminals stop and keep their output;
 after a wake, typing in one starts a new shell.
 
+A machine that sleeps for 7 days with every thread archived, or goes 30 days with no activity on any
+of its threads, has its disk deleted and shows as **Machine discarded**. Its threads stay readable,
+and waking one rebuilds the machine from the server's copy of its work. Admins change both in
+**Settings → Cloud → Compute**.
+
 Anyone can wake or retry a machine. Only the thread's owner or an admin can choose **Sleep now** or
 **Discard machine**, from the thread's menu (on a phone, the **Machine** menu in the thread
 header). Discarding deletes the machine's disk; the transcript and diffs stay. When a machine

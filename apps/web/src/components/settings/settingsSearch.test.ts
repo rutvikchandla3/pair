@@ -205,6 +205,8 @@ describe("searchSettings", () => {
       ["Docker driver", "cloud-docker-driver"],
       ["Base image", "cloud-base-image"],
       ["Machine limits", "cloud-caps"],
+      ["Delete archived machines' disks", "cloud-disk-archived"],
+      ["Delete unused machines' disks", "cloud-disk-inactive"],
       ["Environment variables", "cloud-env"],
       ["Allow cloud threads", "project-cloud-allowed"],
       ["Cloud variables", "project-cloud-env"],
@@ -253,6 +255,8 @@ describe("settings search targets", () => {
       "cloud-docker-driver",
       "cloud-base-image",
       "cloud-caps",
+      "cloud-disk-archived",
+      "cloud-disk-inactive",
       "cloud-env",
       "cloud-test",
     ]) {

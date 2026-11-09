@@ -1216,6 +1216,15 @@ export type DockerSandboxDriver = typeof DockerSandboxDriver.Type;
 export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver]);
 export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
 
+/** Days a stopped machine keeps its disk; null never destroys it (04 §2). */
+const SandboxDiskRetention = Schema.Struct({
+  /** Asleep with every thread archived. */
+  archivedAfterDays: StorageRetentionDays,
+  /** Asleep or failed with no activity on any of its threads. */
+  asleepAfterDays: StorageRetentionDays,
+});
+export type SandboxDiskRetention = typeof SandboxDiskRetention.Type;
+
 export const SandboxSettings = Schema.Struct({
   // Older clients drop a driver kind they do not know rather than fail the settings snapshot.
   drivers: ForwardCompatibleArray(SandboxDriverInstance),
@@ -1224,6 +1233,8 @@ export const SandboxSettings = Schema.Struct({
   env: Schema.optionalKey(ProviderInstanceEnvironment),
   /** While set, the reconciler stops machines it would destroy (04 §5); an admin clears it. */
   restoreModeSince: Schema.optionalKey(Schema.DateTimeUtc),
+  /** Absent: `DEFAULT_DISK_RETENTION` in `@t3tools/shared/sandbox`. */
+  diskRetention: Schema.optionalKey(SandboxDiskRetention),
 });
 export type SandboxSettings = typeof SandboxSettings.Type;
 
@@ -1788,6 +1799,7 @@ export const ServerSettingsPatch = Schema.Struct({
         // The whole list, as provider environments are patched.
         env: Schema.optionalKey(ProviderInstanceEnvironment),
         restoreModeSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
+        diskRetention: Schema.optionalKey(Schema.NullOr(SandboxDiskRetention)),
       }),
     ),
   ),

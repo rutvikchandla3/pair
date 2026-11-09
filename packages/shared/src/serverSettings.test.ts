@@ -656,6 +656,17 @@ describe("serverSettings helpers", () => {
       applyServerSettingsPatch(restoring, { sandbox: { restoreModeSince: null } }).sandbox,
     ).toEqual(removed.sandbox);
 
+    const diskRetention = { archivedAfterDays: null, asleepAfterDays: 60 };
+    const retained = applyServerSettingsPatch(removed, { sandbox: { diskRetention } });
+    expect(retained.sandbox).toEqual({ drivers: [remote], diskRetention });
+    const kept = applyServerSettingsPatch(retained, {
+      sandbox: { drivers: { [remote.id]: null } },
+    });
+    expect(kept.sandbox).toEqual({ drivers: [], diskRetention });
+    expect(applyServerSettingsPatch(kept, { sandbox: { diskRetention: null } })).not.toHaveProperty(
+      "sandbox",
+    );
+
     const emptied = applyServerSettingsPatch(removed, {
       sandbox: { drivers: { [remote.id]: null } },
     });

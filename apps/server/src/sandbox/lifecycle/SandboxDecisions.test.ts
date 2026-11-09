@@ -6,10 +6,11 @@ import {
   type OrchestrationV2Sandbox,
   ProjectId,
   RunId,
+  type SandboxDiskRetention,
   SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
-import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
+import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
 import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
@@ -17,7 +18,9 @@ import {
   APPROVAL_HOLD_MS,
   decideGitCredentialRecord,
   decideCloudPrompt,
+  decideDiskExpiry,
   decideSandboxCommand,
+  diskRetentionOf,
   idleDecision,
   type IdleDecision,
   type IdleInput,
@@ -828,6 +831,205 @@ describe("idleDecision", () => {
     ["a waiter queued waits until 5 idle minutes", input(2, { capPressure: true }), awake(5)],
   ])("%s", (_name, idle, expected) => {
     expect(idleDecision(idle)).toEqual(expected);
+  });
+});
+
+describe("decideDiskExpiry", () => {
+  const day = 24 * 60 * 60_000;
+  const sleptAt = DateTime.toEpochMillis(earlier);
+  const asleep = record({ state: "sleeping", sleepReason: "archived" });
+  const archived = (threadId: ThreadId, atDay = 0) =>
+    attached(threadId, { archived: true, restingAt: sleptAt + atDay * day, activityAt: sleptAt });
+  const active = (threadId: ThreadId, atDay = 0) =>
+    attached(threadId, { activityAt: sleptAt + atDay * day });
+  const never: SandboxDiskRetention = { archivedAfterDays: null, asleepAfterDays: null };
+
+  it.each<
+    readonly [
+      string,
+      OrchestrationV2Sandbox,
+      ReadonlyArray<SandboxAttachedThread>,
+      SandboxDiskRetention,
+      { readonly reason: "archived" | "inactive"; readonly atDay: number } | null,
+    ]
+  >([
+    [
+      "all archived: 7 days after the newest archive",
+      asleep,
+      [archived(owner), archived(sideChat, 2)],
+      DEFAULT_DISK_RETENTION,
+      { reason: "archived", atDay: 9 },
+    ],
+    [
+      "an unarchived thread leaves only the 30-day rule",
+      asleep,
+      [archived(owner), active(sideChat, 3)],
+      DEFAULT_DISK_RETENTION,
+      { reason: "inactive", atDay: 33 },
+    ],
+    [
+      "inactive: 30 days from the sleep when the threads were quiet before it",
+      record({ state: "sleeping", sleepReason: "idle" }),
+      [active(owner, -5)],
+      DEFAULT_DISK_RETENTION,
+      { reason: "inactive", atDay: 30 },
+    ],
+    [
+      "new activity restarts the inactive clock",
+      record({ state: "sleeping", sleepReason: "idle" }),
+      [active(owner, 12)],
+      DEFAULT_DISK_RETENTION,
+      { reason: "inactive", atDay: 42 },
+    ],
+    [
+      "an admin's days",
+      asleep,
+      [archived(owner)],
+      { archivedAfterDays: 1, asleepAfterDays: 3 },
+      { reason: "archived", atDay: 1 },
+    ],
+    [
+      "archived off leaves the inactive rule",
+      asleep,
+      [archived(owner)],
+      { archivedAfterDays: null, asleepAfterDays: 30 },
+      { reason: "inactive", atDay: 30 },
+    ],
+    [
+      "a failed machine with a disk expires only as inactive",
+      record({ state: "failed", failure: lost }),
+      [archived(owner)],
+      DEFAULT_DISK_RETENTION,
+      { reason: "inactive", atDay: 30 },
+    ],
+    ["null settings never expire", asleep, [archived(owner)], never, null],
+    [
+      "an active run holds",
+      asleep,
+      [archived(owner), attached(sideChat, { activeRun: true })],
+      DEFAULT_DISK_RETENTION,
+      null,
+    ],
+    ["a ready machine never expires", record(), [archived(owner)], DEFAULT_DISK_RETENTION, null],
+    [
+      "a waking machine never expires",
+      record({ state: "waking" }),
+      [archived(owner)],
+      DEFAULT_DISK_RETENTION,
+      null,
+    ],
+    [
+      "a failed machine without a disk has nothing to expire",
+      record({ state: "failed", failure: lost, driverRef: null }),
+      [archived(owner)],
+      DEFAULT_DISK_RETENTION,
+      null,
+    ],
+  ])("%s", (_name, current, threads, retention, expected) => {
+    expect(decideDiskExpiry({ record: current, threads, retention })).toEqual(
+      expected === null ? null : { reason: expected.reason, atMs: sleptAt + expected.atDay * day },
+    );
+  });
+
+  const expire = (reason: "archived" | "inactive"): SandboxCommand => ({
+    type: "sandbox.expire",
+    ...base,
+    reason,
+  });
+  const decideExpire = (
+    command: SandboxCommand,
+    current: OrchestrationV2Sandbox,
+    attachedThreads: ReadonlyArray<SandboxAttachedThread>,
+    atDay: number,
+    { retention = diskRetentionOf(undefined), cloudOnly = true } = {},
+  ) =>
+    decideSandboxCommand({
+      command,
+      record: current,
+      ownerMemberId: null,
+      attachedThreads,
+      diskRetention: retention,
+      admission: null,
+      cloudOnly,
+      now: DateTime.makeUnsafe(sleptAt + atDay * day),
+    });
+  it.each<
+    readonly [
+      string,
+      SandboxCommand,
+      OrchestrationV2Sandbox,
+      ReadonlyArray<SandboxAttachedThread>,
+      number,
+      "destroy" | string,
+    ]
+  >([
+    ["archived at 6 days", expire("archived"), asleep, [archived(owner)], 6, "in-use"],
+    ["archived at 8 days", expire("archived"), asleep, [archived(owner)], 8, "destroy"],
+    [
+      "inactive at 29 days",
+      expire("inactive"),
+      record({ state: "sleeping", sleepReason: "idle" }),
+      [active(owner)],
+      29,
+      "in-use",
+    ],
+    [
+      "inactive at 31 days",
+      expire("inactive"),
+      record({ state: "sleeping", sleepReason: "idle" }),
+      [active(owner)],
+      31,
+      "destroy",
+    ],
+    [
+      "a failed machine with a disk at 31 days",
+      expire("inactive"),
+      record({ state: "failed", failure: lost }),
+      [active(owner)],
+      31,
+      "destroy",
+    ],
+    [
+      "unarchived since the sweep read it",
+      expire("archived"),
+      asleep,
+      [active(owner)],
+      8,
+      "in-use",
+    ],
+    ["a woken machine", expire("archived"), record(), [archived(owner)], 31, "wrong-state"],
+    [
+      "a machine already discarded",
+      expire("inactive"),
+      record({ state: "destroyed" }),
+      [active(owner)],
+      31,
+      "wrong-state",
+    ],
+  ])("sandbox.expire: %s", (_name, command, current, attachedThreads, atDay, expected) => {
+    const decision = decideExpire(command, current, attachedThreads, atDay);
+    if (expected !== "destroy") {
+      return expect(decision).toEqual({ _tag: "Refuse", reason: expected });
+    }
+    expect(decision).toMatchObject({
+      _tag: "Accept",
+      next: { state: "destroyed", sleepReason: current.sleepReason },
+      effects: [{ type: "sandbox.destroy", sandboxId, generation: current.generation }],
+    });
+  });
+
+  it("sandbox.expire destroys nothing in restore mode", () => {
+    const retention = diskRetentionOf({ drivers: [], restoreModeSince: earlier });
+    expect(decideExpire(expire("archived"), asleep, [archived(owner)], 31, { retention })).toEqual({
+      _tag: "Refuse",
+      reason: "in-use",
+    });
+  });
+
+  it("sandbox.expire refuses off cloud-only, where no wake could rebuild the disk", () => {
+    expect(
+      decideExpire(expire("archived"), asleep, [archived(owner)], 31, { cloudOnly: false }),
+    ).toEqual({ _tag: "Refuse", reason: "not-cloud-only" });
   });
 });
 

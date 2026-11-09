@@ -252,8 +252,16 @@ function mergeSandboxPatch(
   const baseImage = patched(patch.baseImage, current?.baseImage);
   const env = patched(patch.env, current?.env);
   const restoreModeSince = patched(patch.restoreModeSince, current?.restoreModeSince);
+  const diskRetention = patched(patch.diskRetention, current?.diskRetention);
   // No driver and nothing else set is no key, so solo servers send nothing new.
-  if (drivers.size === 0 && !defaultDriverId && !baseImage && !env && !restoreModeSince) {
+  if (
+    drivers.size === 0 &&
+    !defaultDriverId &&
+    !baseImage &&
+    !env &&
+    !restoreModeSince &&
+    !diskRetention
+  ) {
     return undefined;
   }
   return {
@@ -262,6 +270,7 @@ function mergeSandboxPatch(
     ...(baseImage === undefined ? {} : { baseImage }),
     ...(env === undefined ? {} : { env }),
     ...(restoreModeSince === undefined ? {} : { restoreModeSince }),
+    ...(diskRetention === undefined ? {} : { diskRetention }),
   };
 }
 
