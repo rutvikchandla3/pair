@@ -1042,56 +1042,71 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 in a sandbox", () => {
+  const sandboxId = "sbx_00000000000000000123";
+  const sandboxHome = `/t3-sandbox/${sandboxId}/homes/claude_member-ada`;
+  // The machine's `/t3-sandbox` lives under `root`.
+  const makeSandboxHost = (fileSystem: FileSystem.FileSystem, root: string) => {
+    const spawned: Array<ReadonlyArray<string>> = [];
+    const writes: Array<string> = [];
+    const onMachine = (path: string) =>
+      path.startsWith("/t3-sandbox/") ? NodePath.join(root, path) : path;
+    const machineFileSystem: FileSystem.FileSystem = {
+      ...fileSystem,
+      readDirectory: (path, options) => fileSystem.readDirectory(onMachine(path), options),
+      exists: (path) => fileSystem.exists(onMachine(path)),
+      stream: (path, options) => fileSystem.stream(onMachine(path), options),
+    };
+    const host = {
+      id: sandboxId,
+      kind: "sandbox" as const,
+      // Records every file call that could put a credential on the sandbox's disk.
+      fileSystem: new Proxy(machineFileSystem, {
+        get: (target, key) => {
+          if (/write|make|copy|rename|link|chmod|chown|truncate|sink/i.test(String(key))) {
+            writes.push(String(key));
+          }
+          return Reflect.get(target, key);
+        },
+      }),
+      spawner: ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag === "StandardCommand") {
+            spawned.push([command.command, ...command.args.map(String)]);
+          }
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(999_999_997),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      ),
+      info: Effect.succeed({
+        platform: "linux" as const,
+        homeDirectory: "/home/t3",
+        userId: 1000,
+        environment: { PATH: "/opt/pair-runner/b:/usr/bin", HOME: "/home/t3" },
+        executablePath: "/opt/pair-runner/b/t3",
+      }),
+    };
+    return { host, spawned, writes };
+  };
+
   it.effect("starts the CLI with its account's credential in env and writes nothing", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-sandbox-" });
-        const sandboxId = "sbx_00000000000000000123";
-        const spawned: Array<ReadonlyArray<string>> = [];
-        const writes: Array<string> = [];
+        const { host: sandboxHost, spawned, writes } = makeSandboxHost(fileSystem, cwd);
         const environmentFor: Array<string> = [];
         const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
-        const sandboxHost = {
-          id: sandboxId,
-          kind: "sandbox" as const,
-          // Records every file call that could put a credential on the sandbox's disk.
-          fileSystem: new Proxy(fileSystem, {
-            get: (target, key) => {
-              if (/write|make|copy|rename|link|chmod|chown|truncate|sink/i.test(String(key))) {
-                writes.push(String(key));
-              }
-              return Reflect.get(target, key);
-            },
-          }),
-          spawner: ChildProcessSpawner.make((command) =>
-            Effect.sync(() => {
-              if (command._tag === "StandardCommand") {
-                spawned.push([command.command, ...command.args.map(String)]);
-              }
-              return ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(999_999_997),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-                isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
-                unref: Effect.succeed(Effect.void),
-                stdin: Sink.drain,
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                all: Stream.empty,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-              });
-            }),
-          ),
-          info: Effect.succeed({
-            platform: "linux" as const,
-            homeDirectory: "/home/t3",
-            userId: 1000,
-            environment: { PATH: "/opt/pair-runner/b:/usr/bin", HOME: "/home/t3" },
-            executablePath: "/opt/pair-runner/b/t3",
-          }),
-        };
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ProviderInstanceId.make("claude_member-ada"),
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -1170,15 +1185,86 @@ describe("ClaudeAdapterV2 in a sandbox", () => {
 
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepEqual(environmentFor, [threadId]);
-        const home = `/t3-sandbox/${sandboxId}/homes/claude_member-ada`;
-        assert.deepEqual(spawned[0], ["mkdir", "-p", home]);
+        assert.deepEqual(spawned[0], ["mkdir", "-p", sandboxHome]);
         // Env only, never argv, which every process in the sandbox can read.
         assert.notInclude(JSON.stringify(spawned), "sk-ant-oat-ada");
         const env = opened[0]?.env ?? {};
         assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-ada");
-        assert.equal(env.CLAUDE_CONFIG_DIR, home);
+        assert.equal(env.CLAUDE_CONFIG_DIR, sandboxHome);
         assert.isUndefined(env.SERVER_ONLY);
         assert.deepEqual(writes, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { name: "a new disk", transcript: null, resumed: "ProviderAdapterResumeThreadError" },
+    {
+      name: "a kept disk",
+      transcript: `{"type":"user","message":{"role":"user","content":"hello"},"sessionId":"native-thread-claude-sandbox"}\n`,
+      resumed: "native-thread-claude-sandbox",
+    },
+  ])("resumes a session only when its transcript is on the machine: $name", (testCase) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-sandbox-" });
+        if (testCase.transcript !== null) {
+          const projectDir = NodePath.join(root, sandboxHome, "projects", "-workspace");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            NodePath.join(projectDir, "native-thread-claude-sandbox.jsonl"),
+            testCase.transcript,
+          );
+        }
+        const { host } = makeSandboxHost(fileSystem, root);
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ProviderInstanceId.make("claude_member-ada"),
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: root,
+          fileSystem,
+          hostForPath: () => Effect.succeed(host),
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-sandbox"),
+            open: () => Effect.die("unused"),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-sandbox");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-sandbox"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+
+        const resumed = yield* Effect.result(runtime.resumeThread({ providerThread }));
+        assert.equal(
+          resumed._tag === "Success"
+            ? resumed.success.nativeThreadRef?.nativeId
+            : resumed.failure._tag,
+          testCase.resumed,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

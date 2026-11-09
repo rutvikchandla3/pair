@@ -115,8 +115,9 @@ after a wake, typing in one starts a new shell.
 
 A machine that sleeps for 7 days with every thread archived, or goes 30 days with no activity on any
 of its threads, has its disk deleted and shows as **Machine discarded**. Its threads stay readable,
-and waking one rebuilds the machine from the server's copy of its work. Admins change both in
-**Settings → Cloud → Compute**.
+and waking one rebuilds the machine from the server's copy of its work. The agent starts a new
+session there with the conversation so far ([handoffs](./portable-handoffs.md)). Admins change both
+in **Settings → Cloud → Compute**.
 
 Anyone can wake or retry a machine. Only the thread's owner or an admin can choose **Sleep now** or
 **Discard machine**, from the thread's menu (on a phone, the **Machine** menu in the thread

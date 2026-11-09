@@ -11865,7 +11865,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           let unreadable = false;
           const transcriptFileSystem =
             sessionHost.kind === "sandbox" ? sessionHost.fileSystem : fileSystem;
-          for (const project of yield* transcriptFileSystem.readDirectory(projectsDir)) {
+          const projects = yield* transcriptFileSystem
+            .readDirectory(projectsDir)
+            .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+          for (const project of projects) {
             const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
             // Stray files beside the project dirs fail with ENOTDIR.
             if (
@@ -11893,7 +11896,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             found = true;
           }
-          return found && !unreadable ? ("empty" as const) : ("missing" as const);
+          return unreadable
+            ? ("missing" as const)
+            : found
+              ? ("empty" as const)
+              : ("absent" as const);
         });
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
@@ -11995,6 +12002,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver: CLAUDE_PROVIDER,
                     detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
+                  });
+                }
+                // A machine's home is Pair's, so no transcript there means a new disk.
+                if (transcript === "absent" && sessionHost.kind === "sandbox") {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Claude session ${nativeThreadId} is not on this machine.`,
                   });
                 }
                 // A session imported from the terminal has history but no T3
