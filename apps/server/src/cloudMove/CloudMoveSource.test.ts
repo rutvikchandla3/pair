@@ -62,6 +62,7 @@ interface World {
   readonly captures: Array<{ readonly cwd: string; readonly ref: string }>;
   readonly dispatched: Array<OrchestrationV2ServerCommand>;
   settleRejected: boolean;
+  originless: boolean;
 }
 
 const makeWorld = (threadId: ThreadId): World => ({
@@ -94,6 +95,7 @@ const makeWorld = (threadId: ThreadId): World => ({
   captures: [],
   dispatched: [],
   settleRejected: false,
+  originless: false,
 });
 
 const layerHosts = Layer.unwrap(
@@ -166,13 +168,17 @@ const layerFor = (world: World, options: { readonly team: boolean } = { team: tr
           return { sequence: 1, storedEvents: [] };
         }),
     }),
+    // A shell read peeks the identity cache and may miss it; only the resolved read waits.
     Layer.mock(ProjectService.ProjectService)({
-      getShell: () =>
+      getShell: () => Effect.succeedSome({ repositoryIdentity: null } as never),
+      getResolvedShell: () =>
         Effect.succeedSome({
-          repositoryIdentity: {
-            canonicalKey: "github.com/acme/app",
-            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
-          },
+          repositoryIdentity: world.originless
+            ? null
+            : {
+                canonicalKey: "github.com/acme/app",
+                locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
+              },
         } as never),
     }),
     options.team
@@ -334,6 +340,11 @@ const seedCases: ReadonlyArray<{
         world.sandbox = { ...world.sandbox, state: "destroyed", sleepSnapshotAt: null };
       }).pipe(Effect.orDie),
     expected: { mode: "move", captured: false, snapshot: "none", prerequisite: true },
+  },
+  {
+    name: "a project with no origin",
+    arrange: (world) => Effect.sync(() => (world.originless = true)),
+    expected: { refused: "failed" },
   },
   {
     name: "a running turn",

@@ -203,6 +203,32 @@ it.effect("resolves only the requested active project page in creation order", (
   }),
 );
 
+it.effect("a resolved shell read waits for the repository identity a shell read only peeks", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* ProjectService.ProjectService;
+    yield* sql`INSERT INTO projection_projects ${sql.insert({
+      project_id: "shell:0",
+      title: "Project",
+      workspace_root: "/work/shell-0",
+      scripts_json: "[]",
+      created_at: "2026-10-01T00:00:00.000Z",
+      updated_at: "2026-10-01T00:00:00.000Z",
+      deleted_at: null,
+      auto_pull: 0,
+    })}`;
+
+    const peeked = yield* service.getShell(ProjectId.make("shell:0"));
+    const resolved = yield* service.getResolvedShell(ProjectId.make("shell:0"));
+
+    assert.isNull(Option.getOrThrow(peeked).repositoryIdentity);
+    assert.equal(
+      Option.getOrThrow(resolved).repositoryIdentity?.canonicalKey,
+      "github.com/t3tools/shell-0",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerTestFor(layerMetadata))),
+);
+
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
   ProjectStore.layer,

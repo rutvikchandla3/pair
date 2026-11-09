@@ -234,7 +234,7 @@ const make = Effect.gen(function* () {
       return yield* fail(threadId, "snapshot-missing")();
     }
 
-    const project = yield* projects.getShell(shell.projectId).pipe(Effect.mapError(failed));
+    const project = yield* projects.getResolvedShell(shell.projectId).pipe(Effect.mapError(failed));
     const identity = Option.getOrUndefined(project)?.repositoryIdentity ?? null;
     if (identity === null) return yield* failed("The project has no repository identity.");
     const firstCheckout = runs

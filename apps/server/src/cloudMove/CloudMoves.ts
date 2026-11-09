@@ -10,6 +10,7 @@ import {
   type OrchestrationV2CreationSource,
   type ProjectId,
   ProviderDriverKind,
+  type RepositoryIdentity,
   repositoryGroupingKeyOf,
   type RunId,
   type ThreadId,
@@ -102,6 +103,11 @@ const refused = (reason: ThreadMoveError["reason"], message: string) =>
   new ThreadMoveError({ reason, message });
 const seedFailed = () => refused("seed-failed", CloudMoveClient.SEED_FAILED_MESSAGE);
 const stripSlash = (entry: string) => entry.replace(/\/+$/, "");
+
+const originKeyOf = (project: {
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+}) =>
+  project.repositoryIdentity == null ? null : repositoryGroupingKeyOf(project.repositoryIdentity);
 
 const make = Effect.gen(function* () {
   const client = yield* CloudMoveClient.CloudMoveClient;
@@ -205,15 +211,12 @@ const make = Effect.gen(function* () {
     }
     const project = Option.getOrUndefined(
       yield* projects
-        .getShell(input.projectId)
+        .getResolvedShell(input.projectId)
         .pipe(Effect.mapError(failed("Couldn't read the project here."))),
     );
     if (project === undefined) return yield* failed("This project isn't on this computer.")();
     const root = project.workspaceRoot;
-    const originKey =
-      project.repositoryIdentity == null
-        ? null
-        : repositoryGroupingKeyOf(project.repositoryIdentity);
+    const originKey = originKeyOf(project);
     const moveId = yield* moveIdFor(input.commandId);
     const { environmentId: cloudEnvironmentId, threadId: cloudThreadId } = input.source;
 
@@ -392,7 +395,7 @@ const make = Effect.gen(function* () {
     }
     const project = Option.getOrUndefined(
       yield* projects
-        .getShell(shell.projectId)
+        .getResolvedShell(shell.projectId)
         .pipe(Effect.mapError(failed("Couldn't read the project here."))),
     );
     if (project === undefined) return yield* failed("This thread's project is gone.")();
@@ -666,10 +669,7 @@ const make = Effect.gen(function* () {
       return yield* refused("run-active", RUN_ACTIVE_MESSAGE);
     }
     const checkout = yield* readCheckout(cwd);
-    const originKey =
-      project.repositoryIdentity == null
-        ? null
-        : repositoryGroupingKeyOf(project.repositoryIdentity);
+    const originKey = originKeyOf(project);
     if (originKey === null || !originKey.toLowerCase().startsWith("github.com/")) {
       return yield* refused("not-on-github", "Cloud needs this project's origin on github.com.");
     }

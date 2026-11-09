@@ -162,6 +162,13 @@ export class ProjectService extends Context.Service<
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectOperationError>;
+    /**
+     * `getShell`, but the repository identity is resolved before it returns instead of peeked
+     * from the cache. For a caller that decides something by the project's origin.
+     */
+    readonly getResolvedShell: (
+      projectId: ProjectId,
+    ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectOperationError>;
     readonly listShells: (options?: {
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectOperationError>;
@@ -583,6 +590,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const getResolvedShell: ProjectService["Service"]["getResolvedShell"] = Effect.fn(
+    "ProjectService.getResolvedShell",
+  )(function* (projectId) {
+    const shell = yield* getShell(projectId);
+    if (Option.isNone(shell) || shell.value.repositoryIdentity !== null) return shell;
+    const repositoryIdentity = yield* projectEnrichment.readRepositoryIdentity(
+      shell.value.workspaceRoot,
+    );
+    return Option.some({ ...shell.value, repositoryIdentity });
+  });
+
   const listShells: ProjectService["Service"]["listShells"] = Effect.fn(
     "ProjectService.listShells",
   )(function* (options) {
@@ -642,6 +660,7 @@ export const make = Effect.gen(function* () {
     snapshot,
     listPage,
     getShell,
+    getResolvedShell,
     listShells,
   });
 });

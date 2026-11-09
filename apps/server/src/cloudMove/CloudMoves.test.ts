@@ -103,6 +103,9 @@ interface World {
   uploadDelay: Duration.Input | null;
   readonly turnItems: Array<OrchestrationV2TurnItem>;
   readonly routeCalls: Array<RouteCall>;
+  /** The project's origin as a shell read peeks it, and as the authoritative read resolves it. */
+  peekedOrigin: string | null;
+  resolvedOrigin: string | null;
 }
 
 interface ThreadShell {
@@ -280,15 +283,8 @@ const layerFor = (world: World, reports?: Queue.Queue<void>) =>
               getSettings: Effect.succeed({ providerInstances: {} } as never),
             }),
             Layer.mock(ProjectService.ProjectService)({
-              getShell: () =>
-                Effect.succeedSome({
-                  id: PROJECT,
-                  workspaceRoot: world.root,
-                  repositoryIdentity: {
-                    canonicalKey: ORIGIN_KEY,
-                    locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
-                  },
-                } as never),
+              getShell: () => Effect.succeedSome(projectShell(world, world.peekedOrigin)),
+              getResolvedShell: () => Effect.succeedSome(projectShell(world, world.resolvedOrigin)),
             }),
             Layer.mock(ServerEnvironment.ServerEnvironment)({
               getDescriptor: Effect.succeed({
@@ -384,6 +380,19 @@ const setup = Effect.fn("CloudMovesTest.setup")(function* (world: World) {
   return { root, cloud, head, snapshot, originTip, dir };
 });
 
+const projectShell = (world: World, origin: string | null) =>
+  ({
+    id: PROJECT,
+    workspaceRoot: world.root,
+    repositoryIdentity:
+      origin === null
+        ? null
+        : {
+            canonicalKey: origin,
+            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "x" },
+          },
+  }) as never;
+
 const makeWorld = (): World => ({
   root: "",
   facts: {
@@ -411,6 +420,8 @@ const makeWorld = (): World => ({
   uploadDelay: null,
   turnItems: [],
   routeCalls: [],
+  peekedOrigin: ORIGIN_KEY,
+  resolvedOrigin: ORIGIN_KEY,
 });
 
 const moveInput = (commandId: string) => ({
@@ -579,6 +590,40 @@ it.effect("refuses a project with another origin before the bundle", () => {
     );
     assert.deepEqual(yield* worktreePaths(root), [root]);
     assert.deepEqual(world.launches, []);
+  }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
+});
+
+it.effect("reads the origin past a shell read that missed the cache", () => {
+  const world = makeWorld();
+  world.peekedOrigin = null;
+  return Effect.gen(function* () {
+    yield* setup(world);
+    const moves = yield* CloudMoves.CloudMoves;
+
+    const moved = yield* moves.continueLocally(moveInput("command-1"));
+
+    assert.equal(moved.branch, "work");
+  }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
+});
+
+it.effect("a project with no origin is still refused", () => {
+  const world = makeWorld();
+  world.peekedOrigin = null;
+  world.resolvedOrigin = null;
+  return Effect.gen(function* () {
+    const { root } = yield* setup(world);
+    const moves = yield* CloudMoves.CloudMoves;
+
+    const refused = yield* moves.continueLocally(moveInput("command-1")).pipe(Effect.flip);
+
+    assert.deepEqual(
+      { reason: refused.reason, message: refused.message },
+      {
+        reason: "project-mismatch",
+        message: "The cloud thread's origin, github.com/acme/app, doesn't match this project's.",
+      },
+    );
+    assert.deepEqual(yield* worktreePaths(root), [root]);
   }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
 });
 
@@ -1021,6 +1066,37 @@ it.effect("asks Pair Cloud before uploading anything", () => {
     assert.deepEqual(kinds(world), ["check"]);
     assert.deepEqual(world.dispatched, []);
     yield* noTempLeft(root);
+  }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
+});
+
+it.effect("Continue in cloud reads the origin past a shell read that missed the cache", () => {
+  const world = makeWorld();
+  world.peekedOrigin = null;
+  world.checkRefusal = "Stop here.";
+  return Effect.gen(function* () {
+    yield* setupLocal(world);
+
+    const refused = yield* toCloud().pipe(Effect.flip);
+
+    assert.equal(refused.message, "Stop here.");
+    assert.deepEqual(kinds(world), ["check"]);
+  }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
+});
+
+it.effect("Continue in cloud refuses a project with no origin on github.com", () => {
+  const world = makeWorld();
+  world.peekedOrigin = null;
+  world.resolvedOrigin = null;
+  return Effect.gen(function* () {
+    yield* setupLocal(world);
+
+    const refused = yield* toCloud().pipe(Effect.flip);
+
+    assert.deepEqual(
+      { reason: refused.reason, message: refused.message },
+      { reason: "not-on-github", message: "Cloud needs this project's origin on github.com." },
+    );
+    assert.deepEqual(kinds(world), []);
   }).pipe(Effect.scoped, Effect.provide(layerFor(world)));
 });
 
