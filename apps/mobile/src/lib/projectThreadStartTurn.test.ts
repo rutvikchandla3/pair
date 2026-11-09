@@ -97,4 +97,35 @@ describe("buildProjectThreadStartTurnInput", () => {
       prepareCloud: { baseRef: "main", branch: "t3code/1234abcd" },
     });
   });
+
+  it("continues the member's branch on a routed launch, never the temporary name", () => {
+    const routed = {
+      projectId: ProjectId.make("pair-cloud-project"),
+      projectCwd: "/checkouts/pair-cloud-project",
+      threadId: "routed-thread",
+      commandId: "routed-command",
+      messageId: "routed-message",
+      createdAt: "2026-09-04T00:00:00Z",
+      text: "Fix the flaky test",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "cloud",
+      branch: "feature",
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeBranchName: "t3code/1234abcd",
+      routedFromDefaultBranch: "main",
+    } satisfies ProjectThreadStartTurnSpec;
+
+    expect(buildProjectThreadStartTurnInput(routed).bootstrap.prepareCloud).toEqual({
+      baseRef: "main",
+      branch: "feature",
+      existingBranch: true,
+    });
+    expect(
+      buildProjectThreadStartTurnInput({ ...routed, branch: "main" }).bootstrap.prepareCloud,
+    ).toEqual({ baseRef: "main" });
+  });
 });

@@ -423,7 +423,10 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const projectTitle = props.projectTitle ?? props.project?.title ?? pendingTask.projectTitle ?? "";
   const projectCwd = props.project?.workspaceRoot || null;
   // Drafts only; the reads are shared per-project atoms, and queued rows skip them.
-  const projectDefaults = useNewTaskProjectDefaults(isDraft ? props.project : null);
+  const projectDefaults = useNewTaskProjectDefaults(
+    isDraft ? props.project : null,
+    isDraft ? pendingTask.draft.workspaceSelection?.cloudEnvironmentId : undefined,
+  );
   const draftDefaults = {
     canChooseWorkspace: !projectDefaults.isScratch,
     defaultMode: projectDefaults.defaultWorkspaceMode,

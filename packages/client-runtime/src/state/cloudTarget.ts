@@ -3,6 +3,8 @@ import {
   type ProjectId,
   repositoryGroupingKeyOf,
   type ServerConfig,
+  type VcsRef,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
 import { cloudAvailability } from "@t3tools/shared/sandbox";
 
@@ -112,4 +114,59 @@ export function resolveCloudTarget(input: {
     })
     .sort((left, right) => left.label.localeCompare(right.label));
   return { kind: "targets", targets };
+}
+
+const ORIGIN_PREFIX = "origin/";
+
+function withoutOrigin(branch: string): string {
+  return branch.startsWith(ORIGIN_PREFIX) ? branch.slice(ORIGIN_PREFIX.length) : branch;
+}
+
+/** What a routed launch sends: the member's branch, or a fresh one from the default branch. */
+export function routedCloudLaunch(input: {
+  readonly selectedBranch: string;
+  readonly defaultBranch: string;
+}): { readonly baseRef: string; readonly branch?: string; readonly existingBranch?: true } {
+  const branch = withoutOrigin(input.selectedBranch);
+  const defaultBranch = withoutOrigin(input.defaultBranch);
+  return branch === defaultBranch
+    ? { baseRef: defaultBranch }
+    : { baseRef: defaultBranch, branch, existingBranch: true };
+}
+
+export type CloudBranchCheck =
+  | { readonly kind: "ok" }
+  | { readonly kind: "block"; readonly message: string }
+  | { readonly kind: "warn"; readonly message: string };
+
+/**
+ * Whether Pair Cloud will find `branch` on origin, from the selected branch's own ref. `status`
+ * describes HEAD, so its ahead count counts only when HEAD is that branch. A null ref (refs not
+ * loaded, or a remote-only branch) is `ok`: the server's own check still refuses an unpushed one.
+ */
+export function cloudBranchCheck(input: {
+  readonly branch: string;
+  readonly ref: Pick<VcsRef, "upstreamRef" | "isDefault"> | null;
+  readonly status: Pick<VcsStatusResult, "refName" | "aheadCount"> | null;
+}): CloudBranchCheck {
+  const branch = withoutOrigin(input.branch);
+  if (input.ref === null || input.ref.isDefault) return { kind: "ok" };
+  const upstream = input.ref.upstreamRef;
+  if (upstream === undefined) return { kind: "block", message: `Push ${branch} first.` };
+  const expected = `refs/remotes/${ORIGIN_PREFIX}${branch}`;
+  if (upstream !== expected) {
+    const shown = upstream.replace(/^refs\/remotes\//, "");
+    return {
+      kind: "warn",
+      message: `${branch} tracks ${shown}, not ${ORIGIN_PREFIX}${branch}. Pair Cloud looks on origin.`,
+    };
+  }
+  const ahead = input.status?.refName === branch ? input.status.aheadCount : 0;
+  if (ahead > 0) {
+    return {
+      kind: "warn",
+      message: `${ahead} ${ahead === 1 ? "commit" : "commits"} not pushed won't be included.`,
+    };
+  }
+  return { kind: "ok" };
 }

@@ -1,7 +1,13 @@
 import { EnvironmentId, ProjectId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type CloudTarget, type CloudTargetOption, resolveCloudTarget } from "./cloudTarget.ts";
+import {
+  type CloudTarget,
+  type CloudTargetOption,
+  cloudBranchCheck,
+  resolveCloudTarget,
+  routedCloudLaunch,
+} from "./cloudTarget.ts";
 import type { EnvironmentProject } from "./models.ts";
 import { v2Project } from "./orchestrationV2TestFixtures.ts";
 
@@ -233,5 +239,75 @@ describe("resolveCloudTarget", () => {
     },
   ])("resolves $name", ({ project, environments, projects, expected }) => {
     expect(resolveCloudTarget({ project, environments, projects })).toEqual(expected);
+  });
+});
+
+describe("routedCloudLaunch", () => {
+  it.each([
+    { name: "the default branch", selectedBranch: "main", expected: { baseRef: "main" } },
+    {
+      name: "a feature branch",
+      selectedBranch: "feature/login",
+      expected: { baseRef: "main", branch: "feature/login", existingBranch: true },
+    },
+    {
+      name: "origin/feature picked",
+      selectedBranch: "origin/feature",
+      expected: { baseRef: "main", branch: "feature", existingBranch: true },
+    },
+  ])("plans a routed launch for $name", ({ selectedBranch, expected }) => {
+    expect(routedCloudLaunch({ selectedBranch, defaultBranch: "main" })).toEqual(expected);
+  });
+});
+
+describe("cloudBranchCheck", () => {
+  const tracked = { upstreamRef: "refs/remotes/origin/feature", isDefault: false };
+  const head = { refName: "feature", aheadCount: 0 };
+  it.each([
+    {
+      name: "no upstream",
+      ref: { isDefault: false },
+      status: head,
+      expected: { kind: "block", message: "Push feature first." },
+    },
+    {
+      name: "ahead by 2",
+      ref: tracked,
+      status: { refName: "feature", aheadCount: 2 },
+      expected: { kind: "warn", message: "2 commits not pushed won't be included." },
+    },
+    {
+      name: "an upstream on fork",
+      ref: { upstreamRef: "refs/remotes/fork/feature", isDefault: false },
+      status: head,
+      expected: {
+        kind: "warn",
+        message: "feature tracks fork/feature, not origin/feature. Pair Cloud looks on origin.",
+      },
+    },
+    {
+      name: "an upstream with a different name",
+      ref: { upstreamRef: "refs/remotes/origin/other", isDefault: false },
+      status: head,
+      expected: {
+        kind: "warn",
+        message: "feature tracks origin/other, not origin/feature. Pair Cloud looks on origin.",
+      },
+    },
+    {
+      name: "the default branch",
+      ref: { isDefault: true },
+      status: { refName: "feature", aheadCount: 3 },
+      expected: { kind: "ok" },
+    },
+    { name: "a clean pushed branch", ref: tracked, status: head, expected: { kind: "ok" } },
+    {
+      name: "a branch that isn't checked out while HEAD is ahead",
+      ref: tracked,
+      status: { refName: "main", aheadCount: 4 },
+      expected: { kind: "ok" },
+    },
+  ])("checks $name before a cloud send", ({ ref, status, expected }) => {
+    expect(cloudBranchCheck({ branch: "feature", ref, status })).toEqual(expected);
   });
 });

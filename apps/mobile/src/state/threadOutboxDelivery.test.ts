@@ -727,6 +727,40 @@ describe("thread outbox recovery rollback", () => {
     ).toEqual({ kind: "failed", message, reason: "rejected by server" });
   });
 
+  it("restores a rejected routed Cloud launch to the local project it came from", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "message-routed-restore", text: "cloud task" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      creation: {
+        projectId: ProjectId.make("pair-cloud-project"),
+        workspaceMode: "cloud",
+        branch: "feature",
+        worktreePath: null,
+        routedFrom: {
+          environmentId: EnvironmentId.make("mac"),
+          projectId: ProjectId.make("mac-project"),
+          defaultBranch: "main",
+        },
+      },
+    };
+    await harness.manager.enqueue(message);
+
+    await expect(restoreRejectedQueuedMessage(message, "Push feature first.")).resolves.toBe(
+      "restored",
+    );
+
+    expect(
+      composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),
+    ).toMatchObject({
+      project: { environmentId: "mac", projectId: "mac-project" },
+      workspaceSelection: {
+        mode: "cloud",
+        branch: "feature",
+        cloudEnvironmentId: message.environmentId,
+      },
+    });
+  });
+
   it("does not record a creation outcome for a rejected follow-up message", async () => {
     const message = queuedMessage({ messageId: "message-followup-restore", text: "follow up" });
     await harness.manager.enqueue(message);

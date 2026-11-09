@@ -1,20 +1,22 @@
+import { resolveCloudTarget } from "@t3tools/client-runtime/state/cloud-target";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { ProjectReadFileResult } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { cloudAvailability, newThreadPrefersCloud } from "@t3tools/shared/sandbox";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
-import { useEnvironmentServerConfig } from "../../state/entities";
+import { useEnvironmentServerConfig, useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useProjectHasThreads } from "../../state/project-has-threads";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
 import { useIsTeamMode } from "../../state/team";
+import { useWorkspaceEnvironments } from "../../state/workspace";
+import { NO_NEW_TASK_CLOUD, type NewTaskCloud, resolveNewTaskCloud } from "./new-task-cloud";
 
 /**
  * A project's new-task defaults: server settings merged with its t3.json. The
@@ -22,8 +24,14 @@ import { useIsTeamMode } from "../../state/team";
  * workspace mode here, so a draft that never picked one shows what it sends.
  * Every read is a shared per-environment or per-project atom.
  */
-export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
+export function useNewTaskProjectDefaults(
+  project: EnvironmentProject | null,
+  cloudEnvironmentId?: EnvironmentId,
+) {
   const serverConfig = useEnvironmentServerConfig(project?.environmentId ?? null);
+  const projects = useProjects();
+  const serverConfigs = useServerConfigs();
+  const environments = useWorkspaceEnvironments();
   const isScratch =
     project !== null && isScratchProject(project, serverConfig?.scratchWorkspaceRoot);
   const hasWorkspace = project !== null && project.workspaceRoot !== "";
@@ -63,12 +71,28 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
   );
   const projectHasThreads = useProjectHasThreads(project);
   const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
-  const settings = serverConfig?.settings ?? null;
   const cloudLaunch = serverConfig?.environment.capabilities.cloudLaunch === true;
-  const cloud = cloudAvailability(settings, project?.id ?? null, cloudLaunch);
+  const cloud: NewTaskCloud =
+    project === null
+      ? NO_NEW_TASK_CLOUD
+      : resolveNewTaskCloud({
+          cloudTarget: resolveCloudTarget({
+            project,
+            environments: environments.map((environment) => ({
+              environmentId: environment.environmentId,
+              label: environment.environmentLabel,
+              connected: environment.connectionState === "connected",
+              serverConfig: serverConfigs.get(environment.environmentId) ?? null,
+            })),
+            projects,
+          }),
+          project,
+          cloudEnvironmentId,
+        });
+  // A Pair Cloud project starts in the cloud; a routed one only when the user picks Cloud.
   const defaultWorkspaceMode: NewTaskWorkspaceMode = isScratch
     ? "local"
-    : newThreadPrefersCloud(settings, project?.id ?? null, cloudLaunch)
+    : cloud.available && !cloud.routed
       ? "cloud"
       : resolveNewThreadEnvMode({
           teamDefault: isTeamMode,
@@ -87,7 +111,7 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     projectSettings,
     defaultWorkspaceMode,
     defaultWorkspaceModeSettled,
-    /** Hidden when not-cloud-only; otherwise Cloud is the only mode, disabled with its message. */
+    /** Cloud for this project: on its own Pair Cloud, routed to a matching one, or not offered. */
     cloud,
     cloudLaunch,
   };

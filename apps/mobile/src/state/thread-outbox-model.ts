@@ -44,6 +44,13 @@ const QueuedThreadCreationSchema = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
+  routedFrom: Schema.optional(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+      defaultBranch: Schema.String,
+    }),
+  ),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -77,6 +84,15 @@ export interface QueuedThreadCreation {
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
   readonly pullRequestReference?: string;
+  /**
+   * A Cloud launch routed from this local project to the Pair Cloud project above: it continues
+   * `branch` there unless `branch` is the local default branch.
+   */
+  readonly routedFrom?: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectIdType;
+    readonly defaultBranch: string;
+  };
 }
 
 export interface QueuedThreadMessage {

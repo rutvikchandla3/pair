@@ -459,6 +459,9 @@ export async function restoreRejectedQueuedMessage(
               ...(queuedMessage.creation.startFromOrigin !== undefined
                 ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                 : {}),
+              ...(queuedMessage.creation.routedFrom
+                ? { cloudEnvironmentId: queuedMessage.environmentId }
+                : {}),
             },
           }
         : {}),
@@ -526,10 +529,12 @@ function stampRecoveryDraftProject(queuedMessage: QueuedThreadMessage, draftKey:
   if (!queuedMessage.creation) {
     return;
   }
+  // A routed launch goes back to the local project it was routed from.
+  const { routedFrom } = queuedMessage.creation;
   updateComposerDraftSettings(draftKey, {
     project: {
-      environmentId: queuedMessage.environmentId,
-      projectId: queuedMessage.creation.projectId,
+      environmentId: routedFrom?.environmentId ?? queuedMessage.environmentId,
+      projectId: routedFrom?.projectId ?? queuedMessage.creation.projectId,
       createdAt: queuedMessage.createdAt,
     },
   });
@@ -1102,6 +1107,9 @@ export function createThreadOutboxDelivery(): {
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,
         worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        ...(workspace.routedFrom
+          ? { routedFromDefaultBranch: workspace.routedFrom.defaultBranch }
+          : {}),
       }),
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

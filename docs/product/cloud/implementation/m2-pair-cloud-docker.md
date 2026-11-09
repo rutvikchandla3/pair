@@ -153,8 +153,9 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
 - **Pair Cloud projects and routing.** A Pair Cloud project is a project on a cloud-only server
   whose root is `<ServerConfig.checkoutsDir>/<projectId>`; `PairCloudProjects` (`add`, `gitEnvFor`,
   `fetchCheckout`) and `PairCloudProjectError` (2.26); `resolveCloudTarget`, `CloudTarget`,
-  `CloudTargetOption`, `isCloudLaunchEnvironment` (2.27); `routedCloudLaunch`, `cloudBranchCheck`,
-  the web draft's `cloudEnvironmentId` (2.28); `cloudAccountNotice` (2.30).
+  `CloudTargetOption`, `isCloudLaunchEnvironment` (2.27); `routedCloudLaunch`, `cloudBranchCheck`
+  (2.29, ahead of 2.28); the web draft's `cloudEnvironmentId` (2.28); the mobile draft's
+  `cloudEnvironmentId` and queued creation's `routedFrom` (2.29); `cloudAccountNotice` (2.30).
 - **GitHub.** `GitHubAppInstallationTokens.readTokenFor({ repository })` and
   `READ_TOKEN_PERMISSIONS`, `withAppReads`, `GitHubCredentialSource` `"installation"` (2.44; 2.26
   clones with `readTokenFor`).
@@ -2353,7 +2354,8 @@ whole web surface of 01 J2 and has one client pass.
     (1233) are the target's, so the model picker, `providerStatuses` and attachment capabilities
     read Pair Cloud. Model selection re-resolves through `resolveTeamNewThreadModelSelection`
     (providerInstanceEntries.ts 224) with the target's providers, settings and project id.
-  - `packages/client-runtime/src/state/cloudTarget.ts` adds two pure helpers shared with mobile:
+  - `packages/client-runtime/src/state/cloudTarget.ts` has two pure helpers shared with mobile
+    (2.29 landed them first, with their tests; 2.28 reuses them):
     ```ts
     /** What a routed launch sends: the member's branch, or a fresh one from the default branch. */
     export function routedCloudLaunch(input: {
@@ -2447,40 +2449,50 @@ its own navigation, draft flow and outbox.
 
 - **Needs:** 2.27, 2.31. **Unblocks:** 2.30.
 - **Files:**
-  - `apps/mobile/src/features/threads/use-new-task-project-defaults.ts`: `cloud` (67) becomes the
-    resolver's answer for the selected project, over the mobile environment and project atoms,
-    mapped to `{ available, message, target }`. `newThreadPrefersCloud` (70) already reads
-    `cloudLaunch` after 2.24; the mobile default now comes from the resolver instead.
-  - `new-task-flow-provider.tsx`: `cloud` (150) and `cloudAvailable` (415) read the mapped value.
-    The cloud server config (481) is the target's, so models and uploads come from Pair Cloud.
-  - `NewTaskDraftScreen.tsx` `workspaceModeMenuActions` (107): the Cloud entry reads the mapped
-    value. A `projectId: null` target is disabled with "Add <owner/name> to Pair Cloud first."
-    Several targets get one entry per label.
-  - `apps/mobile/src/lib/projectThreadStartTurn.ts` (87): a routed spec sends
-    `prepareCloud: routedCloudLaunch(...)` (client-runtime). `state/threadOutboxDelivery.ts` (1104)
-    keeps its temporary branch name only for a non-routed cloud launch. The queued message carries
-    the target environment and project, so delivery and retries go to Pair Cloud.
-  - The branch check uses `cloudBranchCheck` with the Mac environment's VCS status and ref, as
-    `ThreadGitControls.tsx` reads status. It shows in the draft's notice area; `block` disables
-    send.
-- **Types and services:** none new; uses 2.27 and 2.28's client-runtime helpers.
+  - `packages/client-runtime/src/state/cloudTarget.ts`: `routedCloudLaunch` and `cloudBranchCheck`
+    as specified in 2.28, landed here first because mobile needs them.
+  - `apps/mobile/src/features/threads/new-task-cloud.ts` (new): `resolveNewTaskCloud` maps the
+    resolver to `{ offered, options, available, message, target, routed }`. `hidden` is not
+    offered (D17). One target is titled "Cloud", several "Cloud on <label>". A `projectId: null`
+    target is disabled with "Add <owner/name> to <label> first." The draft's `cloudEnvironmentId`
+    picks among several, else the first launchable one.
+  - `use-new-task-project-defaults.ts`: `cloud` is that mapping over the mobile environments,
+    projects and server configs. Cloud is the default mode only when it isn't routed.
+  - `new-task-flow-provider.tsx`: in routed Cloud mode, `launch` is the target environment,
+    project and server config, so models, team viewer, linked threads and uploads come from Pair
+    Cloud. `cloudBranch` runs `cloudBranchCheck` on the Mac environment's ref (`useBranches` with
+    the branch as query) and VCS status. A routed pending message targets the Pair Cloud project and
+    carries `routedFrom: { environmentId, projectId, defaultBranch }`.
+  - `NewTaskDraftScreen.tsx` `workspaceModeMenuActions`: one Cloud entry per option, disabled ones
+    with their reason as subtitle; a cloudLaunch project offers only Cloud. `block` disables send
+    and `warn` shows above the workspace controls.
+  - `use-composer-drafts.ts`: optional `workspaceSelection.cloudEnvironmentId`.
+    `thread-outbox-model.ts`: optional `QueuedThreadCreation.routedFrom`, so a routed task survives
+    restarts and retries to Pair Cloud.
+  - `lib/projectThreadStartTurn.ts`: with `routedFromDefaultBranch`, `prepareCloud` is
+    `routedCloudLaunch(...)`; otherwise the temporary branch name as before.
+    `state/threadOutboxDelivery.ts` passes it, and a rejected routed launch (such as 2.31's
+    branch-not-pushed) restores the draft to the Mac project with its Cloud pick.
+- **Types and services:** `NewTaskCloud`; the two client-runtime helpers above.
 - **Commands and events:** none.
-- **Migrations:** none.
-- **Proposed gap answer.** The phone has no Add to Pair Cloud. Cloning onto Pair Cloud from a phone
-  draft is rare, and Add project on the Pair Cloud environment already does it (2.26). The disabled
-  subtitle names the repo. Flagged for the ux-designer pass.
+- **Migrations:** none. Both new fields are optional keys in persisted schemas.
+- **Gap answer.** The phone has no Add to Pair Cloud. Cloning onto Pair Cloud from a phone draft is
+  rare, and Add project on the Pair Cloud environment already does it (2.26). The disabled subtitle
+  names the repo. Flagged for the ux-designer pass.
+- **Known gap.** Draft attachments pre-upload to the Mac; delivery re-uploads them to Pair Cloud
+  because the upload environment differs.
 
-**Tests.** None new at this layer: the resolver, `routedCloudLaunch` and `cloudBranchCheck` are
-tested once in client-runtime (2.27, 2.28), and the mobile side maps them. If
-`resolveNewTaskWorkspaceSelection` changes its `cloudAvailable` input, extend "keeps a cloud
-selection while Cloud is available, else starts a new worktree"
-(`new-task-context-presentation.test.ts` 48) instead of adding a case.
+**Tests.** The helpers in `cloudTarget.test.ts` (launch plan and branch-check tables). Mobile:
+`new-task-cloud.test.ts` (mapping table, including D17), the routed launch in
+`projectThreadStartTurn.test.ts`, the routed round trip in `thread-outbox.test.ts`, and the
+restore in `threadOutboxDelivery.test.ts`.
 
-**Verify.** `vp run typecheck` for mobile and client-runtime; `vp run check:changed`. One `test-t3-mobile` pass (install with `vp
-run mobile:install ios`), the phone paired with a local dev server and a cloud-only one: Cloud on a
-Mac project launches on Pair Cloud with a Pair Cloud model; an unpushed branch blocks; the machine
-picker doesn't list Pair Cloud in Worktree mode; a phone paired only with the local server shows no
-Cloud.
+**Verify.** `vp run typecheck` for mobile and client-runtime; `vp run check:changed`. One
+`test-t3-mobile` pass (install with `vp run mobile:install ios`), the phone paired with a local dev
+server and a cloud-only one: Cloud on a Mac project launches on Pair Cloud with a Pair Cloud model;
+an unpushed branch blocks; an ahead branch warns; the machine picker doesn't list Pair Cloud in
+Worktree mode; a phone paired only with the local server shows no Cloud; a routed queued task
+survives an app restart.
 
 **Reviewer checks.**
 

@@ -13,6 +13,7 @@ import {
   deriveThreadTitleSeed,
   threadTitleTextFromPrompt,
 } from "@t3tools/client-runtime/operations";
+import { routedCloudLaunch } from "@t3tools/client-runtime/state/cloud-target";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 import type { NewTaskWorkspaceMode } from "./newTaskWorkspaceMode";
@@ -36,6 +37,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
   readonly worktreeBranchName: string;
+  /** Set on a Cloud launch routed from a local project: continue `branch` on Pair Cloud. */
+  readonly routedFromDefaultBranch?: string;
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
@@ -84,7 +87,15 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         : {}),
       // The server clones and sets up the workspace in the machine.
       ...(spec.workspaceMode === "cloud"
-        ? { prepareCloud: { baseRef: spec.branch!, branch: spec.worktreeBranchName } }
+        ? {
+            prepareCloud:
+              spec.routedFromDefaultBranch === undefined
+                ? { baseRef: spec.branch!, branch: spec.worktreeBranchName }
+                : routedCloudLaunch({
+                    selectedBranch: spec.branch!,
+                    defaultBranch: spec.routedFromDefaultBranch,
+                  }),
+          }
         : {}),
     },
     createdAt: spec.createdAt,

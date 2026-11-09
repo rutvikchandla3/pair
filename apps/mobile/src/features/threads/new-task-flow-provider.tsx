@@ -5,10 +5,11 @@ import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
 
-import type { CloudAvailability } from "@t3tools/shared/sandbox";
 import type {
   EnvironmentId,
   ModelSelection,
+  ProjectId,
+  ServerConfig,
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
@@ -25,7 +26,12 @@ import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContex
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
-import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
+import {
+  useEnvironmentServerConfig,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+} from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -77,7 +83,11 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
-import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
+import {
+  type CloudBranchCheck,
+  cloudBranchCheck,
+  isCloudLaunchEnvironment,
+} from "@t3tools/client-runtime/state/cloud-target";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -102,6 +112,7 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import type { NewTaskCloud } from "./new-task-cloud";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -147,8 +158,18 @@ type NewTaskFlowContextValue = {
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
-  /** The selected project's Cloud entry: hidden when not-cloud-only, else the only mode. */
-  readonly cloud: CloudAvailability;
+  /** The selected project's Cloud entry: its own Pair Cloud, a routed one, or not offered. */
+  readonly cloud: NewTaskCloud;
+  /** The project's own environment is a Pair Cloud, so Cloud is its only mode. */
+  readonly cloudLaunch: boolean;
+  /** Where the task launches: a routed Cloud draft launches on the matching Pair Cloud project. */
+  readonly launch: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly serverConfig: ServerConfig | null;
+  } | null;
+  /** The selected branch's check before a routed Cloud send; `block` stops the send. */
+  readonly cloudBranch: CloudBranchCheck | null;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly resolveWorkspaceSelection: (
@@ -196,7 +217,11 @@ type NewTaskFlowContextValue = {
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
   ) => void;
-  readonly setWorkspaceMode: (mode: NewTaskWorkspaceMode) => void;
+  /** `cloudEnvironmentId` picks among several Pair Clouds. */
+  readonly setWorkspaceMode: (
+    mode: NewTaskWorkspaceMode,
+    cloudEnvironmentId?: EnvironmentId,
+  ) => void;
   readonly selectBranch: (branch: VcsRef) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly buildPendingTaskMessage: (
@@ -335,16 +360,18 @@ export function NewTaskFlowProvider(
         projectsForEnvironment[0] ??
         null);
 
-  const linkedEnvironments = useLinkedEnvironments(selectedProject?.environmentId ?? null);
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const modelSelectionNow = useNowMinuteMs();
-  const projectDefaults = useNewTaskProjectDefaults(selectedProject);
-  const teamViewer = useTeamViewer(selectedProject?.environmentId ?? null);
+  const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
+  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
+  const projectDefaults = useNewTaskProjectDefaults(
+    selectedProject,
+    selectedProjectDraft.workspaceSelection?.cloudEnvironmentId,
+  );
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
   useEffect(() => {
     // A route that names a draft binds that draft, or returns to the picker.
@@ -373,7 +400,6 @@ export function NewTaskFlowProvider(
           ? `draft-task:${selectedProjectDraftKey}`
           : null;
   const activeNewTask = props.active === false ? null : { pendingKey: activePendingKey };
-  const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   const projectGitStatus = useEnvironmentQuery(
@@ -422,6 +448,43 @@ export function NewTaskFlowProvider(
   const workspaceMode = workspaceSelection.mode;
   const selectedBranchName = workspaceSelection.branch;
   const selectedWorktreePath = workspaceSelection.worktreePath;
+  const cloudRoute =
+    workspaceMode === "cloud" && projectDefaults.cloud.routed ? projectDefaults.cloud.target : null;
+  // Models, uploads, the team viewer and linked threads all come from where the task launches.
+  const launchEnvironmentId = cloudRoute?.environmentId ?? selectedProject?.environmentId ?? null;
+  const launchProjectId = cloudRoute?.projectId ?? selectedProject?.id ?? null;
+  const routedServerConfig = useEnvironmentServerConfig(cloudRoute?.environmentId ?? null);
+  const launchServerConfig = cloudRoute ? routedServerConfig : selectedEnvironmentServerConfig;
+  const launch =
+    launchEnvironmentId && launchProjectId
+      ? {
+          environmentId: launchEnvironmentId,
+          projectId: launchProjectId,
+          serverConfig: launchServerConfig,
+        }
+      : null;
+  const linkedEnvironments = useLinkedEnvironments(launchEnvironmentId);
+  const teamViewer = useTeamViewer(launchEnvironmentId);
+  const routedBranchRefs = useBranches({
+    environmentId: cloudRoute && selectedProject ? selectedProject.environmentId : null,
+    cwd: cloudRoute && selectedBranchName ? selectedProject?.workspaceRoot || null : null,
+    query: selectedBranchName,
+  });
+  const routedDefaultBranchRef = allBranchRefs.find((branch) => branch.isDefault) ?? null;
+  const routedDefaultBranch = routedDefaultBranchRef
+    ? resolveNewTaskBaseBranchName("cloud", routedDefaultBranchRef)
+    : selectedBranchName;
+  const cloudBranch =
+    cloudRoute && selectedBranchName
+      ? cloudBranchCheck({
+          branch: selectedBranchName,
+          ref:
+            routedBranchRefs.data?.refs.find(
+              (branch) => !branch.isRemote && branch.name === selectedBranchName,
+            ) ?? null,
+          status: projectGitStatus.data ?? null,
+        })
+      : null;
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -429,7 +492,7 @@ export function NewTaskFlowProvider(
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-  const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
+  const managedPolicy = launchServerConfig?.managedPolicy;
   const runtimeMode = resolveNewThreadRuntimeMode(
     selectedProjectDraft.runtimeMode,
     defaultRuntimeMode,
@@ -439,28 +502,28 @@ export function NewTaskFlowProvider(
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model.
   const draftModelSelection = resolveSelectableModelSelection(
-    selectedEnvironmentServerConfig,
+    launchServerConfig,
     selectedProjectDraft.modelSelection ?? null,
-    selectedProject?.id ?? null,
+    launchProjectId,
   );
   const configuredDefaultModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
+    launchServerConfig,
     projectSettings.settings.defaultModelSelection,
-    selectedProject?.id ?? null,
+    launchProjectId,
   );
   const storedDefaultModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
+    launchServerConfig,
     storedStickyModelSelection,
-    selectedProject?.id ?? null,
+    launchProjectId,
   );
   // On a team, a new task starts on the creator's own account and never on a teammate's.
   const teamModelSelection =
-    teamViewer !== null && draftModelSelection === null && selectedEnvironmentServerConfig
+    teamViewer !== null && draftModelSelection === null && launchServerConfig
       ? resolveTeamNewThreadModelSelection({
           selection: configuredDefaultModelSelection ?? storedDefaultModelSelection,
-          providers: selectedEnvironmentServerConfig.providers,
-          settings: selectedEnvironmentServerConfig.settings,
-          projectId: selectedProject?.id ?? null,
+          providers: launchServerConfig.providers,
+          settings: launchServerConfig.settings,
+          projectId: launchProjectId,
           memberId: teamViewer.memberId,
         })
       : null;
@@ -469,20 +532,18 @@ export function NewTaskFlowProvider(
   const modelOptions = withCloudModelReasons(
     filterModelOptionsForViewer(
       buildModelOptions(
-        selectedEnvironmentServerConfig,
+        launchServerConfig,
         draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
         undefined,
-        selectedProject?.id ?? null,
+        launchProjectId,
       ),
       {
-        settings: selectedEnvironmentServerConfig?.settings,
+        settings: launchServerConfig?.settings,
         viewer: teamViewer,
         currentInstanceId: undefined,
       },
     ),
-    workspaceMode === "cloud" && selectedEnvironmentServerConfig
-      ? selectedEnvironmentServerConfig
-      : null,
+    workspaceMode === "cloud" && launchServerConfig ? launchServerConfig : null,
   );
 
   const selectedDefaultModel = resolveNewTaskModelSelection({
@@ -495,12 +556,10 @@ export function NewTaskFlowProvider(
     defaultSelection: selectedDefaultModel,
     explicitSelection:
       draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
-    fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
-    providers: selectedEnvironmentServerConfig?.providers ?? [],
-    ...(selectedEnvironmentServerConfig
-      ? { settings: selectedEnvironmentServerConfig.settings }
-      : {}),
-    projectId: selectedProject?.id ?? null,
+    fallbackSelection: launchServerConfig?.settings.fallbackModelSelection ?? null,
+    providers: launchServerConfig?.providers ?? [],
+    ...(launchServerConfig ? { settings: launchServerConfig.settings } : {}),
+    projectId: launchProjectId,
     now: modelSelectionNow,
   }).selection;
   const selectedModelKey = selectedModel
@@ -515,7 +574,7 @@ export function NewTaskFlowProvider(
         option.selection.model === selectedModel.model,
     ) ?? null;
   const selectedProviderStatus =
-    selectedEnvironmentServerConfig?.providers.find(
+    launchServerConfig?.providers.find(
       (provider) => provider.instanceId === selectedModel?.instanceId,
     ) ?? null;
   const planModeEnabled =
@@ -537,7 +596,7 @@ export function NewTaskFlowProvider(
     const selection = withRememberedModelOptions(
       options ? { ...option.selection, options } : option.selection,
     );
-    const provider = selectedEnvironmentServerConfig?.providers.find(
+    const provider = launchServerConfig?.providers.find(
       (candidate) => candidate.instanceId === selection.instanceId,
     );
     updateComposerDraftSettings(selectedProjectDraftKey, {
@@ -671,7 +730,7 @@ export function NewTaskFlowProvider(
     return false;
   };
 
-  const setWorkspaceMode = (mode: NewTaskWorkspaceMode) => {
+  const setWorkspaceMode = (mode: NewTaskWorkspaceMode, cloudEnvironmentId?: EnvironmentId) => {
     if (!selectedProjectDraftKey) {
       return;
     }
@@ -697,9 +756,15 @@ export function NewTaskFlowProvider(
         ...(mode === "local" && localSelection.awaitsCurrentBranch
           ? { followsCurrentCheckout: true }
           : {}),
+        ...(mode === "cloud" && cloudEnvironmentId ? { cloudEnvironmentId } : {}),
       },
     });
   };
+  const pickedCloudEnvironmentId = selectedProjectDraft.workspaceSelection?.cloudEnvironmentId;
+  const keepsCloudPick =
+    workspaceMode === "cloud" && pickedCloudEnvironmentId
+      ? { cloudEnvironmentId: pickedCloudEnvironmentId }
+      : {};
 
   const selectBranch = (branch: VcsRef) => {
     if (!selectedProject || !selectedProjectDraftKey) {
@@ -715,6 +780,7 @@ export function NewTaskFlowProvider(
           branchWorktreePath: branch.worktreePath,
         }),
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        ...keepsCloudPick,
       },
     });
   };
@@ -732,6 +798,7 @@ export function NewTaskFlowProvider(
         ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout
           ? { followsCurrentCheckout: true }
           : {}),
+        ...keepsCloudPick,
       },
     });
   };
@@ -762,16 +829,21 @@ export function NewTaskFlowProvider(
     metadata: TurnCommandMetadata,
     options?: { readonly currentCheckoutBranch?: string | null },
   ): QueuedThreadMessage | null => {
-    if (!selectedProject || !selectedProjectDraftKey) {
+    if (!selectedProject || !selectedProjectDraftKey || !launch) {
       return null;
     }
     const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
     const text = draft.text.trim();
+    const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
+    const mode = workspaceSelection.mode;
+    const route = mode === "cloud" && projectDefaults.cloud.routed;
+    // Models and policy below were resolved for `launch`; a draft that moved since then waits.
+    if (route !== (launch.environmentId !== selectedProject.environmentId)) return null;
     const draftModelSelection =
       resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
+        launchServerConfig,
         draft.modelSelection ?? null,
-        selectedProject.id,
+        launch.projectId,
       ) ?? selectedModel;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
       return null;
@@ -780,16 +852,25 @@ export function NewTaskFlowProvider(
       threadContextsOutsideEnvironment({
         text: draft.text,
         records: draft.context?.records ?? [],
-        environmentId: selectedProject.environmentId,
+        environmentId: launch.environmentId,
         linkedEnvironments,
       }).length > 0
     ) {
       return null;
     }
-    const workspaceSelection = resolveWorkspaceSelection(draft.workspaceSelection);
-    const mode = workspaceSelection.mode;
+    const branch = resolveProjectThreadCreationBranch({
+      workspaceMode: mode,
+      selectedBranch: workspaceSelection?.branch ?? null,
+      currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+    });
+    const launchProject = route
+      ? projects.find(
+          (project) =>
+            project.environmentId === launch.environmentId && project.id === launch.projectId,
+        )
+      : selectedProject;
     return {
-      environmentId: selectedProject.environmentId,
+      environmentId: launch.environmentId,
       threadId: ThreadId.make(metadata.threadId),
       messageId: MessageId.make(metadata.messageId),
       commandId: CommandId.make(metadata.commandId),
@@ -805,27 +886,32 @@ export function NewTaskFlowProvider(
       interactionMode: resolvePendingTaskInteractionMode({
         planModeEnabled: legacyPlanModeEnabled,
         draftInteractionMode: draft.interactionMode,
-        provider: selectedEnvironmentServerConfig?.providers.find(
+        provider: launchServerConfig?.providers.find(
           (candidate) => candidate.instanceId === draftModelSelection.instanceId,
         ),
       }),
       creation: {
-        projectId: selectedProject.id,
-        projectTitle: selectedProject.title,
-        projectCwd: selectedProject.workspaceRoot,
+        projectId: launch.projectId,
+        projectTitle: launchProject?.title ?? selectedProject.title,
+        ...(launchProject ? { projectCwd: launchProject.workspaceRoot } : {}),
         workspaceMode: mode,
         ...(mode === "worktree" && workspaceSelection?.pullRequestReference
           ? { pullRequestReference: workspaceSelection.pullRequestReference }
           : {}),
         // Queued local tasks use drain-time checkout; snapshot branches only for immediate sends or explicit choices.
-        branch: resolveProjectThreadCreationBranch({
-          workspaceMode: mode,
-          selectedBranch: workspaceSelection?.branch ?? null,
-          currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
-        }),
+        branch,
         worktreePath: mode === "local" ? (workspaceSelection?.worktreePath ?? null) : null,
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
+          : {}),
+        ...(route && branch !== null
+          ? {
+              routedFrom: {
+                environmentId: selectedProject.environmentId,
+                projectId: selectedProject.id,
+                defaultBranch: routedDefaultBranch ?? branch,
+              },
+            }
           : {}),
       },
       createdAt: metadata.createdAt,
@@ -909,6 +995,9 @@ export function NewTaskFlowProvider(
     isGitRepoKnown: knownIsGitRepo !== null,
     canChooseWorkspace,
     cloud: projectDefaults.cloud,
+    cloudLaunch: projectDefaults.cloudLaunch,
+    launch,
+    cloudBranch,
     selectedBranchName,
     selectedWorktreePath,
     resolveWorkspaceSelection,

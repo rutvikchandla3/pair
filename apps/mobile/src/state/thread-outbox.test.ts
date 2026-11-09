@@ -1189,7 +1189,7 @@ describe("thread outbox", () => {
     ).toBe("remove");
   });
 
-  it("round-trips queued PR checkout sources and gates incomplete creations from sending", () => {
+  it("round-trips queued PR checkout sources and routes, and gates incomplete creations from sending", () => {
     const base = queuedMessage({
       messageId: "message-1",
       createdAt: "2026-06-08T10:00:01.000Z",
@@ -1212,6 +1212,24 @@ describe("thread outbox", () => {
 
     expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(creationMessage))).toEqual(
       creationMessage,
+    );
+    // A routed Cloud launch keeps its route through a restart.
+    const routedMessage = {
+      ...creationMessage,
+      creation: {
+        projectId: ProjectId.make("pair-cloud-project"),
+        workspaceMode: "cloud",
+        branch: "feature",
+        worktreePath: null,
+        routedFrom: {
+          environmentId: EnvironmentId.make("mac"),
+          projectId: ProjectId.make("mac-project"),
+          defaultBranch: "main",
+        },
+      },
+    } satisfies QueuedThreadMessage;
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(routedMessage))).toEqual(
+      routedMessage,
     );
     expect(isQueuedThreadCreationSendable(creationMessage)).toBe(true);
     expect(

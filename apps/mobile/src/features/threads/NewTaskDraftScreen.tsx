@@ -91,7 +91,7 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
-import type { CloudAvailability } from "@t3tools/shared/sandbox";
+import type { NewTaskCloud } from "./new-task-cloud";
 import type { MenuAction } from "@react-native-menu/menu";
 import { Menu } from "../../components/ui/Menu";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -103,17 +103,48 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
 const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
 
-/** A cloud-launch environment's only mode, disabled with its reason when Cloud can't start. */
-function workspaceModeMenuActions(cloud: CloudAvailability): MenuAction[] {
-  const entry: MenuAction = {
-    id: `${WORKSPACE_MODE_MENU_ID}cloud`,
-    title: resolveNewTaskWorkspaceLabel({ workspaceMode: "cloud", worktreePath: null }),
+/**
+ * Cloud is a Pair Cloud project's only mode. A local project keeps its two modes and adds one
+ * Cloud entry per Pair Cloud with the repo, each disabled with its reason when it can't launch.
+ */
+function workspaceModeMenuActions(input: {
+  readonly cloud: NewTaskCloud;
+  readonly cloudLaunch: boolean;
+  readonly workspaceMode: NewTaskWorkspaceMode;
+}): MenuAction[] {
+  const { cloud } = input;
+  const cloudEntry = (
+    id: string,
+    title: string,
+    disabledReason: string | null,
+    on: boolean,
+  ): MenuAction => ({
+    id: `${WORKSPACE_MODE_MENU_ID}${id}`,
+    title,
     image: "cloud",
-    state: "on",
-  };
-  return [
-    cloud.available ? entry : { ...entry, subtitle: cloud.message, attributes: { disabled: true } },
-  ];
+    ...(on ? { state: "on" as const } : {}),
+    ...(disabledReason ? { subtitle: disabledReason, attributes: { disabled: true } } : {}),
+  });
+  const cloudEntries =
+    cloud.options.length === 0
+      ? [cloudEntry("cloud", "Cloud", cloud.message, input.workspaceMode === "cloud")]
+      : cloud.options.map((option) =>
+          cloudEntry(
+            `cloud:${option.environmentId}`,
+            option.title,
+            option.disabledReason,
+            input.workspaceMode === "cloud" &&
+              (cloud.options.length === 1 || cloud.target?.environmentId === option.environmentId),
+          ),
+        );
+  if (input.cloudLaunch) return cloudEntries;
+  const localEntry = (mode: "local" | "worktree"): MenuAction => ({
+    id: `${WORKSPACE_MODE_MENU_ID}${mode}`,
+    title: resolveNewTaskWorkspaceLabel({ workspaceMode: mode, worktreePath: null }),
+    image: mode === "local" ? "folder" : "arrow.triangle.branch",
+    ...(input.workspaceMode === mode ? { state: "on" as const } : {}),
+  });
+  return [localEntry("local"), localEntry("worktree"), ...cloudEntries];
 }
 
 function NewTaskWorkspaceIcon(props: {
@@ -218,6 +249,12 @@ export function NewTaskDraftScreen(props: {
     selectedProject?.environmentId ?? null,
   );
   const environmentConnected = connectionState === "connected";
+  const { launch } = flow;
+  // A routed Cloud target is offered only while its Pair Cloud is connected.
+  const launchConnected =
+    launch !== null && launch.environmentId !== selectedProject?.environmentId
+      ? true
+      : environmentConnected;
   const canOperate = useEnvironmentScope(
     selectedProject?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -571,10 +608,13 @@ export function NewTaskDraftScreen(props: {
     workspaceMode: flow.workspaceMode,
     pullRequestReference: flow.pullRequestReference,
   });
-  const workspaceLabel = resolveNewTaskWorkspaceLabel({
-    workspaceMode: flow.workspaceMode,
-    worktreePath: flow.selectedWorktreePath,
-  });
+  const workspaceLabel =
+    flow.workspaceMode === "cloud" && flow.cloud.options.length > 1 && flow.cloud.target
+      ? `Cloud on ${flow.cloud.target.label}`
+      : resolveNewTaskWorkspaceLabel({
+          workspaceMode: flow.workspaceMode,
+          worktreePath: flow.selectedWorktreePath,
+        });
   const showBranchLoading =
     environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
 
@@ -585,7 +625,7 @@ export function NewTaskDraftScreen(props: {
     onNativePasteText: handleNativePasteText,
   } = useComposerAttachmentActions({
     draftKey: flow.draftKey,
-    serverConfig: selectedEnvironmentServerConfig,
+    serverConfig: launch?.serverConfig ?? null,
     locked: isComposerInteractionLocked,
   });
 
@@ -603,8 +643,9 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
     if (
-      environmentConnected &&
-      !readEnvironmentScope(selectedProject.environmentId, AuthOrchestrationOperateScope)
+      !launch ||
+      (launchConnected &&
+        !readEnvironmentScope(launch.environmentId, AuthOrchestrationOperateScope))
     ) {
       return null;
     }
@@ -612,9 +653,9 @@ export function NewTaskDraftScreen(props: {
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
     const modelSelection =
       resolveSelectableModelSelection(
-        selectedEnvironmentServerConfig,
+        launch.serverConfig,
         draft.modelSelection ?? null,
-        selectedProject.id,
+        launch.projectId,
       ) ?? flow.selectedModel;
     const workspaceSelection = flow.resolveWorkspaceSelection(draft.workspaceSelection);
     const workspaceMode = workspaceSelection.mode;
@@ -626,22 +667,19 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode !== "local" && !selectedBranchName)
+      (workspaceMode !== "local" && !selectedBranchName) ||
+      flow.cloudBranch?.kind === "block"
     ) {
       return null;
     }
     if (
-      environmentConnected &&
-      isModelSelectionUnavailable(
-        selectedEnvironmentServerConfig,
-        modelSelection,
-        selectedProject.id,
-      )
+      launchConnected &&
+      isModelSelectionUnavailable(launch.serverConfig, modelSelection, launch.projectId)
     ) {
       const { title, detail } = describeUnavailableModelSelection(
-        selectedEnvironmentServerConfig,
+        launch.serverConfig,
         modelSelection,
-        selectedProject.id,
+        launch.projectId,
       );
       Dialog.alert(title, detail);
       return null;
@@ -731,7 +769,9 @@ export function NewTaskDraftScreen(props: {
             ? flow.workspaceMode === "cloud"
               ? "Choose a base branch before starting a machine."
               : "Choose a base branch before creating a worktree."
-            : null
+            : flow.cloudBranch?.kind === "block"
+              ? flow.cloudBranch.message
+              : null
       : "Wait for shared content to finish importing.";
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
@@ -853,7 +893,7 @@ export function NewTaskDraftScreen(props: {
 
   const workspaceDisabled = isComposerInteractionLocked || !flow.isGitRepo;
   // Off a cloud-only server the control stays the two-way toggle it always was.
-  const offersCloud = flow.cloud.available || flow.cloud.reason !== "not-cloud-only";
+  const offersCloud = flow.cloud.offered;
   const workspaceControl = (
     <ComposerInlineControl
       accessibilityHint={
@@ -885,10 +925,24 @@ export function NewTaskDraftScreen(props: {
       {offersCloud && !workspaceDisabled ? (
         <Menu
           accessibilityLabel={workspaceLabel}
-          actions={workspaceModeMenuActions(flow.cloud)}
+          actions={workspaceModeMenuActions({
+            cloud: flow.cloud,
+            cloudLaunch: flow.cloudLaunch,
+            workspaceMode: flow.workspaceMode,
+          })}
           onPressAction={({ nativeEvent }) => {
-            const mode = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
-            if (mode === "cloud" && flow.cloud.available) flow.setWorkspaceMode(mode);
+            const choice = nativeEvent.event.slice(WORKSPACE_MODE_MENU_ID.length);
+            if (choice === "local" || choice === "worktree") flow.setWorkspaceMode(choice);
+            const option = flow.cloud.options.find(
+              (candidate) => choice === `cloud:${candidate.environmentId}`,
+            );
+            if (option && option.disabledReason === null) {
+              // The pick is stored only among several Pair Clouds; one target is derived.
+              flow.setWorkspaceMode(
+                "cloud",
+                flow.cloud.options.length > 1 ? option.environmentId : undefined,
+              );
+            }
           }}
         >
           {workspaceControl}
@@ -990,6 +1044,11 @@ export function NewTaskDraftScreen(props: {
                   />
                 </View>
               ) : null}
+              {flow.cloudBranch?.kind === "warn" ? (
+                <Text textRole="footnote" className="px-3 pb-2 text-foreground-muted">
+                  {flow.cloudBranch.message}
+                </Text>
+              ) : null}
               {flow.canChooseWorkspace ? workspaceControls : null}
             </View>
           ),
@@ -1034,7 +1093,7 @@ export function NewTaskDraftScreen(props: {
         selectedThreadQueueCount={0}
         queuedMessages={[]}
         dispatchingMessageId={null}
-        serverConfig={selectedEnvironmentServerConfig}
+        serverConfig={launch?.serverConfig ?? null}
         usesAutomaticContentInsets
         onOpenConnectionEditor={() => navigation.navigate("Connections")}
         onChangeDraftMessage={flow.setPrompt}

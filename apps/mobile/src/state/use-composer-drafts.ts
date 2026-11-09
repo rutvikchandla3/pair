@@ -433,6 +433,8 @@ export interface ComposerDraftWorkspaceSelection {
    * included) until the user picks a branch, rather than pinning the first name refs reported.
    */
   readonly followsCurrentCheckout?: boolean;
+  /** The Pair Cloud picked for Cloud when several have this repo; otherwise derived. */
+  readonly cloudEnvironmentId?: EnvironmentId;
 }
 
 export type ComposerDraftSettingsUpdate = Pick<
@@ -447,6 +449,7 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
   followsCurrentCheckout: Schema.optional(Schema.Boolean),
+  cloudEnvironmentId: Schema.optional(EnvironmentIdSchema),
 });
 
 const ComposerDraftProjectSchema = Schema.Struct({
