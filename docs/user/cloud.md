@@ -138,7 +138,8 @@ first.
 
 ### Continue locally
 
-In the desktop app, choose **Continue locally** in a cloud thread's menu or the command palette.
+In the desktop app, or the web app your own computer's server shows, choose **Continue locally**
+in a cloud thread's menu or the command palette.
 Pair brings the thread's branch, its uncommitted work and its conversation into a new worktree and
 thread in your project with the same `origin`, on your computer's own provider sign-ins.
 
@@ -257,7 +258,7 @@ Cloud's settings on the web or desktop app.
 On a thread on your Mac, the **Cloud** menu in the thread header, or the thread's long-press menu,
 offers **Continue in cloud…** too, and its preview opens as a sheet. Your Mac does the upload, so
 the phone must be connected to both your Mac and Pair Cloud, and the Mac must already be linked.
-Continue locally is desktop only.
+Continue locally isn't offered on the phone.
 
 ## Coming from Conductor Cloud
 
