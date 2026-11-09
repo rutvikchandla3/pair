@@ -1589,6 +1589,20 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Owes: G2 step 8 rerun with one Claude (Haiku) and one Codex (Luna) thread: `docker rm -f`, Retry,
   send; both run and the log shows `resume_failed`. Codex's fallback is read from code only.
 
+## 2.56 GitHub repository on Pair Cloud (landed ef24b0d7b, b034479c7)
+
+- On cloud-only, `sourceControlLookupRepository` is `PairCloudProjects.lookup`: the same parse
+  (`owner/name[.git]`, `github.com/owner/name`, the https URL), the member-only `checkAccess` and
+  `repositoryInfo` as `add`, with no duplicate check (`add` runs it). A bare name says "Enter the full
+  owner/repository name."; other providers get `unsupported-remote`. Off cloud-only, upstream's
+  lookup is unchanged.
+- `buildAddProjectRemoteSourceReadiness(discovery, { cloudLaunch })`: GitHub is ready on a Pair
+  Cloud environment without the server's own GitHub (web palette, mobile Add project).
+- `PairCloudProjectError` gains `app-no-access` (server only), picked by `MemberGitHubCredential.source`:
+  Connect GitHub gets the App's repository access text, a pasted token the token text.
+- Owes: captures, and the G2 step 5 rerun through **GitHub repository** on web and mobile. GitLab,
+  Bitbucket and Azure DevOps stay listed on Pair Cloud and fail at the lookup.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
