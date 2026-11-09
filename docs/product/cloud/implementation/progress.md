@@ -1613,6 +1613,15 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   The bind exists only for a local Docker host, so the directory is always on the server's host.
 - Owes: the step 10 rerun V2→V3 with machines from V1 and V2.
 
+## 2.58 restore mode in settings.json (landed a994ae4bc)
+
+- `restoreModeSince` is `Schema.DateTimeUtcFromString`, in settings and in the patch. With
+  `Schema.DateTimeUtc` the file held an ISO string that the persisted-settings decode rejected, so
+  every read with restore mode on fell back to default settings: no driver, GitHub App or provider
+  instances (G2 step 11). The wire carries the same ISO string as before, so clients are unchanged.
+- A V2 server stuck there recovers on V3 with no edit: the file on disk never changed.
+- Owes: the step 11 rerun on V3 (Restore mode listed, **Leave restore mode**).
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
