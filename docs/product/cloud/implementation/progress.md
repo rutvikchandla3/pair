@@ -36,12 +36,13 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (5 of 12), specs written 2026-11-10:** full specs in
+**M4 (6 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). Next: 4.16 (critical,
-not started: the lead held it for the usage window to reset), then waves 5–6 and the M4 integrated pass (G4 step 1) on a release with M4.
+(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557) landed too, so waves 1–4 are done. Next: wave 5
+(4.17 critical, 4.18 small, then 4.19 critical), wave 6 (4.20, 4.21, 4.22, all small), a release
+with M4, and the M4 integrated pass (G4 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2085,6 +2086,26 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   `PATH`) as `invalid-recipe`.
 - Owes, with the M4 pass's step 3: the `.npmrc` leak on a real build, `***` in the file and the
   stream, and `grep -rlF -f -` on the base image's grep.
+
+## 4.16 activate, roll back and collect builds (landed 4d285e557)
+
+- Commands `team-image.build.activate`, `.collect` and `.log-deleted`; events
+  `team-image.active-changed` and `team-image.log-deleted`. A capture activates the build when
+  `activateOnSuccess` is set, and `startBuild` now sets it. RPC `teamImage.activateBuild`
+  (`{ imageBuildId }`, settings write); activating an older succeeded build is the rollback.
+- `collect` marks `imageDeletedAt` when it commits and the effect then deletes the image, so an
+  activation can't land on an image about to vanish. There is no `image-deleted` command.
+- Retention (`TeamImageCollection.ts`): the active build, builds a live sandbox uses
+  (`ProjectionStore.listSandboxImageBuildIds` reads `payload_json.imageBuild.id`), and the newest
+  `keepSucceeded` builds besides those. The worker collects at start, daily, and after a success.
+- `TeamImageService.buildFinished` streams `{ build, recipients }` for 4.18's toast and 4.21's
+  push; whoever cancelled is left out. A build failed as interrupted in restart recovery is
+  published before anyone subscribes.
+- 4.17 reads `TeamImageStore.state.activeBuildId`, skips a build with `imageDeletedAt` or another
+  driver, and writes `imageBuild` on the sandbox record. 4.19 dispatches
+  `team-image.build.request` with an agent requester and `activateOnSuccess: false`.
+- Owes, with the M4 pass: image deletion on a real daemon with `keepSucceeded: 1`, the rollback
+  timed against 10 s, and Docker's answer when a stray container still uses the image.
 
 ## Open follow-ups and risks
 
