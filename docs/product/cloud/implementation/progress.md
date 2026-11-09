@@ -17,10 +17,9 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (32 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.22–2.29, 2.31–2.40, 2.42–2.45, 2.47. In flight
-on the Mac (worktrees under `../pair-wt/`): 2.21, 2.30, 2.46. Then 2.41 (lead-run, after the
-workers). Lead decision
+**M2 (35 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.21–2.40, 2.42–2.47. Left: 2.41 (the R1 git
+p50 comparison, lead-run), then the M2 integrated pass. Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
@@ -1415,6 +1414,61 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Open: VCS/git reads on an arbitrary cwd (15 ws.ts entry points, listed in the spec row), symlink
   check-then-read race. Owes test-t3-app pass + trust-text capture;
   `ProviderAccountsSection.browser.test.tsx`.
+
+## 2.46 review guides in the cloud thread's machine (landed cd6484a32)
+
+- `textGeneration/machineInvestigation.ts`: `makeMachineInvestigationFor` → `{ host, environment }`;
+  on a sandbox cwd the guide's provider runs in the machine with
+  `sandboxProviderSessionEnvironmentFor` plus `CLAUDE_CONFIG_DIR`/`CODEX_HOME` =
+  `ensureSandboxProviderHome(host, instanceId)`. Claude/Codex text generation constructors take
+  `instanceId` first. `cloudInvestigationUnsupported` removed.
+- `PullRequestReviewGuideService`: `ReviewGuideRequester { mayUseMachines }` (ws.ts from
+  `terminal:operate`, MCP true). On cloud-only, `machineCheckout` uses the newest linked cloud
+  thread (same project, sandbox + worktree, not a side chat, link not stack-dismissed) on a sandbox
+  host; scratch dir via `makeSandboxTempDirectory`; `sandboxActivity.view(threadId)` keeps it awake.
+  `generate` picks the model once and passes it to `write`.
+- Refusals: no linked cloud thread; requester can't use machines; machine asleep ("Wake the machine
+  of ‘<title>’…"); guide model on a member-owned instance ("Pick a team account for Review guide
+  model in Settings → Source Control.").
+- `ProjectionThreadPullRequests` gains title, sandboxId, worktreePath. Docs: 02, 07,
+  `docs/user/source-control.md`.
+- Not checked: a machine clone's origin URL matching the project's `remoteUrl` (the linked-thread
+  choice relies on it). Owes a G2 runtime transcript.
+
+## 2.30 what a member must connect before a cloud session (landed 390435f6f)
+
+- `CloudPreparation`: `CloudLaunchError` reason `repo-unreadable` ("Pair Cloud can't read <remote>.
+  Connect GitHub to clone private repos, in Settings → Team."), mapped only from git's
+  `authentication_failed` / `remote_unreachable` on the machine's fetch or clone.
+  `ThreadLaunchService.failureDetail` returns a cloud refusal's own message, also inside
+  `ThreadLaunchError`.
+- client-runtime `state/sandbox.ts`: `cloudAccountNotice` → "Add an account on Pair Cloud" /
+  "Connect GitHub on Pair Cloud" / null (constants); `createCloudAccountNoticeAtoms` stays null
+  until config and the member's row load. Web `sandbox/cloudAccountBanner.tsx` in ChatView, mobile
+  notice in `NewTaskDraftScreen` (opens SettingsTeam), both keyed on 2.28/2.29's resolved launch
+  target. No banner on an "Add to Pair Cloud" or offline target.
+- Web `state/team.ts`: Team visibility per environment (`useTeamSettingsEnvironmentIds`);
+  `TeamSettings` gets an environment picker via the shared `SettingsEnvironmentPicker` (moved out of
+  ConnectionsSettings). The picker sets the settings `machine` scope. Hosted web can now show Team
+  for connected environments.
+- Owes: browser tests ChatView ×2, SettingsSidebarNav.composition, ProviderAccountsSection;
+  private-repo launch transcript; test-t3-app / test-t3-mobile with captures.
+
+## 2.21 Pair Cloud install guide (landed 2636727f5)
+
+- New `docs/user/pair-cloud.md` (install, Docker + gVisor, service.env, proxy, Cloud, GitHub App,
+  invites, projects, cap and retention, backup, restore, upgrade, offboarding, Conductor).
+  `cloud.md` gains Cloud on a local project, idle sleep, provider accounts and the clone error;
+  small edits to team, mobile-notifications, project-settings, updating, README, internals/overview,
+  operations/release, product/decisions, pair-features.
+- As landed vs spec: isolation label shows in the driver's Overview row; Docker group and
+  service.env come before `t3 service install`; projects via Add Project → Git URL (the GitHub
+  picker still asks the server's `gh`); backups also need `attachments` and `sandbox/mirrors`;
+  `T3CODE_PUBLIC_URL` only sets webhook URLs, so invites need `--base-url`; first sign-in uses `t3
+  auth pairing create --base-url` (`t3 pair` has none); no `t3 service stop` (`systemctl --user stop
+  t3code.service`); `t3 update` doesn't drain, **Update server** does.
+- G2 to confirm: whether the Claude and Codex CLIs must be on the server host, and gVisor with the
+  machines' local socket.
 
 ## Open follow-ups and risks
 
