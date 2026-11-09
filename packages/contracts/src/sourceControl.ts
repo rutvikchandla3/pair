@@ -261,6 +261,6 @@ export class SourceControlRepositoryError extends Schema.TaggedError<SourceContr
   },
 ) {
   override get message(): string {
-    return `Source control repository operation ${this.operation} failed for ${this.provider}: ${this.detail}`;
+    return this.detail;
   }
 }

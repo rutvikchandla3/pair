@@ -52,6 +52,7 @@ function makeHarness(options: {
   readonly member?: string;
   readonly status?: number;
   readonly shells?: ReadonlyArray<OrchestrationProjectShell>;
+  readonly githubApp?: boolean;
 }) {
   const started: Array<{ input: ProjectCloneStartInput; hooks: ProjectCloneHooks }> = [];
   const requests: Array<{ url: string; authorization: string | undefined }> = [];
@@ -86,7 +87,7 @@ function makeHarness(options: {
         Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
         Layer.mock(MemberGitHub)({
-          enabled: true,
+          enabled: options.githubApp ?? true,
           credentialFor: () =>
             Effect.succeed(
               options.member === undefined
@@ -186,11 +187,18 @@ describe("PairCloudProjects", () => {
       reason: "no-access",
     },
     { name: "a private repository without GitHub", status: 404, reason: "github-not-connected" },
+    {
+      name: "a private repository on a server without the GitHub App",
+      status: 404,
+      githubApp: false,
+      reason: "github-token-needed",
+    },
   ] as const)("refuses adding $name before any git runs", (row) => {
     const harness = makeHarness({
       ...("member" in row ? { member: row.member } : {}),
       ...("status" in row ? { status: row.status } : {}),
       ...("shells" in row ? { shells: row.shells } : {}),
+      ...("githubApp" in row ? { githubApp: row.githubApp } : {}),
     });
     return Effect.gen(function* () {
       const projects = yield* PairCloudProjects.PairCloudProjects;

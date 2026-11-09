@@ -64,6 +64,7 @@ export class PairCloudProjectError extends Schema.TaggedError<PairCloudProjectEr
       "already-added",
       "no-access",
       "github-not-connected",
+      "github-token-needed",
     ]),
     /** `owner/name`. */
     repository: Schema.optional(Schema.String),
@@ -80,6 +81,8 @@ export class PairCloudProjectError extends Schema.TaggedError<PairCloudProjectEr
         return `Your GitHub account can't read ${repository}.`;
       case "github-not-connected":
         return "Connect GitHub to clone private repos, in Settings → Team.";
+      case "github-token-needed":
+        return "Add a GitHub token to clone private repos, in Settings → Team.";
     }
   }
 }
@@ -257,7 +260,11 @@ const make = Effect.gen(function* () {
       return yield* new PairCloudProjectError({ reason: "no-access", repository });
     }
     if (token === null && status === 404) {
-      return yield* new PairCloudProjectError({ reason: "github-not-connected", repository });
+      return yield* new PairCloudProjectError({
+        // Without a Client ID, Settings → Team offers no Connect GitHub, only a token.
+        reason: members.enabled ? "github-not-connected" : "github-token-needed",
+        repository,
+      });
     }
     return yield* failure(`GitHub answered ${status} when checking access to ${repository}.`);
   });
