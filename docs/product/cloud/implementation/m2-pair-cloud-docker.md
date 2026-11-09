@@ -4230,9 +4230,11 @@ release, never from `~/pair`. Subagents do not start their own servers. Reach th
 4. **Unpushed branch (Mac).** Pick **Cloud** on a local-only branch, then on one ahead of its
    pushed copy. Passes on "Push <branch> first" (`branch-not-pushed`), and a warning before send on
    the second.
-5. **Private repo (Mac).** With no GitHub credential and the App ID cleared, add the private repo
-   as a Pair Cloud project. Then restore the App and add it again, and push from a session. Passes
-   on "Connect GitHub to clone private repos", then a clone and a push.
+5. **Private repo (Mac).** Disconnect the member's GitHub in Settings → Team and add a private repo
+   that isn't on Pair Cloud yet. `checkAccess` (PairCloudProjects.ts 231) reads the repo with the
+   member's own GitHub only, so the App can't stand in: a member adds only repos they can read.
+   Connect GitHub again, add it, and push from a session. Passes on "Connect GitHub to clone
+   private repos", then an add, a clone and a push.
 6. **Teammate (Phone).** The second member joins on the web app, then on the phone (`vp run
    mobile:install ios` if the dev client is stale). Each opens the session, prompts it, queues
    behind a running turn and uses **Steer now**.
