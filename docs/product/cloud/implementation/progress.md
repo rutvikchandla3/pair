@@ -28,7 +28,10 @@ under the spec page's "What the code changed in 10 §2".
 
 **M3 (5 of 8), specs written 2026-11-09:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
-(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7), so waves 1–3 are done. In flight: 3.23. Next: wave 5
+(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7), so waves 1–3 are done. 3.23 was stopped early when the lead moved to the Mac: branch `wip/3.23` holds its unfinished,
+untested start (contracts, RPC scopes, `pickCloudMoveModel`); restart the row from it or from
+scratch. Nothing is in flight. Maintainer, 2026-11-09: no more questions, take the spec's proposals
+and tag the release without asking. Next: 3.23, then wave 5
 (3.24 is built, but its testing and G3 step 5 on the phone wait: maintainer, 2026-11-09), a release with M3 (maintainer approval), then G3 by the spec's
 [integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
 
