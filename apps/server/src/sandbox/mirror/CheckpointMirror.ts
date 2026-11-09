@@ -71,6 +71,12 @@ export class CheckpointMirror extends Context.Service<
       projectId: ProjectId,
       refs: ReadonlyMap<string, string>,
     ) => Effect.Effect<void, CheckpointMirrorError>;
+    /** Stores `content` as a blob and points `ref` at it. The mirror must exist. */
+    readonly writeBlobRef: (
+      projectId: ProjectId,
+      ref: string,
+      content: string,
+    ) => Effect.Effect<void, CheckpointMirrorError>;
     readonly deleteRefs: (
       projectId: ProjectId,
       refs: ReadonlyArray<string>,
@@ -115,6 +121,9 @@ export const snapshotNamers = (
   }
   return namers;
 };
+
+/** The JSON `SandboxHeadContext` PR discovery reads while the machine sleeps. */
+export const sandboxHeadRef = (threadId: ThreadId) => `${sandboxThreadRefPrefix(threadId)}head`;
 
 interface BundleHeader {
   readonly prerequisites: ReadonlyArray<string>;
@@ -420,6 +429,20 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const writeBlobRef: CheckpointMirror["Service"]["writeBlobRef"] = Effect.fn(
+    "CheckpointMirror.writeBlobRef",
+  )(function* (projectId, ref, content) {
+    yield* writeLocks.withLock(
+      projectId,
+      Effect.gen(function* () {
+        const written = yield* runInMirror(projectId, "import", ["hash-object", "-w", "--stdin"], {
+          stdin: content,
+        });
+        yield* runInMirror(projectId, "import", ["update-ref", ref, written.stdout.trim()]);
+      }),
+    );
+  });
+
   const maintain: CheckpointMirror["Service"]["maintain"] = Effect.fn("CheckpointMirror.maintain")(
     function* (projectId) {
       yield* writeLocks.withLock(
@@ -526,6 +549,7 @@ const make = Effect.gen(function* () {
     tips,
     importBundle,
     updateRefs,
+    writeBlobRef,
     deleteRefs,
     maintain,
     deleteThreadNamespace,

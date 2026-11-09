@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -38,9 +39,11 @@ import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "../../workspace/WorkspaceSearchIndex.ts";
 import * as CheckpointMirror from "./CheckpointMirror.ts";
+import { SandboxHeadContextJson } from "./SandboxHeadContext.ts";
 import { StoppedSandboxReads, type StoppedView } from "./StoppedSandboxReadsService.ts";
 
 const posix = NodePath.posix;
+const decodeHeadContext = Schema.decodeEffect(SandboxHeadContextJson);
 
 /** Same caps as the live index and editor reads. */
 const MAX_LIST_ENTRIES = 25_000;
@@ -664,8 +667,27 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const headContext: StoppedSandboxReads["Service"]["headContext"] = Effect.fn(
+    "StoppedSandboxReads.headContext",
+  )(
+    function* (threadId) {
+      const { projectId } = yield* projection.getThread(threadId);
+      const gitDir = CheckpointMirror.mirrorGitDir(path, stateDir, projectId);
+      const blob = yield* git(gitDir, "headContext", [
+        "cat-file",
+        "blob",
+        CheckpointMirror.sandboxHeadRef(threadId),
+      ]);
+      if (blob.exitCode !== 0) return null;
+      return yield* decodeHeadContext(blob.stdout);
+    },
+    // No mirror, no record, or one this server can't read: discovery keeps the last link.
+    Effect.orElseSucceed(() => null),
+  );
+
   return StoppedSandboxReads.of({
     diffPreview,
+    headContext,
     viewFor,
     refuseWrite,
     list,

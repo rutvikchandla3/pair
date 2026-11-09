@@ -671,9 +671,10 @@ const layerIdleCompactionWorker = Layer.effectDiscard(
   IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(ProjectionStoreV2.layer));
 
+// Reads StoppedSandboxReads optionally; without it a sleeping machine's thread keeps its last PR.
 const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(layerPullRequestService));
+).pipe(Layer.provide(layerPullRequestService), Layer.provide(layerStoppedSandboxReads));
 
 const layerProviderInstallationRefresh = Layer.effectDiscard(
   Effect.gen(function* () {

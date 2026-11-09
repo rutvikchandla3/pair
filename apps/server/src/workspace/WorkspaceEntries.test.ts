@@ -128,6 +128,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
                         cwd,
                       })
                     : Effect.fail(new SandboxAsleep({ sandboxId, state: "sleeping" })),
+                headContext: () => Effect.die("unused"),
                 refuseWrite: () => Effect.die("unused"),
                 list: (view) =>
                   Effect.succeed({

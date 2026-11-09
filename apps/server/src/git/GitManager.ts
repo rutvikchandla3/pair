@@ -89,6 +89,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { SandboxGitHooks } from "../sandbox/credentials/SandboxGitHooks.ts";
+import type { SandboxHeadContext } from "../sandbox/mirror/SandboxHeadContext.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -153,6 +154,14 @@ export class GitManager extends Context.Service<
       input: { readonly cwd: string; readonly branch: string },
       options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
+    /**
+     * A sleeping machine's branch PR, from the head context saved at sleep; asks only the forge.
+     * `cwd` is the project root and only picks the forge. Null also when the record can't tell.
+     */
+    readonly pullRequestForRecordedHead: (input: {
+      readonly cwd: string;
+      readonly head: SandboxHeadContext;
+    }) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -256,6 +265,75 @@ interface BranchHeadContext {
   headRepositoryNameWithOwner: string | null;
   headRepositoryOwnerLogin: string | null;
   isCrossRepository: boolean;
+}
+
+interface RemoteRepositoryContext {
+  readonly remoteUrlKey: string | null;
+  readonly repositoryNameWithOwner: string | null;
+  readonly ownerLogin: string | null;
+}
+
+/** The head selectors to ask the forge, from the branch's remote and origin. */
+function branchHeadContextFrom(input: {
+  readonly localBranch: string;
+  readonly headBranch: string;
+  readonly probeLocalBranch: boolean;
+  readonly remoteName: string | null;
+  readonly remoteRepository: RemoteRepositoryContext;
+  readonly originRepository: RemoteRepositoryContext;
+  readonly isOnlyRemote: boolean;
+}): BranchHeadContext {
+  const { localBranch, headBranch, remoteName, remoteRepository, originRepository } = input;
+  const isForeignRemote = remoteName !== null && remoteName !== "origin" && !input.isOnlyRemote;
+
+  const isCrossRepository =
+    remoteRepository.repositoryNameWithOwner !== null &&
+    originRepository.repositoryNameWithOwner !== null
+      ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
+        originRepository.repositoryNameWithOwner.toLowerCase()
+      : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null;
+
+  const ownerHeadSelector =
+    remoteRepository.ownerLogin && headBranch.length > 0
+      ? `${remoteRepository.ownerLogin}:${headBranch}`
+      : null;
+  const remoteAliasHeadSelector =
+    remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
+  const shouldProbeRemoteOwnedSelectors = isCrossRepository || isForeignRemote;
+
+  const headSelectors: string[] = [];
+  if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+    appendUnique(headSelectors, ownerHeadSelector);
+    appendUnique(
+      headSelectors,
+      remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+    );
+  }
+  if (input.probeLocalBranch) {
+    appendUnique(headSelectors, localBranch);
+  }
+  appendUnique(headSelectors, headBranch !== localBranch ? headBranch : null);
+  if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
+    appendUnique(headSelectors, ownerHeadSelector);
+    appendUnique(
+      headSelectors,
+      remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
+    );
+  }
+
+  return {
+    localBranch,
+    headBranch,
+    headSelectors,
+    preferredHeadSelector: ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
+    remoteName,
+    headRemoteUrlKey:
+      remoteRepository.remoteUrlKey ?? (remoteName === null ? originRepository.remoteUrlKey : null),
+    targetRemoteUrlKey: originRepository.remoteUrlKey,
+    headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
+    headRepositoryOwnerLogin: remoteRepository.ownerLogin,
+    isCrossRepository,
+  };
 }
 
 export function pullRequestRepositoryKey(value: string): string | null {
@@ -1600,20 +1678,11 @@ export const make = Effect.gen(function* () {
     return handle?.context?.provider ?? provider;
   });
 
-  const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
+  /** Runs no git; `cwd` only picks the forge for a nested repository path. */
+  const remoteRepositoryContextFromUrl = Effect.fn("remoteRepositoryContextFromUrl")(function* (
     cwd: string,
-    remoteName: string | null,
+    remoteUrl: string | null,
   ) {
-    if (!remoteName) {
-      return {
-        remoteUrl: null,
-        remoteUrlKey: null,
-        repositoryNameWithOwner: null,
-        ownerLogin: null,
-      };
-    }
-
-    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
     let repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
     if (
       remoteUrl !== null &&
@@ -1635,6 +1704,16 @@ export const make = Effect.gen(function* () {
       repositoryNameWithOwner,
       ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
     };
+  });
+
+  const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
+    cwd: string,
+    remoteName: string | null,
+  ) {
+    return yield* remoteRepositoryContextFromUrl(
+      cwd,
+      remoteName ? yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`) : null,
+    );
   });
 
   const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
@@ -1690,58 +1769,15 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
       (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository));
-    const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
-
-    const isCrossRepository =
-      remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
-        ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
-        : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null;
-
-    const ownerHeadSelector =
-      remoteRepository.ownerLogin && headBranch.length > 0
-        ? `${remoteRepository.ownerLogin}:${headBranch}`
-        : null;
-    const remoteAliasHeadSelector =
-      remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
-    const shouldProbeRemoteOwnedSelectors = isCrossRepository || isForeignRemote;
-
-    const headSelectors: string[] = [];
-    if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-      appendUnique(headSelectors, ownerHeadSelector);
-      appendUnique(
-        headSelectors,
-        remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-      );
-    }
-    if (shouldProbeLocalBranchSelector) {
-      appendUnique(headSelectors, details.branch);
-    }
-    appendUnique(headSelectors, headBranch !== details.branch ? headBranch : null);
-    if (!isCrossRepository && shouldProbeRemoteOwnedSelectors) {
-      appendUnique(headSelectors, ownerHeadSelector);
-      appendUnique(
-        headSelectors,
-        remoteAliasHeadSelector !== ownerHeadSelector ? remoteAliasHeadSelector : null,
-      );
-    }
-
-    return {
+    return branchHeadContextFrom({
       localBranch: details.branch,
       headBranch,
-      headSelectors,
-      preferredHeadSelector:
-        ownerHeadSelector && isCrossRepository ? ownerHeadSelector : headBranch,
+      probeLocalBranch: shouldProbeLocalBranchSelector,
       remoteName,
-      headRemoteUrlKey:
-        remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
-      headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
-      headRepositoryOwnerLogin: remoteRepository.ownerLogin,
-      isCrossRepository,
-    } satisfies BranchHeadContext;
+      remoteRepository,
+      originRepository,
+      isOnlyRemote,
+    });
   });
 
   // Remote names can contain slashes; match refs literally.
@@ -2866,6 +2902,72 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+  const recordedHeadPrLookup = yield* Cache.makeWith(
+    ({ cwd, headContext }: { readonly cwd: string; readonly headContext: BranchHeadContext }) =>
+      findLatestPrForHeadContext(cwd, headContext).pipe(
+        Effect.tap((latest) => (latest === null ? Effect.void : noteLookupState(latest))),
+      ),
+    {
+      capacity: PR_LOOKUP_CACHE_CAPACITY,
+      timeToLive: (exit, key) => {
+        const streakKey = `recorded\u0000${key.cwd}\u0000${key.headContext.localBranch}`;
+        if (!Exit.isSuccess(exit)) return nextPrLookupFailureTtl(streakKey);
+        prLookupFailureStreakByKey.delete(streakKey);
+        return exit.value?.state === "open" ? PR_LOOKUP_CACHE_TTL : PR_LOOKUP_NO_OPEN_PR_CACHE_TTL;
+      },
+    },
+  );
+  const pullRequestForRecordedHead: GitManager["Service"]["pullRequestForRecordedHead"] = Effect.fn(
+    "pullRequestForRecordedHead",
+  )(function* ({ cwd, head }) {
+    // Without an upstream the record can't tell a published branch from a local one.
+    if (head.upstream === null) return null;
+    const { remoteName, remoteRef } = head.upstream;
+    const urlOf = (name: string) => head.remotes.find((remote) => remote.name === name)?.url;
+    const [remoteRepository, originRepository] = yield* Effect.all(
+      [
+        remoteRepositoryContextFromUrl(cwd, urlOf(remoteName) ?? null),
+        remoteRepositoryContextFromUrl(cwd, urlOf("origin") ?? null),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const remoteUrl = urlOf(remoteName);
+    const isOnlyRemote =
+      remoteName !== "origin" &&
+      originRepository.remoteUrlKey === null &&
+      head.remotes.length === 1 &&
+      remoteUrl !== undefined &&
+      (yield* targetsOnlyRemote(cwd, remoteName, {
+        remoteUrl,
+        repositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
+      }));
+    const headBranch = remoteRef.replace(/^refs\/heads\//, "");
+    const headContext = branchHeadContextFrom({
+      localBranch: head.branch,
+      headBranch,
+      probeLocalBranch: headBranch === head.branch,
+      remoteName,
+      remoteRepository,
+      originRepository,
+      isOnlyRemote,
+    });
+    const isDefault = (branch: string) =>
+      branch === head.defaultBranch ||
+      (head.defaultBranch === null && (branch === "main" || branch === "master"));
+    // A worktree's base upstream (origin/main) is not the branch's PR head.
+    if (headBranch !== head.branch && isDefault(headBranch) && !headContext.isCrossRepository) {
+      return null;
+    }
+    const latest = yield* detachStackFrame(Cache.get(recordedHeadPrLookup, { cwd, headContext }));
+    if (latest === null || (isDefault(head.branch) && latest.state !== "open")) return null;
+    return {
+      ...toStatusPr(latest),
+      closedAt: latest.closedAt ?? null,
+      mergedAt: latest.mergedAt ?? null,
+      headSha: latest.headSha ?? null,
+      repositoryKey: pullRequestRepositoryKey(latest.url),
+    };
+  });
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
@@ -3494,6 +3596,7 @@ export const make = Effect.gen(function* () {
     remoteStatus,
     status,
     branchPullRequest,
+    pullRequestForRecordedHead,
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,

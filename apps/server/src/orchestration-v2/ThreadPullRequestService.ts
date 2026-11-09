@@ -22,8 +22,10 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
@@ -104,7 +106,23 @@ export const make = Effect.gen(function* () {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
   const pendingBackfill = new Map<ThreadId, number>();
+
+  // Side chats share the checkout, and the thread that named its snapshot holds the record.
+  const recordedHeadFor = (
+    group: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>,
+    branch: string,
+  ) =>
+    Option.isNone(stopped)
+      ? Effect.succeed(null)
+      : Effect.gen(function* () {
+          for (const thread of group) {
+            const head = yield* stopped.value.headContext(thread.id);
+            if (head?.branch === branch) return head;
+          }
+          return null;
+        });
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -175,10 +193,17 @@ export const make = Effect.gen(function* () {
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
           const worktreePath = first.worktreePath;
-          // A stopped machine's branch can't move, and discovery never wakes it: keep the last link.
           const worktreeHost =
             worktreePath === null ? null : yield* hosts.forPath(worktreePath).pipe(Effect.option);
-          if (worktreeHost !== null && Option.isNone(worktreeHost)) return finishBackfill(group);
+          // Discovery never wakes a stopped machine: it asks only the forge, from the head saved
+          // at sleep. Without one the branch can't have moved, so the last link stays.
+          const recordedHead =
+            worktreeHost !== null && Option.isNone(worktreeHost) && first.branch !== null
+              ? yield* recordedHeadFor(group, first.branch)
+              : null;
+          if (worktreeHost !== null && Option.isNone(worktreeHost) && recordedHead === null) {
+            return finishBackfill(group);
+          }
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
@@ -186,22 +211,37 @@ export const make = Effect.gen(function* () {
           if (first.branch !== null && repository === null) return finishBackfill(group);
           // A worktree folder can outlive its .git, and git there fails with not_a_repository.
           // An unreadable .git keeps the worktree rather than failing the group.
-          const cwd =
+          const worktreeHasGit =
             worktreePath !== null &&
             worktreeHost !== null &&
             Option.isSome(worktreeHost) &&
             (yield* worktreeHost.value.fileSystem
               .exists(path.join(worktreePath, ".git"))
-              .pipe(Effect.orElseSucceed(() => true)))
-              ? worktreePath
-              : project.workspaceRoot;
+              .pipe(Effect.orElseSucceed(() => true)));
+          // The project root is another checkout: a machine's branch is never read there.
+          if (
+            worktreePath !== null &&
+            sandboxIdFromPath(worktreePath) !== undefined &&
+            recordedHead === null &&
+            !worktreeHasGit
+          ) {
+            return finishBackfill(group);
+          }
+          const cwd =
+            worktreeHasGit && worktreePath !== null ? worktreePath : project.workspaceRoot;
+          const lookup = (
+            branch: string,
+            options: Parameters<GitManager.GitManager["Service"]["branchPullRequest"]>[1],
+          ) =>
+            recordedHead === null
+              ? git.branchPullRequest({ cwd, branch }, options)
+              : git.pullRequestForRecordedHead({ cwd: project.workspaceRoot, head: recordedHead });
           const detected =
             first.branch === null
               ? null
-              : yield* git.branchPullRequest(
-                  { cwd, branch: first.branch },
-                  { refresh: request.refresh },
-                );
+              : yield* lookup(first.branch, { refresh: request.refresh });
+          // A sleeping machine's record can't prove a PR is gone; only a found one is applied.
+          if (recordedHead !== null && detected === null) return finishBackfill(group);
           if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);
           }
@@ -276,10 +316,7 @@ export const make = Effect.gen(function* () {
           if (updates.length === 0) return;
 
           if (detected !== null && first.branch !== null) {
-            const current = yield* git.branchPullRequest(
-              { cwd, branch: first.branch },
-              { freshGitState: true },
-            );
+            const current = yield* lookup(first.branch, { freshGitState: true });
             const currentIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
               refresh: true,
             });

@@ -35,6 +35,9 @@ import { EventId } from "@t3tools/contracts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import type { SandboxHeadContext } from "../sandbox/mirror/SandboxHeadContext.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it("rejects a pull-request result when the project root changes before dispatch", () => {
@@ -224,6 +227,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       unreadablePaths: [],
       lookups: [],
     },
+    // The project root is another checkout, never the machine's branch.
+    {
+      worktree: "a ready machine's checkout without .git",
+      worktreePath: "/t3-sandbox/sbx_00000000000000000034/worktrees/main",
+      existingPaths: ["/t3-sandbox/sbx_00000000000000000034/worktrees/main"],
+      unreadablePaths: [],
+      lookups: [],
+    },
   ] as const)(
     "looks up a branch whose worktree is $worktree in $lookups",
     ({ worktreePath, existingPaths, unreadablePaths, lookups }) =>
@@ -309,6 +320,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             Path.layer,
           );
           yield* Effect.gen(function* () {
+            const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+            yield* hosts.register("/t3-sandbox/sbx_00000000000000000034", hosts.local);
             const service = yield* ThreadPullRequestService.make;
             yield* service.start();
             yield* Deferred.succeed(activation, undefined);
@@ -321,6 +334,141 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           );
 
           expect(lookupCwds).toEqual(lookups);
+        }),
+      ),
+  );
+
+  it.effect(
+    "finds a PR for an asleep cloud thread from its recorded head without touching the sandbox path",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // A side chat sorts first; the owner named the snapshot and holds the record.
+          const worktreePath = "/t3-sandbox/sbx_00000000000000000033/worktrees/main";
+          const asleep = (id: string) => ({
+            ...threadShell(id),
+            branch: "feature/asleep",
+            worktreePath,
+          });
+          const sideChat = asleep("asleep-side-chat");
+          const ownerThread = asleep("asleep-owner");
+          const head: SandboxHeadContext = {
+            version: 1,
+            capturedAt: NOW,
+            branch: "feature/asleep",
+            headOid: "a".repeat(40),
+            upstream: { remoteName: "origin", remoteRef: "refs/heads/feature/asleep" },
+            remotes: [{ name: "origin", url: "git@github.com:acme/project.git" }],
+            defaultBranch: "main",
+          };
+          const project: OrchestrationProjectShell = {
+            id: sideChat.projectId,
+            title: "Project",
+            workspaceRoot: "/workspace/project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const commands: Array<OrchestrationV2ServerCommand> = [];
+          const recordedLookups: Array<{ readonly cwd: string; readonly head: unknown }> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getPullRequestSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [sideChat, ownerThread],
+                    archivedThreads: [],
+                  }),
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return { sequence: 2, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: () => Effect.die("git must not run for a sleeping machine"),
+              pullRequestForRecordedHead: (input) =>
+                Effect.sync(() => {
+                  recordedLookups.push(input);
+                  return {
+                    number: 7,
+                    title: "Opened while asleep",
+                    url: "https://github.com/acme/project/pull/7",
+                    baseRef: "main",
+                    headRef: "feature/asleep",
+                    state: "open" as const,
+                    repositoryKey: "github.com/acme/project",
+                    updatedAt: "2026-09-20T00:00:00.000Z",
+                  };
+                }),
+            }),
+            Layer.mock(StoppedSandboxReads.StoppedSandboxReads)({
+              headContext: (threadId) => Effect.succeed(threadId === ownerThread.id ? head : null),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () =>
+                Effect.succeed({
+                  canonicalKey: "github.com/acme/project",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "git@github.com:acme/project.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name: "project",
+                }),
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({
+              exists: () => Effect.die("no file check at a sleeping machine's path"),
+            }),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(
+            Effect.provide(
+              WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+            ),
+          );
+
+          expect(recordedLookups[0]).toEqual({ cwd: project.workspaceRoot, head });
+          const reference = {
+            projectId: project.id,
+            repository: "acme/project",
+            number: 7,
+            url: "https://github.com/acme/project/pull/7",
+          };
+          expect(commands).toMatchObject(
+            [sideChat, ownerThread].map((thread) => ({
+              type: "thread.pull-request.sync",
+              threadId: thread.id,
+              branchPullRequest: reference,
+            })),
+          );
+          expect(commands).toHaveLength(2);
         }),
       ),
   );

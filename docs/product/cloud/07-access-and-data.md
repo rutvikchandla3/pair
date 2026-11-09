@@ -106,6 +106,7 @@ the checkout stays.
 | `refs/t3/orchestration-v2/checkpoints/...`        | After each capture, under its original name (M1)                                   | Diffs, restore previews, reads while the machine is stopped              |
 | `refs/t3/sandbox/<thread>/branch`                 | After each capture and at the flush before stop (M1); with the sleep snapshot (M2) | Rebuilding a machine (M2), Continue locally (M3), PR head context        |
 | `refs/t3/sandbox/<thread>/snapshot`               | Before sleep (M2), and at Continue locally (M3)                                    | The read-only file browser, Continue locally, rebuild                    |
+| `refs/t3/sandbox/<thread>/head`                   | With the sleep snapshot (M2), a JSON blob                                          | PR discovery while the machine sleeps                                    |
 | `refs/t3/staged/<command>/branch` and `/snapshot` | When a seed upload passes its checks (M3)                                          | The cloud launch that names it (section 8)                               |
 
 `<thread>` is the base64url thread id (`sandboxThreadRefPrefix`). Checkpoint refs keep their original
@@ -291,7 +292,9 @@ M1 it skips threads whose machine is stopped and keeps their last link, because 
 branch can't move. That misses a PR someone opens on GitHub while the machine sleeps. M2's snapshot
 before sleep therefore also stores what `branchPullRequest` reads: remote names and URLs, the
 branch's upstream and tip (`for-each-ref`), and the default branch. Discovery for a sleeping cloud
-thread uses that record and asks only the forge.
+thread uses that record and asks only the forge. The record is a blob at
+`refs/t3/sandbox/<thread>/head`, with credentials stripped from remote URLs. A lookup that finds
+nothing keeps the last link, and a thread with no record keeps it too.
 
 **PR list and panel.** These reads run on Pair Cloud against the project checkout and the forge API.
 [GitHubRequestPolicy.ts](../../../packages/source-control-github/src/server/GitHubRequestPolicy.ts)

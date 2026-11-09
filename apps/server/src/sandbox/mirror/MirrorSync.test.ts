@@ -23,6 +23,7 @@ import * as WorkspaceHostLoopback from "../../workspaceHost/WorkspaceHostLoopbac
 import * as CheckpointMirror from "./CheckpointMirror.ts";
 import * as MirrorCheckpointReader from "./MirrorCheckpointReader.ts";
 import * as MirrorSync from "./MirrorSync.ts";
+import * as StoppedSandboxReads from "./StoppedSandboxReads.ts";
 
 const GIT_IDENTITY = {
   GIT_AUTHOR_NAME: "Test",
@@ -299,4 +300,47 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(layerWith())),
+);
+
+it.effect("records a thread's head context as a blob ref", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:head");
+    const { projectId, sandbox, mirror } = yield* setup(threadId);
+    yield* mirror.ensure(projectId);
+    // A cross-repo head: the branch tracks a fork, whose URL carries a token.
+    yield* git(sandbox, [
+      "remote",
+      "add",
+      "fork",
+      "https://x-access-token:secret@github.com/contributor/project.git",
+    ]);
+    yield* git(sandbox, ["config", "branch.work.remote", "fork"]);
+    yield* git(sandbox, ["config", "branch.work.merge", "refs/heads/feature/work"]);
+    const sync = yield* MirrorSync.MirrorSync;
+    const reads = yield* StoppedSandboxReads.StoppedSandboxReads;
+    const recorded = Effect.gen(function* () {
+      yield* sync.recordHead({ threadId, cwd: sandbox });
+      const head = yield* reads.headContext(threadId);
+      assert.isNotNull(head);
+      const { capturedAt: _capturedAt, ...rest } = head!;
+      return rest;
+    });
+
+    assert.deepEqual(yield* recorded, {
+      version: 1,
+      branch: "work",
+      headOid: yield* git(sandbox, ["rev-parse", "work"]),
+      upstream: { remoteName: "fork", remoteRef: "refs/heads/feature/work" },
+      remotes: [
+        { name: "origin", url: yield* git(sandbox, ["config", "remote.origin.url"]) },
+        { name: "fork", url: "https://github.com/contributor/project.git" },
+      ],
+      defaultBranch: "main",
+    });
+    yield* git(sandbox, ["remote", "set-head", "origin", "--delete"]);
+    assert.isNull((yield* recorded).defaultBranch);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(StoppedSandboxReads.layer.pipe(Layer.provideMerge(layerWith()))),
+  ),
 );

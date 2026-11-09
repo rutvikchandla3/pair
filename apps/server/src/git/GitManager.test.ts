@@ -1410,6 +1410,61 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("finds a sleeping machine's fork PR from its recorded head without running git", () =>
+    Effect.gen(function* () {
+      const projectRoot = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(projectRoot);
+      const gitCommands: string[] = [];
+      const fromRepository = (number: number, owner: string, updatedAt: string) => ({
+        number,
+        title: `PR from ${owner}`,
+        url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+        baseRefName: "main",
+        headRefName: "feature/asleep",
+        state: "open" as const,
+        updatedAt,
+        isCrossRepository: owner !== "pingdotgg",
+        headRepositoryNameWithOwner: `${owner}/codething-mvp`,
+        headRepositoryOwnerLogin: owner,
+      });
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          prListByHeadSelector: {
+            // The same branch name on origin is someone else's, and newer.
+            "feature/asleep": [
+              fromRepository(301, "pingdotgg", "2026-04-06T15:00:00Z"),
+              fromRepository(302, "contributor", "2026-04-05T15:00:00Z"),
+            ],
+          },
+        },
+      });
+
+      const pullRequest = yield* manager.pullRequestForRecordedHead({
+        cwd: projectRoot,
+        head: {
+          version: 1,
+          capturedAt: DateTime.makeUnsafe("2026-04-05T16:00:00Z"),
+          branch: "feature/asleep",
+          headOid: "a".repeat(40),
+          upstream: { remoteName: "team/fork", remoteRef: "refs/heads/feature/asleep" },
+          remotes: [
+            { name: "origin", url: "git@github.com:pingdotgg/codething-mvp.git" },
+            { name: "team/fork", url: "git@github.com:contributor/codething-mvp.git" },
+          ],
+          defaultBranch: "main",
+        },
+      });
+
+      expect(pullRequest).toMatchObject({
+        number: 302,
+        state: "open",
+        repositoryKey: "github.com/pingdotgg/codething-mvp",
+      });
+      expect(gitCommands).toEqual([]);
+    }),
+  );
+
   it.effect("branch PR lookup recovers a deleted fork branch from its remote-tracking ref", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

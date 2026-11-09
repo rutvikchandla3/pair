@@ -113,6 +113,10 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import {
+  stoppedFilesFromProjection,
+  stoppedReadLabel,
+} from "@t3tools/client-runtime/state/sandbox";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -1055,10 +1059,19 @@ export default function GitActionsControl({
   const gitStatusForActions = gitStatus;
   const resolvedChangesTotals = resolveChangesTotals(gitStatusForActions);
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
+  const stoppedFiles = activeServerThreadProjection
+    ? stoppedFilesFromProjection(activeServerThreadProjection.projection)
+    : null;
+  const stoppedLabel = stoppedFiles === null ? null : stoppedReadLabel(stoppedFiles);
   const changesBaseLabel = resolvedChangesTotals
-    ? resolvedChangesTotals.baseRef === null
-      ? "Uncommitted"
-      : `vs ${resolvedChangesTotals.baseRef}`
+    ? [
+        stoppedLabel,
+        resolvedChangesTotals.baseRef === null
+          ? "Uncommitted"
+          : `vs ${resolvedChangesTotals.baseRef}`,
+      ]
+        .filter((part) => part !== null)
+        .join(" · ")
     : null;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];

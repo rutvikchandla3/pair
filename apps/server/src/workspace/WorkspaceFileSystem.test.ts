@@ -522,6 +522,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           Effect.provideService(
             StoppedSandboxReads.StoppedSandboxReads,
             StoppedSandboxReads.StoppedSandboxReads.of({
+              headContext: () => Effect.die("unused"),
               viewFor: () => Effect.die("a write never reads"),
               refuseWrite: (id) =>
                 Effect.fail(new SandboxAsleep({ sandboxId: id, state: "sleeping" })),

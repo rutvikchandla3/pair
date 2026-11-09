@@ -1089,9 +1089,10 @@ because it touches GitManager; the clients only gain the sleep-time label.
     ^remote\..*\.url$`, and `symbolic-ref --short refs/remotes/origin/HEAD` (missing is null).
     Add `MirrorSync.recordHead({ threadId, cwd })` that writes the JSON as a blob and points
     `refs/t3/sandbox/<b64>/head` at it.
-  - `apps/server/src/sandbox/mirror/CheckpointMirror.ts`: add `writeBlobRef(projectId, ref, bytes)`
-    (`hash-object -w --stdin`, then the existing `updateRefs` (385) path) and `readBlob(projectId,
-    ref) => Option<Uint8Array>`. `deleteThreadNamespace` (439) already removes the ref.
+  - `apps/server/src/sandbox/mirror/CheckpointMirror.ts`: add `writeBlobRef(projectId, ref,
+    content)` (`hash-object -w --stdin`, then `update-ref` under the mirror's write lock) and
+    `sandboxHeadRef(threadId)`. No `readBlob`: `StoppedSandboxReads` reads the blob with its own
+    `cat-file`. `deleteThreadNamespace` (439) already removes the ref.
   - `apps/server/src/sandbox/mirror/MirrorSyncWorker.ts`: 2.7's `syncRefs` takes
     `recordHead?: boolean`; 2.7's `snapshotBeforeSleep` passes `true`. Same 15 s bound.
   - `apps/server/src/sandbox/mirror/StoppedSandboxReadsService.ts`: add
@@ -1111,7 +1112,10 @@ because it touches GitManager; the clients only gain the sleep-time label.
       keeps the last link (2.13 rebuilds the checkout).
   - Status: no server change; `VcsStatusBroadcaster` (585) already keeps the last status. Web and
     mobile label the status line with 2.8's `stoppedReadLabel` when the thread's machine is not
-    ready (the branch-toolbar status and the mobile thread header).
+    ready. The web status line is the details panel's Changes row (`GitActionsControl.tsx`;
+    `BranchToolbar` shows no status), and on iOS the git menu's status line
+    (`ThreadGitControls.tsx` `compactMenuStatus`; Android has no git menu). Both pass
+    `stoppedFilesFromProjection(projection)`.
 - **Types and services:** `SandboxHeadContext = Schema.Struct({ version: Schema.Literal(1),
   capturedAt: Schema.DateTimeUtcFromString, branch: Schema.String, headOid: Schema.String,
   upstream: Schema.NullOr(Schema.Struct({ remoteName: Schema.String, remoteRef: Schema.String })),
@@ -1120,7 +1124,10 @@ because it touches GitManager; the clients only gain the sleep-time label.
   `apps/server/src/sandbox/mirror/`. `GitManager.pullRequestForRecordedHead`.
 - **Commands and events:** none new; discovery dispatches the existing `thread.pull-request.sync`.
 - **Migrations:** none (a mirror ref).
-- **Proposed gap answers.** The record is a mirror blob ref, not a `091_` table: it is written with
+- **Proposed gap answers.** A record with no upstream finds nothing (an unpublished branch has no
+  PR), and asleep discovery only adds or changes a link, never clears one. A failed head record is
+  logged and does not fail the snapshot, so `sleepSnapshotAt` still lands. Remote URLs are stored
+  without credentials. The record is a mirror blob ref, not a `091_` table: it is written with
   the snapshot, read only while asleep, and removed with the thread's namespace. Status is not
   persisted: after a server restart an asleep thread shows no counts until wake.
 

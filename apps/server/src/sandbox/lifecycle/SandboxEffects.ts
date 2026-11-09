@@ -259,15 +259,18 @@ const make = Effect.gen(function* () {
         namers,
         ([cwd, threadId]) => {
           const ref = sandboxSnapshotRef(threadId);
-          return checkpoints.value
-            .captureSnapshot({ cwd, ref })
-            .pipe(
-              Effect.flatMap((status) =>
-                status === "ready"
-                  ? mirrorSync.value.syncRefs({ threadId, cwd, checkpointRefs: [ref] })
-                  : Effect.succeed(false),
-              ),
-            );
+          return checkpoints.value.captureSnapshot({ cwd, ref }).pipe(
+            Effect.flatMap((status) =>
+              status === "ready"
+                ? mirrorSync.value.syncRefs({
+                    threadId,
+                    cwd,
+                    checkpointRefs: [ref],
+                    recordHead: true,
+                  })
+                : Effect.succeed(false),
+            ),
+          );
         },
         { concurrency: "unbounded" },
       );

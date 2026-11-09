@@ -6,8 +6,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -22,11 +22,16 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { isRunnerLost, type WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import * as CheckpointMirror from "./CheckpointMirror.ts";
+import { type SandboxHeadContext, SandboxHeadContextJson } from "./SandboxHeadContext.ts";
 
 const DEFAULT_MAX_BUNDLE_BYTES = 512 * 1024 * 1024;
 const SEED_HEAD_REF = "refs/t3/seed/origin/HEAD";
 const ORDINAL_REF = /^(.*\/ordinal\/)(\d+)$/;
 const TIP_LINE = /^([0-9a-f]{40}) (\S+)$/;
+const REMOTE_URL_LINE = /^remote\.(.+)\.url (.+)$/;
+// Only a URL's repository matters here; a token an agent put in it stays out of the mirror.
+const URL_USERINFO = /^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i;
+const encodeHeadContext = Schema.encodeEffect(SandboxHeadContextJson);
 
 export interface MirrorHooksShape {
   readonly afterCapture: (input: {
@@ -91,6 +96,11 @@ export class MirrorSync extends Context.Service<
       readonly worktreePath: string;
       readonly branch: string;
     }) => Effect.Effect<{ readonly snapshotAt: DateTime.Utc | null } | null, MirrorSyncError>;
+    /** Saves the thread's branch, upstream and remotes for PR discovery while it sleeps. */
+    readonly recordHead: (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+    }) => Effect.Effect<void, MirrorSyncError>;
   }
 >()("t3/sandbox/mirror/MirrorSync") {}
 
@@ -179,6 +189,56 @@ export const make = Effect.fn("MirrorSync.make")(function* (
         return Effect.succeed(tips);
       }),
     );
+
+  const readHeadContext = Effect.fn("MirrorSync.readHeadContext")(function* (
+    threadId: ThreadId,
+    host: WorkspaceHost,
+    cwd: string,
+    branch: string,
+  ) {
+    const text = (args: ReadonlyArray<string>) =>
+      runGit(threadId, host, cwd, args, (stdout) =>
+        stdout.pipe(Stream.decodeText(), Stream.mkString),
+      );
+    const [branchRef, remoteUrls, originHead] = yield* Effect.all(
+      [
+        text([
+          "for-each-ref",
+          "--format=%(objectname)%00%(upstream:remotename)%00%(upstream:remoteref)",
+          `refs/heads/${branch}`,
+        ]),
+        text(["config", "--get-regexp", "^remote\\..*\\.url$"]),
+        text(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]),
+      ],
+      { concurrency: "unbounded" },
+    );
+    // config exits 1 when nothing matches; symbolic-ref exits 1 when origin/HEAD is unset.
+    for (const result of [branchRef, ...(remoteUrls.exitCode === 1 ? [] : [remoteUrls])]) {
+      if (result.exitCode !== 0) return yield* failWith(threadId, "bundle-failed")(result.stderr);
+    }
+    const [headOid = "", remoteName = "", remoteRef = ""] = branchRef.stdout
+      .split("\n", 1)[0]!
+      .split("\0");
+    if (headOid === "") return null;
+    const remotes = remoteUrls.stdout.split("\n").flatMap((line) => {
+      const match = REMOTE_URL_LINE.exec(line);
+      return match === null
+        ? []
+        : [{ name: match[1]!, url: match[2]!.replace(URL_USERINFO, "$1") }];
+    });
+    const originBranch = originHead.exitCode === 0 ? originHead.stdout.trim() : "";
+    return {
+      version: 1 as const,
+      capturedAt: yield* DateTime.now,
+      branch,
+      headOid,
+      upstream: remoteName !== "" && remoteRef !== "" ? { remoteName, remoteRef } : null,
+      remotes,
+      defaultBranch: originBranch.startsWith("origin/")
+        ? originBranch.slice("origin/".length)
+        : null,
+    } satisfies SandboxHeadContext;
+  });
 
   const writeBundle = (
     threadId: ThreadId,
@@ -396,7 +456,24 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     return { snapshotAt: snapshot?.takenAt ?? null };
   }, Effect.scoped);
 
-  return MirrorSync.of({ sync, restore });
+  const recordHead: MirrorSync["Service"]["recordHead"] = Effect.fn("MirrorSync.recordHead")(
+    function* ({ threadId, cwd }) {
+      const importFailed = failWith(threadId, "import-failed");
+      const thread = yield* projections.getThread(threadId).pipe(Effect.mapError(importFailed));
+      if (thread.branch === null) return;
+      const host = yield* hosts
+        .forPath(cwd)
+        .pipe(Effect.mapError(failWith(threadId, "sandbox-unavailable")));
+      const head = yield* readHeadContext(threadId, host, cwd, thread.branch);
+      if (head === null) return;
+      const json = yield* encodeHeadContext(head).pipe(Effect.mapError(importFailed));
+      yield* mirror
+        .writeBlobRef(thread.projectId, CheckpointMirror.sandboxHeadRef(threadId), json)
+        .pipe(Effect.mapError(importFailed));
+    },
+  );
+
+  return MirrorSync.of({ sync, restore, recordHead });
 });
 
 export const layer = Layer.effect(MirrorSync, make());

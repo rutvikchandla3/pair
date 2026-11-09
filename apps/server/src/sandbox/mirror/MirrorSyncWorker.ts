@@ -30,6 +30,8 @@ export class MirrorSyncWorker extends Context.Service<
       readonly threadId: ThreadId;
       readonly cwd: string;
       readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
+      /** Also saves the head context; a failure there is logged and does not make this false. */
+      readonly recordHead?: boolean;
     }) => Effect.Effect<boolean>;
   }
 >()("t3/sandbox/mirror/MirrorSyncWorker") {}
@@ -165,8 +167,21 @@ const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
-  const syncRefs: MirrorSyncWorker["Service"]["syncRefs"] = (input) =>
+  const recordHead = (input: { readonly threadId: ThreadId; readonly cwd: string }) =>
+    mirrorSync.recordHead(input).pipe(
+      Effect.catchTags({
+        MirrorSyncError: (cause) =>
+          Effect.logWarning("Could not record the head context for PR discovery", {
+            threadId: input.threadId,
+            cause,
+          }),
+      }),
+    );
+
+  const syncRefs: MirrorSyncWorker["Service"]["syncRefs"] = ({ recordHead: withHead, ...input }) =>
     syncCheckpoints(input).pipe(
+      Effect.tap(() => (withHead === true ? recordHead(input) : Effect.void)),
+      bounded(input.threadId),
       Effect.as(true),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

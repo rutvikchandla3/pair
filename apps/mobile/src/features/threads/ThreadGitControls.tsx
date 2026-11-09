@@ -18,7 +18,9 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { stoppedReadLabel } from "@t3tools/client-runtime/state/sandbox";
 
+import { useStoppedFiles } from "../../state/sandbox";
 import { useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
@@ -43,7 +45,7 @@ function compactMenuBranchLabel(branch: string): string {
   return truncateMiddle(branch, 24);
 }
 
-function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
+function compactMenuStatus(gitStatus: VcsStatusResult | null, stoppedLabel: string | null): string {
   if (!gitStatus) {
     return "Checking status";
   }
@@ -68,6 +70,9 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
       gitStatus.sourceControlProvider?.kind,
     ).changeRequest;
     parts.push(`${shortLabel} #${gitStatus.pr.number}`);
+  }
+  if (stoppedLabel !== null) {
+    parts.push(stoppedLabel);
   }
 
   return parts.join(" · ");
@@ -127,6 +132,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   );
   const threadId = props.threadId;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
+  const stoppedFiles = useStoppedFiles(
+    environmentId && threadId && props.hasThread !== false
+      ? {
+          environmentId: EnvironmentId.make(String(environmentId)),
+          threadId: ThreadId.make(String(threadId)),
+        }
+      : null,
+  );
+  const stoppedLabel = stoppedFiles === null ? null : stoppedReadLabel(stoppedFiles);
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
@@ -265,6 +279,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    menuStatus: compactMenuStatus(gitStatus, stoppedLabel),
     openFiles,
     openGitInspector,
     openReview,
@@ -356,7 +371,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       menu: {
         items: [
           {
-            description: compactMenuStatus(props.gitStatus),
+            description: model.menuStatus,
             disabled: true,
             icon: {
               name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -540,7 +555,7 @@ function threadGitMenuDefinition(
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: model.menuStatus,
         onPress: () => {},
       },
       {

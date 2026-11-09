@@ -22,6 +22,7 @@ import type * as Effect from "effect/Effect";
 import type * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import type { SandboxHeadContext } from "./SandboxHeadContext.ts";
 
 // Only the tag, apart from its layer: workspace code inside the runner resolves it, and the layer
 // pulls in ProjectionStore, which the runner bundle must never carry (03 §2.1).
@@ -47,6 +48,8 @@ export interface StoppedView {
 export class StoppedSandboxReads extends Context.Service<
   StoppedSandboxReads,
   {
+    /** The head context saved with the thread's last sleep snapshot; null when there is none. */
+    readonly headContext: (threadId: ThreadId) => Effect.Effect<SandboxHeadContext | null>;
     /** The view for a cwd under /t3-sandbox/<id>/; fails with SandboxAsleep when none exists. */
     readonly viewFor: (
       cwd: string,
