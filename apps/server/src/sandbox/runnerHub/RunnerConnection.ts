@@ -11,7 +11,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Queue from "effect/Queue";
@@ -21,6 +20,7 @@ import type * as RpcClient from "effect/rpc/RpcClient";
 import type { RpcClientError } from "effect/rpc/RpcClientError";
 
 import type { CoarseOperations } from "../../workspaceHost/WorkspaceHost.ts";
+import { makeByteBudget } from "./ByteBudget.ts";
 
 export type RunnerClient = RpcClient.FromGroup<typeof RunnerRpcGroup, RpcClientError>;
 
@@ -133,35 +133,6 @@ const markFirstByte = (handle: RunnerHandleId, stream: RunnerOutputKey) =>
     Effect.ignore,
   );
 
-/** One sandbox's output allowance, shared by every output stream of its connection. */
-interface IngressBudget {
-  /** Waits on `Clock` while the bucket is overdrawn, so the stream's next pull waits too. */
-  readonly take: (bytes: number) => Effect.Effect<void>;
-}
-
-/**
- * A token bucket that refills at `bytesPerSecond` and holds a sixteenth of a second of burst. A
- * take may overdraw it and waits out its own debt, so a chunk larger than the burst still passes.
- */
-const makeIngressBudget = (bytesPerSecond: number): IngressBudget => {
-  if (bytesPerSecond === Number.POSITIVE_INFINITY) return { take: () => Effect.void };
-  const burst = bytesPerSecond / 16;
-  let tokens = burst;
-  let refilledAt: bigint | undefined;
-  return {
-    take: (bytes) =>
-      Effect.clockWith((clock) => {
-        const now = clock.monotonicTimeNanosUnsafe();
-        const elapsedSeconds = refilledAt === undefined ? 0 : Number(now - refilledAt) / 1e9;
-        refilledAt = now;
-        tokens = Math.min(burst, tokens + elapsedSeconds * bytesPerSecond) - bytes;
-        return tokens >= 0
-          ? Effect.void
-          : Effect.sleep(Duration.millis(Math.ceil((-tokens * 1000) / bytesPerSecond)));
-      }),
-  };
-};
-
 const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number): A =>
   (typeof data === "string" ? data.slice(offset) : data.subarray(offset)) as A;
 
@@ -230,7 +201,8 @@ export const makeRunnerConnection = (
   },
   ingressBytesPerSecond: number,
 ): RunnerConnection => {
-  const ingress = makeIngressBudget(ingressBytesPerSecond);
+  // One allowance for every output stream of this sandbox.
+  const ingress = makeByteBudget(ingressBytesPerSecond, ingressBytesPerSecond / 16);
 
   /** Runs `call` on the live client, again on the next socket after a transport failure. */
   const onLiveClient = <A, E>(

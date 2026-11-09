@@ -4,12 +4,18 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { assert, it } from "@effect/vitest";
 import { SandboxId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { Headers, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 
 import * as ServerConfig from "../../config.ts";
@@ -176,10 +182,10 @@ it.live("serves the current bundle and its digest to a runner credential only", 
     assert.equal(yield* digest.text, `${info.tarballSha256}  ${info.runnerBuildId}.tar.gz\n`);
     const tarball = yield* get(`${info.runnerBuildId}.tar.gz`, `Enroll ${Redacted.value(secret)}`);
     assert.equal(tarball.status, 200);
-    assert.deepStrictEqual(
-      new Uint8Array(yield* tarball.arrayBuffer),
-      yield* fs.readFile(info.tarballPath),
-    );
+    const bytes = yield* fs.readFile(info.tarballPath);
+    assert.equal(tarball.headers["content-type"], "application/gzip");
+    assert.equal(tarball.headers["content-length"], String(bytes.length));
+    assert.deepStrictEqual(new Uint8Array(yield* tarball.arrayBuffer), bytes);
     // Downloads never spend the secret.
     assert.deepStrictEqual(
       yield* hub.authorizeDownload(Headers.fromInput({ authorization: bearer })),
@@ -189,4 +195,67 @@ it.live("serves the current bundle and its digest to a runner credential only", 
       },
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "bundle downloads share one budget: a lone one inside the burst, then two that wait",
+  () =>
+    Effect.gen(function* () {
+      const hubServices = yield* Layer.build(layerHub);
+      const hub = Context.get(hubServices, RunnerHub.RunnerHub);
+      const info = yield* Context.get(hubServices, RunnerBundle.RunnerBundle).current;
+      const tarball = yield* (yield* FileSystem.FileSystem).readFile(info.tarballPath);
+      // The server's clock reports each sleep, so the test moves the clock once a download waits.
+      const testClock = yield* Clock.Clock;
+      const sleeps = yield* Queue.unbounded<number>();
+      const observed: Clock.Clock = {
+        ...testClock,
+        sleep: (duration) =>
+          Effect.suspend(() => {
+            Queue.offerUnsafe(sleeps, Duration.toMillis(duration));
+            return testClock.sleep(duration);
+          }),
+      };
+      // One bundle a second, with a burst of one bundle.
+      const services = yield* Layer.build(
+        HttpRouter.serve(
+          RunnerRoute.layerWhen(Effect.succeed(true), {
+            downloadBytesPerSecond: tarball.length,
+            downloadBurstBytes: tarball.length,
+          }),
+          { disableListenLog: true, disableLogger: true },
+        ).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(Layer.succeedContext(hubServices)),
+        ),
+      ).pipe(Effect.provideService(Clock.Clock, observed));
+      const client = Context.get(services, HttpClient.HttpClient);
+      const secret = yield* hub.mintEnrollment(SandboxId.make("sbx_0000000000000000000a"), 1);
+      const download = client
+        .execute(
+          HttpClientRequest.get(`/runner/v1/bundle/${info.runnerBuildId}.tar.gz`).pipe(
+            HttpClientRequest.setHeaders({ authorization: `Bearer ${Redacted.value(secret)}` }),
+          ),
+        )
+        .pipe(
+          Effect.flatMap((response) => response.arrayBuffer),
+          Effect.map((body) => new Uint8Array(body)),
+        );
+
+      assert.deepStrictEqual(yield* download, tarball);
+      assert.isTrue(Option.isNone(yield* Queue.poll(sleeps)));
+
+      // A second refills the burst; then one of two downloads together owes a whole bundle.
+      yield* TestClock.adjust("1 second");
+      const pair = yield* Effect.all([download, download], { concurrency: 2 }).pipe(
+        Effect.forkChild,
+      );
+      const waited = yield* Effect.raceFirst(
+        Queue.take(sleeps),
+        Fiber.await(pair).pipe(Effect.as("both finished without waiting")),
+      );
+      assert.strictEqual(waited, 1000);
+      yield* TestClock.adjust("1 second");
+      assert.deepStrictEqual(yield* Fiber.join(pair), [tarball, tarball]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

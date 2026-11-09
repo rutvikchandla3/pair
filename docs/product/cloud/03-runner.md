@@ -618,6 +618,11 @@ stream of its connection. Past it the hub stops pulling that sandbox's output, s
 wait and the runner pauses its sources at their buffer caps, where
 `t3_runner_source_paused_ms_total` counts the time. It is a fixed per-sandbox rate, not a fair
 share: the smallest model that stops one machine's output from taking the event loop from the rest.
+Every bundle download through one listener (the runner socket, or the TCP listener when a driver
+dials it) shares one budget, 32 MiB/s with a 16 MiB burst that holds a whole bundle
+(`DOWNLOAD_BYTES_PER_SECOND` in
+[RunnerRoute.ts](../../../apps/server/src/sandbox/runnerHub/RunnerRoute.ts)), so machines fetching
+at once after an upgrade wait for each other instead of taking the event loop.
 `vp run bench:runner --load` proves the target: 30 loopback runners, one `cat`ing a large file in a
 PTY and one downloading the runner bundle back to back, while 28 print a stamped line every 50 ms.
 It passes when those 28 runners' p95 latency rises at most `max(1 ms, 10%)` over an all-quiet

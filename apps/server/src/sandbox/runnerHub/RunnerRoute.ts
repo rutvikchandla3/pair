@@ -1,25 +1,44 @@
 import { RUNNER_PROTOCOL_VERSION } from "@t3tools/contracts/runner";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
+import { makeByteBudget } from "./ByteBudget.ts";
 import { RunnerBundle } from "./RunnerBundle.ts";
 import { RunnerHub } from "./RunnerHub.ts";
 
 const BUILD_HEADER = "x-pair-runner-build";
 const BUNDLE_FILE = /^([0-9a-f]{64})\.(tar\.gz|sha256)$/;
+/** Every download through one layer shares this rate (03 §9). */
+const DOWNLOAD_BYTES_PER_SECOND = 32 * 1024 * 1024;
+/** Holds a whole release bundle (about 9 MB), so a lone fetch never waits. */
+const DOWNLOAD_BURST_BYTES = 16 * 1024 * 1024;
 
 /**
  * The runner's only door (03 §3.1). It shares nothing with `/ws` but the HTTP server: no
  * `SessionStore`, no `RpcAuthorization`, and the server is the RPC client here.
  * While `mounted` is false every route answers 404 before reading the request.
+ * `downloadBytesPerSecond: Infinity` turns the download budget off.
  */
-export const layerWhen = (mounted: Effect.Effect<boolean>) =>
+export const layerWhen = (
+  mounted: Effect.Effect<boolean>,
+  options: {
+    readonly downloadBytesPerSecond?: number;
+    readonly downloadBurstBytes?: number;
+  } = {},
+) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const hub = yield* RunnerHub;
       const bundle = yield* RunnerBundle;
+      const fs = yield* FileSystem.FileSystem;
+      const downloads = makeByteBudget(
+        options.downloadBytesPerSecond ?? DOWNLOAD_BYTES_PER_SECOND,
+        options.downloadBurstBytes ?? DOWNLOAD_BURST_BYTES,
+      );
       // Without a runner tree (not a Pair Cloud release) there is no build to compare or serve.
       const currentBuild = bundle.current.pipe(
         Effect.map((info) => info.runnerBuildId),
@@ -104,9 +123,13 @@ export const layerWhen = (mounted: Effect.Effect<boolean>) =>
           if (match[2] === "sha256") {
             return HttpServerResponse.text(`${tarballSha256}  ${runnerBuildId}.tar.gz\n`);
           }
-          return yield* HttpServerResponse.file(tarballPath, {
-            contentType: "application/gzip",
-          }).pipe(Effect.orDie);
+          const { size } = yield* fs.stat(tarballPath).pipe(Effect.orDie);
+          return HttpServerResponse.stream(
+            fs
+              .stream(tarballPath, { bytesToRead: size })
+              .pipe(Stream.tap((chunk) => downloads.take(chunk.length))),
+            { contentType: "application/gzip", contentLength: Number(size) },
+          );
         }).pipe(
           Effect.catchTags({
             RunnerAuthError: (error) =>
