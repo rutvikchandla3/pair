@@ -26,11 +26,22 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (0 of 8), specs written 2026-11-09:** full specs in
-[m3-continue-in-cloud.md](./m3-continue-in-cloud.md), with the build order (wave 1: 3.19 agent
-link, 3.20 staged seeds), the open maintainer questions and the [integrated
-pass](./m3-continue-in-cloud.md#m3-integrated-pass) that turns G3 into steps. Next: build M3 from
-wave 1, then a release with M3 (maintainer approval), then G3.
+**M3 (2 of 8), specs written 2026-11-09:** full specs in
+[m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
+(78669f835), 3.19 (2cd926a34), so wave 1 is done. Next: wave 2 (3.21 seed checkout, 3.22 context
+export), then waves 3–5, a release with M3 (maintainer approval), then G3 by the spec's
+[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
+
+### M3 maintainer answers (2026-11-09)
+
+Every open question in the M3 spec is answered as proposed, except the row wording: the cloud side
+reads "Continued locally on `<environment label>`", and a copy reads "`<member>` copied this thread
+to `<environment label>`". So: agent links need no Labs beta on either side; non-cloud MCP launches
+on Pair Cloud stay refused; the no-model link account and the link fence across renewals wait until
+after G3; unclaimed seeds live 24 h; an export is user and assistant text at the spec's caps;
+Continue locally on an asleep machine with no snapshot is refused ("Wake the machine first") and
+shows in `npx t3`'s web too; the cloud model is the member's own instance of the same model first;
+Connect GitHub is a warning; no keybinding. The evals key is still open.
 
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
@@ -336,6 +347,13 @@ M2 is built on macOS, not the container. `../pair-wt/` (`/Users/rutvik/rcode/pai
 background subagents (Opus, high effort), one per PR in `../pair-wt/<id>`; Orca can't wake a
 desktop-app session. Workers check the lead checkout with `git --no-optional-locks status`, since a
 plain `status` takes the lead's index lock. Mac-only test failures are listed in the brief.
+
+### M3 in a cloud container (2026-11-09)
+
+M3 is built in a claude.ai/code cloud container: lead checkout `/home/user/pair`, worktrees and
+the scripts below in `/home/user/pair-wt/` (recreated from this file, the brief pointed at the M3
+spec). Workers: Opus high for security and critical-path rows (3.19, 3.20, 3.22, 3.23, 3.25),
+Sonnet high for 3.21, 3.24 and 3.26.
 
 ### Machine setup (a fresh container)
 
@@ -1706,6 +1724,43 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   passes (2.21 ms against 2.59). Kept at 32 MiB/s. The next step (worker-thread framing, per 03 §9,
   or a restated limit) is open.
 
+## 3.20 staged seeds (landed 78669f835)
+
+- `packages/contracts/src/cloudMove.ts` holds the Staging names as specified; `cloudImport` sits
+  beside `cloudLaunch` in `ServerEnvironment.ts`. Migration 093.
+- `apps/server/src/cloudMove/StagedCloudImports.ts`: `stage`, `check`, `claim` and `sweep` take one
+  lock per key; the sweep re-checks each row under it. `check`/`claim` take `{ key, kind, projectId,
+  memberId }` (`claim` adds `threadId`); a replayed claim for the same thread succeeds. Only `seed`
+  is handled: 3.22 adds `context-export` where `stage`, `check`, `claim` and the sweep switch on
+  kind (the table already takes any kind).
+- `CloudMoveHttp.ts`: 404 off cloud-only first, then auth, key and `projectId`, `content-length`;
+  one 32 MiB/s, 16 MiB burst budget. Refusals carry fixed text from `FAILURE_MESSAGES` (lead
+  rewrote it into product words, since 3.23 shows `upload-failed` messages), never git stderr.
+  `authenticateLinkMember` is not exported (knip): later routes go in the same file, joining
+  `Layer.mergeAll` in `layer`, with new reasons in `STAGE_REFUSALS`.
+- `sweep`'s error is `StagedCloudImportError | PersistenceSqlError`. `importBundle`'s `exactRefs`
+  is checked before the lock and `index-pack`.
+- Owes: the runtime transcript against the VM (curl), with G3.
+
+## 3.19 agent link (landed 2cd926a34)
+
+- The `/mcp` scope carries `memberId` for every client (peer links still get no `hostedAppUrl`).
+  `register` and the `/mcp` middleware allow a peer link when the beta is on or the server is
+  cloud-only. Migration 092 `cloud_launch`; `PeerLinks.agentLinks` is always empty on a cloud-only
+  server.
+- `RemoteDelegation` sends `{ type: "cloud", baseRef }` to a `cloudLaunch` peer, refuses other
+  isolation, and checks the parent's branch with `ls-remote` first (a git error is logged, the
+  launch goes on).
+- `OrchestratorMcpEnvironmentLink.cloud` lives in `orchestratorMcp.ts`. `ThreadConnection` gained
+  `cloudLabel` for `t3 thread --environment`'s `--cloud` check.
+- `useLinkMachine(host)(machine, access, pairingCode?)` returns `Result<PeerLink, { minting,
+  message | null }>`; a null message is a cancel. 3.23 calls it.
+- Box toolkit fixtures in PeerForwarding and RemoteDelegation tests use the box's own TeamState:
+  link calls now carry a `memberId`, which runs the member overlay on thread lists.
+- `mcpToolListJsonBytes` 47990 → 48110: the PR needs the `agent-context-increase` label.
+- Owes: live evals (no API key here; dry run passes), the runtime transcript and a `test-t3-app`
+  pass, with G3.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
@@ -1717,3 +1772,9 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - `DEFAULT_BASE_IMAGE_REPOSITORY` is `ghcr.io/rutvikchandla3/t3-sandbox` (1.23): maintainers to confirm the owner.
 - Old runner builds under `<stateDir>/runner/` are never pruned (1.9).
 - PR-level runtime evidence the specs ask for (dev-server metrics tables, `test-t3-app` passes, captures) was deferred: workers may not start dev servers. The lead does it once in the integrated passes.
+- M3 copy review gaps, left for after G3 (maintainer, 2026-11-09): label Continue locally "Continue
+  a copy locally" for a non-owner; the inline Link's access picker defaults to Supervised and offers
+  Full access, which a member can't mint ("cannot create sign-in codes" misleads); no notice when a
+  thread already moved to cloud once; the mobile move row can't open the other thread; "From Pair
+  · <Mac>"'s tooltip says "Started by an agent…" for a member's own move; the shipped Forget confirm
+  says "Connections" where the guide says Sharing & access.

@@ -113,8 +113,8 @@ give the evidence.
     the model picker.
   - Delegation to Pair Cloud names `cloud`, and `t3 thread` keeps `--cloud`: 2.22 refuses every
     non-cloud launch on Pair Cloud. 3.26 corrects 08 §6 and 01 J7.
-  - "Continued on `<name>`'s Mac" reads "Continued on `<environment label>`": the local server
-    knows its own label, not that it runs on a Mac.
+  - "Continued on `<name>`'s Mac" reads "Continued locally on `<environment label>`": the local
+    server knows its own label, not that it runs on a Mac.
   - An agent may move its own thread mid-turn. "Blocked while a run is active" applies to every
     other run.
 - **Migrations.** Two, each taking the next free id at merge (P8): `092_PeerLinkCloudLaunch`
@@ -125,7 +125,10 @@ give the evidence.
   - The transcript endpoint's item array is strict, so the server leaves `move` rows out of
     transcripts.
 
-Open questions for a maintainer, each with a proposed answer in its spec:
+Open questions for a maintainer, each with a proposed answer in its spec. **Answered 2026-11-09:**
+every proposal below is accepted except the row wording, which is "Continued locally on
+`<environment label>`" and "`<member>` copied this thread to `<environment label>`". Only the
+evals key is still open.
 
 - Agent links without the Labs beta (3.19). Proposed: no beta for them, on either side.
 - Non-cloud MCP launches on Pair Cloud (3.19). Proposed: still refused in M3. Agents and the CLI
@@ -141,7 +144,9 @@ Open questions for a maintainer, each with a proposed answer in its spec:
 - Continue locally on an asleep machine with no usable snapshot (3.25). Proposed: refused, with
   "Wake the machine first".
 - The row wording (3.22, 3.25). Proposed: "Continued on `<environment label>`", and
-  "`<member>` continued a copy on `<environment label>`".
+  "`<member>` continued a copy on `<environment label>`". Answered: "Continued locally on
+  `<environment label>`" and "`<member>` copied this thread to `<environment label>`", each row
+  repeating its action's name as "Continued in cloud on `<label>`" does.
 - Continue locally in `npx t3`'s web as well as the desktop (3.25). Proposed: yes. It shows
   wherever the client's primary environment is the member's own server.
 - Which model the cloud thread uses (3.23). Proposed: the member's own instance of the same driver
@@ -555,7 +560,7 @@ keeps using.
 - **Settling uses `thread.settle`; sleeping is 2.1's settle rule.** `sandbox.sleep` would stop a
   machine a teammate's fork still uses. `decideAutoSleep` (SandboxDecisions.ts 155–168) sleeps the
   machine once every attached thread is settled, on drivers with `sleepOnSettle` (Docker).
-- **"Continued on `<name>`'s Mac" reads "Continued on `<environment label>`".** The local server
+- **"Continued on `<name>`'s Mac" reads "Continued locally on `<environment label>`".** The local server
   knows its own label ("Kim's MacBook Pro"), not that it's a Mac; the desktop runs on Windows and
   Linux too. G3's pass checks this row; its wording in pass.md should follow.
 - **Owner means the thread's holder**, `ownerId ?? the server owner` (`holderOf`,
@@ -2659,7 +2664,7 @@ bundle of the thread's branch and snapshot. An awake machine snapshots and syncs
 one is bundled from the mirror without waking. The local server imports the bundle into the local
 project whose origin matches: a new worktree, the snapshot in the working tree, and a new thread
 whose history and `from` row come from the export. Then it reports back. The thread's holder
-moves the session: the cloud thread records "Continued on …" and settles, and 2.1's settle rule
+moves the session: the cloud thread records "Continued locally on …" and settles, and 2.1's settle rule
 puts its machine to sleep. Anyone else gets a copy on a new branch, and the cloud session stays
 live (D19). It is its own PR because it is the first move and lands before 3.23: it creates the
 laptop's `CloudMoves` service and its route client, and Pair Cloud's mirror-to-laptop download,
@@ -2859,8 +2864,8 @@ which 3.23 and 3.21 reuse.
       boolean }, CloudMoveSourceError>`: the shell must exist (`not-found`).
       `copy = input.copy || holder !== memberId`. Dispatch `thread.move.record` (3.22) with
       `commandId: cloud-move:<moveId>:record`, `to: input.thread`, `actorId: memberId` and
-      `message` "Continued on `<environmentLabel>`", or for a copy "`<member name>` continued a
-      copy on `<environmentLabel>`" (the active member's name, else "A teammate", as
+      `message` "Continued locally on `<environmentLabel>`", or for a copy "`<member name>` copied
+      this thread to `<environmentLabel>`" (the active member's name, else "A teammate", as
       `emitLifecycleNotice` names members, Orchestrator.ts 1521–1535). Then, for a move with no
       unfinished work, `thread.settle` with `commandId: cloud-move:<moveId>:settle` and no
       `actorId` (no lifecycle notice beside the row); a previously rejected receipt reads as
@@ -2985,7 +2990,8 @@ which 3.23 and 3.21 reuse.
     SandboxDecisions.ts 155–168) sleeps the machine only once every attached thread is settled, so
     a teammate's fork keeps it awake. Overruled: `continued` also dispatches `sandbox.sleep` as the
     holder, and a fork on the machine is stopped with it.
-  - The row reads "Continued on `<environment label>`" ("Continued on Kim's MacBook Pro"), not
+  - The row reads "Continued locally on `<environment label>`" ("Continued locally on Kim's
+    MacBook Pro"), not
     "`<name>`'s Mac": the local server knows its label, and the desktop also runs on Windows and
     Linux. Overruled: only the sentence in `continued` changes.
   - Branches: a move keeps the session's name, else `<branch>-<n>`; a copy is
@@ -3082,7 +3088,7 @@ server, client-runtime, web, mobile; `vp run check:changed`. The primary agent r
 with a local dev server linked to a cloud-only one, as G3 steps 2 and 3 do: the item in both
 thread menus and the palette (enabled, and disabled during a turn), the move, the copy, the rows
 on both sides, and 3.22's history and gap notice. Captures for the PR: the menu item enabled and
-disabled, the palette item, the "Continued on …" and "Continued from …" rows on web and desktop.
+disabled, the palette item, the "Continued locally on …" and "Continued from …" rows on web and desktop.
 G3 step 2 also wakes, sleeps and moves again to show an asleep machine stays stopped.
 
 **Reviewer checks.**
@@ -3321,7 +3327,7 @@ tag. Subagents don't start their own servers.
    - a new local worktree is on the session's branch, with the cloud commits and the uncommitted
      change;
    - the new local thread has the history and links back;
-   - the cloud session shows "Continued on `<g3-a's environment label>`", settles, and its
+   - the cloud session shows "Continued locally on `<g3-a's environment label>`", settles, and its
      container stops (`docker ps -a`).
 
    Then wake that session, **Sleep now**, and continue it locally again. Passes when the
@@ -3331,7 +3337,7 @@ tag. Subagents don't start their own servers.
    leave a change. From `g3-b`'s client, signed in as member B, run **Continue locally** on it.
    Passes when:
    - member B gets a local thread on a new branch (`<branch>-copy`), and the cloud session shows
-     that B continued a copy;
+     "`<member B>` copied this thread to `<g3-b's environment label>`";
    - the cloud session stays awake and takes a new prompt from member A;
    - no branch was pushed to GitHub (`git ls-remote`).
 4. **The agent link (Mac, Credentials).** In a local `g3-a` thread, ask the agent (Claude Haiku)
@@ -3358,7 +3364,7 @@ tag. Subagents don't start their own servers.
 Evidence (redact pairing links, startup URLs and tokens from all of it):
 
 - G3's video, with a move each way (steps 1 and 2).
-- Captures of the preview and of the "Continued in cloud" and "Continued on `<label>`" rows, on
+- Captures of the preview and of the "Continued in cloud on `<label>`" and "Continued locally on `<label>`" rows, on
   web and desktop.
 - The `mcp-tool-use` eval output for 3.19 and 3.23, run with an `ANTHROPIC_API_KEY` in the
   repo's `.env`.
