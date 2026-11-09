@@ -1,6 +1,6 @@
 # Pair Cloud: implementation plan
 
-Status: M0, M1 and M2 landed and G1 and G2 closed; M3 has full specs; the rest is a proposal,
+Status: M0, M1 and M2 landed and G1 and G2 closed; M3 and M4 have full specs; the rest is a proposal,
 rewritten 2026-11-08 for local-first Pair Cloud.
 The design is the [plan](../README.md) and its ten docs; this folder turns their PR list
 ([10 §2](../10-delivery-plan.md#2-pull-request-plan)) into specs an engineer or agent can implement
@@ -15,6 +15,7 @@ against the repo; the [findings](#verification-findings) are at the end.
 | [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                                              |
 | [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md)       | M2's 36 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M2 integrated pass.                        |
 | [m3-continue-in-cloud.md](./m3-continue-in-cloud.md)       | M3's 8 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M3 integrated pass.                         |
+| [m4-team-images.md](./m4-team-images.md)                   | M4's 12 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M4 integrated pass.                        |
 | [m2-m5.md](./m2-m5.md)                                     | M3–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first; M2's rows as first sharpened. |
 | [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                                                        |
 
@@ -34,7 +35,8 @@ Write each milestone's full specs the same way while the previous milestone's ga
 during G1, M3's during G2, and so on. Each milestone settles names and seams the next one depends
 on, so specs written earlier would be guesses. Until then, [m2-m5.md](./m2-m5.md) holds each row at
 PR level. M2's were written during G1, in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md),
-and M3's after G2 closed, in [m3-continue-in-cloud.md](./m3-continue-in-cloud.md).
+M3's after G2 closed, in [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), and M4's during G3,
+in [m4-team-images.md](./m4-team-images.md).
 
 ## Build order
 
@@ -73,7 +75,7 @@ Inside each milestone:
 - **M4 and M5:** merged side by side after G3. M4 starts with the outbox's aggregate key (4.11),
   which merges before any row that adds effect types; M5 starts with the EC2 driver (5.4), the
   internal listeners and the policy keys, builds AMIs (5.7) once Docker builds (4.14) are in, and
-  ends with the AWS kit and its CI. See [M4's waves](../10-delivery-plan.md#m4-team-images) and
+  ends with the AWS kit and its CI. See [M4's build order](./m4-team-images.md#build-order) and
   [M5's waves](../10-delivery-plan.md#m5-byoc-on-aws).
 - **Early starts:** the base image (1.20), the GitHub App key (1.27) and the mirror store (1.30)
   needed nothing from M0 but 0.1. M2's rows that need only M1 can be built while G1 runs. The secret

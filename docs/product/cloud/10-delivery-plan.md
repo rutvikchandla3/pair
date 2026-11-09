@@ -163,7 +163,7 @@ seed and export upload and download through it. M3 PRs merge after G2 passes.
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------------- | --------------- |
 | 3.19           | `feat(contracts,server,client-runtime,web,mobile): link a member's local server to Pair Cloud` (member-scoped, laptop to Pair Cloud only; `t3_thread_launch`, `delegate_task` and `t3 thread` through RemoteDelegation; evals; D14) | 08 §6, §9; 06 §11; 01 J7          | M2               | Critical, first |
 | 3.20           | `feat(server): accept staged seeds and import them into the mirror` (`capabilities.cloudImport`; keyed by the move's staging key; size and refs checked; strict import)                                                             | 07 §8, §10 #20; 06 §11; 08 §2, §9 | M2 (2.26)        | Critical        |
-| 3.21           | `feat(server): check out a seed in machines` (`seedRef` on the server's cloud launch strategy; the seed reaches the machine as a bundle over the runner's file channel)                                                                             | 07 §8, §10 #21; 08 §2             | 3.20             | Critical        |
+| 3.21           | `feat(server): check out a seed in machines` (`seedRef` on the server's cloud launch strategy; the seed reaches the machine as a bundle over the runner's file channel)                                                             | 07 §8, §10 #21; 08 §2             | 3.20             | Critical        |
 | 3.22           | `feat(contracts,server,client-runtime,web,mobile): import a context export as read-only history` (`contextExportRef`, provenance, a new `historyOrigin` value)                                                                      | 07 §8, §10 #22; 08 §2, §9         | 2.32, 3.20       | Yes, with 3.20  |
 | 3.23           | `feat(contracts,shared,server,client-runtime,web): continue a local thread in cloud` (preview with exclusions, thread menu, palette, "Continued in cloud" row, the laptop agents' tool with evals)                                  | 07 §8, §10 #23; 08 §4, §9; 01 J9  | 3.21, 3.22, 3.25 | Critical        |
 | 3.24           | `feat(mobile): continue a Mac thread in cloud`                                                                                                                                                                                      | 08 §5, §9                         | 3.23             | Yes             |
@@ -211,6 +211,11 @@ rebuild hint stays here as 4.22. M4 PRs merge after G3 passes, and G4 closes M4 
 | 4    | 4.15 leak check, 4.16 activate and roll back                     |
 | 5    | 4.17 boot from the build, 4.18 Team image page, 4.19 admin agent |
 | 6    | 4.20 install script proposals, 4.21 mobile, 4.22 rebuild hint    |
+
+The full specs and their reasoning are in
+[m4-team-images.md](./implementation/m4-team-images.md). They add Needs the table leaves out: 4.18
+also needs 4.15, 4.20 needs 4.18, 4.21 needs 4.16, and 4.22 needs 4.18, so 4.18 lands before 4.19
+in wave 5.
 
 ### M5 BYOC on AWS
 
