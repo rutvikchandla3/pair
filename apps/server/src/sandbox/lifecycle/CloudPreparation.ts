@@ -53,6 +53,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "sandbox-failed",
     "local-launch",
     "not-cloud-only",
+    "seed-on-base",
+    "seed-unavailable",
   ]),
   baseRef: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.String),
@@ -90,6 +92,10 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return "This server runs threads only in the cloud. Launch it as a cloud thread.";
       case "not-cloud-only":
         return NOT_CLOUD_ONLY_MESSAGE;
+      case "seed-on-base":
+        return `${this.branch} is Pair Cloud's base branch. Create a new branch for this work, then try again.`;
+      case "seed-unavailable":
+        return "The work uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
     }
   }
 }
@@ -240,8 +246,9 @@ const clonePathFor = (root: string, url: string, projectId: ProjectId) => {
 };
 
 /**
- * Keeps a kept disk's checkout, else clones or fetches origin and rebuilds a lost checkout at its
- * path from the mirror, else adds a worktree from `origin/<branch>` or `origin/<baseRef>` (README
+ * Keeps a kept disk's checkout, else clones or fetches origin and checks the thread out of the
+ * mirror (a rebuild at its recorded path, or a claimed seed at a new one; a `seeded` launch never
+ * falls back to origin), else adds a worktree from `origin/<branch>` or `origin/<baseRef>` (README
  * P4; an `existingBranch` must be pushed). Git runs as the sandbox's agent user.
  */
 export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
@@ -253,9 +260,12 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
   readonly branch: string;
   readonly existingBranch: boolean;
   readonly existingWorktreePath: string | null;
+  readonly seeded: boolean;
 }) {
   const git = yield* GitWorkflow.GitWorkflowService;
   const root = (yield* SandboxCheckoutRoot)(input.sandboxId);
+  const worktreePathFor = (checkoutRoot: string, branch: string) =>
+    `${checkoutRoot}/worktrees/${branch.replaceAll("/", "-")}`;
   const isCheckout = (cwd: string) => git.isRepository(cwd).pipe(Effect.orElseSucceed(() => false));
   const url = yield* git.readRemoteUrl({ cwd: input.projectRoot, remoteName: "origin" });
   if (url === null) {
@@ -293,25 +303,34 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       : git.fetchRemote({ cwd: clonePath, remoteName: "origin" })
   ).pipe(Effect.mapError(cloneOrFetchFailed));
   const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
-  if (input.existingWorktreePath !== null && Option.isSome(mirror)) {
+  if (Option.isSome(mirror)) {
+    const rebuilt = input.existingWorktreePath !== null;
+    const worktreePath = input.existingWorktreePath ?? worktreePathFor(root, input.branch);
+    // An attempt that failed after `worktree add` left this path; start it again.
+    if (!rebuilt && (yield* isCheckout(worktreePath))) {
+      yield* git.removeWorktree({ cwd: clonePath, path: worktreePath, force: true });
+    }
     const restored = yield* mirror.value.restore({
       threadId: input.threadId,
       projectId: input.projectId,
       clonePath,
-      worktreePath: input.existingWorktreePath,
+      worktreePath,
       branch: input.branch,
     });
-    // `created: false`: a cancelled preparation must not delete the work it just brought back.
     if (restored !== null) {
       return {
         clonePath,
-        worktreePath: input.existingWorktreePath,
+        worktreePath,
         branch: input.branch,
-        created: false,
-        restoredFrom: "mirror" as const,
+        // A rebuild never deletes the work it brought back; a failed first checkout is undone.
+        created: !rebuilt,
+        restoredFrom: rebuilt ? ("mirror" as const) : ("seed" as const),
         snapshotAt: restored.snapshotAt,
       };
     }
+  }
+  if (input.seeded) {
+    return yield* new CloudLaunchError({ projectId: input.projectId, reason: "seed-unavailable" });
   }
   const hasRemoteBranch = (refName: string) =>
     git.hasCommit({ cwd: clonePath, refName: `refs/remotes/origin/${refName}` });
@@ -336,7 +355,7 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     refName: `origin/${pushed ? input.branch : input.baseRef}`,
     newRefName: input.branch,
     baseRefName: `refs/remotes/origin/${input.baseRef}`,
-    path: `${root}/worktrees/${input.branch.replaceAll("/", "-")}`,
+    path: worktreePathFor(root, input.branch),
   });
   return {
     clonePath,

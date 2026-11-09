@@ -12,6 +12,7 @@ import { assert, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ChatAttachmentId,
+  CloudStagingKey,
   ComposerContextId,
   type ChatAttachment,
   CommandId,
@@ -19,6 +20,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitCommandError,
+  MemberId,
   MessageId,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ProjectId,
@@ -80,6 +82,7 @@ import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts"
 import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
 import * as ServerDrain from "../drain/ServerDrain.ts";
 import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
+import * as StagedCloudImports from "../cloudMove/StagedCloudImports.ts";
 import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as FakeComputeDriver from "../sandbox/compute/ComputeDriverTesting.ts";
@@ -159,6 +162,7 @@ interface HarnessOptions {
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
   readonly mirrorRestore?: MirrorSync.MirrorSync["Service"]["restore"];
+  readonly stagedImports?: Partial<StagedCloudImports.StagedCloudImports["Service"]>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -274,6 +278,9 @@ function makeHarness(options: HarnessOptions = {}) {
         options.mirrorRestore === undefined
           ? Layer.empty
           : Layer.mock(MirrorSync.MirrorSync)({ restore: options.mirrorRestore }),
+        options.stagedImports === undefined
+          ? Layer.empty
+          : Layer.mock(StagedCloudImports.StagedCloudImports)(options.stagedImports),
       ),
     ),
   );
@@ -2535,7 +2542,7 @@ const cloudRemote = "https://github.com/acme/app.git";
 /** A cloud launch's git: the project has an origin, the sandbox has no clone yet, `main` is pushed. */
 function cloudHarness(
   git: Partial<GitWorkflow.GitWorkflowService["Service"]> = {},
-  options: Pick<HarnessOptions, "mirrorRestore" | "runSetup"> = {},
+  options: Pick<HarnessOptions, "mirrorRestore" | "runSetup" | "stagedImports"> = {},
 ) {
   const cloneRepository = vi.fn(
     (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["cloneRepository"]>[0]) =>
@@ -2571,6 +2578,14 @@ const runReaching = (threadId: ThreadId, status: "starting" | "failed") =>
   );
 
 const cloudWorkspace = { type: "cloud" as const, baseRef: "main" };
+const seedRef = CloudStagingKey.make(`mv_${"0".repeat(32)}`);
+const seedMember = MemberId.make("member:seed");
+const seedWorkspace = {
+  ...cloudWorkspace,
+  branch: "feature/login",
+  seedRef,
+  existingBranch: true as const,
+};
 const existingBranchWorkspace = {
   ...cloudWorkspace,
   branch: "feature/login",
@@ -2690,6 +2705,80 @@ it.effect("launches a cloud thread and releases it on runner hello", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("launches a seeded cloud thread from its claimed seed and never asks origin", () => {
+  const restored = Deferred.makeUnsafe<{ worktreePath: string; branch: string }>();
+  const setupRan = Deferred.makeUnsafe<string>();
+  const check = vi.fn(
+    (_input: Parameters<StagedCloudImports.StagedCloudImports["Service"]["check"]>[0]) =>
+      Effect.void,
+  );
+  const claim = vi.fn(
+    (_input: Parameters<StagedCloudImports.StagedCloudImports["Service"]["claim"]>[0]) =>
+      Effect.void,
+  );
+  const mirrorRestore = vi.fn<MirrorSync.MirrorSync["Service"]["restore"]>((input) =>
+    Deferred.succeed(restored, { worktreePath: input.worktreePath, branch: input.branch }).pipe(
+      Effect.as({ snapshotAt: null }),
+    ),
+  );
+  const harness = cloudHarness(
+    {
+      currentBranch: () => Effect.succeed("main"),
+      remoteHasBranch: () => Effect.die("a seeded launch never asks origin for its branch"),
+    },
+    {
+      mirrorRestore,
+      stagedImports: { check, claim },
+      runSetup: ({ worktreePath }) =>
+        Deferred.succeed(setupRan, worktreePath).pipe(Effect.as({ status: "no-script" as const })),
+    },
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const commandId = CommandId.make("command:launch:cloud-seed");
+    const input = {
+      ...launchInput({
+        command: commandId,
+        thread: "thread:launch:cloud-seed",
+        message: "Keep going",
+        workspace: seedWorkspace,
+      }),
+      actorId: seedMember,
+    };
+    const launched = yield* launches.launch(input);
+    const staged = { key: seedRef, kind: "seed", projectId, memberId: seedMember };
+    assert.deepEqual(check.mock.calls, [[staged]]);
+    assert.deepEqual(claim.mock.calls, [[{ ...staged, threadId: launched.threadId }]]);
+    assert.isBelow(check.mock.invocationCallOrder[0]!, claim.mock.invocationCallOrder[0]!);
+
+    const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
+    yield* threads.dispatch({
+      type: "sandbox.runner.attached",
+      commandId: CommandId.make(`sandbox-attached:${sandboxId}:1:boot`),
+      threadId: launched.threadId,
+      sandboxId,
+      generation: 1,
+      runnerBootId: "boot",
+    });
+    yield* runReaching(launched.threadId, "starting");
+    const worktreePath = `/t3-sandbox/${sandboxId}/worktrees/feature-login`;
+    assert.deepEqual(yield* Deferred.await(restored), { worktreePath, branch: "feature/login" });
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(yield* Deferred.await(setupRan), worktreePath);
+    assert.equal(
+      (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+      worktreePath,
+    );
+
+    // A replay has the launch's receipt: it does not check again, and claims for the same thread.
+    yield* launches.launch(input);
+    assert.equal(check.mock.calls.length, 1);
+    assert.equal(claim.mock.calls.length, 2);
+    assert.equal(claim.mock.calls[1]?.[0].threadId, launched.threadId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each([
   { name: "a kept disk", kept: true, mirrored: true, restoredFrom: "disk" },
   {
@@ -2699,63 +2788,106 @@ it.effect.each([
     restoredFrom: "mirror",
   },
   { name: "a new disk the mirror never saw", kept: false, mirrored: false, restoredFrom: "origin" },
-] as const)("checks a cloud thread out again from $name", ({ kept, mirrored, restoredFrom }) =>
-  Effect.gen(function* () {
-    const sandboxId = SandboxId.make("sbx_00000000000000000213");
-    const root = `/t3-sandbox/${sandboxId}`;
-    const recorded = `${root}/worktrees/feature-login`;
-    const fetchRemote = vi.fn(() => Effect.void);
-    const cloneRepository = vi.fn(() => Effect.void);
-    const createWorktree = vi.fn((input: { readonly path: string | null }) =>
-      Effect.succeed({ worktree: { path: input.path!, refName: "feature/login", headSha: "abc" } }),
-    );
-    const restore = vi.fn(() => Effect.succeed(mirrored ? { snapshotAt: null } : null));
-    const checkout = yield* CloudPreparation.checkoutInSandbox({
-      sandboxId,
-      threadId: ThreadId.make("thread:checkout-again"),
-      projectId,
-      projectRoot: project.workspaceRoot,
-      baseRef: "main",
-      branch: "feature/login",
-      existingBranch: false,
-      existingWorktreePath: recorded,
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(GitWorkflow.GitWorkflowService)({
-            readRemoteUrl: () => Effect.succeed(cloudRemote),
-            isRepository: (cwd) => Effect.succeed(kept && cwd === recorded),
-            fetchRemote,
-            cloneRepository,
-            hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
-            createWorktree: createWorktree as never,
-          }),
-          Layer.mock(MirrorSync.MirrorSync)({ restore }),
+  {
+    // The retry and re-arm case too: the seed lives in the thread's refs, so no `seeded` is passed.
+    name: "a new thread whose mirror holds its seed",
+    recorded: false,
+    kept: false,
+    mirrored: true,
+    restoredFrom: "seed",
+  },
+  {
+    name: "a seeded launch the mirror has no copy of",
+    recorded: false,
+    seeded: true,
+    kept: false,
+    mirrored: false,
+    restoredFrom: "seed-unavailable",
+  },
+] as const)(
+  "checks a cloud thread out again from $name",
+  ({ kept, mirrored, restoredFrom, ...row }) =>
+    Effect.gen(function* () {
+      const recorded = "recorded" in row ? row.recorded : true;
+      const seeded = "seeded" in row ? row.seeded : false;
+      const sandboxId = SandboxId.make("sbx_00000000000000000213");
+      const root = `/t3-sandbox/${sandboxId}`;
+      const recordedPath = `${root}/worktrees/feature-login`;
+      const fetchRemote = vi.fn(() => Effect.void);
+      const cloneRepository = vi.fn(() => Effect.void);
+      const createWorktree = vi.fn((input: { readonly path: string | null }) =>
+        Effect.succeed({
+          worktree: { path: input.path!, refName: "feature/login", headSha: "abc" },
+        }),
+      );
+      const restore = vi.fn((_input: Parameters<MirrorSync.MirrorSync["Service"]["restore"]>[0]) =>
+        Effect.succeed(mirrored ? { snapshotAt: null } : null),
+      );
+      const checkingOut = CloudPreparation.checkoutInSandbox({
+        sandboxId,
+        threadId: ThreadId.make("thread:checkout-again"),
+        projectId,
+        projectRoot: project.workspaceRoot,
+        baseRef: "main",
+        branch: "feature/login",
+        existingBranch: false,
+        existingWorktreePath: recorded ? recordedPath : null,
+        seeded,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              readRemoteUrl: () => Effect.succeed(cloudRemote),
+              isRepository: (cwd) => Effect.succeed(kept && cwd === recordedPath),
+              fetchRemote,
+              cloneRepository,
+              hasCommit: ({ refName }) => Effect.succeed(refName === "refs/remotes/origin/main"),
+              createWorktree: createWorktree as never,
+            }),
+            Layer.mock(MirrorSync.MirrorSync)({ restore }),
+          ),
         ),
-      ),
-    );
-    assert.deepInclude(checkout, { worktreePath: recorded, restoredFrom });
-    // A kept disk does no fetch and no bundle; a rebuild never deletes its work on cancel.
-    assert.equal(cloneRepository.mock.calls.length, kept ? 0 : 1);
-    assert.equal(fetchRemote.mock.calls.length, 0);
-    assert.equal(restore.mock.calls.length, kept ? 0 : 1);
-    assert.equal(createWorktree.mock.calls.length, restoredFrom === "origin" ? 1 : 0);
-    assert.equal(checkout.created, restoredFrom === "origin");
-  }),
+      );
+      if (restoredFrom === "seed-unavailable") {
+        const error = yield* Effect.flip(checkingOut);
+        assert.include(error, { _tag: "CloudLaunchError", reason: "seed-unavailable" });
+        assert.equal(createWorktree.mock.calls.length, 0);
+        return;
+      }
+      const checkout = yield* checkingOut;
+      assert.deepInclude(checkout, { worktreePath: recordedPath, restoredFrom });
+      // A kept disk does no fetch and no bundle; a rebuild never deletes its work on cancel.
+      assert.equal(cloneRepository.mock.calls.length, kept ? 0 : 1);
+      assert.equal(fetchRemote.mock.calls.length, 0);
+      assert.equal(restore.mock.calls.length, kept ? 0 : 1);
+      assert.equal(createWorktree.mock.calls.length, restoredFrom === "origin" ? 1 : 0);
+      assert.equal(checkout.created, restoredFrom === "origin" || restoredFrom === "seed");
+      if (restoredFrom === "seed") {
+        assert.equal(restore.mock.calls[0]?.[0].worktreePath, recordedPath);
+      }
+    }),
 );
 
-it.effect(
-  "rebuilds a cloud thread's lost checkout when its machine comes back, and says so",
-  () => {
+it.effect.each([
+  { name: "a thread with a run", message: "Fix the build" },
+  // No run records a base, so the rebuild falls back to the thread's branch.
+  { name: "a thread launched without a message", message: undefined },
+] as const)(
+  "rebuilds a cloud thread's lost checkout when its machine comes back, and says so: $name",
+  ({ message }) => {
     const restored = Deferred.makeUnsafe<string>();
     const setupRan = Deferred.makeUnsafe<string>();
+    const mirrorRestore = vi.fn<MirrorSync.MirrorSync["Service"]["restore"]>(({ worktreePath }) =>
+      Deferred.succeed(restored, worktreePath).pipe(
+        Effect.as({ snapshotAt: DateTime.makeUnsafe("2026-11-09T14:02:30.000Z") }),
+      ),
+    );
+    // The launch's own checkout of a new thread asks the mirror first and finds nothing.
+    mirrorRestore.mockImplementationOnce(() => Effect.succeed(null));
     const harness = cloudHarness(
       {},
       {
-        mirrorRestore: ({ worktreePath }) =>
-          Deferred.succeed(restored, worktreePath).pipe(
-            Effect.as({ snapshotAt: DateTime.makeUnsafe("2026-11-09T14:02:30.000Z") }),
-          ),
+        mirrorRestore,
         runSetup: ({ worktreePath }) =>
           Deferred.succeed(setupRan, worktreePath).pipe(
             Effect.as({ status: "no-script" as const }),
@@ -2770,8 +2902,8 @@ it.effect(
         launchInput({
           command: commandId,
           thread: "thread:launch:cloud-rebuild",
-          message: "Fix the build",
-          workspace: cloudWorkspace,
+          ...(message === undefined ? {} : { message }),
+          workspace: { ...cloudWorkspace, branch: "feature/login" },
         }),
       );
       const sandboxId = CloudPreparation.sandboxIdForLaunch(commandId);
@@ -2783,9 +2915,8 @@ it.effect(
         generation: 1,
         runnerBootId: "boot",
       });
-      yield* runReaching(launched.threadId, "starting");
-      const recorded = (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath;
       yield* Deferred.await(setupRan);
+      const recorded = (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath;
       const setupRuns = harness.runSetup.mock.calls.length;
 
       // The fake's disk never holds the checkout, as a machine on a new disk does not.
@@ -3069,13 +3200,43 @@ it.effect.each([
     cloudOnly: false,
     refusal: { _tag: "CloudLaunchError", reason: "not-cloud-only" },
   },
+  {
+    name: "a seed with no branch",
+    settings: cloudSettings,
+    workspace: { ...cloudWorkspace, seedRef },
+    refusal: { _tag: "CloudLaunchError", reason: "no-branch" },
+  },
+  {
+    name: "a seed on its base branch",
+    settings: cloudSettings,
+    workspace: { ...seedWorkspace, branch: "main" },
+    refusal: { _tag: "CloudLaunchError", reason: "seed-on-base", branch: "main" },
+  },
+  {
+    name: "a seed on the checkout's default branch",
+    settings: cloudSettings,
+    workspace: { ...seedWorkspace, baseRef: "develop", branch: "main" },
+    refusal: { _tag: "CloudLaunchError", reason: "seed-on-base", branch: "main" },
+  },
+  {
+    name: "a seed staged by someone else",
+    settings: cloudSettings,
+    workspace: seedWorkspace,
+    check: () =>
+      Effect.fail(
+        new StagedCloudImports.StagedCloudImportError({ key: seedRef, reason: "key-in-use" }),
+      ),
+    refusal: { _tag: "CloudLaunchError", reason: "seed-unavailable" },
+  },
 ])(
   "refuses a cloud launch for $name before any thread or machine",
-  ({ settings, git, workspace, cloudOnly = true, refusal }) => {
+  ({ settings, git, workspace, cloudOnly = true, refusal, ...row }) => {
+    const claim = vi.fn(() => Effect.void);
     const harness = makeHarness({
       cloudOnly,
       serverSettings: settings,
-      ...(git === undefined ? {} : { git }),
+      git: { currentBranch: () => Effect.succeed("main"), ...git },
+      stagedImports: { check: "check" in row ? row.check : () => Effect.void, claim },
     });
     return Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -3086,11 +3247,12 @@ it.effect.each([
         message: "Fix the build",
         workspace: workspace ?? cloudWorkspace,
       });
-      const error = yield* Effect.flip(launches.launch(input));
+      const error = yield* Effect.flip(launches.launch({ ...input, actorId: seedMember }));
       assert.equal(error._tag, "ThreadLaunchError");
       const cause = error._tag === "ThreadLaunchError" ? error.cause : undefined;
       assert.include(cause ?? {}, refusal);
       assert.isNull(yield* threads.getThreadShell(input.threadId));
+      assert.equal(claim.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   },
 );

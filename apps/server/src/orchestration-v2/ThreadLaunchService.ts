@@ -7,6 +7,7 @@ import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import {
   CommandId,
   type ChatAttachment,
+  type CloudStagingKey,
   type MemberId,
   type MessageId,
   type ModelSelection,
@@ -46,6 +47,7 @@ import {
   WORKTREE_BRANCH_PREFIX,
 } from "@t3tools/shared/git";
 
+import * as StagedCloudImports from "../cloudMove/StagedCloudImports.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as PairCloudProjects from "../project/PairCloudProjects.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -87,6 +89,8 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly existingBranch?: true | undefined;
+      /** A staged seed this launch claims; its branch need not be on origin. */
+      readonly seedRef?: CloudStagingKey | undefined;
     };
 
 type RunWorkspaceStrategy = Exclude<ThreadLaunchWorkspaceStrategy, { readonly type: "cloud" }>;
@@ -148,6 +152,8 @@ type PreparationInput = Pick<
   readonly existingWorktreePath?: string | null;
   /** A cloud `branch` that must already be on origin. */
   readonly existingBranch?: true;
+  /** The launch claimed a staged seed: the mirror holds the branch, origin is never asked. */
+  readonly seeded?: true;
 };
 
 type CloudPlacement = Effect.Success<ReturnType<typeof CloudPreparation.resolveCloudLaunch>>;
@@ -301,6 +307,7 @@ const make = Effect.gen(function* () {
   const sandboxCheckouts = yield* KeyedLock.make<SandboxId>();
   // The server provides it; on a cloud-only server it fetches and authenticates the checkout.
   const pairCloudProjects = yield* Effect.serviceOption(PairCloudProjects.PairCloudProjects);
+  const stagedImports = yield* Effect.serviceOption(StagedCloudImports.StagedCloudImports);
   const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
     Context.add(ProjectionStore.ProjectionStoreV2, projections),
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
@@ -391,6 +398,28 @@ const make = Effect.gen(function* () {
         Effect.logWarning("Could not ask origin for a cloud launch's branch", { cause }),
     }),
   );
+
+  /** A seed that is not staged for this member refuses the launch; only a failed read stays an error. */
+  const seedStaged = Effect.fn("ThreadLaunchService.seedStaged")(function* (
+    projectId: ProjectId,
+    memberId: MemberId | undefined,
+    run: (
+      imports: StagedCloudImports.StagedCloudImports["Service"],
+      memberId: MemberId,
+    ) => ReturnType<StagedCloudImports.StagedCloudImports["Service"]["check"]>,
+  ) {
+    const unavailable = new CloudPreparation.CloudLaunchError({
+      projectId,
+      reason: "seed-unavailable",
+    });
+    if (Option.isNone(stagedImports) || memberId === undefined) return yield* unavailable;
+    yield* run(stagedImports.value, memberId).pipe(
+      Effect.catchTags({
+        StagedCloudImportError: (error) =>
+          Effect.fail(error.reason === "failed" ? error : unavailable),
+      }),
+    );
+  });
 
   /** The machine derives from `commandId`, so a replayed launch provisions the same one. */
   const provisionCloud = Effect.fn("ThreadLaunchService.provisionCloud")(function* (input: {
@@ -644,6 +673,7 @@ const make = Effect.gen(function* () {
           branch: branch!,
           existingBranch: input.existingBranch === true,
           existingWorktreePath,
+          seeded: input.seeded === true,
         }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
         yield* Effect.logInfo("Prepared a cloud checkout", {
           threadId,
@@ -1177,7 +1207,44 @@ const make = Effect.gen(function* () {
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
       const strategy = input.workspaceStrategy;
-      const existingBranch = strategy.type === "cloud" && strategy.existingBranch === true;
+      const seedRef = strategy.type === "cloud" ? strategy.seedRef : undefined;
+      const seedMemberId = input.actorId ?? input.ownerId;
+      const existingBranch =
+        strategy.type === "cloud" && strategy.existingBranch === true && seedRef === undefined;
+      if (seedRef !== undefined && strategy.type === "cloud") {
+        if (strategy.branch === undefined) {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )(
+            new CloudPreparation.CloudLaunchError({
+              projectId: input.projectId,
+              reason: "no-branch",
+            }),
+          );
+        }
+        // `MirrorSync.restore` fetches into the branch, which a clone can't do for its checked-out one.
+        const checkedOut = yield* git
+          .currentBranch(project.workspaceRoot)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (strategy.branch === strategy.baseRef || strategy.branch === checkedOut) {
+          return yield* mapError(
+            input,
+            "resolve-project",
+          )(
+            new CloudPreparation.CloudLaunchError({
+              projectId: input.projectId,
+              reason: "seed-on-base",
+              branch: strategy.branch,
+            }),
+          );
+        }
+        if (Option.isNone(launchReceipt)) {
+          yield* seedStaged(input.projectId, seedMemberId, (imports, memberId) =>
+            imports.check({ key: seedRef, kind: "seed", projectId: input.projectId, memberId }),
+          ).pipe(Effect.mapError(mapError(input, "resolve-project")));
+        }
+      }
       if (existingBranch) {
         if (strategy.branch === undefined) {
           return yield* mapError(
@@ -1327,6 +1394,17 @@ const make = Effect.gen(function* () {
         }
         const sandboxId =
           cloud === null ? undefined : CloudPreparation.sandboxIdForLaunch(input.commandId);
+        if (seedRef !== undefined) {
+          yield* seedStaged(input.projectId, seedMemberId, (imports, memberId) =>
+            imports.claim({
+              key: seedRef,
+              kind: "seed",
+              projectId: input.projectId,
+              memberId,
+              threadId,
+            }),
+          ).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        }
         if (cloud !== null) {
           yield* provisionCloud({
             commandId: input.commandId,
@@ -1438,6 +1516,7 @@ const make = Effect.gen(function* () {
                     workspaceStrategy: preparationStrategy,
                     sandboxId,
                     ...(existingBranch ? { existingBranch: true as const } : {}),
+                    ...(seedRef !== undefined ? { seeded: true as const } : {}),
                   },
                   threadId,
                   runId,
@@ -1501,7 +1580,7 @@ const make = Effect.gen(function* () {
       const firstCheckout = runs
         .toSorted((left, right) => left.ordinal - right.ordinal)
         .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation;
-      if (firstCheckout?.type !== "worktree") return;
+      if (firstCheckout !== undefined && firstCheckout.type !== "worktree") return;
       const project = yield* projects.getById(shell.projectId);
       if (Option.isNone(project)) return;
       const { workspaceRoot } = project.value;
@@ -1513,10 +1592,11 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         projectId: shell.projectId,
         projectRoot: workspaceRoot,
-        baseRef: firstCheckout.baseRef,
+        baseRef: firstCheckout?.baseRef ?? branch,
         branch,
         existingBranch: false,
         existingWorktreePath: worktreePath,
+        seeded: false,
       });
       yield* Effect.logInfo("Restored a cloud checkout", {
         threadId: input.threadId,
