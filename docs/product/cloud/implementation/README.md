@@ -102,7 +102,8 @@ Every spec uses these, so the tracks fit together.
   `.release-waiters`, `.hand-over`: all replay safe and bounded at 60 s in the effect worker.
 - **Migrations.** `088_SandboxProjections` (1.3), `089_SandboxRunnerGrants` (1.7) and a small
   `MemberGitHubSource` (1.28a), each taking the next free id at merge. No mirror table in M1.
-- **Bootstrap.** `PAIR_RUNNER_URL`, `PAIR_SANDBOX_ID`, `PAIR_RUNNER_BUILD`, `PAIR_RUNNER_ENROLL`.
+- **Bootstrap.** `PAIR_RUNNER_URL`, `PAIR_SANDBOX_ID`, `PAIR_RUNNER_BUILD`, `PAIR_RUNNER_ENROLL`,
+  and `PAIR_DNS` on gVisor.
   Scripts in cloud see `T3CODE_SANDBOX=1`, and every sandbox process carries `T3CODE_THREAD_ID`.
 
 ## Proposed answers to gaps that blocked implementation

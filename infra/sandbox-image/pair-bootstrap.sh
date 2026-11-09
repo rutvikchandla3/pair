@@ -8,13 +8,20 @@ ENV_FILE=/etc/pair-runner/bootstrap.env
 BUNDLES=/opt/pair-runner
 RUN_DIR=/run/pair-runner
 
-# Docker writes the four values to a file so `docker inspect` never shows the secret.
+# Docker writes the values to a file so `docker inspect` never shows the secret.
 if [ -f "$ENV_FILE" ]; then
   set -a
   . "$ENV_FILE"
   set +a
   rm -f "$ENV_FILE"
 fi
+# Under gVisor, Docker's embedded resolver (127.0.0.11) is unreachable, so the driver names others.
+# Docker leaves a resolv.conf it did not write alone.
+if [ -n "${PAIR_DNS:-}" ]; then
+  kept="$(grep -E '^(search|options)[[:space:]]' /etc/resolv.conf || true)"
+  { for server in $PAIR_DNS; do echo "nameserver $server"; done; echo "$kept"; } >/etc/resolv.conf
+fi
+unset PAIR_DNS
 : "${PAIR_RUNNER_URL:?}" "${PAIR_SANDBOX_ID:?}" "${PAIR_RUNNER_BUILD:?}" "${PAIR_RUNNER_ENROLL:?}"
 # The secret stays out of every child's environment (/proc/<pid>/environ): the runner reads it
 # from $RUN_DIR/enroll, the tmpfs only root can read, and deletes it.

@@ -16,7 +16,8 @@ Cloud releases, and `https://pair.example.com` is your domain.
 - A domain name with TLS for it, or a Tailscale tailnet.
 - A GitHub organization that holds your repositories.
 - Outbound HTTPS to github.com, api.github.com and ghcr.io (the machines' base image), and to
-  `exp.host` for phone notifications.
+  `exp.host` for phone notifications. Machines under gVisor look names up at `1.1.1.1` and
+  `8.8.8.8`, so allow outbound DNS (port 53) to them too.
 
 Size the host for the machines you want running at once. Each **Default** machine gets 4 vCPUs and
 8 GB of memory, and by default a driver runs one machine at a time per 4 of its host's vCPUs: a

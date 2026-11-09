@@ -237,6 +237,7 @@ const EngineContainer = Schema.Struct({
   Created: Schema.String,
   State: Schema.Struct({ Status: Schema.String }),
   Config: Schema.Struct({ Labels: Schema.optionalKey(Labels) }),
+  HostConfig: Schema.optionalKey(Schema.Struct({ Runtime: Schema.optionalKey(Schema.String) })),
 });
 export type EngineContainer = typeof EngineContainer.Type;
 

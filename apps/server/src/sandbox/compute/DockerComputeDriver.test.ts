@@ -218,6 +218,7 @@ interface FakeContainer {
   labels: Record<string, string>;
   status: string;
   generation: number;
+  runtime?: string;
 }
 
 interface FakeImages {
@@ -276,9 +277,15 @@ const fakeEngine = (
         const body = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
           readonly Labels?: Record<string, string>;
           readonly Image?: string;
+          readonly HostConfig?: { readonly Runtime?: string };
         };
         createdImages.set(name, body.Image);
-        containers.set(name, { labels: body.Labels ?? {}, status: "created", generation: 0 });
+        containers.set(name, {
+          labels: body.Labels ?? {},
+          status: "created",
+          generation: 0,
+          ...(body.HostConfig?.Runtime === undefined ? {} : { runtime: body.HostConfig.Runtime }),
+        });
         return reply(201, { Id: name });
       }
       if (existing === undefined) return request.method === "DELETE" ? reply(204) : reply(404, {});
@@ -289,6 +296,7 @@ const fakeEngine = (
           Created: "2026-11-07T00:00:00Z",
           State: { Status: existing.status },
           Config: { Labels: existing.labels },
+          HostConfig: { Runtime: existing.runtime },
         });
       }
       if (path.endsWith("/archive") && request.method === "GET") {
@@ -442,9 +450,25 @@ describe("DockerComputeDriver", () => {
         const env = new TextDecoder().decode(readFirstTarFile(fake.archives[0]!)!);
         assert.include(env, "PAIR_RUNNER_URL='unix:/run/pair-host/runner.sock'\n");
         assert.include(env, "PAIR_RUNNER_ENROLL='enroll'\n");
+        assert.notInclude(env, "PAIR_DNS");
       }),
     );
   });
+
+  it.effect("names reachable resolvers for a gVisor machine, which cannot reach Docker's", () =>
+    withDriver(
+      new Map(),
+      (driver, fake) =>
+        Effect.gen(function* () {
+          yield* driver.create(createInput);
+          const env = new TextDecoder().decode(readFirstTarFile(fake.archives.at(-1)!)!);
+          assert.include(env, "PAIR_DNS='1.1.1.1 8.8.8.8'\n");
+        }),
+      {
+        runtimes: { runc: {}, runsc: { path: "/usr/bin/runsc", runtimeArgs: ["--host-uds=open"] } },
+      },
+    ),
+  );
 
   it.effect(
     "fails a create while the image downloads, then boots from the override's image id",

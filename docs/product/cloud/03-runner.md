@@ -104,9 +104,11 @@ bootstrap script as its command and four values: `PAIR_RUNNER_URL`, `PAIR_SANDBO
 `PAIR_RUNNER_BUILD` (the `runnerBuildId`) and `PAIR_RUNNER_ENROLL` (the enrollment secret). Where a driver can
 write a file into the machine instead of setting an environment variable, it does, since cloud APIs
 and `docker inspect` show environment variables: Docker writes `/etc/pair-runner/bootstrap.env`
-(mode 0600), which the bootstrap deletes. The bootstrap hands the secret to the runner as the
-file `<stateDir>/enroll`, never through the runner's environment, which `/proc/<pid>/environ` keeps
-readable for the life of the process.
+(mode 0600), which the bootstrap deletes. Under gVisor, Docker also passes `PAIR_DNS`
+(`1.1.1.1 8.8.8.8`): gVisor's network stack cannot reach Docker's embedded resolver on a
+user-defined network, so the bootstrap writes those servers to `/etc/resolv.conf`. The bootstrap
+hands the secret to the runner as the file `<stateDir>/enroll`, never through the runner's
+environment, which `/proc/<pid>/environ` keeps readable for the life of the process.
 
 ```mermaid
 sequenceDiagram

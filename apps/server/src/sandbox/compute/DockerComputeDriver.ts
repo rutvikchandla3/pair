@@ -106,6 +106,9 @@ const runscReachesHostSockets = (runsc: unknown) => {
   return value === "open" || value === "all";
 };
 
+/** gVisor's own network stack cannot reach Docker's embedded resolver on a user-defined network. */
+const GVISOR_RESOLVERS = "1.1.1.1 8.8.8.8";
+
 /** gVisor whenever the daemon offers it. */
 export const isolationFromInfo = (
   info: Pick<EngineInfo, "Runtimes" | "SecurityOptions">,
@@ -613,6 +616,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
       PAIR_SANDBOX_ID: bootstrap.sandboxId,
       PAIR_RUNNER_BUILD: bootstrap.runnerBuildId,
       PAIR_RUNNER_ENROLL: Redacted.value(bootstrap.enrollmentSecret),
+      ...(container.HostConfig?.Runtime === "runsc" ? { PAIR_DNS: GVISOR_RESOLVERS } : {}),
     };
     if (Object.values(values).some((value) => /[\0\n\r]/.test(value))) {
       return yield* failure(operation, "invalid-request");
