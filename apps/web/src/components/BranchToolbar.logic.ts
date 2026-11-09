@@ -1,11 +1,24 @@
-import type {
-  EnvironmentId,
-  EnvironmentMachineKind,
-  VcsRef,
-  ProjectId,
-  SandboxId,
-  WorktreeSubmodules,
+import {
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type VcsRef,
+  type ProjectId,
+  resolveEnvironmentMachineKind,
+  type SandboxId,
+  type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import type {
+  EnvironmentConnectionPhase,
+  EnvironmentServerConfig,
+} from "@t3tools/client-runtime/connection";
+import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
 import type { CloudAvailability } from "@t3tools/shared/sandbox";
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
@@ -19,6 +32,82 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+}
+
+/**
+ * The machines a draft of `activeProject` can run on, for auto balance and the machine picker.
+ * Pair Cloud runs only cloud threads, so it is left out unless it holds `activeProject`.
+ */
+export function resolveLogicalProjectEnvironments(input: {
+  readonly activeProject: EnvironmentProject;
+  readonly scratchDraft: boolean;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly connection: { readonly phase: EnvironmentConnectionPhase };
+    readonly serverConfig: EnvironmentServerConfig | null;
+  }>;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
+}): EnvironmentOption[] {
+  const { activeProject, projects, projectGroupingSettings } = input;
+  const pairClouds = new Set(
+    input.environments
+      .filter(
+        (environment) =>
+          environment.environmentId !== activeProject.environmentId &&
+          isCloudLaunchEnvironment(environment.serverConfig),
+      )
+      .map((environment) => environment.environmentId),
+  );
+  const environmentById = new Map(
+    input.environments.map((environment) => [environment.environmentId, environment]),
+  );
+  const envs: EnvironmentOption[] = [];
+  const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
+    const environment = environmentById.get(environmentId) ?? null;
+    envs.push({
+      environmentId,
+      projectId,
+      label: environment?.label ?? environmentId,
+      isPrimary: environmentId === input.primaryEnvironmentId,
+      machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+    });
+  };
+  if (input.scratchDraft) {
+    for (const environment of input.environments) {
+      if (pairClouds.has(environment.environmentId)) continue;
+      const scratchRoot = availableScratchWorkspaceRoot(
+        environment.connection.phase,
+        environment.serverConfig,
+      );
+      if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
+        continue;
+      const scratchProject =
+        environment.environmentId === activeProject.environmentId
+          ? activeProject
+          : projects.find(
+              (p) =>
+                p.environmentId === environment.environmentId && isScratchProject(p, scratchRoot),
+            );
+      pushEnvironment(environment.environmentId, scratchProject?.id ?? null);
+    }
+  } else {
+    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const seen = new Set<string>();
+    for (const p of projects) {
+      if (seen.has(p.environmentId) || pairClouds.has(p.environmentId)) continue;
+      if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey) continue;
+      seen.add(p.environmentId);
+      pushEnvironment(p.environmentId, p.id);
+    }
+  }
+  envs.sort((a, b) => {
+    if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+  return envs;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

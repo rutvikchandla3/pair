@@ -14,7 +14,8 @@ export type CloudAvailability =
     };
 
 /**
- * Hidden when not-cloud-only or not-configured; disabled with `message` when project-disallowed.
+ * Hidden when not-cloud-only; otherwise disabled with `message`, since a cloud-only server refuses
+ * every local mode.
  * `cloudLaunch` is the server's `capabilities.cloudLaunch` (or `ServerConfig.cloudOnly`).
  */
 export function cloudAvailability(

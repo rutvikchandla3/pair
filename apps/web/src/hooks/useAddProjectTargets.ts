@@ -1,4 +1,5 @@
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
@@ -9,7 +10,8 @@ import { useEnvironmentsWithScope } from "../state/session";
 export type AddProjectTarget = Pick<EnvironmentOption, "environmentId" | "label" | "machine">;
 
 /**
- * Connected machines that do not have the project yet and can clone it.
+ * Connected machines that do not have the project yet and can clone it. Pair Cloud is not one:
+ * its Cloud item adds projects there.
  * `projectEnvironments` is the project's current machine list, from
  * `useLogicalProjectEnvironments`. Projects without a git remote get none.
  */
@@ -30,7 +32,8 @@ export function useAddProjectTargets(
         !hasProject.has(environment.environmentId) &&
         canClone.has(environment.environmentId) &&
         canCreateProjectInEnvironment(environment.connection.phase) &&
-        environment.serverConfig !== null,
+        environment.serverConfig !== null &&
+        !isCloudLaunchEnvironment(environment.serverConfig),
     )
     .map((environment) => ({
       environmentId: environment.environmentId,

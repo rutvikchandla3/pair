@@ -77,6 +77,7 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -831,8 +832,13 @@ export function NewTaskFlowProvider(
     };
   };
 
+  // Pair Cloud runs only cloud threads: it backs the Cloud mode, never a local machine choice.
+  const offersLocalModes = (environmentId: EnvironmentId) =>
+    environmentId === selectedProject?.environmentId ||
+    !isCloudLaunchEnvironment(serverConfigs.get(environmentId) ?? null);
   const scratchEnvironments = connectedEnvironments.filter(
     (environment) =>
+      offersLocalModes(environment.environmentId) &&
       availableScratchWorkspaceRoot(
         environment.connectionState,
         serverConfigs.get(environment.environmentId),
@@ -876,7 +882,7 @@ export function NewTaskFlowProvider(
       if (!hostsSelectedRepository(project)) {
         continue;
       }
-      if (seen.has(project.environmentId)) {
+      if (seen.has(project.environmentId) || !offersLocalModes(project.environmentId)) {
         continue;
       }
       const environment = savedConnectionsById[project.environmentId];

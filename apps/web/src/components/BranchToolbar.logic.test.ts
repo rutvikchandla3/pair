@@ -1,7 +1,10 @@
 import {
+  EnvironmentId,
+  ProjectId,
   SandboxId,
   orchestrationV2PendingWorktreeBase,
   type OrchestrationV2Run,
+  type ServerConfig,
   type VcsRef,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -15,6 +18,7 @@ import {
   resolveBranchToolbarValue,
   resolveCloudEnvModeItem,
   resolveLocalCheckoutBranchMismatch,
+  resolveLogicalProjectEnvironments,
   resolvePreviousWorktreeSeed,
   resolveWorktreeBaseBranchName,
   sanitizeNewRefName,
@@ -262,6 +266,67 @@ describe("resolvePreviousWorktreeSeed", () => {
         currentWorktreePath: null,
       }),
     ).toEqual({ branch: "t3/local", worktreePath: "/repo/.t3/wt" });
+  });
+});
+
+describe("resolveLogicalProjectEnvironments", () => {
+  const mac = EnvironmentId.make("mac");
+  const cloud = EnvironmentId.make("cloud");
+  const serverConfig = (cloudLaunch: boolean) =>
+    ({
+      environment: { platform: { machine: "server" }, capabilities: { cloudLaunch } },
+      scratchWorkspaceRoot: "/scratch",
+    }) as unknown as ServerConfig;
+  const project = (id: string, environmentId: EnvironmentId) => ({
+    id: ProjectId.make(id),
+    environmentId,
+    title: "app",
+    workspaceRoot: `/${id}/app`,
+    repositoryIdentity: {
+      canonicalKey: "github.com/acme/app",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/app",
+      },
+    },
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-11-01T00:00:00.000Z",
+    updatedAt: "2026-11-01T00:00:00.000Z",
+  });
+  const local = project("local", mac);
+  const onCloud = project("on-cloud", cloud);
+  const resolve = (activeProject: typeof local, scratchDraft = false) =>
+    resolveLogicalProjectEnvironments({
+      activeProject,
+      scratchDraft,
+      environments: [
+        {
+          environmentId: mac,
+          label: "Mac",
+          connection: { phase: "connected" },
+          serverConfig: serverConfig(false),
+        },
+        {
+          environmentId: cloud,
+          label: "Pair Cloud",
+          connection: { phase: "connected" },
+          serverConfig: serverConfig(true),
+        },
+      ],
+      projects: [local, onCloud],
+      primaryEnvironmentId: mac,
+      projectGroupingSettings: {
+        sidebarProjectGroupingMode: "repository",
+        sidebarProjectGroupingOverrides: {},
+      },
+    }).map((option) => option.environmentId);
+
+  it("keeps a cloud-launch server out of a local draft's machines unless it holds the project", () => {
+    expect(resolve(local)).toEqual([mac]);
+    expect(resolve(local, true)).toEqual([mac]);
+    expect(resolve(onCloud)).toEqual([mac, cloud]);
   });
 });
 

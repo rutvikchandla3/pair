@@ -183,6 +183,10 @@
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
     },
+    "./state/cloud-target": {
+      "types": "./src/state/cloudTarget.ts",
+      "default": "./src/state/cloudTarget.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

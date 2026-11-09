@@ -2227,22 +2227,26 @@ refused launch. It is its own PR so 2.28 and 2.29 share one tested rule (decisio
       readonly disabledReason: string | null;
     }
 
-    export function isCloudLaunchEnvironment(serverConfig: ServerConfig | null): boolean;
+    export function isCloudLaunchEnvironment(
+      serverConfig: Pick<ServerConfig, "environment"> | null,
+    ): boolean;
     export function resolveCloudTarget(input: {
       readonly project: Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
       readonly environments: ReadonlyArray<{
         readonly environmentId: EnvironmentId;
         readonly label: string;
         readonly connected: boolean;
-        readonly serverConfig: ServerConfig | null;
+        // Picked: web's environment presentations carry ServerConfig without `providers`.
+        readonly serverConfig: Pick<ServerConfig, "environment" | "settings"> | null;
       }>;
       readonly projects: ReadonlyArray<EnvironmentProject>;
     }): CloudTarget;
     ```
     Rules, in order:
     1. The project's own environment reports `cloudLaunch`: one target, itself, with
-       `disabledReason` from `cloudAvailability` (shared/sandbox.ts 14). `not-configured` gives
-       `hidden`. This is the M1 path.
+       `disabledReason` from `cloudAvailability` (shared/sandbox.ts 14), `not-configured` included:
+       local modes are refused there, so Cloud shows disabled (as 2.24's pickers do). This is the
+       M1 path.
     2. No environment reports `cloudLaunch`: `hidden`. A phone paired only with the Mac sees
        nothing new (D17).
     3. No `repositoryIdentity`, or an origin key (`repositoryGroupingKeyOf`, environment.ts 214)
@@ -2253,7 +2257,8 @@ refused launch. It is its own PR so 2.28 and 2.29 share one tested rule (decisio
        that project's `cloudAvailability` message. A null project uses
        `cloudAvailability(settings, null, true)`, which checks only the driver.
   - `apps/web/src/hooks/useLogicalProjectEnvironments.ts` (19): skip environments where
-    `isCloudLaunchEnvironment(serverConfig)`, except the active project's own. Auto balance
+    `isCloudLaunchEnvironment(serverConfig)`, except the active project's own. The list is built by
+    `resolveLogicalProjectEnvironments` in `BranchToolbar.logic.ts`, which the hook wraps. Auto balance
     (`useDraftEnvironmentRouting.ts` candidates, 76) and the machine picker both read this list, so
     one filter covers both.
   - `apps/web/src/hooks/useAddProjectTargets.ts` (16): skip `cloudLaunch` environments. Otherwise
@@ -2279,7 +2284,9 @@ refused launch. It is its own PR so 2.28 and 2.29 share one tested rule (decisio
 (Add); a fork whose origin key differs from the Pair Cloud project's upstream key (Add, not a
 match); no origin; a gitlab origin; no `cloudLaunch` environment (hidden); Pair Cloud offline; two
 Pair Clouds (two options, by label); two matching projects on one (oldest); an archived match
-ignored. The picker filters are one-line wiring on top and get no test of their own.
+ignored. The web machine list's filter is a logic bug once 2.24 lands, so it gets one failing-first
+case in `BranchToolbar.logic.test.ts` ("keeps a cloud-launch server out of a local draft's
+machines…"). The Add targets and mobile filters are one-line wiring and get no test of their own.
 
 **Verify.** `vp test run packages/client-runtime/src/state/cloudTarget.test.ts`; `vp run typecheck`
 for client-runtime, web, mobile; `vp run check:changed`. No client pass on its own; 2.28's pass
