@@ -17,10 +17,11 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (36 of 36 done):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+**M2 (36 of 36 done), G2 closed:** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
 Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.21–2.40, 2.42–2.47; 2.41 measured with no
-change needed on the Mac (rerun on the VM in G2). Next: the M2 integrated pass on release
-`0.1.7-pair.1`. Lead decision
+change needed on the Mac. G2 ran on releases `0.1.7-pair.1`–`.3` and landed fix rows 2.48–2.59
+([G2 on real hardware](#g2-on-real-hardware-2026-11-09-pair-cloud-pass-releases-v1v3)). Next: M3's
+full specs, then M3 and G3. Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
@@ -248,6 +249,71 @@ passed. These were set aside, not run, and need the maintainer when picked up:
   the App whenever one is configured;
 - the 1.42 evals, with `ANTHROPIC_API_KEY` in the repo root `.env`;
 - test-t3-mobile, with a simulator (this Mac has no full Xcode) or a Pair build.
+
+### G2 on real hardware (2026-11-09, `pair-cloud-pass`, releases V1–V3)
+
+The [M2 integrated pass](./m2-pair-cloud-docker.md#m2-integrated-pass) ran on the VM from the
+published prereleases [V1 `0.1.7-pair.1`](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.1),
+[V2 `0.1.7-pair.2`](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.2) (rows
+2.48–2.56) and [V3 `0.1.7-pair.3`](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.3)
+(2.57, 2.58), driven from the Mac's browser pane over Tailscale. Steps 6, 7 and 13 were set aside
+by the maintainer (phone, phone across servers, managed Codex).
+
+1. **Install and start: passed.** Cloud-only, `cloudLaunch` true, Test reports gVisor, team cap 6,
+   App ID and key saved, a Claude team account (setup token). Fixed on the way: gVisor refused the
+   runner's host socket without `--host-uds=open` (661bf393f says what to run), and machines under
+   gVisor could not resolve names (7fd616700; the install guide now asks for outbound DNS).
+2. **Desktop beside its local server: passed** on web (local and worktree Replay turns, terminal,
+   diff, restore). Findings 9, 10 and 13 (2.48).
+3. **Cloud from a local project: passed.** PR #4 opened as the member through the device flow with
+   an App push; PR #5 pushed with the member's own token; the App ID was restored after.
+4. **Unpushed branch: passed** ("Push <branch> first", then the ahead warning). Findings 18 and 21
+   (2.52).
+5. **Private repo: passed through the Git URL source** (add, clone, a Haiku session pushed
+   `g2-step5-private`). The GitHub repository source failed for any private repo (2.56).
+6. **Sleep, wake, lost disk: passed** on V1 (auto-sleep on time, reads while asleep, Send → reply
+   5.3 s, Retry rebuilt from the mirror). `docker rm -f` lost the send and the next turn hit a
+   missing Claude session (2.54, 2.55). Video: `~/rcode/pair-gate-videos/g2-step8-sleep-wake-lost-disk.mp4`.
+7. **Automations: passed.** A scheduled task and the webhook each launched a cloud session.
+8. **Drain and upgrade: passed on V2 → V3.** V1 → V2 drained and held a prompt, but V2's start
+   prune removed V1's runtime, which every V1 machine bind-mounts (2.57, blocker). On V2 → V3 the
+   running Haiku turn finished, `t3 drain` held a new send (admission `draining`), `t3 update`
+   restarted the service on V3, a V1 machine woke on V3 and the held send reached its first token
+   5 s after the machine was ready; the V2 machine survived the restart. V2's runtime stays until
+   the prune's one-hour grace ends. Finding 28 reproduced.
+9. **Restore: not passed.** On V2, saving `restoreModeSince` made the server drop settings.json for
+   defaults (2.58, blocker), so Settings → Cloud had no Restore mode section. 2.58 is in V3; the
+   rerun on V3 was set aside when the gate closed.
+10. **Numbers.** Ten Haiku sends each on V3: first token on a ready machine p50 1.28 s (p95
+    1.51 s) against 1.19 s (p95 1.78 s) for a local worktree thread on a second, non-cloud V3 server
+    on the VM: 90 ms apart, within 300 ms. Asleep (Sleep now) → machine ready p50 1.23 s (p95 2.32 s),
+    under 5 s; asleep → first token p50 4.27 s, p95 8.59 s, under 20 s and 45 s.
+    `bench:runner --load` against V3's runner tree with 2.59: stdout and keystroke rows pass (03 §9's
+    M2 column), startup misses (548 ms mounted, 917 ms fetched), CPU over local 8.9 ms per MB
+    against 5, and the load test fails (2.59's note). The 2.41 A/B rerun was stopped after one run.
+
+Findings → rows: 2.48 (6, 9, 10, 13), 2.49 (1–5, 7, 8), 2.50 (11, 14, 15), 2.51 (16, 20), 2.52
+(18, 21), 2.53 (17), 2.54 (23), 2.55 (24), 2.56 (25, 26), 2.57 (29), 2.58 (30), 2.59 (31). 19 was a spec
+fix (8ef0a28ca), 12 was dropped (deliberate attribution), and 22, 27, 28 and 32 are follow-ups.
+Evidence: `../pair-wt/g2-evidence/` on the lead's Mac (not committed).
+
+**G2 closed on 2026-11-09 by the maintainer.** Set aside, not run:
+
+- step 11 on V3, and steps 6, 7 and 13;
+- the V3 checks rows 2.48–2.56 owe (each note's "Owes"), with their captures: 2.54 and 2.55's
+  `docker rm -f` with a Claude thread, 2.56's **GitHub repository** add, 2.51's `docker stop`,
+  2.53's PR text with Codex signed out, and 2.49's `t3 service install` transcript;
+- 2.41's A/B on the VM.
+
+Follow-ups from G2:
+
+- 22: deleting a scheduled task asks for no confirmation.
+- 27: after `t3 drain --cancel` the web keeps "Pair Cloud is restarting for an upgrade…" until a
+  reload.
+- 28: a wake held by a drain shows "Waking machine" and "Setting up …", not the draining copy.
+- 32: 2.57 recreates `versions/<old>/runner` as an empty folder that the start prune never removes
+  (it skips entries without `.install-complete`).
+- Startup and CPU over budget on the VM (03 §2.3 and §9), and the load test (2.59).
 
 ## How to resume
 
@@ -1621,6 +1687,18 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   instances (G2 step 11). The wire carries the same ISO string as before, so clients are unchanged.
 - A V2 server stuck there recovers on V3 with no edit: the file on disk never changed.
 - Owes: the step 11 rerun on V3 (Restore mode listed, **Leave restore mode**).
+
+## 2.59 runner bundle downloads share one budget (landed 0768dad29)
+
+- `makeByteBudget` (runnerHub/ByteBudget.ts) is the token bucket both budgets use. RunnerRoute
+  streams the tarball through one budget per layer, 32 MiB/s with a 16 MiB burst; rate and burst
+  are `layerWhen` options (Infinity is off). Two listeners (socket and TCP) get a budget each. The
+  response reads exactly `content-length` bytes; `etag` and `last-modified` are gone.
+- VM bench (V3's runner tree): downloads 147–183 → 33 MB/s, load ELU 0.81 → 0.59, quiet p95
+  6.1–6.8 → 4.7–5.7 ms, still over the ~2.6 ms limit. Scratch runs at 8 and 4 MiB/s: 3.3–3.8 ms.
+  The rate is not the lever below 32 MiB/s; any download beside the PTY hog fails, the hog alone
+  passes (2.21 ms against 2.59). Kept at 32 MiB/s. The next step (worker-thread framing, per 03 §9,
+  or a restated limit) is open.
 
 ## Open follow-ups and risks
 

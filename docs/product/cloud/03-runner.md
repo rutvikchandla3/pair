@@ -156,7 +156,7 @@ machine across a network (EC2 in M5). Node start and `runner.mjs` evaluation tak
 TLS, the upgrade and `runner.hello` take the RTTs. A fetch adds a few MB: under 200 ms on loopback,
 seconds on a slow link (inferred). Container or VM start is the driver's budget. The benchmark
 (section 9) fails when a Docker figure misses at p50: 500 ms mounted, 700 ms fetched. Both passed on
-M1's integrated pass.
+M1's integrated pass and missed on G2's, on the same VM: 548 ms mounted, 917 ms fetched.
 
 ## 3. Transport
 
@@ -584,13 +584,13 @@ as today and swaps only the endpoint for the `mcp` forward address.
 
 Budgets, measured from bytes leaving the child to bytes entering the adapter or terminal manager:
 
-| Path                                           | Docker, same machine                          | Across a network, RTT r                    | Measured, Docker (M1)              | Measured, Docker (M2) |
-| ---------------------------------------------- | --------------------------------------------- | ------------------------------------------ | ---------------------------------- | --------------------- |
-| Provider stdout, added latency p50 / p99       | 1 ms / 5 ms                                   | r/2 + 2 ms / r/2 + 10 ms                   | Within budget                      | G2 step 12            |
-| Keystroke to echo in the terminal manager      | 2 ms                                          | r + 3 ms                                   | Within budget                      | G2 step 12            |
-| PTY throughput (`cat` of a large file)         | 50 MB/s, up to the per-sandbox ingress budget | Link speed, window permitting: 256 KiB / r | 41 MB/s                            | G2 step 12            |
-| Server CPU per MB of runner output, over local | Under 5 ms (compression off)                  | Under 15 ms (compression on)               | 25 ms; the local baseline, 17.6 ms | G2 step 12            |
-| Server memory per sandbox                      | Under 8 MiB steady                            | Same                                       | Within budget                      | G2 step 12            |
+| Path                                           | Docker, same machine                          | Across a network, RTT r                    | Measured, Docker (M1)              | Measured, Docker (M2)                |
+| ---------------------------------------------- | --------------------------------------------- | ------------------------------------------ | ---------------------------------- | ------------------------------------ |
+| Provider stdout, added latency p50 / p99       | 1 ms / 5 ms                                   | r/2 + 2 ms / r/2 + 10 ms                   | Within budget                      | 0.44 ms / 0.90 ms                    |
+| Keystroke to echo in the terminal manager      | 2 ms                                          | r + 3 ms                                   | Within budget                      | 1.15 ms                              |
+| PTY throughput (`cat` of a large file)         | 50 MB/s, up to the per-sandbox ingress budget | Link speed, window permitting: 256 KiB / r | 41 MB/s                            | 17 MB/s                              |
+| Server CPU per MB of runner output, over local | Under 5 ms (compression off)                  | Under 15 ms (compression on)               | 25 ms; the local baseline, 17.6 ms | 8.9 ms; on V2's runner tree, 12.5 ms |
+| Server memory per sandbox                      | Under 8 MiB steady                            | Same                                       | Within budget                      | Within budget                        |
 
 Measure with spans for `runner.hello`, spawn and first byte; metrics in
 [Metrics.ts](../../../apps/server/src/observability/Metrics.ts) for bytes by channel and direction,
@@ -600,8 +600,8 @@ for runner startup; and `vp run bench:runner` (not in CI,
 over loopback and in Docker and compares both with `LocalWorkspaceHost`
 ([performance regressions](../../internals/performance-regressions.md#runner)).
 
-The M1 column is M1's integrated pass on an idle 8-CPU VM; G2 step 12 fills the M2 column on the
-same VM, since a shared machine's numbers say little. CPU counts only what the hub adds over local
+The M1 column is M1's integrated pass on an idle 8-CPU VM; the M2 column is G2 step 12 on the same
+VM with release `0.1.7-pair.3`'s runner tree, since a shared machine's numbers say little. CPU counts only what the hub adds over local
 work: the local baseline spends 17.6 ms per MB on its own PTY, so an absolute 5 ms could never pass.
 A machine's throughput stops at its ingress budget (below), so the PTY row reads 50 MB/s only when
 the budget is above that; at the default, `cat` reaches about 16 MB/s. `vp run bench:runner
@@ -626,9 +626,10 @@ at once after an upgrade wait for each other instead of taking the event loop.
 `vp run bench:runner --load` proves the target: 30 loopback runners, one `cat`ing a large file in a
 PTY and one downloading the runner bundle back to back, while 28 print a stamped line every 50 ms.
 It passes when those 28 runners' p95 latency rises at most `max(1 ms, 10%)` over an all-quiet
-baseline from the same run, and memory per sandbox stays under 8 MiB. The result is G2 step 12's.
-Framing stays on the server's event loop and moves to worker threads only if the load test fails
-with the budget in place.
+baseline from the same run, and memory per sandbox stays under 8 MiB. On G2 step 12 it failed with
+both budgets in place: quiet p95 rose 3–4 ms, and 1.5–2.4 ms with downloads held to 4–8 MiB/s,
+while the PTY hog alone passed. Framing is still on the server's event loop; moving it to worker
+threads, which a failure with the budget in place calls for, is an open decision.
 
 Runner traffic stays off the client wire. Clients never subscribe to runner streams. Adapters
 consume provider stdio and emit the same normalized events as today. Terminal output enters the
