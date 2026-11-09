@@ -1576,6 +1576,19 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   is `failed`, else "The machine stopped. Send your message again." No new command, event or state.
 - Owes: the VM check (Replay prompt, `docker rm -f` within 2 s, before/after capture).
 
+## 2.55 Claude resume on a rebuilt machine (landed 1022a217d)
+
+- `claudeTranscriptState` returns "absent" when no transcript exists (a missing `projects` folder
+  counts as none); "missing" now means a copy existed but couldn't be read.
+- `resumeThread` on a machine fails ("…is not on this machine.") for an "absent" transcript, so
+  ProviderTurnStartService's upstream `resume_failed` fallback starts a new native session with the
+  handoff. Local hosts still resume and leave it to the CLI. A machine session that never wrote a
+  transcript also starts fresh.
+- Docs say "the conversation so far", not "a summary": a handoff is a budgeted selection
+  (portable-handoffs.md).
+- Owes: G2 step 8 rerun with one Claude (Haiku) and one Codex (Luna) thread: `docker rm -f`, Retry,
+  send; both run and the log shows `resume_failed`. Codex's fallback is read from code only.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.

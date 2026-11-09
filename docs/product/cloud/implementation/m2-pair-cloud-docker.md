@@ -5326,7 +5326,7 @@ and writes to every attached thread on a rebuild. The adapter already knows abou
       - Add the comment `// A machine's home is Pair's, so no transcript there means a new disk.`
       - The live-process check (11988) still skips the scan.
   - `docs/user/cloud.md` (116–119): after "waking one rebuilds the machine from the server's copy
-    of its work.", add "The agent starts a new session there with a summary of the thread so far
+    of its work.", add "The agent starts a new session there with the conversation so far
     ([handoffs](./portable-handoffs.md))." (**proposed**)
 - **Types and services:** none (`"absent"` is a local literal).
 - **Copy:**
