@@ -1,4 +1,4 @@
-import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { OrchestrationDispatchCommandError, ServerDrainError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -280,6 +280,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
+import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1571,6 +1572,7 @@ export const layerWsRpc = (
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const sandboxOverview = yield* SandboxOverview.SandboxOverview;
       const sandboxWake = yield* SandboxWake;
+      const serverDrain = yield* ServerDrain.ServerDrain;
       const computeDriverCheck = yield* ComputeDriverCheck.ComputeDriverCheck;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -1965,6 +1967,7 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
+        const drain = yield* serverDrain.current;
         const discovery = yield* resolveOpenDiscoveryForConfig({
           editors: externalLauncher.resolveAvailableEditors(),
           fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
@@ -2040,6 +2043,7 @@ export const layerWsRpc = (
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          ...(drain === null ? {} : { drainingSince: drain.since }),
         };
       });
 
@@ -2810,6 +2814,19 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           ServerSelfUpdate.updateProgressStream(serverSelfUpdate, input),
+        [WS_METHODS.serverDrain]: () =>
+          Stream.unwrap(
+            serverDrain
+              .start(currentSession.memberId)
+              .pipe(
+                Effect.as(
+                  serverDrain.watch.pipe(
+                    Stream.mapError((cause) => new ServerDrainError({ cause })),
+                  ),
+                ),
+              ),
+          ),
+        [WS_METHODS.serverCancelDrain]: () => serverDrain.cancel,
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
           serverSelfUpdate.commitDesktopUpdate(input.requestId),
         [WS_METHODS.serverUpsertKeybinding]:
@@ -3524,6 +3541,16 @@ export const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const drainUpdates =
+                input.drainUpdates === true
+                  ? serverDrain.changes.pipe(
+                      Stream.map((drain) => ({
+                        version: 1 as const,
+                        type: "drainUpdated" as const,
+                        payload: { drainingSince: drain?.since ?? null },
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
                   ServerSettings.redactServerSettingsForClient(settings, client),
@@ -3541,7 +3568,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, drainUpdates),
+                    ),
                   ),
                 ),
               );

@@ -275,7 +275,14 @@ const layerSandboxAdmissionOpen = Layer.succeed(
   SandboxAdmission.SandboxAdmission,
   SandboxAdmission.SandboxAdmission.of({
     withLock: (effect) => effect,
-    snapshot: () => Effect.succeed({ running: 0, waiting: 0, cap: Infinity, startAvailable: true }),
+    snapshot: () =>
+      Effect.succeed({
+        running: 0,
+        waiting: 0,
+        cap: Infinity,
+        startAvailable: true,
+        draining: false,
+      }),
     takeStart: Effect.void,
     nextStartAt: Effect.succeed(null),
   }),

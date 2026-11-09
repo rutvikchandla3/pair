@@ -13,6 +13,7 @@ import {
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  drainNoticeLabel,
   SANDBOX_ISOLATION_LABELS,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
@@ -28,7 +29,7 @@ import { sandboxEnvironment } from "~/state/sandbox";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { toastCommandFailure } from "../team/toastCommandFailure";
-import { Alert, AlertDescription } from "../ui/alert";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -108,6 +109,9 @@ function CloudEnvironmentSettings({
   );
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const checkDriver = useAtomCommand(sandboxEnvironment.checkDriver, { reportFailure: false });
+  const cancelDrain = useAtomCommand(sandboxEnvironment.cancelDrain, { reportFailure: false });
+  const canCancelDrain = useAtomValue(sandboxEnvironment.cancelDrain.permissionAtom(environmentId));
+  const drainNotice = drainNoticeLabel(serverConfig.drainingSince);
   const secretSources = useSecretSources(environmentId);
   const [form, setForm] = useState<DriverForm | null>(null);
   const [checks, setChecks] = useState<
@@ -175,6 +179,28 @@ function CloudEnvironmentSettings({
             Plain Docker is not a security boundary: agents in a machine can reach this host's
             Docker network and kernel. Use rootless Docker or gVisor.
           </AlertDescription>
+        </Alert>
+      ) : null}
+      {drainNotice !== null ? (
+        <Alert variant="info">
+          <InfoIcon aria-hidden />
+          <AlertDescription>{drainNotice}</AlertDescription>
+          {canCancelDrain ? (
+            <AlertAction>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={async () =>
+                  toastCommandFailure(
+                    "Drain not cancelled",
+                    await cancelDrain({ environmentId, input: {} }),
+                  )
+                }
+              >
+                Cancel drain
+              </Button>
+            </AlertAction>
+          ) : null}
         </Alert>
       ) : null}
       {desktopServer ? (

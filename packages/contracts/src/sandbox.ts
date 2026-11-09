@@ -80,7 +80,13 @@ export class SandboxAsleep extends Schema.TaggedError<SandboxAsleep>()("SandboxA
 export const SandboxSize = Schema.Literals(["small", "default", "large"]);
 export type SandboxSize = typeof SandboxSize.Type;
 
-export const SandboxAdmissionReason = Schema.Literals(["team-cap", "member-cap", "rate-limit"]);
+export const SandboxAdmissionReason = Schema.Literals([
+  "team-cap",
+  "member-cap",
+  "rate-limit",
+  /** The server is draining for an upgrade (`t3 drain`); the restart or a cancel admits it. */
+  "draining",
+]);
 export type SandboxAdmissionReason = typeof SandboxAdmissionReason.Type;
 
 export const SandboxSleepReason = Schema.Literals([

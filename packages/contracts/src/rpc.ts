@@ -353,6 +353,8 @@ import {
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
   ServerSelfUpdateError,
+  ServerDrainError,
+  ServerDrainStatus,
   ServerNpmRelease,
   ServerNpmReleaseError,
   ServerNpmReleaseInput,
@@ -532,6 +534,8 @@ export const WS_METHODS = {
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
+  serverDrain: "server.drain",
+  serverCancelDrain: "server.cancelDrain",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverRunStorageCleanup: "server.runStorageCleanup",
@@ -822,6 +826,20 @@ const WsServerUpdateServerWithProgressRpc = Rpc.make(WS_METHODS.serverUpdateServ
   success: ServerSelfUpdateProgressEvent,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+/** Starts a drain (idempotent) and reports running turns; ends at zero or on a cancel. */
+const WsServerDrainRpc = Rpc.make(WS_METHODS.serverDrain, {
+  payload: Schema.Struct({}),
+  success: ServerDrainStatus,
+  error: Schema.Union([ServerDrainError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsServerCancelDrainRpc = Rpc.make(WS_METHODS.serverCancelDrain, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUpdate, {
@@ -1975,6 +1993,8 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** Omit per-cwd provider snapshots; the client fetches its cwd through `server.refreshProviders`. */
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
+    /** Opt-in to `drainUpdated` events, which older clients reject. */
+    drainUpdates: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2234,6 +2254,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetNpmReleaseRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,
+  WsServerDrainRpc,
+  WsServerCancelDrainRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerRunStorageCleanupRpc,

@@ -3057,7 +3057,7 @@ operator switch that touches admission, prompt gating and a CLI.
         readonly start: (actorId: MemberId | null) => Effect.Effect<DrainState>; // idempotent
         readonly cancel: Effect.Effect<void>;
         /** Emits on start and on each run change; completes when no turn is running. */
-        readonly watch: Stream.Stream<ServerDrainStatus, ProjectionStoreError>;
+        readonly watch: Stream.Stream<ServerDrainStatus, ProjectionStoreV2Error | EventSinkV2Error>;
       }
     >()("t3/drain/ServerDrain") {}
     ```
@@ -3068,9 +3068,10 @@ operator switch that touches admission, prompt gating and a CLI.
     It reads only while a drain is active, so the unindexed status count costs nothing otherwise.
   - `packages/contracts/src/server.ts`:
     - `ServerDrainStatus = Struct({ since: DateTimeUtc, runningTurns: NonNegativeInt })`.
-    - `ServerConfig` (610) and `ServerConfigUpdatedPayload` (714) gain
-      `drainingSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc))`. The worker publishes
-      a config update on `ServerDrain.changes` through the existing config-updated stream.
+    - `ServerConfig` (610) gains `drainingSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc))`.
+      `ServerConfigUpdatedPayload` is unused, so the config stream gains a `drainUpdated` event
+      (`{ drainingSince }`) from `ServerDrain.changes`. Older clients reject an unknown event type,
+      so it is sent only to subscribers that pass `drainUpdates: true`, as client-runtime does.
   - `packages/contracts/src/rpc.ts`: `serverDrain: "server.drain"` (stream, payload `{}`, success
     `ServerDrainStatus`) and `serverCancelDrain: "server.cancelDrain"` (void).
     `apps/server/src/auth/RpcAuthorization.ts` (84–86) and `CLIENT_GUARDED_RPC_SCOPES` (18):
@@ -3098,11 +3099,16 @@ operator switch that touches admission, prompt gating and a CLI.
       `prepared-run.release` for each `preparing` run with no `workspacePreparation`. The id is the
       one `releaseWaiters` uses, `sandbox-release:<runId>:<generation>` (SandboxEffects.ts 259),
       so the two dedupe.
-    - The sweep subscribes to `ServerDrain.changes` and invalidates its `DueHint`, so a cancel
-      releases work on the next tick.
+    - A cancel sends no domain event, so the first sweep after a drain ends runs even when its
+      `DueHint` is idle, and releases work on that tick. (A subscription to `ServerDrain.changes`
+      would invalidate the hint on another fiber, after the tick it was meant for.)
+    - `sandbox.admit` refuses `no-capacity` while draining, and `releaseWaiters`
+      (SandboxEffects.ts) skips plain releases on a machine that turns ready during a drain; the
+      sweep releases those after it.
   - `apps/server/src/cloud/selfUpdate.ts`: `ServerSelfUpdate.update` calls `drain.start(null)`
-    before installing. It does not wait. The Settings update button then holds new cloud turns
-    through the install and restart.
+    before the boot service's hand-off. It does not wait. The Settings update button then holds
+    new cloud turns through the install and restart. A refused hand-off cancels the drain it
+    started, never one an admin started before it.
   - New `apps/server/src/cli/drain.ts`: `t3 drain [--timeout 15m] [--cancel]`, registered in
     `binCli.ts` beside `updateCommand`. It connects like `connectLiveTeam` (`cli/member.ts` 86) and
     reads `server.drain`, printing "Draining: N turns running" on each status. It exits 0 when

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -25,6 +26,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sandboxCheckDriver]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
+  // Draining holds every member's new cloud turns, as an update restarts the server.
+  [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,

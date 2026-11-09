@@ -14,6 +14,7 @@ import {
   type ServerSettings,
   type TeamMember,
 } from "@t3tools/contracts";
+import type * as DateTime from "effect/DateTime";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import { Atom } from "effect/reactivity";
 
@@ -77,7 +78,15 @@ const ADMISSION_COPY = {
   "team-cap": "Waiting for a machine: team limit reached",
   "member-cap": "Waiting for a machine: your limit reached",
   "rate-limit": "Waiting for a machine: starting soon",
+  draining: "Waiting: Pair Cloud is restarting for an upgrade",
 } as const;
+
+/** Why new turns wait while an admin drains the server (`t3 drain`); null when not draining. */
+export function drainNoticeLabel(drainingSince: DateTime.Utc | null | undefined): string | null {
+  return drainingSince == null
+    ? null
+    : "Pair Cloud is restarting for an upgrade. New turns start when it's back.";
+}
 
 const FAILURE_COPY: Readonly<Record<string, string>> = {
   "driver-removed": "The machine's driver was removed",
@@ -301,6 +310,11 @@ export function createSandboxEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId, input }) => `${environmentId}:${input.driverId}`,
       },
+    }),
+    /** Ends a drain (`t3 drain`), which releases the turns it held; environment:maintain. */
+    cancelDrain: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-drain",
+      tag: WS_METHODS.serverCancelDrain,
     }),
     /** The command's scope, then the delete rule (owner or admin in team mode) for sleep and discard. */
     actionAllowedAtom,

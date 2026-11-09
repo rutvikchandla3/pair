@@ -118,6 +118,15 @@ describe("RPC authorization scopes", () => {
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxViewing));
   });
 
+  it("keeps draining, which holds every member's new cloud turns, admin only", () => {
+    expect(MEMBER_SCOPES).not.toContain(AuthEnvironmentMaintainScope);
+    expect(ADMIN_SCOPES).toContain(AuthEnvironmentMaintainScope);
+    for (const method of [WS_METHODS.serverDrain, WS_METHODS.serverCancelDrain]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthEnvironmentMaintainScope);
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthEnvironmentMaintainScope]);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

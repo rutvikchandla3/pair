@@ -19,6 +19,7 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerDrain from "../drain/ServerDrain.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
@@ -133,7 +134,9 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
+  const drain = yield* ServerDrain.ServerDrain.pipe(Effect.provide(ServerDrain.layerTest));
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
+    Effect.provideService(ServerDrain.ServerDrain, drain),
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(
@@ -156,7 +159,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
       ),
     ),
   );
-  return { selfUpdate, order, urls };
+  return { selfUpdate, order, urls, drain };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
@@ -254,6 +257,30 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
       expect(stages).toEqual(["downloading", "installing"]);
       expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("drains through the hand-off, and a refused hand-off releases only its own drain", () =>
+    Effect.gen(function* () {
+      const refused = yield* makeHarness({
+        requestUpdate: () =>
+          Effect.fail(
+            new ServiceLauncherClient.ServiceLauncherRejectedError({
+              targetVersion: "1.1.0",
+              reason: "busy",
+            }),
+          ),
+      });
+      yield* refused.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(yield* refused.drain.current).toBeNull();
+      // An admin's own drain outlives a refused update.
+      const drained = yield* refused.drain.start(null);
+      yield* refused.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(yield* refused.drain.current).toBe(drained);
+
+      const accepted = yield* makeHarness();
+      yield* accepted.selfUpdate.update({ targetVersion: "1.1.0" });
+      expect(yield* accepted.drain.current).not.toBeNull();
     }),
   );
 

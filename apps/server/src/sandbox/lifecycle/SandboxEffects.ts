@@ -18,6 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
+import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
 import {
@@ -159,6 +160,7 @@ const make = Effect.gen(function* () {
   const outbox = yield* EffectOutboxV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const credentials = yield* SandboxCredentialRevocation.SandboxCredentialRevocation;
+  const drain = yield* ServerDrain.ServerDrain;
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
   const checkpoints = yield* Effect.serviceOption(CheckpointService.CheckpointServiceV2);
@@ -315,6 +317,8 @@ const make = Effect.gen(function* () {
     const fail = (cause: unknown) =>
       new SandboxEffectError({ sandboxId: record.id, operation: "report", retryable: true, cause });
     const rows = yield* projections.listSandboxThreads(record.id).pipe(Effect.mapError(fail));
+    // A drain holds new turns; the lifecycle sweep releases these after a cancel or the restart.
+    const holding = record.state === "ready" && (yield* drain.current) !== null;
     for (const { threadId } of rows) {
       const { runs } = yield* projections
         .getThreadRecords(threadId, ["runs"])
@@ -332,6 +336,7 @@ const make = Effect.gen(function* () {
           }
           continue;
         }
+        if (holding) continue;
         yield* releaseOne(
           record,
           record.state === "ready"
@@ -632,4 +637,5 @@ export const layer: Layer.Layer<
   | ThreadManagement.ThreadManagementService
   | ServerEnvironment.ServerEnvironment
   | SandboxCredentialRevocation.SandboxCredentialRevocation
+  | ServerDrain.ServerDrain
 > = Layer.effect(SandboxEffects, make);

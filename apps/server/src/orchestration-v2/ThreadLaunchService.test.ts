@@ -77,6 +77,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
+import * as ServerDrain from "../drain/ServerDrain.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as FakeComputeDriver from "../sandbox/compute/ComputeDriverTesting.ts";
 import * as SandboxBootstrapSource from "../sandbox/lifecycle/SandboxBootstrapSource.ts";
@@ -2924,6 +2925,7 @@ it.live("launches a cloud thread end to end: machine, runner hello, clone, relea
       Layer.provide(
         Layer.mergeAll(
           FakeComputeDriver.layerRegistry(fake.driver),
+          ServerDrain.layerTest,
           // Only stop and destroy revoke credentials.
           Layer.mock(SandboxCredentialRevocation.SandboxCredentialRevocation)({}),
           Layer.mock(ServerEnvironment.ServerEnvironment)({

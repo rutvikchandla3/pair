@@ -93,7 +93,13 @@ type Row = readonly [
   cloudOnly?: boolean,
 ];
 
-const free: AdmissionSnapshot = { running: 0, waiting: 0, cap: 2, startAvailable: true };
+const free: AdmissionSnapshot = {
+  running: 0,
+  waiting: 0,
+  cap: 2,
+  startAvailable: true,
+  draining: false,
+};
 const waiting = (reason: "team-cap" | "rate-limit", generation = 2) =>
   record({
     state: "provisioning",
@@ -166,6 +172,14 @@ const rows: ReadonlyArray<Row> = [
     { ...free, running: 1, waiting: 1 },
   ],
   [
+    "a wake while draining waits for the restart",
+    { type: "sandbox.wake", ...base },
+    record({ state: "sleeping" }),
+    { next: { state: "waking", admission: { reason: "draining", since: now } }, effects: [] },
+    [],
+    { ...free, draining: true },
+  ],
+  [
     "admit clears the wait and creates",
     { type: "sandbox.admit", ...at(2) },
     waiting("team-cap"),
@@ -196,6 +210,14 @@ const rows: ReadonlyArray<Row> = [
     "no-capacity",
     [],
     { ...free, startAvailable: false },
+  ],
+  [
+    "admit while draining",
+    { type: "sandbox.admit", ...at(2) },
+    waiting("team-cap"),
+    "no-capacity",
+    [],
+    { ...free, draining: true },
   ],
   [
     "admit for an older generation",
@@ -862,6 +884,12 @@ describe("decideCloudPrompt", () => {
   it.each([
     { name: "a ready machine sends", current: record(), expected: { _tag: "Send" } },
     {
+      name: "a ready machine holds the run while draining",
+      current: record(),
+      draining: true,
+      expected: { _tag: "Defer", workspaceStrategy: undefined, wake: null },
+    },
+    {
       name: "a booting machine parks the run without a second start",
       current: record({ state: "provisioning", generation: 1, driverRef: null }),
       expected: { _tag: "Defer", workspaceStrategy: undefined, wake: null },
@@ -936,14 +964,14 @@ describe("decideCloudPrompt", () => {
       cloudOnly: false,
       expected: { _tag: "Defer", workspaceStrategy: undefined, state: "waking", generation: 3 },
     },
-  ])("$name", ({ current, threadId = owner, cloudOnly = true, expected }) => {
+  ])("$name", ({ current, threadId = owner, cloudOnly = true, draining = false, expected }) => {
     const decision = decideCloudPrompt({
       record: current,
       commandId: CommandId.make("prompt"),
       threadId,
       dispatchMode: "start_immediately",
       checkout,
-      admission: free,
+      admission: { ...free, draining },
       cloudOnly,
       now,
     });

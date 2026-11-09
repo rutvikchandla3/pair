@@ -673,6 +673,8 @@ export const ServerConfig = Schema.Struct({
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
   /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /** When `t3 drain` started holding new cloud turns; null or absent while not draining. */
+  drainingSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -794,6 +796,12 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
+export const ServerConfigStreamDrainUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("drainUpdated"),
+  payload: Schema.Struct({ drainingSince: Schema.NullOr(Schema.DateTimeUtc) }),
+});
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -801,6 +809,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  ServerConfigStreamDrainUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
@@ -956,6 +965,21 @@ export const ServerSelfUpdateProgressEvent = Schema.Union([
   }),
 ]);
 export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
+
+/** One `server.drain` reading: new cloud turns wait while `runningTurns` finish. */
+export const ServerDrainStatus = Schema.Struct({
+  since: Schema.DateTimeUtc,
+  runningTurns: NonNegativeInt,
+});
+export type ServerDrainStatus = typeof ServerDrainStatus.Type;
+
+export class ServerDrainError extends Schema.TaggedError<ServerDrainError>()("ServerDrainError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Could not count the running turns.";
+  }
+}
 
 export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateError>()(
   "ServerSelfUpdateError",

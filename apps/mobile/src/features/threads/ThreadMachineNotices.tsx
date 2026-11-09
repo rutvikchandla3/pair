@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
   cloudPushCredential,
+  drainNoticeLabel,
   githubAppConfigured,
   SANDBOX_OWNER_ONLY_REASON,
   type SandboxAction,
@@ -78,7 +79,8 @@ function MachineNotice(props: {
 
 /**
  * A cloud thread's machine notices above the composer: its failure with Retry and Discard, a
- * discarded machine, a push that has no GitHub credential, and a machine shared with a teammate.
+ * discarded machine, a server draining for an upgrade, a push that has no GitHub credential, and a
+ * machine shared with a teammate.
  */
 export function ThreadMachineNotices(props: {
   readonly thread: EnvironmentThreadShell;
@@ -114,6 +116,10 @@ export function ThreadMachineNotices(props: {
   };
 
   const notices: ReactNode[] = [];
+  const drainNotice = drainNoticeLabel(props.serverConfig?.drainingSince);
+  if (drainNotice !== null) {
+    notices.push(<MachineNotice key="draining" icon="cloud" tone="default" title={drainNotice} />);
+  }
   if (machine?.state === "failed") {
     const discardDenied = machine.ownerOnlyDenied.includes("discard");
     notices.push(

@@ -40,6 +40,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
+import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -103,7 +104,9 @@ const makeLayerTest = (
   sandboxAdmission?: Layer.Layer<
     SandboxAdmission.SandboxAdmission,
     never,
-    ProjectionStore.ProjectionStoreV2 | ServerSettings.ServerSettingsService
+    | ProjectionStore.ProjectionStoreV2
+    | ServerSettings.ServerSettingsService
+    | ServerDrain.ServerDrain
   >,
 ) => {
   // One instance, so the admission's cap reads the settings a test updates.
@@ -127,6 +130,7 @@ const makeLayerTest = (
               : {
                   sandboxAdmission: sandboxAdmission.pipe(
                     Layer.provide(layerSettings),
+                    Layer.provide(ServerDrain.layerTest),
                     Layer.orDie,
                   ),
                 }),
@@ -135,6 +139,8 @@ const makeLayerTest = (
       ),
     ),
     Layer.provideMerge(layerSettings),
+    // The same memoized instance the admission above reads.
+    Layer.provideMerge(ServerDrain.layerTest),
     Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
   );
 };
@@ -1800,6 +1806,48 @@ it.layer(layerAdmissionTest(1))("sandbox admission at the team cap", (it) => {
         call._tag === "destroy" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
       );
       yield* runAnswering(runtime, answerCreateOf(second.sandboxId));
+    }).pipe(Effect.scoped),
+  );
+});
+
+// A released run leaves a provider turn queued, which no other test's worker may claim.
+it.layer(layerAdmissionTest(2))("sandbox admission while draining", (it) => {
+  it.effect("holds new turns and new machines until the drain is cancelled", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime((yield* AdmissionDriver).fake);
+      const drain = yield* ServerDrain.ServerDrain;
+      const ready = yield* provisioned("drain-ready");
+      yield* runAnswering(runtime, answerCreateOf(ready.sandboxId));
+      yield* attachAndRelease(runtime, ready.threadId, ready.sandboxId, 1);
+
+      yield* drain.start(null);
+      const { run } = yield* prompt(ready.threadId, "drain-ready");
+      assert.equal(run.status, "preparing");
+      const fresh = yield* provisioned("drain-new");
+      assert.equal((yield* getSandbox(fresh.sandboxId))?.admission?.reason, "draining");
+      const runStatus = ProjectionStore.ProjectionStoreV2.use((projections) =>
+        projections.getThreadRecords(ready.threadId, ["runs"]),
+      ).pipe(Effect.map(({ runs }) => runs.find((candidate) => candidate.id === run.id)?.status));
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(runtime.layerDriver),
+      );
+      yield* sweep();
+      assert.equal(yield* runStatus, "preparing");
+      assert.deepEqual(yield* effectsOf("prompt:drain-ready"), []);
+      assert.equal((yield* getSandbox(fresh.sandboxId))?.admission?.reason, "draining");
+
+      yield* drain.cancel;
+      yield* sweep();
+      yield* sweep();
+      assert.equal(yield* runStatus, "starting");
+      assert.deepEqual(
+        (yield* effectsOf(`sandbox-release:${run.id}:1`)).map((effect) => effect.request.type),
+        ["provider-turn.start"],
+      );
+      assert.deepInclude(yield* getSandbox(fresh.sandboxId), {
+        state: "provisioning",
+        admission: null,
+      });
     }).pipe(Effect.scoped),
   );
 });

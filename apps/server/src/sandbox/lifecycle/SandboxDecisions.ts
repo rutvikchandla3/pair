@@ -112,7 +112,7 @@ type SandboxRefusalReason =
   | "active-run"
   | "in-use"
   | "stale-generation"
-  /** `sandbox.admit` with no free slot or start token; the sweep tries again later. */
+  /** `sandbox.admit` with no free slot or start token, or while draining; the sweep tries again later. */
   | "no-capacity"
   | "not-cloud-only";
 
@@ -125,6 +125,7 @@ const admissionWait = (
   now: DateTime.Utc,
 ): OrchestrationV2SandboxAdmission | null => {
   if (snapshot === null) return null;
+  if (snapshot.draining) return { reason: "draining", since: now };
   if (snapshot.running + snapshot.waiting >= snapshot.cap)
     return { reason: "team-cap", since: now };
   return snapshot.startAvailable && snapshot.waiting === 0
@@ -330,7 +331,13 @@ export const decideCloudPrompt = (input: {
   readonly now: DateTime.Utc;
 }): CloudPromptDecision => {
   const { record } = input;
-  if (record === null || record.state === "ready") return { _tag: "Send" };
+  if (record === null) return { _tag: "Send" };
+  if (record.state === "ready") {
+    // Held until a cancel or the restart; the lifecycle sweep then releases it.
+    return input.admission?.draining === true
+      ? { _tag: "Defer", workspaceStrategy: undefined, wake: null }
+      : { _tag: "Send" };
+  }
   // Decided as the owner would decide the wake, so another thread refuses what the owner would.
   const decision = decideSandboxCommand({
     command: {
@@ -571,7 +578,10 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
         return refuse("wrong-state");
       }
       const snapshot = input.admission;
-      if (snapshot !== null && (snapshot.running >= snapshot.cap || !snapshot.startAvailable)) {
+      if (
+        snapshot !== null &&
+        (snapshot.draining || snapshot.running >= snapshot.cap || !snapshot.startAvailable)
+      ) {
         return refuse("no-capacity");
       }
       return update({ admission: null }, [

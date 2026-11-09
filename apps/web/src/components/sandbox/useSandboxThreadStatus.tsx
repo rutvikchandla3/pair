@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  drainNoticeLabel,
   SANDBOX_ACTION_FAILURE_TITLES,
   SANDBOX_DISCARD_CONFIRMATION,
   SANDBOX_OWNER_ONLY_REASON,
@@ -15,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/state/sandbox";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { OrchestrationV2Sandbox, SandboxId, ScopedThreadRef } from "@t3tools/contracts";
+import type * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { CloudIcon, CloudOffIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -26,6 +28,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { sandboxEnvironment } from "~/state/sandbox";
+import { serverEnvironment } from "~/state/server";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
 const NO_MACHINE_ATOM = Atom.make<SandboxThreadMachine | null>(null).pipe(
@@ -108,14 +111,45 @@ export interface SandboxThreadStatus {
 
 const NO_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 
-/** The active thread's machine: header badge, status line, failure and discarded notices. */
-export function useSandboxThreadStatus(input: {
+interface SandboxThreadStatusInput {
   readonly threadRef: ScopedThreadRef | null;
   /** The loaded detail's machine, for the driver's own failure message. */
   readonly sandbox: OrchestrationV2Sandbox | null | undefined;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
   readonly onStartNewMachine: () => void;
-}): SandboxThreadStatus {
+}
+
+const NOT_DRAINING_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
+  Atom.withLabel("server-draining-since:none"),
+);
+
+/** The active thread's machine: header badge, status line, failure and discarded notices. */
+export function useSandboxThreadStatus(input: SandboxThreadStatusInput): SandboxThreadStatus {
+  const status = useMachineStatus(input);
+  const machine = useSandboxThreadMachine(input.threadRef);
+  const drainingSince = useAtomValue(
+    input.threadRef === null || machine === null
+      ? NOT_DRAINING_ATOM
+      : serverEnvironment.drainingSinceAtom(input.threadRef.environmentId),
+  );
+  const notice = drainNoticeLabel(drainingSince);
+  if (notice === null) return status;
+  return {
+    ...status,
+    bannerItems: [
+      {
+        id: "server-draining",
+        variant: "info",
+        group: "environment",
+        icon: <CloudIcon />,
+        title: notice,
+      },
+      ...status.bannerItems,
+    ],
+  };
+}
+
+function useMachineStatus(input: SandboxThreadStatusInput): SandboxThreadStatus {
   const { threadRef } = input;
   const machine = useSandboxThreadMachine(threadRef);
   const runAction = useSandboxActionRunner();

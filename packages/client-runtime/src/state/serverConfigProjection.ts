@@ -9,14 +9,23 @@ export interface ServerConfigProjection {
 }
 
 /**
- * Published themes and usage-limit sources are current machine state, so a
+ * Published themes, usage-limit sources and a drain are current machine state, so a
  * cache could restore a set the machine no longer reports.
  */
 export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
-  if (config.environmentThemes === undefined && config.usageLimitSources === undefined) {
+  if (
+    config.environmentThemes === undefined &&
+    config.usageLimitSources === undefined &&
+    config.drainingSince === undefined
+  ) {
     return config;
   }
-  const { environmentThemes: _themes, usageLimitSources: _sources, ...rest } = config;
+  const {
+    environmentThemes: _themes,
+    usageLimitSources: _sources,
+    drainingSince: _drain,
+    ...rest
+  } = config;
   return rest;
 }
 
@@ -127,6 +136,16 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "drainUpdated":
+      return Option.map(current, (projection) => {
+        const { drainingSince: _since, ...config } = projection.config;
+        const since = event.payload.drainingSince;
+        return {
+          config: since === null ? config : { ...config, drainingSince: since },
+          latestEvent: event,
+          source: "live",
+        };
+      });
     case "usageLimitSourcesUpdated":
       return Option.map(current, (projection) => ({
         config: {

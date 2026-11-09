@@ -2,6 +2,7 @@ import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as RunnerHubFacts from "../sandbox/runnerHub/RunnerHubFacts.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as ServerDrain from "../drain/ServerDrain.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -223,9 +224,14 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+// One per process: admission, the sweep, `t3 drain` and the self-update share one drain state.
+const layerServerDrainProvided = ServerDrain.layer.pipe(
+  Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
+);
+
 // One per process: the orchestrator and the lifecycle worker share its lock and start bucket.
 const layerSandboxAdmissionProvided = SandboxAdmission.layer.pipe(
-  Layer.provide(ProjectionStore.layer),
+  Layer.provide(Layer.merge(ProjectionStore.layer, layerServerDrainProvided)),
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
@@ -342,6 +348,7 @@ const layerSandboxEffectsProvided = SandboxEffects.layer.pipe(
       EffectOutbox.layer,
       layerThreadManagementProvided,
       layerCheckpointServiceProvided,
+      layerServerDrainProvided,
     ),
   ),
 );
@@ -428,9 +435,11 @@ export const layerProduction = Layer.mergeAll(
         layerThreadManagementProvided,
         layerOrchestratorProvided,
         layerSandboxAdmissionProvided,
+        layerServerDrainProvided,
       ),
     ),
   ),
+  layerServerDrainProvided,
   SandboxReconciler.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

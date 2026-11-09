@@ -4,6 +4,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Sandbox,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2ThreadShell,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
@@ -90,6 +92,7 @@ export const makeSweep = Effect.gen(function* () {
   const admission = yield* SandboxAdmission.SandboxAdmission;
   const activity = yield* SandboxActivity.SandboxActivity;
   const settings = yield* ServerSettingsService;
+  const drain = yield* ServerDrain.ServerDrain;
   const due = DueHint.make();
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
@@ -99,6 +102,8 @@ export const makeSweep = Effect.gen(function* () {
   // A raised cap sends no event, and a full queue's hint never comes due on its own.
   const settingsChanges = yield* settings.subscribeChanges;
   yield* forkParked(Stream.runForEach(settingsChanges, () => due.invalidate));
+  // A cancel sends no domain event, so the first sweep after a drain runs even when idle.
+  let sawDrain = false;
 
   // The decider re-checks each command under the owner's lock, so a race ends in a refusal.
   const dispatch = (sandbox: OrchestrationV2Sandbox, command: OrchestrationV2ServerCommand) =>
@@ -112,17 +117,48 @@ export const makeSweep = Effect.gen(function* () {
       ),
     );
 
+  const attachedShells = Effect.fn("SandboxLifecycleWorker.attachedShells")(function* (
+    sandbox: OrchestrationV2Sandbox,
+  ) {
+    const rows = yield* projections.listSandboxThreads(sandbox.id);
+    const shells = yield* Effect.forEach(rows, (row) => projections.getThreadShell(row.threadId));
+    return shells.filter((shell) => shell !== null);
+  });
+
+  /**
+   * Releases runs a drain parked on a ready machine, which no hello will release. Uses the id
+   * `releaseWaiters` uses, so the two dedupe; runs with a checkout to make are re-armed there.
+   */
+  const releaseHeld = Effect.fn("SandboxLifecycleWorker.releaseHeld")(function* (
+    sandbox: OrchestrationV2Sandbox,
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  ) {
+    let released = false;
+    for (const shell of shells) {
+      if (shell.activityRunStatus !== "preparing") continue;
+      const { runs } = yield* projections.getThreadRecords(shell.id, ["runs"]);
+      for (const run of runs) {
+        if (run.status !== "preparing" || run.workspacePreparation !== undefined) continue;
+        released = true;
+        yield* dispatch(sandbox, {
+          type: "prepared-run.release",
+          commandId: CommandId.make(`sandbox-release:${run.id}:${sandbox.generation}`),
+          threadId: shell.id,
+          runId: run.id,
+        });
+      }
+    }
+    return released;
+  });
+
   const idleFor = Effect.fn("SandboxLifecycleWorker.idleFor")(function* (
     sandbox: OrchestrationV2Sandbox,
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
     driver: ComputeDriver["Service"],
     capPressure: boolean,
     nowMs: number,
   ) {
-    const rows = yield* projections.listSandboxThreads(sandbox.id);
-    const shells = yield* Effect.forEach(rows, (row) => projections.getThreadShell(row.threadId));
-    const threads = shells.flatMap((shell) =>
-      shell === null ? [] : [sandboxAttachedThread(shell)],
-    );
+    const threads = shells.map(sandboxAttachedThread);
     return idleDecision({
       record: sandbox,
       threads,
@@ -174,6 +210,8 @@ export const makeSweep = Effect.gen(function* () {
     driverId: ComputeDriverId,
     queue: ReadonlyArray<OrchestrationV2Sandbox>,
   ) {
+    // A cancel or the restart moves the queue.
+    if ((yield* drain.current) !== null) return { admitted: 0, nextDueMs: Infinity };
     let admitted = 0;
     for (const sandbox of queue) {
       const snapshot = yield* admission.withLock(admission.snapshot(driverId));
@@ -210,7 +248,10 @@ export const makeSweep = Effect.gen(function* () {
   return Effect.fn("SandboxLifecycleWorker.sweep")(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
-    if (yield* due.isIdle(nowMs)) return;
+    const draining = (yield* drain.current) !== null;
+    const drainEnded = sawDrain && !draining;
+    sawDrain = draining;
+    if (!drainEnded && (yield* due.isIdle(nowMs))) return;
     const readVersion = yield* due.version;
     const sandboxes = yield* listLiveSandboxes();
     const drivers = sandboxes.some((sandbox) => sandbox.state === "ready")
@@ -226,9 +267,17 @@ export const makeSweep = Effect.gen(function* () {
     }
     for (const sandbox of sandboxes) {
       if (sandbox.state === "ready") {
+        const shells = yield* attachedShells(sandbox);
+        if (!draining && (yield* releaseHeld(sandbox, shells))) acted = true;
         const driver = drivers.get(sandbox.driverId);
         if (driver === undefined) continue;
-        const decision = yield* idleFor(sandbox, driver, queues.has(sandbox.driverId), nowMs);
+        const decision = yield* idleFor(
+          sandbox,
+          shells,
+          driver,
+          queues.has(sandbox.driverId),
+          nowMs,
+        );
         if (decision._tag === "Busy") continue;
         if (decision._tag === "Awake") {
           nextDueMs = Math.min(nextDueMs, decision.untilMs);

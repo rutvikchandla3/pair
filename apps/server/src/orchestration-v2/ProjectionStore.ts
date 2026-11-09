@@ -616,6 +616,8 @@ export interface ProjectionStoreV2Shape {
     Effect.Success<ReturnType<typeof SandboxProjection.countStates>>,
     ProjectionStoreV2Error
   >;
+  /** Turns starting, running or waiting on a question, across every thread. Read by `t3 drain`. */
+  readonly countRunningRuns: () => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -7951,6 +7953,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ),
     );
 
+    const countRunningRuns = Effect.fn("ProjectionStore.countRunningRuns")(
+      function* () {
+        const rows = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM orchestration_v2_projection_runs
+          WHERE status IN ('starting', 'running', 'waiting')
+        `;
+        return rows[0]?.count ?? 0;
+      },
+      Effect.mapError(
+        (cause) => new ProjectionStoreReadError({ threadId: ThreadId.make("runs"), cause }),
+      ),
+    );
+
     const readOnReader =
       <Args extends ReadonlyArray<unknown>, A, E, R>(
         method: (...args: Args) => Effect.Effect<A, E, R>,
@@ -7979,6 +7994,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listSandboxThreads: readOnReader(listSandboxThreads),
       countSandboxAdmission: readOnReader(countSandboxAdmission),
       countSandboxStates: countSandboxStates.pipe(NodeSqliteClient.readOnly),
+      countRunningRuns: readOnReader(countRunningRuns),
       memberUsageSince: readOnReader(memberUsageSince),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),

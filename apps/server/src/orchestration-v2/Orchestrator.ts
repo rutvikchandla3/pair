@@ -11125,8 +11125,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * A prompt to a cloud thread whose machine is not `ready` waits in `preparing`; on the owner the
-   * same commit wakes the machine, or provisions a new one after a discard.
+   * A prompt to a cloud thread whose machine is not `ready`, or any cloud prompt during a drain,
+   * waits in `preparing`; on the owner the same commit wakes the machine, or provisions a new one
+   * after a discard.
    */
   // A thread without a machine ran on this server; on a cloud-only server it takes no new work.
   const refuseLocalThread = Effect.fn("Orchestrator.refuseLocalThread")(function* (
@@ -11168,7 +11169,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
     );
     const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
-    if (record === null || record.state === "ready") return command;
+    if (record === null) return command;
+    // Read before the ready check: a drain holds prompts on a ready machine too.
+    const admission = yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection);
+    if (record.state === "ready" && !admission.draining) return command;
     const firstCheckout = hasNoDisk(record)
       ? (yield* projectionStore
           .getThreadRecords(command.threadId, ["runs"])
@@ -11176,7 +11180,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .toSorted((left, right) => left.ordinal - right.ordinal)
           .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation
       : undefined;
-    const admission = yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection);
     const now = yield* DateTime.now;
     const decision = decideCloudPrompt({
       record,

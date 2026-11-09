@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 
@@ -21,6 +22,8 @@ export interface AdmissionSnapshot {
   readonly cap: number;
   /** The start-rate bucket holds a token now. */
   readonly startAvailable: boolean;
+  /** `t3 drain` holds new machines and new cloud turns. */
+  readonly draining: boolean;
 }
 
 export class SandboxAdmission extends Context.Service<
@@ -44,6 +47,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
+    const drain = yield* ServerDrain.ServerDrain;
     const lock = yield* Semaphore.make(1);
     // In memory: a restart refills the bucket, which is fine for a spend guard.
     let tokens = STARTS_PER_MINUTE;
@@ -66,7 +70,8 @@ export const layer = Layer.effect(
       // A removed driver queues nothing: its start fails with `driver-removed` instead.
       const cap = yield* registry.runningCap(driverId).pipe(Effect.orElseSucceed(() => Infinity));
       yield* refill();
-      return { ...counts, cap, startAvailable: tokens > 0 } satisfies AdmissionSnapshot;
+      const draining = (yield* drain.current) !== null;
+      return { ...counts, cap, startAvailable: tokens > 0, draining } satisfies AdmissionSnapshot;
     });
 
     return SandboxAdmission.of({

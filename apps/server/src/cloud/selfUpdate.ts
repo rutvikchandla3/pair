@@ -29,6 +29,7 @@ import {
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as ServerDrain from "../drain/ServerDrain.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -133,6 +134,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const httpClient = yield* HttpClient.HttpClient;
+  const drain = yield* ServerDrain.ServerDrain;
   const mirror = managedUpdateMirror(policy.document);
   const releaseBaseUrl =
     mirror?.feedUrl ??
@@ -295,8 +297,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
 
       yield* reportProgress("installing");
+      // New cloud turns wait through the install and restart; a refused hand-off releases them.
+      const drainedBefore = (yield* drain.current) !== null;
+      yield* drain.start(null);
       const updateId = yield* Effect.uninterruptible(
         launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
+          Effect.tapError(() => (drainedBefore ? Effect.void : drain.cancel)),
           Effect.mapError((error) =>
             failWith(
               error._tag === "ServiceLauncherRejectedError"

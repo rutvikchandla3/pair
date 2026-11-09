@@ -1,8 +1,5 @@
 import {
-  ADMIN_SCOPES,
   MemberRole,
-  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
-  ORCHESTRATION_PROTOCOL_VERSION,
   type TeamError,
   type TeamInviteInput,
   type TeamLinkResult,
@@ -10,7 +7,6 @@ import {
   type TeamRemoveInput,
   type TeamSignInLinkInput,
   WS_METHODS,
-  WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -18,24 +14,19 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
-import * as RpcClient from "effect/rpc/RpcClient";
-import * as RpcSerialization from "effect/rpc/RpcSerialization";
-import * as Socket from "effect/socket/Socket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { buildPairingUrl } from "../startupAccess.ts";
 import * as TeamMembers from "../team/TeamMembers.ts";
 import { baseUrlFlag, jsonFlag, ttlFlag } from "./auth.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { connectLiveServer } from "./liveServer.ts";
 import { findMember } from "./memberGrant.ts";
 import { resolveDirectPairingBaseUrl } from "./pair.ts";
 
@@ -64,50 +55,16 @@ interface TeamOperations {
 
 const LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(2);
 
-const layerLiveProtocol = (socketUrl: string) =>
-  Layer.effect(
-    RpcClient.Protocol,
-    RpcClient.makeProtocolSocket({ retryTransientErrors: false, retryPolicy: Schedule.recurs(0) }),
-  ).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Socket.layerWebSocket(socketUrl).pipe(
-          Layer.provide(Socket.layerWebSocketConstructorGlobal),
-        ),
-        RpcSerialization.layerJson,
-      ),
-    ),
-  );
-
 /**
  * A running server holds open sockets and its own member snapshot, which only its own
  * writes update, so membership changes go through it while it answers.
  */
 const connectLiveTeam = Effect.fn("cli.member.connectLiveTeam")(function* (statePath: string) {
-  const state = yield* readPersistedServerRuntimeState(statePath);
-  if (Option.isNone(state) || !isProcessAlive(state.value.pid)) {
+  const live = yield* connectLiveServer(statePath, "t3 member cli");
+  if (Option.isNone(live)) {
     return Option.none<{ readonly team: TeamOperations; readonly pairingBaseUrl: string }>();
   }
-  const origin = state.value.origin;
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const issued = yield* Effect.acquireRelease(
-    environmentAuth.issueSession({ scopes: ADMIN_SCOPES, label: "t3 member cli" }),
-    (session) =>
-      environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-  const ticket = yield* environmentAuth.issueWebSocketTicket(
-    { sessionId: issued.sessionId },
-    { use: "rpc" },
-  );
-  const socketUrl = new URL("/ws", origin);
-  socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
-  socketUrl.searchParams.set("wsTicket", Redacted.value(ticket.ticket));
-  socketUrl.searchParams.set(
-    ORCHESTRATION_PROTOCOL_QUERY_PARAM,
-    String(ORCHESTRATION_PROTOCOL_VERSION),
-  );
-  const protocol = yield* Layer.build(layerLiveProtocol(socketUrl.href));
-  const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provide(protocol));
+  const { client, origin, state } = live.value;
 
   const request = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
     effect.pipe(
@@ -138,7 +95,7 @@ const connectLiveTeam = Effect.fn("cli.member.connectLiveTeam")(function* (state
     });
     return Option.none();
   }
-  return Option.some({ team, pairingBaseUrl: resolveDirectPairingBaseUrl(state.value) });
+  return Option.some({ team, pairingBaseUrl: resolveDirectPairingBaseUrl(state) });
 });
 
 const isTeamError = (error: { readonly _tag: string }): error is TeamError =>

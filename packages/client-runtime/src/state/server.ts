@@ -1078,6 +1078,13 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  /** Set while an admin drains the server for an upgrade (`t3 drain`). */
+  const drainingSinceAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(configValueAtom(environmentId))?.drainingSince ?? null).pipe(
+      Atom.withEquality(Equal.equals),
+      Atom.withLabel(`environment-data:server:draining-since:${environmentId}`),
+    ),
+  );
   const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const settings = get(settingsValueAtom(environmentId));
@@ -1221,6 +1228,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    drainingSinceAtom,
     hiddenThreadTagsAtom,
     usageModelFilterAtom,
     providersValueAtom,

@@ -68,6 +68,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
+import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
@@ -784,6 +785,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(StorageCleanup.StorageCleanup)({}),
   Layer.mock(DatabaseStorage.DatabaseStorage)({}),
   Layer.mock(SandboxWake)({}),
+  ServerDrain.layerTest,
   Layer.mock(TerminalManager.TerminalManager)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadManagement.ThreadManagementService)({}),
