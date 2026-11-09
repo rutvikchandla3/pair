@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -252,6 +253,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       );
       assert.equal(persisted.responseStreamingMode, "turn");
       assert.deepEqual(persisted.projectSettingsOverrides, settings.projectSettingsOverrides);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("reads back the restore mode a server saved", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const driver = {
+        kind: "docker",
+        id: "docker",
+        label: "This machine",
+        runningCap: 6,
+      } as const;
+      const since = "2026-11-09T13:33:42.057Z";
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ sandbox: { drivers: [driver], restoreModeSince: since } }),
+      );
+
+      const { sandbox } = yield* service.getSettings;
+      assert.deepStrictEqual<unknown>(sandbox?.drivers, [driver]);
+      assert.equal(
+        sandbox?.restoreModeSince && DateTime.formatIso(sandbox.restoreModeSince),
+        since,
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

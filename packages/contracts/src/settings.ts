@@ -1232,7 +1232,7 @@ export const SandboxSettings = Schema.Struct({
   baseImage: Schema.optionalKey(TrimmedNonEmptyString),
   env: Schema.optionalKey(ProviderInstanceEnvironment),
   /** While set, the reconciler stops machines it would destroy (04 §5); an admin clears it. */
-  restoreModeSince: Schema.optionalKey(Schema.DateTimeUtc),
+  restoreModeSince: Schema.optionalKey(Schema.DateTimeUtcFromString),
   /** Absent: `DEFAULT_DISK_RETENTION` in `@t3tools/shared/sandbox`. */
   diskRetention: Schema.optionalKey(SandboxDiskRetention),
 });
@@ -1798,7 +1798,7 @@ export const ServerSettingsPatch = Schema.Struct({
         baseImage: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
         // The whole list, as provider environments are patched.
         env: Schema.optionalKey(ProviderInstanceEnvironment),
-        restoreModeSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
+        restoreModeSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
         diskRetention: Schema.optionalKey(Schema.NullOr(SandboxDiskRetention)),
       }),
     ),
