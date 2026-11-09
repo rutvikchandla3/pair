@@ -1603,6 +1603,16 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Owes: captures, and the G2 step 5 rerun through **GitHub repository** on web and mobile. GitLab,
   Bitbucket and Azure DevOps stay listed on Pair Cloud and fail at the lookup.
 
+## 2.57 machines from a pruned release (landed 09ec4dbdb)
+
+- An update prunes every runtime but the new one, removing the old release's `runner/` tree that
+  stopped machines bind at `/opt/pair-runner/<build>`. Docker then refuses `start` (404), and the
+  reconciler later destroyed a machine's disk (G2 step 10, V1→V2).
+- Docker's `start` recreates each missing bind source under `/opt/pair-runner/` as an empty
+  directory. The bootstrap then finds no `.install-complete` and downloads the server's own build.
+  The bind exists only for a local Docker host, so the directory is always on the server's host.
+- Owes: the step 10 rerun V2→V3 with machines from V1 and V2.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
