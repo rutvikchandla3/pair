@@ -1566,6 +1566,16 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Owes: on the VM, `docker stop` mid-turn and during boot; Test passing, then failing without the
   gVisor DNS shim; captures.
 
+## 2.54 machine gone during a message (landed 579102545)
+
+- `ProviderSessionManager.open` passes `WorkspaceHostUnavailableError` through (an unregistered
+  `/t3-sandbox/` path); `ProviderWorkspaceMissingError` now means only a folder that is really
+  missing or not a directory.
+- `ProviderTurnStartService.start`: on the last attempt that error settles the run with signal
+  `machine-unavailable`, title "This message didn't run", and the record's `failure.message` when it
+  is `failed`, else "The machine stopped. Send your message again." No new command, event or state.
+- Owes: the VM check (Replay prompt, `docker rm -f` within 2 s, before/after capture).
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
