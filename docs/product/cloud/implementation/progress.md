@@ -36,12 +36,12 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (4 of 12), specs written 2026-11-10:** full specs in
+**M4 (5 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a), 4.13 (109a0876b) and 4.14 (549574f63). Next: wave 4 (4.16, critical, then 4.15,
-small; they share files), then waves 5–6 and the M4 integrated pass (G4 step 1) on a release with M4.
+(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). Next: 4.16 (critical,
+not started: the lead held it for the usage window to reset), then waves 5–6 and the M4 integrated pass (G4 step 1) on a release with M4.
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2068,6 +2068,23 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   destroying by backend name, and the reconciler on real tagged machines.
 - New failure on this Mac, also on `feat/pair`: `ServerEnvironment.test.ts` "publishes proven
   install ownership…" (`/var` against `/private/var`).
+
+## 4.15 leak check and log redaction (landed fd44a033d)
+
+- `teamImageBuildProgram.ts`: `leakCheckNames` and a `leak_check` function, run in `clean` over
+  05 §6's files plus each clone's `.git/config`, and again over `/etc/t3/build.json` after the
+  manifest. A hit prints `::t3-leak::<NAME>::<path>` and the program exits 3; the pattern goes to
+  `grep -f -` on stdin, never an argv.
+- A leak fails the build with `{ phase: "leak", detail, logTail }`, for example "NPM_TOKEN's value
+  was found in /home/t3/.npmrc. 1 more place leaks a secret. Use ${NPM_TOKEN} instead." The detail
+  never holds a value, and the active build is untouched.
+- `TeamImageBuildLog.open(number, values)` redacts to `***` before the file, the ring, live readers
+  and the tail. `TeamImageEffectsLive` reads secrets and clone tokens in a `prepare` step before
+  the log opens; a secret under 4 characters fails the build at `install`.
+- The decider refuses reserved build env and secret names (`T3CODE_*`, `T3_CLONE_TOKEN_*`, `HOME`,
+  `PATH`) as `invalid-recipe`.
+- Owes, with the M4 pass's step 3: the `.npmrc` leak on a real build, `***` in the file and the
+  stream, and `grep -rlF -f -` on the base image's grep.
 
 ## Open follow-ups and risks
 
