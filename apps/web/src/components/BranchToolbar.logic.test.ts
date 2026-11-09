@@ -16,7 +16,9 @@ import {
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
+  pairCloudAddInput,
   resolveCloudEnvModeItem,
+  resolveCloudLaunchTarget,
   resolveLocalCheckoutBranchMismatch,
   resolveLogicalProjectEnvironments,
   resolvePreviousWorktreeSeed,
@@ -175,58 +177,196 @@ describe("resolveEffectiveEnvMode", () => {
 });
 
 describe("resolveCloudEnvModeItem", () => {
-  const available = { available: true } as const;
-  const disallowed = {
-    available: false,
-    reason: "project-disallowed",
-    message: "Cloud threads are turned off for this project.",
+  const mac = EnvironmentId.make("mac");
+  const cloud = EnvironmentId.make("cloud");
+  const cloudB = EnvironmentId.make("cloud-b");
+  const project = {
+    environmentId: mac,
+    repositoryIdentity: {
+      canonicalKey: "github.com/acme/app",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "git@github.com:acme/app.git",
+      },
+    },
   } as const;
-  const notConfigured = {
-    ...disallowed,
-    reason: "not-configured",
-    message: "Cloud is not set up on this environment.",
-  } as const;
-  const notCloudOnly = { ...disallowed, reason: "not-cloud-only", message: "" } as const;
+  const option = (
+    environmentId: EnvironmentId,
+    label: string,
+    projectId: string | null,
+    disabledReason: string | null = null,
+  ) => ({
+    environmentId,
+    label,
+    projectId: projectId === null ? null : ProjectId.make(projectId),
+    disabledReason,
+  });
+  const targets = (...options: ReadonlyArray<ReturnType<typeof option>>) =>
+    ({ kind: "targets", targets: options }) as const;
   const draft = {
+    project,
+    cloudEnvironmentId: undefined,
     effectiveEnvMode: "cloud",
     isServerThread: false,
     forceNewWorktree: false,
   } as const;
+  const cloudRow = (reason: string | null = null) => ({
+    value: "cloud",
+    label: "Cloud",
+    action: { kind: "launch", environmentId: null },
+    disabled: reason !== null,
+    reason,
+  });
 
   it.each([
+    ["hidden with no Pair Cloud paired", { cloud: { kind: "hidden" } }, null],
     [
-      "hidden on a server that isn't cloud-only",
-      { cloud: notCloudOnly, effectiveEnvMode: "worktree" },
-      null,
+      "disabled when the origin isn't on github.com",
+      {
+        cloud: { kind: "unavailable", message: "Cloud needs this project's origin on github.com." },
+      },
+      {
+        disabledReason: "Cloud needs this project's origin on github.com.",
+        only: false,
+        rows: [cloudRow("Cloud needs this project's origin on github.com.")],
+        value: "cloud",
+      },
     ],
     [
-      "the only choice without a driver",
-      { cloud: notConfigured },
-      { disabledReason: notConfigured.message, only: true },
+      "the only choice on a Pair Cloud project",
+      {
+        cloud: targets(
+          option(mac, "Pair Cloud", "own", "Cloud is not set up on this environment."),
+        ),
+      },
+      {
+        disabledReason: "Cloud is not set up on this environment.",
+        only: true,
+        rows: [cloudRow("Cloud is not set up on this environment.")],
+        value: "cloud",
+      },
     ],
-    ["the only choice on a draft", { cloud: available }, { disabledReason: null, only: true }],
     [
-      "disabled by the project",
-      { cloud: disallowed },
-      { disabledReason: disallowed.message, only: true },
+      "Cloud for one matching Pair Cloud project",
+      { cloud: targets(option(cloud, "Pair Cloud", "match")) },
+      { disabledReason: null, only: false, rows: [cloudRow()], value: "cloud" },
+    ],
+    [
+      "Add to Pair Cloud with no match",
+      { cloud: targets(option(cloud, "Pair Cloud", null)) },
+      {
+        disabledReason: "Add acme/app to Pair Cloud first.",
+        only: false,
+        rows: [
+          {
+            value: "add:cloud",
+            label: "Add to Pair Cloud",
+            action: { kind: "add", environmentId: cloud, label: "Pair Cloud" },
+            disabled: false,
+            reason: "Add acme/app to Pair Cloud first.",
+          },
+        ],
+        value: "cloud",
+      },
+    ],
+    [
+      "one row per Pair Cloud, on the draft's pick",
+      {
+        cloud: targets(option(cloud, "Pair Cloud", "match"), option(cloudB, "Zeta", null)),
+        cloudEnvironmentId: cloud,
+      },
+      {
+        disabledReason: null,
+        only: false,
+        rows: [
+          {
+            value: "cloud:cloud",
+            label: "Cloud on Pair Cloud",
+            action: { kind: "launch", environmentId: cloud },
+            disabled: false,
+            reason: null,
+          },
+          {
+            value: "add:cloud-b",
+            label: "Add to Zeta",
+            action: { kind: "add", environmentId: cloudB, label: "Zeta" },
+            disabled: false,
+            reason: "Add acme/app to Zeta first.",
+          },
+        ],
+        value: "cloud:cloud",
+      },
     ],
     [
       "disabled for a multi-model send",
-      { cloud: available, forceNewWorktree: true, effectiveEnvMode: "worktree" },
-      { disabledReason: "Each model starts in its own worktree.", only: true },
+      {
+        cloud: targets(option(cloud, "Pair Cloud", "match")),
+        forceNewWorktree: true,
+        effectiveEnvMode: "worktree",
+      },
+      {
+        disabledReason: "Each model starts in its own worktree.",
+        only: false,
+        rows: [cloudRow("Each model starts in its own worktree.")],
+        value: "cloud",
+      },
     ],
     [
       "hidden on a started local thread",
-      { cloud: available, isServerThread: true, effectiveEnvMode: "local" },
+      {
+        cloud: targets(option(cloud, "Pair Cloud", "match")),
+        isServerThread: true,
+        effectiveEnvMode: "local",
+      },
       null,
     ],
     [
       "shown on a cloud thread after its server stopped launching cloud work",
-      { cloud: notCloudOnly, isServerThread: true },
-      { disabledReason: null, only: false },
+      { cloud: { kind: "hidden" }, isServerThread: true },
+      { disabledReason: null, only: false, rows: [cloudRow()], value: "cloud" },
     ],
   ] as const)("%s", (_name, overrides, expected) => {
     expect(resolveCloudEnvModeItem({ ...draft, ...overrides })).toEqual(expected);
+  });
+
+  it.each([
+    ["the draft's pick", [option(cloud, "A", "a"), option(cloudB, "B", "b")], cloudB, cloudB],
+    [
+      "the first launchable target",
+      [option(cloud, "A", null), option(cloudB, "B", "b")],
+      undefined,
+      cloudB,
+    ],
+    [
+      "nothing when the pick is offline",
+      [option(cloud, "A", "a", "A is offline."), option(cloudB, "B", "b")],
+      cloud,
+      null,
+    ],
+    ["nothing with only an Add target", [option(cloud, "A", null)], undefined, null],
+  ] as const)("launches Cloud on %s", (_name, options, cloudEnvironmentId, expected) => {
+    expect(
+      resolveCloudLaunchTarget(targets(...options), cloudEnvironmentId)?.environmentId ?? null,
+    ).toBe(expected);
+  });
+
+  it("adds the local origin to Pair Cloud over https with no files", () => {
+    expect(
+      pairCloudAddInput({
+        project: { ...project, workspaceRoot: "/src/app/web", title: "app" },
+        target: { environmentId: cloud, label: "Pair Cloud" },
+        projectId: ProjectId.make("new"),
+      }),
+    ).toEqual({
+      source: { environmentId: mac, cwd: "/src/app/web" },
+      subdirectory: "",
+      target: { environmentId: cloud, label: "Pair Cloud" },
+      projectId: ProjectId.make("new"),
+      title: "app",
+      remoteUrl: "https://github.com/acme/app.git",
+      files: [],
+    });
   });
 });
 

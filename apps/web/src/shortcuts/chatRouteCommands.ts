@@ -19,7 +19,8 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
-import { readCloudAvailable } from "../state/sandbox";
+import { readCloudTarget } from "../state/sandbox";
+import { resolveCloudLaunchTarget } from "../components/BranchToolbar.logic";
 import { readEnvironmentScope } from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -117,7 +118,11 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "chat.newCloud": (event) => {
         const context = readThreadContext();
         const projectRef = resolveThreadActionProjectRef(context);
-        if (projectRef === null || !readCloudAvailable(projectRef)) return;
+        if (
+          projectRef === null ||
+          resolveCloudLaunchTarget(readCloudTarget(projectRef), undefined) === null
+        )
+          return;
         claim(event);
         void startNewThreadFromContext(context, { envMode: "cloud" });
       },

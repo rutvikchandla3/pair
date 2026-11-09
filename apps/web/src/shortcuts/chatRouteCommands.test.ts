@@ -36,7 +36,18 @@ describe("new thread commands", () => {
     { mode: "boring", count: 2, command: "chat.newCloud", picker: false, cloud: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
     const cloud = "cloud" in scenario ? scenario.cloud : undefined;
-    using _cloud = vi.spyOn(sandbox, "readCloudAvailable").mockReturnValue(cloud === true);
+    // Pair Cloud has this repo (launch) or not yet (Add only, which doesn't start a cloud draft).
+    using _cloud = vi.spyOn(sandbox, "readCloudTarget").mockReturnValue({
+      kind: "targets",
+      targets: [
+        {
+          environmentId: EnvironmentId.make("pair-cloud"),
+          label: "Pair Cloud",
+          projectId: cloud === true ? ProjectId.make("on-cloud") : null,
+          disabledReason: null,
+        },
+      ],
+    });
     using _settings = vi.spyOn(settings, "getClientSettings").mockReturnValue({
       ...DEFAULT_CLIENT_SETTINGS,
       boringSidebarEnabled: scenario.mode === "boring",

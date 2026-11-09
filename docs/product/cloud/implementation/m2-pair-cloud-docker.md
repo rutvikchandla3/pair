@@ -2327,33 +2327,36 @@ whole web surface of 01 J2 and has one client pass.
 
 - **Needs:** 2.26, 2.27, 2.31. **Unblocks:** 2.30.
 - **Files:**
-  - `apps/web/src/components/BranchToolbar.logic.ts`: `resolveCloudEnvModeItem` (114) takes the
-    `CloudTarget` and the draft's chosen target in place of `CloudAvailability`. `CloudEnvModeItem`
-    (109) becomes:
-    ```ts
-    { readonly disabledReason: string | null; readonly targets: ReadonlyArray<CloudTargetOption> }
-    ```
+  - `apps/web/src/components/BranchToolbar.logic.ts`: `resolveCloudEnvModeItem` takes the
+    `CloudTarget`, the project and the draft's `cloudEnvironmentId` in place of
+    `CloudAvailability`. `CloudEnvModeItem` keeps `disabledReason` and `only` (2.24) and gains
+    `rows` (one `CloudEnvModeRow` per picker row: value, label, a `launch` or `add` action,
+    disabled, hover reason) and `value` (the row that stands for the draft's Cloud mode).
     `hidden` returns null. `unavailable` disables with its message. `forceNewWorktree` keeps its
-    reason. A server thread keeps today's null.
+    reason. A server thread keeps today's null. `resolveCloudLaunchTarget(cloud,
+    cloudEnvironmentId)` picks where Cloud launches: the draft's pick, else the first launchable
+    target, else null. `pairCloudAddInput` builds the Add call below.
   - `apps/web/src/components/BranchToolbar.tsx` and `BranchToolbarEnvModeSelector.tsx`: one target
     with a project shows "Cloud". One with `projectId: null` shows "Add to Pair Cloud", which calls
     `addProjectToMachine` with `files: []`, `subdirectory: ""`, no `destinationPath`, and
     `remoteUrl` the https form of the local origin (`cloneUrlForProtocol` from
-    `@t3tools/shared/cloneUrl`). It then opens the new Pair Cloud project, as
-    `AddProjectToMachineDialog` callers do (`openAddProjectToMachine`, 70). Several targets show
-    "Cloud on <label>" per option.
+    `@t3tools/shared/cloneUrl`). It then opens the new Pair Cloud project with
+    `handleNewThread`. Several targets show "Cloud on <label>", or "Add to <label>" for one with
+    no project. An Add row's hover reads "Add <owner/name> to <label> first.", 2.29's copy.
   - `apps/web/src/composerDraftStore.ts`: draft gains optional `cloudEnvironmentId: EnvironmentId`,
     set only when the member picks one of several targets. Otherwise the target is derived at
     render and send. The loader decodes `cloudEnvironmentId` by hand, as it does the other draft
     fields (1712). `normalizeDraftThreadEnvMode` (1335) is unchanged: it sees only the stored
-    value. The way back is a render rule in `resolveEffectiveEnvMode` (BranchToolbar.logic.ts
-    194), which takes the resolver's result and falls back from `cloud` to the project's default
-    mode when there is no launchable target.
+    value. The way back is the existing render rule in `resolveEffectiveEnvMode`: its
+    `cloudAvailable` is now `resolveCloudLaunchTarget(...) !== null`, and a stored `cloud` draft
+    with no launchable target renders as New worktree, as it did when Cloud went away.
   - `apps/web/src/components/ChatView.tsx`: in routed Cloud mode (draft, mode `cloud`, target
-    environment differs from the project's), `serverConfig` (1230) and `providerEnvironmentId`
-    (1233) are the target's, so the model picker, `providerStatuses` and attachment capabilities
-    read Pair Cloud. Model selection re-resolves through `resolveTeamNewThreadModelSelection`
-    (providerInstanceEntries.ts 224) with the target's providers, settings and project id.
+    environment differs from the project's), `providerEnvironmentId`, the provider settings and
+    project id, attachment capabilities, usage-limit sources and the provider catalog are the
+    target's, so the model picker and `providerStatuses` read Pair Cloud. `serverConfig` stays
+    the project's own: PR, version-mismatch and side-chat reads describe the Mac. The draft's
+    default model re-resolves through `resolveTeamNewThreadModelSelection` with the target's
+    providers, settings and project id. Multiple models are off while routed.
   - `packages/client-runtime/src/state/cloudTarget.ts` has two pure helpers shared with mobile
     (2.29 landed them first, with their tests; 2.28 reuses them):
     ```ts
@@ -2384,18 +2387,22 @@ whole web surface of 01 J2 and has one client pass.
     `baseRefForCloud` (1437) is the selected branch. `useComposerSend.ts` (1355): in routed mode,
     `prepareCloud` is `routedCloudLaunch({ selectedBranch: baseRefForCloud, defaultBranch })`. The
     default branch comes from the local refs (`isDefault`). It sends `startThreadTurn` to the
-    target environment, with `createThread.projectId` the target project, then opens the thread
-    there. A `block` stops send with its message, as `missingWorktreeBaseBranch` does (897). A
-    `warn` shows in the composer banner slot (`useSystemComposerBanners`) and doesn't block.
+    target environment, with `createThread.projectId` the target project and its uploads made
+    there, and promotes the draft to the target thread so the route opens it. A `block` stops
+    send with its message, as `missingWorktreeBaseBranch` does (897). A `warn` shows in the
+    composer banner stack beside the cloud push banner and doesn't block.
   - The local branch status is the existing `vcsEnvironment.status` query (as
     `GitActionsControl.tsx` 1035 reads it). The current ref comes from `vcsEnvironment.listRefs`
-    with `query: branch` (as `BranchToolbarBranchSelector.tsx` 293 reads it). Both are on the
-    project's own environment.
+    with `query: branch` (as `BranchToolbarBranchSelector.tsx` 293 reads it, so they share a
+    cache entry). The default branch is the `isDefault` ref of a `limit: 2` page, since current and
+    default sort first; while it is unknown, the launch starts a fresh branch from the selected
+    one. All are on the project's own environment.
   - `apps/web/src/state/sandbox.ts`: `readCloudAvailable` (17) becomes `readCloudTarget(projectRef)`,
-    the resolver over the atom registry's environments and projects. `chatRouteCommands.ts`
-    `chat.newCloud` (117) runs when it gives a launchable target. `CommandPalette.tsx` (1296) shows
-    "New cloud thread" from the same read. Both start the draft in `cloud` mode, and the draft
-    routes.
+    the resolver over the atom registry's environments and projects, plus `useCloudTarget` for
+    renders. `chatRouteCommands.ts` `chat.newCloud` (117) runs when `readCloudTarget` gives a
+    launchable target. `CommandPalette.tsx` (1296) shows "New cloud thread" from `useCloudTarget`,
+    since a render-time registry read would go stale under the React Compiler. Both start the
+    draft in `cloud` mode, and the draft routes.
 - **Types and services:** `routedCloudLaunch`, `CloudBranchCheck`, `cloudBranchCheck`; draft field
   `cloudEnvironmentId`.
 - **Commands and events:** none new; the launch is `thread.launch` with the 2.31 strategy.
@@ -2412,11 +2419,17 @@ whole web surface of 01 J2 and has one client pass.
   $name" (default branch, feature branch, `origin/feature` picked) and "checks $name before a cloud
   send" (no upstream, ahead by 2, upstream on `fork`, upstream with a different name, default
   branch, clean, and a selected branch that isn't checked out while HEAD is ahead: no warning).
-- `apps/web/src/components/BranchToolbar.logic.test.ts`: a `resolveEffectiveEnvMode` row where a
-  stored `cloud` draft with no launchable target falls back to the project's default mode.
+- `apps/web/src/components/BranchToolbar.logic.test.ts`: the existing `resolveEffectiveEnvMode`
+  row "a cloud draft after Cloud went away" covers the fallback.
 - `apps/web/src/components/BranchToolbar.logic.test.ts`, describe "resolveCloudEnvModeItem" (126):
-  replace the `CloudAvailability` rows with `CloudTarget` rows (hidden, unavailable, one launch
-  target, one add target, two targets, forced new worktree, server thread).
+  replace the `CloudAvailability` rows with `CloudTarget` rows (hidden, unavailable, own Pair
+  Cloud project, one launch target, one add target, two targets, forced new worktree, server
+  thread), plus "launches Cloud on $name" for `resolveCloudLaunchTarget` and one `pairCloudAddInput`
+  case.
+- `apps/web/src/composerDraftStore.test.ts`: the picked Pair Cloud survives a reload and drops
+  when the project changes.
+- `apps/web/src/shortcuts/chatRouteCommands.test.ts`: `chat.newCloud` mocks `readCloudTarget`;
+  an Add-only target starts nothing.
 - `apps/web/src/components/ChatView.logic.test.ts`, "prepares a worktree or a cloud launch from the
   selected branch on a new thread": unchanged; it pins that `baseRefForCloud` is the selected
   branch.

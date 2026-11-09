@@ -1262,6 +1262,33 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps the picked Pair Cloud through a reload until the project changes", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, envMode: "cloud" });
+    store.setDraftThreadContext(draftId, { cloudEnvironmentId: OTHER_TEST_ENVIRONMENT_ID });
+    store.setDraftThreadContext(draftId, { envMode: "cloud" });
+    expect(store.getDraftThread(draftId)?.cloudEnvironmentId).toBe(OTHER_TEST_ENVIRONMENT_ID);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const hydrated = persistApi
+      .getOptions()
+      .merge(
+        partializeComposerDraftStoreState(useComposerDraftStore.getState()),
+        useComposerDraftStore.getState(),
+      );
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.cloudEnvironmentId).toBe(
+      OTHER_TEST_ENVIRONMENT_ID,
+    );
+    store.setDraftThreadContext(draftId, { projectRef: remoteProjectRef });
+    expect(store.getDraftThread(draftId)?.cloudEnvironmentId).toBeUndefined();
+  });
+
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

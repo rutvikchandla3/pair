@@ -3,6 +3,7 @@ import {
   type EnvironmentMachineKind,
   type VcsRef,
   type ProjectId,
+  repositoryGroupingKeyOf,
   resolveEnvironmentMachineKind,
   type SandboxId,
   type WorktreeSubmodules,
@@ -12,7 +13,11 @@ import type {
   EnvironmentServerConfig,
 } from "@t3tools/client-runtime/connection";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
-import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
+import {
+  type CloudTarget,
+  type CloudTargetOption,
+  isCloudLaunchEnvironment,
+} from "@t3tools/client-runtime/state/cloud-target";
 import {
   deriveLogicalProjectKeyFromSettings,
   type ProjectGroupingSettings,
@@ -20,10 +25,11 @@ import {
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
-import type { CloudAvailability } from "@t3tools/shared/sandbox";
+import { cloneUrlForProtocol } from "@t3tools/shared/cloneUrl";
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import type { AddProjectToMachineInput } from "../lib/addProjectToMachine";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
@@ -195,27 +201,165 @@ export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
+export interface CloudLaunchTarget {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly label: string;
+}
+
+const canLaunch = (target: CloudTargetOption) =>
+  target.disabledReason === null && target.projectId !== null;
+
+function chooseCloudTarget(
+  cloud: CloudTarget,
+  cloudEnvironmentId: EnvironmentId | undefined,
+): CloudTargetOption | null {
+  if (cloud.kind !== "targets") return null;
+  return (
+    cloud.targets.find((target) => target.environmentId === cloudEnvironmentId) ??
+    cloud.targets.find(canLaunch) ??
+    null
+  );
+}
+
+/** Where Cloud launches: the draft's pick, else the first launchable target, else nowhere. */
+export function resolveCloudLaunchTarget(
+  cloud: CloudTarget,
+  cloudEnvironmentId: EnvironmentId | undefined,
+): CloudLaunchTarget | null {
+  const chosen = chooseCloudTarget(cloud, cloudEnvironmentId);
+  return chosen !== null && chosen.projectId !== null && chosen.disabledReason === null
+    ? { environmentId: chosen.environmentId, projectId: chosen.projectId, label: chosen.label }
+    : null;
+}
+
+export interface CloudEnvModeRow {
+  readonly value: string;
+  readonly label: string;
+  /** Launch there (null: the only target), or add the repo to that Pair Cloud. */
+  readonly action:
+    | { readonly kind: "launch"; readonly environmentId: EnvironmentId | null }
+    | { readonly kind: "add"; readonly environmentId: EnvironmentId; readonly label: string };
+  readonly disabled: boolean;
+  /** Shown on hover: why it is disabled, or what Add does. */
+  readonly reason: string | null;
+}
+
 export interface CloudEnvModeItem {
   readonly disabledReason: string | null;
   /** A draft on a cloud-launch server: Cloud is its only workspace. */
   readonly only: boolean;
+  readonly rows: ReadonlyArray<CloudEnvModeRow>;
+  /** The row value that stands for the draft's Cloud mode. */
+  readonly value: string;
 }
 
-/** Cloud's row in both workspace pickers: null hides it, so servers that aren't cloud-only look as before. */
+const MULTI_MODEL_CLOUD_REASON = "Each model starts in its own worktree.";
+
+function cloudRow(reason: string | null): CloudEnvModeRow {
+  return {
+    value: "cloud",
+    label: resolveEnvModeLabel("cloud"),
+    action: { kind: "launch", environmentId: null },
+    disabled: reason !== null,
+    reason,
+  };
+}
+
+function repositoryName(project: Pick<EnvironmentProject, "repositoryIdentity"> | null): string {
+  return project?.repositoryIdentity
+    ? repositoryGroupingKeyOf(project.repositoryIdentity).replace(/^github\.com\//i, "")
+    : "this repo";
+}
+
+/** Cloud's rows in both workspace pickers: null hides them, so servers that aren't cloud-only look as before. */
 export function resolveCloudEnvModeItem(input: {
-  cloud: CloudAvailability;
+  cloud: CloudTarget;
+  project: Pick<EnvironmentProject, "environmentId" | "repositoryIdentity"> | null;
+  cloudEnvironmentId: EnvironmentId | undefined;
   effectiveEnvMode: EnvMode;
   isServerThread: boolean;
   forceNewWorktree: boolean;
 }): CloudEnvModeItem | null {
+  const { cloud } = input;
   if (input.isServerThread) {
-    return input.effectiveEnvMode === "cloud" ? { disabledReason: null, only: false } : null;
+    return input.effectiveEnvMode === "cloud"
+      ? { disabledReason: null, only: false, rows: [cloudRow(null)], value: "cloud" }
+      : null;
   }
-  if (!input.cloud.available && input.cloud.reason === "not-cloud-only") return null;
-  if (input.forceNewWorktree) {
-    return { disabledReason: "Each model starts in its own worktree.", only: true };
+  if (cloud.kind === "hidden") return null;
+  const worktreeReason = input.forceNewWorktree ? MULTI_MODEL_CLOUD_REASON : null;
+  if (cloud.kind === "unavailable") {
+    const reason = worktreeReason ?? cloud.message;
+    return { disabledReason: reason, only: false, rows: [cloudRow(reason)], value: "cloud" };
   }
-  return { disabledReason: input.cloud.available ? null : input.cloud.message, only: true };
+  const [first] = cloud.targets;
+  if (
+    first !== undefined &&
+    cloud.targets.length === 1 &&
+    first.environmentId === input.project?.environmentId
+  ) {
+    const reason = worktreeReason ?? first.disabledReason;
+    return { disabledReason: reason, only: true, rows: [cloudRow(reason)], value: "cloud" };
+  }
+  const several = cloud.targets.length > 1;
+  const repository = repositoryName(input.project);
+  const rows = cloud.targets.map((target): CloudEnvModeRow => {
+    if (target.projectId === null) {
+      return {
+        value: `add:${target.environmentId}`,
+        label: several ? `Add to ${target.label}` : "Add to Pair Cloud",
+        action: { kind: "add", environmentId: target.environmentId, label: target.label },
+        disabled: target.disabledReason !== null,
+        reason: target.disabledReason ?? `Add ${repository} to ${target.label} first.`,
+      };
+    }
+    const reason = worktreeReason ?? target.disabledReason;
+    return {
+      value: several ? `cloud:${target.environmentId}` : "cloud",
+      label: several ? `Cloud on ${target.label}` : resolveEnvModeLabel("cloud"),
+      action: { kind: "launch", environmentId: several ? target.environmentId : null },
+      disabled: reason !== null,
+      reason,
+    };
+  });
+  const chosen = chooseCloudTarget(cloud, input.cloudEnvironmentId);
+  const chosenRow = rows[chosen === null ? -1 : cloud.targets.indexOf(chosen)];
+  return {
+    disabledReason:
+      worktreeReason ??
+      (chosen === null
+        ? (rows[0]?.reason ?? null)
+        : (chosen.disabledReason ??
+          (chosen.projectId === null ? `Add ${repository} to ${chosen.label} first.` : null))),
+    only: false,
+    rows,
+    value: chosenRow?.action.kind === "launch" ? chosenRow.value : "cloud",
+  };
+}
+
+/** Add to Pair Cloud: clone the local origin over https, no files, at the server's own path. */
+export function pairCloudAddInput(input: {
+  project: Pick<
+    EnvironmentProject,
+    "environmentId" | "workspaceRoot" | "title" | "repositoryIdentity"
+  >;
+  target: { readonly environmentId: EnvironmentId; readonly label: string };
+  projectId: ProjectId;
+}): AddProjectToMachineInput | null {
+  const identity = input.project.repositoryIdentity;
+  const sourceUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
+  const remoteUrl = sourceUrl ? cloneUrlForProtocol(sourceUrl, "https") : null;
+  if (remoteUrl === null) return null;
+  return {
+    source: { environmentId: input.project.environmentId, cwd: input.project.workspaceRoot },
+    subdirectory: "",
+    target: input.target,
+    projectId: input.projectId,
+    title: input.project.title,
+    remoteUrl,
+    files: [],
+  };
 }
 
 /** The built-in workspace default once the environment has a second member. */

@@ -8,6 +8,7 @@ import {
   resolveEnvModeLabel,
   resolveLockedWorkspaceLabel,
   type CloudEnvModeItem,
+  type CloudEnvModeRow,
   type EnvMode,
 } from "./BranchToolbar.logic";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -34,6 +35,7 @@ interface BranchToolbarEnvModeSelectorProps {
   activeWorktreePath: string | null;
   cloudItem: CloudEnvModeItem | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  onCloudRow: (row: CloudEnvModeRow) => void;
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
@@ -46,6 +48,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   activeWorktreePath,
   cloudItem,
   onEnvModeChange,
+  onCloudRow,
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
@@ -65,7 +68,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
           { value: "worktree", label: resolveEnvModeLabel("worktree") },
         ]),
-    ...(cloudItem ? [{ value: "cloud", label: resolveEnvModeLabel("cloud") }] : []),
+    ...(cloudItem?.rows.map((row) => ({ value: row.value, label: row.label })) ?? []),
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -115,13 +118,15 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   return (
     <Select
       modal={false}
-      value={effectiveEnvMode}
+      value={effectiveEnvMode === "cloud" ? (cloudItem?.value ?? "cloud") : effectiveEnvMode}
       onValueChange={(value: string | null) => {
         if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
           onUsePreviousWorktree?.();
           return;
         }
-        onEnvModeChange(value as EnvMode);
+        const cloudRow = cloudItem?.rows.find((row) => row.value === value);
+        if (cloudRow) onCloudRow(cloudRow);
+        else onEnvModeChange(value as EnvMode);
       }}
       items={envModeItems}
     >
@@ -185,16 +190,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               </SelectItem>
             </>
           )}
-          {cloudItem ? (
-            <CloudEnvModeTooltip reason={cloudItem.disabledReason}>
-              <SelectItem value="cloud" disabled={cloudItem.disabledReason !== null}>
+          {cloudItem?.rows.map((row) => (
+            <CloudEnvModeTooltip key={row.value} reason={row.reason}>
+              <SelectItem value={row.value} disabled={row.disabled}>
                 <span className="inline-flex items-center gap-1.5">
                   <CloudIcon className="size-3" />
-                  {resolveEnvModeLabel("cloud")}
+                  {row.label}
                 </span>
               </SelectItem>
             </CloudEnvModeTooltip>
-          ) : null}
+          ))}
           {showPreviousWorktree && previousWorktreeLabel ? (
             <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
               <PreviousWorktreeItemContent branch={previousWorktreeBranch} />

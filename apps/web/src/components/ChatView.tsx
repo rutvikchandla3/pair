@@ -110,7 +110,7 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
+import { cloudBranchCheck } from "@t3tools/client-runtime/state/cloud-target";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
@@ -199,6 +199,7 @@ import {
   resolveProjectDefaultProviderModelSelection,
   shouldShowInstanceBadge,
 } from "../providerInstances";
+import { resolveTeamNewThreadModelSelection } from "@t3tools/client-runtime/state/provider-instance-entries";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -232,7 +233,13 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { useIsTeamMode, useTeamAttribution, useThreadShareOrigin } from "~/state/team";
+import {
+  useCurrentMemberId,
+  useIsTeamMode,
+  useTeamAttribution,
+  useThreadShareOrigin,
+} from "~/state/team";
+import { useCloudTarget } from "~/state/sandbox";
 import { othersTurnStarterId } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   primaryServerAvailableEditorsAtom,
@@ -281,6 +288,7 @@ import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
+import { CloudIcon } from "lucide-react";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
@@ -298,6 +306,7 @@ import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  resolveCloudLaunchTarget,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -745,6 +754,28 @@ export default function ChatView(props: ChatViewProps) {
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
+  // Cloud on a local project launches on its Pair Cloud project: models and uploads read there.
+  const draftCloudTarget = useCloudTarget(
+    !serverThread && draftThread?.envMode === "cloud" ? fallbackDraftProjectRef : null,
+  );
+  const draftCloudLaunchTarget = resolveCloudLaunchTarget(
+    draftCloudTarget,
+    draftThread?.cloudEnvironmentId,
+  );
+  const routedCloud =
+    !serverThread &&
+    draftThread &&
+    draftCloudLaunchTarget !== null &&
+    draftCloudLaunchTarget.environmentId !== draftThread.environmentId
+      ? draftCloudLaunchTarget
+      : null;
+  const routedCloudSettings = useEnvironmentSettings(routedCloud?.environmentId ?? environmentId);
+  const routedCloudMemberId = useCurrentMemberId(routedCloud?.environmentId ?? null);
+  const draftModelSettings = routedCloud ? routedCloudSettings : settings;
+  const draftModelProjectId = routedCloud?.projectId ?? draftThread?.projectId ?? null;
+  const draftModelProviders = draftThread
+    ? (providersByEnvironment.get(routedCloud?.environmentId ?? draftThread.environmentId) ?? [])
+    : [];
   const localDraftError = serverThread
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
@@ -768,26 +799,35 @@ export default function ChatView(props: ChatViewProps) {
     }
   }
   const nowMinute = useNowMinute();
-  const draftDefaultModelSelection = draftThread
+  const projectDraftDefaultModelSelection = draftThread
     ? resolveProjectSettings(
-        settings,
-        fallbackDraftProject?.id ?? null,
-        fallbackDraftProject ?? undefined,
+        draftModelSettings,
+        routedCloud ? draftModelProjectId : (fallbackDraftProject?.id ?? null),
+        routedCloud ? undefined : (fallbackDraftProject ?? undefined),
       ).settings.defaultModelSelection
     : null;
+  const draftDefaultModelSelection = routedCloud
+    ? (resolveTeamNewThreadModelSelection({
+        selection: projectDraftDefaultModelSelection,
+        providers: draftModelProviders,
+        settings: draftModelSettings,
+        projectId: draftModelProjectId,
+        memberId: routedCloudMemberId,
+      }) ?? projectDraftDefaultModelSelection)
+    : projectDraftDefaultModelSelection;
   const draftModelResolution = draftThread
     ? resolveNewThreadModelSelection({
         defaultSelection:
           draftDefaultModelSelection ??
           resolveProjectDefaultProviderModelSelection(
-            providersByEnvironment.get(draftThread.environmentId) ?? [],
-            settings,
-            draftThread.projectId,
+            draftModelProviders,
+            draftModelSettings,
+            draftModelProjectId,
           ),
-        fallbackSelection: settings.fallbackModelSelection,
-        providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
-        settings,
-        projectId: draftThread.projectId,
+        fallbackSelection: draftModelSettings.fallbackModelSelection,
+        providers: draftModelProviders,
+        settings: draftModelSettings,
+        projectId: draftModelProjectId,
         now: Date.parse(`${nowMinute}:00Z`),
       })
     : null;
@@ -1125,7 +1165,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectDefaultModelSelection =
     !isServerThread && draftFallback
       ? draftFallback.selection
-      : activeProjectSettings.settings.defaultModelSelection;
+      : routedCloud
+        ? draftDefaultModelSelection
+        : activeProjectSettings.settings.defaultModelSelection;
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -1231,8 +1273,13 @@ export default function ChatView(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const providerEnvironmentId = (activeThread ? activeEnvironment : primaryEnvironment)
-    ?.environmentId;
+  const providerEnvironmentId =
+    routedCloud?.environmentId ??
+    (activeThread ? activeEnvironment : primaryEnvironment)?.environmentId;
+  // PR, version and side-chat reads stay on the project's own server; providers follow the target.
+  const providerServerConfig = routedCloud
+    ? (environmentById.get(routedCloud.environmentId)?.serverConfig ?? null)
+    : serverConfig;
   const providerStatuses =
     (providerEnvironmentId === undefined
       ? undefined
@@ -1251,7 +1298,8 @@ export default function ChatView(props: ChatViewProps) {
   const modelPickerLockedProvider = supportsProviderSwitchingViaHandoff ? null : lockedProvider;
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig !== null;
-  const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
+  const attachmentEnvironmentConfig =
+    environmentById.get(routedCloud?.environmentId ?? environmentId)?.serverConfig ?? null;
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments = attachmentEnvironmentConfig !== null;
   const supportsAttachmentUploads = attachmentEnvironmentConfig !== null;
@@ -1301,8 +1349,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const providerInstanceEntries = providerInstanceEntriesFor(
     providerStatuses,
-    settings,
-    activeProject?.id ?? null,
+    draftModelSettings,
+    routedCloud?.projectId ?? activeProject?.id ?? null,
   );
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
@@ -1427,7 +1475,7 @@ export default function ChatView(props: ChatViewProps) {
     providerInstanceId: activeProviderInstanceId,
     providerDriver: activeProviderStatus?.driver ?? null,
     providers: providerStatuses,
-    sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+    sources: providerServerConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
   });
   const {
     beginLocalDispatch,
@@ -2213,7 +2261,7 @@ export default function ChatView(props: ChatViewProps) {
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
     preparingWorktree: isPreparingWorktree,
     sandboxId: serverThread?.source.sandboxId,
-    cloudAvailable: cloudAvailability(settings, activeProject?.id ?? null, cloudLaunch).available,
+    cloudAvailable: draftCloudLaunchTarget !== null,
     cloudLaunch,
   });
   const canOverrideServerThreadEnvMode = Boolean(
@@ -2250,6 +2298,39 @@ export default function ChatView(props: ChatViewProps) {
     canOverrideServerThreadEnvMode && pendingServerThreadBranchEntryForThread !== null
       ? pendingServerThreadBranchEntryForThread.branch
       : (activeThread?.branch ?? null);
+  // A routed launch checks the selected branch on this machine: Pair Cloud only sees origin.
+  const routedCloudBranch = routedCloud && activeThreadBranch !== null ? activeThreadBranch : null;
+  const routedCloudRefQuery = useEnvironmentQuery(
+    routedCloudBranch !== null && gitCwd !== null
+      ? vcsEnvironment.listRefs({
+          environmentId,
+          input: { cwd: gitCwd, query: routedCloudBranch, limit: 10 },
+        })
+      : null,
+  );
+  // Current and default sort first, so a short page names the default branch.
+  const routedCloudDefaultRefQuery = useEnvironmentQuery(
+    routedCloud && gitCwd !== null
+      ? vcsEnvironment.listRefs({ environmentId, input: { cwd: gitCwd, limit: 2 } })
+      : null,
+  );
+  const routedCloudSend =
+    routedCloud && routedCloudBranch !== null
+      ? {
+          environmentId: routedCloud.environmentId,
+          projectId: routedCloud.projectId,
+          defaultBranch:
+            routedCloudDefaultRefQuery.data?.refs.find((ref) => ref.isDefault)?.name ?? null,
+          branchCheck: cloudBranchCheck({
+            branch: routedCloudBranch,
+            ref:
+              routedCloudRefQuery.data?.refs.find(
+                (ref) => ref.name === routedCloudBranch && ref.isRemote !== true,
+              ) ?? null,
+            status: gitStatusQuery.data ?? null,
+          }),
+        }
+      : null;
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
@@ -2646,9 +2727,22 @@ export default function ChatView(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const routedCloudWarning =
+      routedCloudSend?.branchCheck.kind === "warn"
+        ? [
+            {
+              id: `routed-cloud-branch:${routedCloudBranch}`,
+              variant: "warning" as const,
+              icon: <CloudIcon />,
+              title: "Pair Cloud only sees what's on origin",
+              description: routedCloudSend.branchCheck.message,
+            },
+          ]
+        : [];
     const cloudPushItems = [
       ...sandboxStatus.bannerItems,
       ...[cloudPushBannerItem, sharedMachineBannerItem].filter((item) => item !== null),
+      ...routedCloudWarning,
     ];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
@@ -2884,7 +2978,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     activeRuntime,
     activeProjectSettings,
-    settings,
+    settings: draftModelSettings,
     providerStatuses,
     lockedProvider,
     supportsProviderSwitchingViaHandoff,
@@ -2936,6 +3030,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const { onSend } = useComposerSend({
     environmentId,
+    routedCloud: routedCloudSend,
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,
@@ -3638,8 +3733,9 @@ export default function ChatView(props: ChatViewProps) {
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
+                                routedCloud === null &&
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
-                                true
+                                  true
                               }
                               onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                               composerRef={composerRef}
@@ -3729,12 +3825,12 @@ export default function ChatView(props: ChatViewProps) {
                               interactionMode={interactionMode}
                               lockedProvider={modelPickerLockedProvider}
                               providerStatuses={providerStatuses as ServerProvider[]}
-                              providerCatalogKnown={serverConfig !== null}
+                              providerCatalogKnown={providerServerConfig !== null}
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
-                              activeProjectId={activeProject?.id ?? null}
+                              activeProjectId={routedCloud?.projectId ?? activeProject?.id ?? null}
                               contextWindowEntries={serverVisibleTurnItems}
                               contextWindowLiveUsage={activeThreadLiveTokenUsage}
                               contextWindowProviderThread={activeProviderThread}
@@ -3742,7 +3838,7 @@ export default function ChatView(props: ChatViewProps) {
                               compactDisabled={compactDisabled}
                               compactDisabledReason={compactDisabledReason}
                               resolvedTheme={resolvedTheme}
-                              settings={settings}
+                              settings={draftModelSettings}
                               keybindings={keybindings}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
                               gitCwd={gitCwd}
@@ -3972,7 +4068,7 @@ export default function ChatView(props: ChatViewProps) {
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
-                    sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+                    sources: providerServerConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}
                 />

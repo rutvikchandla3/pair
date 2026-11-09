@@ -312,6 +312,7 @@ const PersistedDraftThreadState = Schema.Struct({
   logicalProjectKey: Schema.optionalKey(Schema.String),
   environmentSelection: Schema.optionalKey(Schema.Literals(["auto", "manual"])),
   loadBalancedEnvironmentId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  cloudEnvironmentId: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -405,6 +406,8 @@ export interface DraftSessionState {
   logicalProjectKey: string;
   environmentSelection?: "auto" | "manual";
   loadBalancedEnvironmentId?: EnvironmentId | null;
+  /** The Pair Cloud the member picked among several for Cloud; otherwise derived at render. */
+  cloudEnvironmentId?: EnvironmentId;
   createdAt: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -497,6 +500,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
+      cloudEnvironmentId?: EnvironmentId | null;
     },
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
@@ -1520,6 +1524,9 @@ function createDraftThreadState(
               : existingThread.loadBalancedEnvironmentId,
           }
         : {}),
+    ...(existingThread?.cloudEnvironmentId && !projectChanged
+      ? { cloudEnvironmentId: existingThread.cloudEnvironmentId }
+      : {}),
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
     runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode:
@@ -1556,6 +1563,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.logicalProjectKey === right.logicalProjectKey &&
     left.environmentSelection === right.environmentSelection &&
     left.loadBalancedEnvironmentId === right.loadBalancedEnvironmentId &&
+    left.cloudEnvironmentId === right.cloudEnvironmentId &&
     left.createdAt === right.createdAt &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
@@ -1721,6 +1729,10 @@ function normalizePersistedDraftThreads(
           : candidateDraftThread.loadBalancedEnvironmentId === null
             ? { loadBalancedEnvironmentId: null }
             : {}),
+        ...(typeof candidateDraftThread.cloudEnvironmentId === "string" &&
+        candidateDraftThread.cloudEnvironmentId.length > 0
+          ? { cloudEnvironmentId: candidateDraftThread.cloudEnvironmentId }
+          : {}),
         promotedTo,
       };
     }
@@ -2484,6 +2496,9 @@ function toHydratedDraftThreadState(
             persistedDraftThread.loadBalancedEnvironmentId as EnvironmentId | null,
         }
       : {}),
+    ...(persistedDraftThread.cloudEnvironmentId
+      ? { cloudEnvironmentId: persistedDraftThread.cloudEnvironmentId as EnvironmentId }
+      : {}),
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2743,6 +2758,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (options.branch != null || options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
+            const cloudEnvironmentId =
+              options.cloudEnvironmentId === undefined
+                ? projectChanged
+                  ? undefined
+                  : existing.cloudEnvironmentId
+                : (options.cloudEnvironmentId ?? undefined);
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -2755,6 +2776,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                     ? null
                     : (existing.loadBalancedEnvironmentId ?? null)
                   : options.loadBalancedEnvironmentId,
+              ...(cloudEnvironmentId ? { cloudEnvironmentId } : {}),
               createdAt:
                 options.createdAt === undefined
                   ? existing.createdAt
@@ -2774,6 +2796,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.logicalProjectKey === existing.logicalProjectKey &&
               nextDraftThread.environmentSelection === existing.environmentSelection &&
               nextDraftThread.loadBalancedEnvironmentId === existing.loadBalancedEnvironmentId &&
+              nextDraftThread.cloudEnvironmentId === existing.cloudEnvironmentId &&
               nextDraftThread.createdAt === existing.createdAt &&
               nextDraftThread.runtimeMode === existing.runtimeMode &&
               nextDraftThread.interactionMode === existing.interactionMode &&

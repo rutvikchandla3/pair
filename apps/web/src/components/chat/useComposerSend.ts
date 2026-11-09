@@ -21,11 +21,16 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
+  type ProjectId,
   type ThreadId,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import {
+  type CloudBranchCheck,
+  routedCloudLaunch,
+} from "@t3tools/client-runtime/state/cloud-target";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
@@ -166,6 +171,13 @@ type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
   readonly environmentId: EnvironmentId;
+  /** Cloud on a local project: the draft launches on this Pair Cloud project instead. */
+  readonly routedCloud: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly defaultBranch: string | null;
+    readonly branchCheck: CloudBranchCheck;
+  } | null;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
@@ -266,6 +278,7 @@ interface ComposerSendInput {
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
+    routedCloud,
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,
@@ -900,6 +913,12 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
+    const routed = baseRefForCloud !== null ? routedCloud : null;
+    if (routed?.branchCheck.kind === "block") {
+      setThreadError(threadIdForSend, routed.branchCheck.message);
+      return;
+    }
+    const sendEnvironmentId = routed?.environmentId ?? environmentId;
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -932,7 +951,8 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     const readLiveAttachmentCapabilities = () => {
-      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      const config =
+        appAtomRegistry.get(environmentServerConfigsAtom).get(sendEnvironmentId) ?? null;
       const liveSupportsAttachmentUploads = config !== null;
       return {
         supportsAttachmentUploads: liveSupportsAttachmentUploads,
@@ -973,7 +993,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const turnUsesAttachmentUploads =
       composerFilesSnapshot.length > 0
         ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
-        : (readEnvironmentPresentation(environmentId)?.serverConfig ?? null) !== null;
+        : (readEnvironmentPresentation(sendEnvironmentId)?.serverConfig ?? null) !== null;
     if (turnUsesAttachmentUploads && composerAttachmentsSnapshot.length > 0) {
       for (const attachment of composerAttachmentsSnapshot) {
         const upload =
@@ -981,7 +1001,7 @@ export function useComposerSend(input: ComposerSendInput) {
             ? retryAttachmentUpload
             : startAttachmentUpload;
         upload({
-          environmentId,
+          environmentId: sendEnvironmentId,
           image: attachment,
           draftTarget: composerDraftTarget,
         });
@@ -993,7 +1013,12 @@ export function useComposerSend(input: ComposerSendInput) {
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
         return;
       }
-      if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
+      if (
+        getUploadedAttachments({
+          environmentId: sendEnvironmentId,
+          images: composerAttachmentsSnapshot,
+        }) === null
+      ) {
         sendInFlightRef.current = false;
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
         return;
@@ -1028,7 +1053,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
     if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      !readEnvironmentScope(sendEnvironmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
     ) {
       sendInFlightRef.current = false;
@@ -1184,7 +1209,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     const turnAttachmentsPromise = prepareTurnAttachments({
-      environmentId,
+      environmentId: sendEnvironmentId,
       attachments: composerAttachmentsSnapshot,
       usesAttachmentUploads: turnUsesAttachmentUploads,
     });
@@ -1208,7 +1233,9 @@ export function useComposerSend(input: ComposerSendInput) {
     const optimisticAttachments = optimisticMessageAttachments(composerAttachmentsSnapshot);
     if (!shouldQueueBehindActiveRun) {
       anchorNewTurn(
-        scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        scopedThreadKey(
+          scopeThreadRef(routed?.environmentId ?? activeThread.environmentId, threadIdForSend),
+        ),
         messageIdForSend,
       );
     }
@@ -1251,10 +1278,12 @@ export function useComposerSend(input: ComposerSendInput) {
       );
     }
     const sentDraftThreadRef = isLocalDraftThread
-      ? scopeThreadRef(environmentId, threadIdForSend)
+      ? scopeThreadRef(sendEnvironmentId, threadIdForSend)
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
-    if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
+    if (sentDraftThreadRef && routed && draftId) {
+      useComposerDraftStore.getState().markDraftThreadPromoting(draftId, sentDraftThreadRef);
+    } else if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -1301,7 +1330,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
     if (failure === null && compactBeforeSend) {
       const compactResult = await startThreadTurn({
-        environmentId,
+        environmentId: sendEnvironmentId,
         input: {
           threadId: threadIdForSend,
           message: {
@@ -1330,13 +1359,13 @@ export function useComposerSend(input: ComposerSendInput) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
-                      projectId: activeProject.id,
+                      projectId: routed?.projectId ?? activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      worktreePath: routed ? null : activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -1352,16 +1381,26 @@ export function useComposerSend(input: ComposerSendInput) {
                   }
                 : {}),
               // The server runs setup inside the sandbox, so no runSetupScript here.
-              ...(baseRefForCloud ? { prepareCloud: { baseRef: baseRefForCloud } } : {}),
+              ...(baseRefForCloud
+                ? {
+                    prepareCloud: routed
+                      ? // Default branch unknown yet: start fresh from the selected one.
+                        routedCloudLaunch({
+                          selectedBranch: baseRefForCloud,
+                          defaultBranch: routed.defaultBranch ?? baseRefForCloud,
+                        })
+                      : { baseRef: baseRefForCloud },
+                  }
+                : {}),
             }
           : undefined;
       const backgroundThreadRef =
         submissionIntent === "background" && isLocalDraftThread
-          ? scopeThreadRef(environmentId, threadIdForSend)
+          ? scopeThreadRef(sendEnvironmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       const startPromise = startThreadTurn({
-        environmentId,
+        environmentId: sendEnvironmentId,
         input: {
           threadId: threadIdForSend,
           message: {
@@ -1452,7 +1491,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ) {
           handleNewThreadInActiveProject();
         }
-        void recordPromptSent(environmentId);
+        void recordPromptSent(sendEnvironmentId);
       }
     }
 
@@ -1465,7 +1504,7 @@ export function useComposerSend(input: ComposerSendInput) {
             ? newThreadId()
             : threadIdForSend,
         );
-        clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
+        clearBackgroundDraftSubmissionByRef(scopeThreadRef(sendEnvironmentId, threadIdForSend));
       }
       if (
         !composerDraftHasUserContent(

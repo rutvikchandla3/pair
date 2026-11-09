@@ -144,7 +144,7 @@ import {
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
+import { useCloudTarget } from "../state/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
 import { SANDBOX_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
 import { SANDBOX_ACTION_PALETTE_LABELS } from "./sandbox/sandboxActionLabels";
@@ -220,7 +220,7 @@ import {
   reduceCommandPaletteSearchState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
-import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { resolveCloudLaunchTarget, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
@@ -562,6 +562,7 @@ function OpenCommandPaletteDialog(props: {
     defaultProjectRef,
     handleNewThread,
   });
+  const contextualCloudTarget = useCloudTarget(contextualProjectRef);
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: contextualProjectRef,
@@ -1293,12 +1294,7 @@ function OpenCommandPaletteDialog(props: {
       });
       if (
         contextualProjectRef !== null &&
-        cloudAvailability(
-          serverConfigs.get(contextualProjectRef.environmentId)?.settings ?? null,
-          contextualProjectRef.projectId,
-          serverConfigs.get(contextualProjectRef.environmentId)?.environment.capabilities
-            .cloudLaunch === true,
-        ).available
+        resolveCloudLaunchTarget(contextualCloudTarget, undefined) !== null
       ) {
         actionItems.push({
           kind: "action",

@@ -23,8 +23,6 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useAtomValue } from "@effect/atom-react";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -32,6 +30,7 @@ import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type CloudEnvModeItem,
+  type CloudEnvModeRow,
   type EnvMode,
   type EnvironmentOption,
   resolveContextStripLabelsCompact,
@@ -40,6 +39,7 @@ import {
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  pairCloudAddInput,
   resolveCloudEnvModeItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -49,6 +49,10 @@ import {
 } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
+import { addProjectToMachine } from "../lib/addProjectToMachine";
+import { newProjectId } from "../lib/utils";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useCloudTarget } from "../state/sandbox";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { BranchToolbarEnvModeSelector, CloudEnvModeTooltip } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
@@ -79,7 +83,6 @@ import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
-import { environmentCloudLaunchAtom, serverEnvironment } from "~/state/server";
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
@@ -169,6 +172,7 @@ interface RunContextSelectorProps {
   activeWorktreePath: string | null;
   cloudItem: CloudEnvModeItem | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  onCloudRow: (row: CloudEnvModeRow) => void;
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
@@ -193,6 +197,7 @@ const RunContextSelector = memo(function RunContextSelector({
   activeWorktreePath,
   cloudItem,
   onEnvModeChange,
+  onCloudRow,
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
@@ -414,13 +419,15 @@ const RunContextSelector = memo(function RunContextSelector({
         <MenuGroup>
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
-            value={effectiveEnvMode}
+            value={effectiveEnvMode === "cloud" ? (cloudItem?.value ?? "cloud") : effectiveEnvMode}
             onValueChange={(value) => {
               if (value === "previous-worktree") {
                 onUsePreviousWorktree();
                 return;
               }
-              onEnvModeChange(value as EnvMode);
+              const cloudRow = cloudItem?.rows.find((row) => row.value === value);
+              if (cloudRow) onCloudRow(cloudRow);
+              else onEnvModeChange(value as EnvMode);
             }}
           >
             {cloudItem?.only ? null : (
@@ -447,20 +454,20 @@ const RunContextSelector = memo(function RunContextSelector({
                 </MenuRadioItem>
               </>
             )}
-            {cloudItem ? (
-              <CloudEnvModeTooltip reason={cloudItem.disabledReason}>
+            {cloudItem?.rows.map((row) => (
+              <CloudEnvModeTooltip key={row.value} reason={row.reason}>
                 <MenuRadioItem
-                  disabled={envModeLocked || cloudItem.disabledReason !== null}
-                  value="cloud"
+                  disabled={envModeLocked || row.disabled}
+                  value={row.value}
                   closeOnClick
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
                     <CloudIcon className="size-3" />
-                    <span className="min-w-0 truncate">{resolveEnvModeLabel("cloud")}</span>
+                    <span className="min-w-0 truncate">{row.label}</span>
                   </span>
                 </MenuRadioItem>
               </CloudEnvModeTooltip>
-            ) : null}
+            ))}
             {previousWorktreeLabel && !cloudItem?.only ? (
               <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
                 <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
@@ -672,14 +679,58 @@ export const BranchToolbar = memo(function BranchToolbar({
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked =
     envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
-  const environmentSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const cloudLaunch = useAtomValue(environmentCloudLaunchAtom(environmentId));
+  const cloudEnvironmentId = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId)?.cloudEnvironmentId : undefined,
+  );
   const cloudItem = resolveCloudEnvModeItem({
-    cloud: cloudAvailability(environmentSettings, projectId, cloudLaunch),
+    cloud: useCloudTarget(isServerThread ? null : activeProjectRef),
+    project: activeProject,
+    cloudEnvironmentId,
     effectiveEnvMode,
     isServerThread,
     forceNewWorktree,
   });
+  const handleNewThread = useNewThreadHandler();
+  const addingToPairCloud = useRef(false);
+  const addToPairCloud = (target: { environmentId: EnvironmentId; label: string }) => {
+    if (!activeProject || addingToPairCloud.current) return;
+    const newId = newProjectId();
+    const input = pairCloudAddInput({ project: activeProject, target, projectId: newId });
+    if (input === null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not add to ${target.label}`,
+        description: "This project's origin has no https form.",
+      });
+      return;
+    }
+    addingToPairCloud.current = true;
+    void addProjectToMachine(input).then(
+      () => {
+        addingToPairCloud.current = false;
+        // The unsent draft stays here; the new project's composer shows the clone.
+        void handleNewThread(scopeProjectRef(target.environmentId, newId));
+      },
+      (cause: unknown) => {
+        addingToPairCloud.current = false;
+        toastManager.add({
+          type: "error",
+          title: `Could not add to ${target.label}`,
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        });
+      },
+    );
+  };
+  const onCloudRow = (row: CloudEnvModeRow) => {
+    if (row.action.kind === "add") {
+      addToPairCloud(row.action);
+      return;
+    }
+    if (row.action.environmentId !== null) {
+      setDraftThreadContext(draftId ?? threadRef, { cloudEnvironmentId: row.action.environmentId });
+    }
+    onEnvModeChange("cloud");
+  };
 
   const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
@@ -761,6 +812,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             cloudItem={cloudItem}
             onEnvModeChange={onEnvModeChange}
+            onCloudRow={onCloudRow}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -813,6 +865,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             cloudItem={cloudItem}
             onEnvModeChange={onEnvModeChange}
+            onCloudRow={onCloudRow}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -857,6 +910,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               activeWorktreePath={activeWorktreePath}
               cloudItem={cloudItem}
               onEnvModeChange={onEnvModeChange}
+              onCloudRow={onCloudRow}
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
