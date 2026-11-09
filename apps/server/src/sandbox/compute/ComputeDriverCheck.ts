@@ -30,6 +30,32 @@ const GENERATION = 1;
 
 type Step = SandboxDriverCheckResult["steps"][number];
 
+/** What the Test runs in the machine to reach the network. Only tests replace it. */
+export const MachineNetworkProbe = Context.Reference<ChildProcess.Command>(
+  "t3/sandbox/compute/ComputeDriverCheck/MachineNetworkProbe",
+  {
+    defaultValue: () =>
+      ChildProcess.make(
+        "curl",
+        ["-sS", "-o", "/dev/null", "--max-time", "20", "https://github.com"],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      ),
+  },
+);
+
+const networkFailure = (curlExit: number) => {
+  switch (curlExit) {
+    case 6:
+      return "The machine can't look up github.com. Allow outbound DNS (port 53) from this host; under gVisor, machines use 1.1.1.1 and 8.8.8.8.";
+    case 7:
+      return "The machine can't connect to github.com. Allow outbound HTTPS (port 443) from this host.";
+    case 28:
+      return "The machine timed out reaching github.com. Allow outbound DNS (port 53) and HTTPS (port 443) from this host.";
+    default:
+      return `The machine couldn't reach github.com (curl exit ${curlExit}).`;
+  }
+};
+
 /**
  * Settings → Cloud's Test: boots a machine with no thread, so nothing is projected or counted
  * against caps (P16). Its runner's facts name no sandbox record, so `RunnerHubFacts` drops them.
@@ -157,22 +183,22 @@ const make = Effect.gen(function* () {
         failed: () => "The machine's runner did not connect to this server.",
       });
       if (Option.isNone(runner)) return;
-      yield* run(
-        "git",
-        hosts
+      // The network probe reports inside `git`; see `SandboxDriverCheckStep`.
+      const machine = Effect.gen(function* () {
+        const gitFailed = "git --version did not run in the machine.";
+        const host = yield* hosts
           .forPath(`${SANDBOX_ROOT}/${sandboxId}`)
-          .pipe(
-            Effect.flatMap((host) =>
-              host.spawner.string(
-                ChildProcess.make("git", ["--version"], { stdin: "ignore", stderr: "ignore" }),
-              ),
-            ),
-          ),
-        {
-          ok: (output) => output.trim(),
-          failed: () => "git --version did not run in the machine.",
-        },
-      );
+          .pipe(Effect.mapError(() => gitFailed));
+        const version = yield* host.spawner
+          .string(ChildProcess.make("git", ["--version"], { stdin: "ignore", stderr: "ignore" }))
+          .pipe(Effect.mapError(() => gitFailed));
+        const curlExit = yield* host.spawner
+          .exitCode(yield* MachineNetworkProbe)
+          .pipe(Effect.mapError(() => "curl did not run in the machine."));
+        if (curlExit !== 0) return yield* Effect.fail(networkFailure(curlExit));
+        return version.trim();
+      });
+      yield* run("git", machine, { ok: (version) => version, failed: (message) => message });
     });
 
     // Destroying a missing machine succeeds, so a create that never answered is removed by name.

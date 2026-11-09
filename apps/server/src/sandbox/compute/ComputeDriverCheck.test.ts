@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -130,36 +131,51 @@ const bootMachine = Effect.fnUntraced(function* (
 const outline = (result: SandboxDriverCheckResult) =>
   result.steps.map(({ step, ok }) => `${step}:${ok ? "ok" : "failed"}`);
 
-it.effect("boots a machine, reaches its runner, runs git there, then destroys it", () =>
-  Effect.gen(function* () {
-    const { driver, calls } = yield* FakeComputeDriver.make(driverId);
-    yield* Effect.gen(function* () {
-      const check = yield* ComputeDriverCheck.ComputeDriverCheck;
-      const hub = yield* RunnerHub.RunnerHub;
-      const running = yield* check.check({ driverId }).pipe(Effect.forkChild);
-      const input = yield* bootMachine(calls);
-      // The machine boots: its runner enrolls with the bootstrap's secret and says hello.
-      const runner = yield* RunnerHubTesting.makeRunner(input.bootstrap.enrollmentSecret);
-      yield* runner.connect();
-      const destroy = yield* take(calls, "destroy");
-      assert.equal(destroy.ref, input.name);
-      assert.equal(input.tags["pair.sandbox"], input.sandboxId);
-      yield* Deferred.succeed(destroy.reply, undefined);
+it.effect.each([
+  { curlExit: 0, git: "ok", message: /^git version / },
+  { curlExit: 6, git: "failed", message: /look up github\.com/ },
+  { curlExit: 7, git: "failed", message: /connect to github\.com/ },
+  { curlExit: 35, git: "failed", message: /curl exit 35/ },
+] as const)(
+  "boots a machine, reaches its runner, runs git and curl there, then destroys it (curl exit $curlExit)",
+  (row) =>
+    Effect.gen(function* () {
+      const { driver, calls } = yield* FakeComputeDriver.make(driverId);
+      yield* Effect.gen(function* () {
+        const check = yield* ComputeDriverCheck.ComputeDriverCheck;
+        const hub = yield* RunnerHub.RunnerHub;
+        const running = yield* check
+          .check({ driverId })
+          .pipe(
+            Effect.provideService(
+              ComputeDriverCheck.MachineNetworkProbe,
+              ChildProcess.make("sh", ["-c", `exit ${row.curlExit}`]),
+            ),
+            Effect.forkChild,
+          );
+        const input = yield* bootMachine(calls);
+        // The machine boots: its runner enrolls with the bootstrap's secret and says hello.
+        const runner = yield* RunnerHubTesting.makeRunner(input.bootstrap.enrollmentSecret);
+        yield* runner.connect();
+        const destroy = yield* take(calls, "destroy");
+        assert.equal(destroy.ref, input.name);
+        assert.equal(input.tags["pair.sandbox"], input.sandboxId);
+        yield* Deferred.succeed(destroy.reply, undefined);
 
-      const result = yield* Fiber.join(running);
-      assert.deepEqual(outline(result), [
-        "image:ok",
-        "create:ok",
-        "runner:ok",
-        "git:ok",
-        "discard:ok",
-      ]);
-      assert.match(result.steps[3]?.message ?? "", /^git version /);
-      // Revoked: the check's runner keeps no live boot or credential.
-      const status = yield* hub.status(input.sandboxId).pipe(Stream.runHead);
-      assert.equal(Option.getOrThrow(status)._tag, "lost");
-    }).pipe(Effect.provide(layerCheck(driver, layerRealHub)));
-  }).pipe(Effect.scoped),
+        const result = yield* Fiber.join(running);
+        assert.deepEqual(outline(result), [
+          "image:ok",
+          "create:ok",
+          "runner:ok",
+          `git:${row.git}`,
+          "discard:ok",
+        ]);
+        assert.match(result.steps[3]?.message ?? "", row.message);
+        // Revoked: the check's runner keeps no live boot or credential.
+        const status = yield* hub.status(input.sandboxId).pipe(Stream.runHead);
+        assert.equal(Option.getOrThrow(status)._tag, "lost");
+      }).pipe(Effect.provide(layerCheck(driver, layerRealHub)));
+    }).pipe(Effect.scoped),
 );
 
 it.effect("destroys the machine when its runner never connects", () =>

@@ -4649,8 +4649,7 @@ A machine stopped outside Pair is noticed in seconds. Today a booting one waits 
 deadline (10 minutes from `provisioning`, 5 from `waking`) and a ready one waits out the runner's
 120 s lease. The driver **Test** also checks that a machine reaches github.com, which is how gVisor
 DNS went unnoticed. This row closes 16 and 20. Both are about the server not seeing the machine's
-real state, and both change only `apps/server/src/sandbox`, the contracts step list and one web
-label map.
+real state, and both change only `apps/server/src/sandbox` and one web label.
 
 Commits, in order:
 
@@ -4710,8 +4709,10 @@ Commits, in order:
     sentence. A dropped runner whose backend is not running is lost at once. A booting machine's
     backend is checked every 30 s.
   - Commit 5 (20):
-    - `packages/contracts/src/sandbox.ts` `SandboxDriverCheckStep` (188–194) gets `"network"` after
-      `"git"`.
+    - `packages/contracts/src/sandbox.ts` `SandboxDriverCheckStep` (188–194) stays as it is. It is
+      a strict `Schema.Literals` and `v0.1.7-pair.1` shipped, so a `"network"` literal would fail
+      older clients' decode of the whole result (08 forward compatibility, like P15). The probe
+      reports inside `git`, and a comment on the union says why.
     - `apps/server/src/sandbox/compute/ComputeDriverCheck.ts` adds:
 
       ```ts
@@ -4731,25 +4732,26 @@ Commits, in order:
 
       The precedent is `MemberPushEndpoint` (MemberPushNotifier.ts 36).
 
-    - After the `git` step (160–175), `steady` runs `run("network", ...)` on the same host. It
-      calls `host.spawner.exitCode(yield* MachineNetworkProbe)` and fails on a non-zero code; the
+    - The `git` step (160–175) runs the probe after `git --version` on the same host. It calls
+      `host.spawner.exitCode(yield* MachineNetworkProbe)` and fails on a non-zero code; the
       precedent is `SandboxProviderHome.ts` 69–72. `curl` ships in the image (`provision.sh` 35).
       This tests the machine's own resolver, since the check boots through the same `driver.create`
       as a thread's machine, `PAIR_DNS` included (`pair-bootstrap.sh` 20–24).
-    - `apps/web/src/components/settings/CloudSettings.tsx` `STEP_LABELS` (57–63) adds `network:
-      "Reach github.com"`. The `Record<SandboxDriverCheckStep, …>` type makes this required.
+    - `apps/web/src/components/settings/CloudSettings.tsx` `STEP_LABELS` (57–63): `git` reads
+      `Run git and reach github.com`.
     - Docs: in `docs/user/pair-cloud.md` 107 and `docs/user/cloud.md` 29, "checks that it connects
       back and runs git" → "checks that it connects back, runs git and reaches github.com". In
       `docs/product/cloud/implementation/README.md` P16 (131), "the check stops after `git
       --version`" → "the check ends by reaching github.com from the machine" (see For the lead).
 - **Types and services:** `RunnerHub.drops` and the `RunnerDrop` type. `RunnerHubFacts.layer` needs
-  `ComputeDriverRegistry`. Failure code `boot-stopped` (open set). `SandboxDriverCheckStep` gains
-  `"network"` (wire). `ComputeDriverCheck.MachineNetworkProbe` reference.
+  `ComputeDriverRegistry`. Failure code `boot-stopped` (open set). `SANDBOX_BACKEND_MISSING_FAILURE`
+  and the `ComputeDriverCheck.MachineNetworkProbe` reference. No wire change.
 - **Copy:**
   - A booting thread whose machine was stopped (thread error, via `CloudLaunchError` sandbox-failed):
     after up to 10 minutes `The machine did not connect in time.` → within 30 s `The machine stopped
     before it was ready.`
-  - Settings → Cloud → Test, new row `Reach github.com`. Failure messages by curl exit code:
+  - Settings → Cloud → Test, the `Run git --version` row reads `Run git and reach github.com`.
+    Failure messages by curl exit code:
     - 6: `The machine can't look up github.com. Allow outbound DNS (port 53) from this host; under
       gVisor, machines use 1.1.1.1 and 8.8.8.8.`
     - 7: `The machine can't connect to github.com. Allow outbound HTTPS (port 443) from this host.`
@@ -4808,15 +4810,12 @@ Commits, in order:
     `["sandbox.stop", "sandbox.release-waiters"]`. "a stopped boot after the runner attached":
     `ready`, then `wrong-state`. Add `bootStopped` beside `bootTimeout` (60).
 - Commit 5, `apps/server/src/sandbox/compute/ComputeDriverCheck.test.ts`:
-  - The happy-path case (133) gets `Effect.provideService(ComputeDriverCheck.MachineNetworkProbe,
-    ChildProcess.make("sh", ["-c", "exit 0"]))`. Its outline adds `"network:ok"` before
-    `"discard:ok"`.
-  - New `it.effect.each([{ code: 6, message: /look up github\.com/ }, { code: 7, message:
-    /connect to github\.com/ }, { code: 35, message: /curl exit 35/ }])("fails the network step
-    when curl exits $code, then discards the machine")`. It uses the real runner as in 133 with
-    `sh -c "exit ${code}"`. It asserts the outline `[..., "git:ok", "network:failed",
-    "discard:ok"]` and the step's message.
-  - Fails on `feat/pair`: no `network` step.
+  - The happy-path case (133) becomes an `it.effect.each` over curl exits 0, 6, 7 and 35, each
+    through `Effect.provideService(ComputeDriverCheck.MachineNetworkProbe, ChildProcess.make("sh",
+    ["-c", `exit ${curlExit}`]))` and the real runner. It asserts the outline `[..., "git:ok" or
+    "git:failed", "discard:ok"]` and the `git` step's message: the git version, then
+    `/look up github\.com/`, `/connect to github\.com/` and `/curl exit 35/`.
+  - Fails on `feat/pair`: no `MachineNetworkProbe`.
   - Capture: Settings → Cloud → Test passing, and failing on a machine with broken DNS.
 
 **Verify.**
@@ -4827,8 +4826,8 @@ Commits, in order:
   apps/server/src/sandbox/lifecycle/SandboxDecisions.test.ts
   apps/server/src/sandbox/compute/ComputeDriverCheck.test.ts
   apps/web/src/components/settings/CloudSettings.logic.test.ts`.
-- `vp run typecheck` for `packages/contracts`, `apps/server`, `apps/web` and `apps/mobile`. Mobile
-  only follows the contracts change; it has no driver Test.
+- `vp run typecheck` for `packages/contracts`, `apps/server` and `apps/web`. Mobile has no driver
+  Test, and the contracts change is a comment.
 - `vp run check:changed`.
 - The lead, on the VM or a cloud-only dev server with the Docker driver:
   - `docker stop` a ready machine mid-turn: the thread errors within about 10 s, not 2 minutes.

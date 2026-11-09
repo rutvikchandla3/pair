@@ -104,10 +104,10 @@ app. It works once.
 ## Turn on Cloud
 
 In **Settings → Cloud**, choose **Add Docker driver**, leave **Docker host** empty, and choose
-**Test**. The test starts a machine, checks that it connects back and runs git, and removes it. The
-driver's row under **Overview** then says **gVisor**; on plain Docker it says **Plain Docker
-(runc)** and the page warns. [Turn on Cloud](./cloud.md#turn-on-cloud) covers other Docker
-hosts, machine sizes, the base image and variables.
+**Test**. The test starts a machine, checks that it connects back, runs git and reaches github.com,
+and removes it. The driver's row under **Overview** then says **gVisor**; on plain Docker it says
+**Plain Docker (runc)** and the page warns. [Turn on Cloud](./cloud.md#turn-on-cloud) covers other
+Docker hosts, machine sizes, the base image and variables.
 
 ## Connect GitHub
 
