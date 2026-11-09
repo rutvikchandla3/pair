@@ -3886,6 +3886,14 @@ found the account gone from settings afterwards; or sign-in begins before
 `ProviderInstanceRegistry` has built the new instance, so `getController` finds nothing. Fix it
 with a failing test in the owning service's test. **Needs:** M1. **Unblocks:** G2 step 13 (a managed Codex turn), so schedule it early in M2.
 
+Diagnosed from code only; the root cause is not confirmed. The second lead does not hold for
+**Add provider**: the dialog mounts sign-in only once the instance's provider snapshot has `setup`,
+and snapshots come only from instances the registry has built. A watcher reload after the create
+also yields an equal config, so the instance is not rebuilt. The first lead matches both symptoms,
+because a whole `providerInstances` map without the account deletes it from settings and the
+registry. The add dialog and onboarding's mode switch now send `create` and `upsert` mutations, so
+no web code writes the whole map. Reproduce in a real client to confirm.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,

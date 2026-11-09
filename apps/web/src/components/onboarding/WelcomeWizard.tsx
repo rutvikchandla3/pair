@@ -86,7 +86,6 @@ import { providerClients } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
-import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
@@ -897,7 +896,7 @@ function OnboardingCodexSetup({
   readonly onAutoStartConsumed: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
+  const update = useAtomCommand(serverEnvironment.mutateProviderInstance, "Codex setup settings");
   const instanceId =
     createdAccount?.instanceId ??
     provider?.instanceId ??
@@ -918,8 +917,9 @@ function OnboardingCodexSetup({
     void update({
       environmentId,
       input: {
-        patch: buildProviderInstanceUpdatePatch({
-          settings,
+        patch: {},
+        providerInstanceMutation: {
+          operation: "upsert",
           instanceId,
           instance: {
             ...instance,
@@ -932,7 +932,7 @@ function OnboardingCodexSetup({
               setupMode,
             },
           },
-        }),
+        },
       },
     });
   };
