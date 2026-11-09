@@ -262,7 +262,7 @@ describe("routedCloudLaunch", () => {
 
 describe("cloudBranchCheck", () => {
   const tracked = { upstreamRef: "refs/remotes/origin/feature", isDefault: false };
-  const head = { refName: "feature", aheadCount: 0 };
+  const head = { refName: "feature", aheadCount: 0, hasUpstream: true };
   it.each([
     {
       name: "no upstream",
@@ -273,7 +273,7 @@ describe("cloudBranchCheck", () => {
     {
       name: "ahead by 2",
       ref: tracked,
-      status: { refName: "feature", aheadCount: 2 },
+      status: { refName: "feature", aheadCount: 2, hasUpstream: true },
       expected: { kind: "warn", message: "2 commits not pushed won't be included." },
     },
     {
@@ -297,15 +297,27 @@ describe("cloudBranchCheck", () => {
     {
       name: "the default branch",
       ref: { isDefault: true },
-      status: { refName: "feature", aheadCount: 3 },
+      status: { refName: "feature", aheadCount: 3, hasUpstream: true },
       expected: { kind: "ok" },
     },
     { name: "a clean pushed branch", ref: tracked, status: head, expected: { kind: "ok" } },
     {
       name: "a branch that isn't checked out while HEAD is ahead",
       ref: tracked,
-      status: { refName: "main", aheadCount: 4 },
+      status: { refName: "main", aheadCount: 4, hasUpstream: true },
       expected: { kind: "ok" },
+    },
+    {
+      name: "a branch that isn't checked out with unpushed commits",
+      ref: { ...tracked, aheadCount: 1 },
+      status: { refName: "main", aheadCount: 0, hasUpstream: true },
+      expected: { kind: "warn", message: "1 commit not pushed won't be included." },
+    },
+    {
+      name: "the checked-out branch before its remote status loads",
+      ref: { ...tracked, aheadCount: 2 },
+      status: { refName: "feature", aheadCount: 0, hasUpstream: false },
+      expected: { kind: "warn", message: "2 commits not pushed won't be included." },
     },
   ])("checks $name before a cloud send", ({ ref, status, expected }) => {
     expect(cloudBranchCheck({ branch: "feature", ref, status })).toEqual(expected);

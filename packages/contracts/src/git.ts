@@ -86,6 +86,8 @@ export const VcsRef = Schema.Struct({
   remoteName: Schema.optional(TrimmedNonEmptyStringSchema),
   // Full Git ref, for example refs/remotes/origin/feature.
   upstreamRef: Schema.optional(TrimmedNonEmptyStringSchema),
+  // Commits on this local branch that its upstream lacks. Absent without an upstream that exists.
+  aheadCount: Schema.optional(NonNegativeInt),
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),

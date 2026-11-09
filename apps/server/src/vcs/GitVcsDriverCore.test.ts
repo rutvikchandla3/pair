@@ -4250,6 +4250,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("counts each local branch's unpushed commits, checked out or not", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["switch", "-c", "feature"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "one"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "two"]);
+        yield* git(cwd, ["switch", initialBranch]);
+        yield* git(cwd, ["branch", "--no-track", "local-only"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const { refs } = yield* driver.listRefs({ cwd });
+        const byName = new Map(refs.map((ref) => [ref.name, ref]));
+        assert.equal(byName.get("feature")?.aheadCount, 2);
+        assert.equal(byName.get(initialBranch)?.aheadCount, 0);
+        const localOnly = byName.get("local-only");
+        assert.ok(localOnly);
+        assert.equal("aheadCount" in localOnly, false);
+      }),
+    );
+
     it.effect("marks the origin default ref as default when no local copy exists", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

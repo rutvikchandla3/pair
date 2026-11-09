@@ -306,6 +306,10 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   return worktreePaths;
 }
 
+// `%(upstream:track,nobracket)`: "", "ahead 2", "behind 1", "ahead 2, behind 1" or "gone".
+const parseUpstreamAhead = (track: string): number | undefined =>
+  track === "gone" ? undefined : Number(/ahead (\d+)/.exec(track)?.[1] ?? 0);
+
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");
   if (parts.length === 0) return [];
@@ -3998,7 +4002,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           [
             ...gitDirArgs,
             "for-each-ref",
-            "--format=%(refname)%09%(committerdate:unix)%09%(symref)%09%(upstream)",
+            "--format=%(refname)%09%(committerdate:unix)%09%(symref)%09%(upstream)%09%(upstream:track,nobracket)",
             "refs/heads",
             "refs/remotes",
           ],
@@ -4068,13 +4072,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const line of refsResult.stdout.split("\n")) {
       if (line.length === 0) continue;
-      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef] = line.split("\t");
+      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef, track] = line.split("\t");
       if (!fullRefName || symbolicTarget) continue;
       const parsedLastCommit = Number.parseInt(lastCommitRaw ?? "0", 10);
       const lastCommit = Number.isFinite(parsedLastCommit) ? parsedLastCommit : 0;
 
       if (fullRefName.startsWith("refs/heads/")) {
         const name = fullRefName.slice("refs/heads/".length);
+        const aheadCount = upstreamRef ? parseUpstreamAhead(track ?? "") : undefined;
         localBranches.push({
           ref: {
             name,
@@ -4083,6 +4088,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             isDefault: name === defaultBranch,
             worktreePath: worktreeMap.get(name) ?? null,
             ...(upstreamRef ? { upstreamRef } : {}),
+            ...(aheadCount === undefined ? {} : { aheadCount }),
           },
           lastCommit,
         });

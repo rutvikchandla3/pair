@@ -2378,8 +2378,8 @@ whole web surface of 01 J2 and has one client pass.
       | { readonly kind: "warn"; readonly message: string };
     export function cloudBranchCheck(input: {
       readonly branch: string;
-      readonly ref: Pick<VcsRef, "upstreamRef" | "isDefault"> | null;
-      readonly status: Pick<VcsStatusResult, "refName" | "aheadCount"> | null;
+      readonly ref: Pick<VcsRef, "upstreamRef" | "isDefault" | "aheadCount"> | null;
+      readonly status: Pick<VcsStatusResult, "refName" | "aheadCount" | "hasUpstream"> | null;
     }): CloudBranchCheck;
     ```
     Both names drop a remote prefix (`origin/feature` becomes `feature`). Equal names give
@@ -2387,9 +2387,10 @@ whole web surface of 01 J2 and has one client pass.
     `cloudBranchCheck` reads the selected branch's own `VcsRef` (git.ts 83), not the checked-out
     HEAD's status. The default branch (`isDefault`) is `ok`. No `upstreamRef` (88) is `block`,
     "Push <branch> first." An `upstreamRef` other than `refs/remotes/origin/<branch>` is `warn`,
-    "<branch> tracks <upstream>, not origin/<branch>. Pair Cloud looks on origin." `aheadCount`
-    (248) counts only when `status.refName` is the branch, since status describes HEAD; above zero
-    it is `warn`, "<n> commits not pushed won't be included."
+    "<branch> tracks <upstream>, not origin/<branch>. Pair Cloud looks on origin." The ahead
+    count is HEAD's status `aheadCount` (248) when `status.refName` is the branch and the status
+    knows its upstream; otherwise it is the ref's own `aheadCount` (2.52). Above zero it is
+    `warn`, "<n> commits not pushed won't be included."
   - `apps/web/src/components/ChatView.logic.ts`: `planComposerTurn` (1406) is unchanged; its
     `baseRefForCloud` (1437) is the selected branch. `useComposerSend.ts` (1355): in routed mode,
     `prepareCloud` is `routedCloudLaunch({ selectedBranch: baseRefForCloud, defaultBranch })`. The

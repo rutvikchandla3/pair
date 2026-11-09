@@ -140,14 +140,15 @@ export type CloudBranchCheck =
   | { readonly kind: "warn"; readonly message: string };
 
 /**
- * Whether Pair Cloud will find `branch` on origin, from the selected branch's own ref. `status`
- * describes HEAD, so its ahead count counts only when HEAD is that branch. A null ref (refs not
- * loaded, or a remote-only branch) is `ok`: the server's own check still refuses an unpushed one.
+ * Whether Pair Cloud will find `branch` on origin, from the selected branch's own ref. HEAD's
+ * status counts for HEAD once it knows the upstream; any other branch uses its ref's own count. A
+ * null ref (refs not loaded, or a remote-only branch) is `ok`: the server's own check still
+ * refuses an unpushed one.
  */
 export function cloudBranchCheck(input: {
   readonly branch: string;
-  readonly ref: Pick<VcsRef, "upstreamRef" | "isDefault"> | null;
-  readonly status: Pick<VcsStatusResult, "refName" | "aheadCount"> | null;
+  readonly ref: Pick<VcsRef, "upstreamRef" | "isDefault" | "aheadCount"> | null;
+  readonly status: Pick<VcsStatusResult, "refName" | "aheadCount" | "hasUpstream"> | null;
 }): CloudBranchCheck {
   const branch = withoutOrigin(input.branch);
   if (input.ref === null || input.ref.isDefault) return { kind: "ok" };
@@ -161,7 +162,10 @@ export function cloudBranchCheck(input: {
       message: `${branch} tracks ${shown}, not ${ORIGIN_PREFIX}${branch}. Pair Cloud looks on origin.`,
     };
   }
-  const ahead = input.status?.refName === branch ? input.status.aheadCount : 0;
+  const ahead =
+    input.status?.refName === branch && input.status.hasUpstream
+      ? input.status.aheadCount
+      : (input.ref.aheadCount ?? 0);
   if (ahead > 0) {
     return {
       kind: "warn",
