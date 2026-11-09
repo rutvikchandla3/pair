@@ -9,6 +9,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as LiveTeamImageBuild from "../sandbox/image/LiveTeamImageBuild.ts";
 
 export interface DrainState {
   readonly since: DateTime.Utc;
@@ -28,7 +29,10 @@ export class ServerDrain extends Context.Service<
     /** Idempotent: a second start keeps the first one's state. */
     readonly start: (actorId: MemberId | null) => Effect.Effect<DrainState>;
     readonly cancel: Effect.Effect<void>;
-    /** Emits on start and on each run change; completes when no turn is running or on a cancel. */
+    /**
+     * Emits on start and on each run or team image build change; completes when no turn or build
+     * is running, or on a cancel.
+     */
     readonly watch: Stream.Stream<
       ServerDrainStatus,
       ProjectionStore.ProjectionStoreV2Error | EventSink.EventSinkV2Error
@@ -41,6 +45,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const events = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
     const state = yield* SubscriptionRef.make<DrainState | null>(null);
 
     const start = Effect.fn("ServerDrain.start")(function* (actorId: MemberId | null) {
@@ -66,14 +71,24 @@ export const layer = Layer.effect(
         // The sequence is read before the first count, so a run that ends between them still
         // sends the event that re-counts.
         const afterSequence = yield* events.latestSequence();
-        return Stream.concat(
-          Stream.succeed(undefined),
+        // The build's changes start with the current value, which makes the first count.
+        return Stream.merge(
+          liveBuild.changes,
           events.stream({ afterSequence, eventType: "run.updated" }),
         ).pipe(
-          Stream.mapEffect(() => projections.countRunningRuns()),
-          Stream.changes,
-          Stream.map((runningTurns) => ({ since: drain.since, runningTurns })),
-          Stream.takeUntil((status) => status.runningTurns === 0),
+          Stream.mapEffect(() =>
+            Effect.all({
+              runningTurns: projections.countRunningRuns(),
+              runningBuilds: liveBuild.current.pipe(
+                Effect.map((build) => (build === null ? 0 : 1)),
+              ),
+            }),
+          ),
+          Stream.changesWith(
+            (a, b) => a.runningTurns === b.runningTurns && a.runningBuilds === b.runningBuilds,
+          ),
+          Stream.map((counts) => ({ since: drain.since, ...counts })),
+          Stream.takeUntil((status) => status.runningTurns === 0 && status.runningBuilds === 0),
           Stream.interruptWhen(cancelled),
         );
       }),
@@ -89,7 +104,10 @@ export const layer = Layer.effect(
   }),
 );
 
-/** The real state over stub stores, for tests that start and cancel but never `watch`. */
+/**
+ * The real state over stub stores, for tests that start and cancel but never `watch`. It exposes
+ * its `LiveTeamImageBuild`, so admission in the same test counts the same build.
+ */
 export const layerTest = layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -97,4 +115,5 @@ export const layerTest = layer.pipe(
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
     ),
   ),
+  Layer.provideMerge(LiveTeamImageBuild.layer),
 );

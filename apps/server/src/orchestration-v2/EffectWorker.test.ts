@@ -11,6 +11,7 @@ import {
   RunId,
   RuntimeRequestId,
   SandboxId,
+  TeamImageBuildId,
   ThreadId,
   VcsProcessExitError,
 } from "@t3tools/contracts";
@@ -197,7 +198,10 @@ it.effect.each([
             Option.some<EffectOutbox.ClaimedEffectV2>({
               id: "effect:worker-team-image",
               commandId: CommandId.make("command:worker-team-image"),
-              request: { type: "team-image.build.launch", imageBuildId: "build-1" },
+              request: {
+                type: "team-image.build.launch",
+                imageBuildId: TeamImageBuildId.make("tib_00000000000000000011"),
+              },
               status: "running",
               attemptCount: count,
               availableAt: now,

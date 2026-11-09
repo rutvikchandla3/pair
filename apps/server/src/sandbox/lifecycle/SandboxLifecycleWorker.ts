@@ -27,6 +27,7 @@ import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ComputeDriver } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as LiveTeamImageBuild from "../image/LiveTeamImageBuild.ts";
 import * as CheckpointMirror from "../mirror/CheckpointMirror.ts";
 import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
@@ -111,6 +112,7 @@ export const makeSweep = Effect.gen(function* () {
   const activity = yield* SandboxActivity.SandboxActivity;
   const settings = yield* ServerSettingsService;
   const drain = yield* ServerDrain.ServerDrain;
+  const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const mirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
   const due = DueHint.make();
@@ -122,6 +124,8 @@ export const makeSweep = Effect.gen(function* () {
   // A raised cap sends no event, and a full queue's hint never comes due on its own.
   const settingsChanges = yield* settings.subscribeChanges;
   yield* forkParked(Stream.runForEach(settingsChanges, () => due.invalidate));
+  // A team image build frees its slot without a domain event.
+  yield* forkParked(Stream.runForEach(liveBuild.changes, () => due.invalidate));
   // A cancel sends no domain event, so the first sweep after a drain runs even when idle.
   let sawDrain = false;
 

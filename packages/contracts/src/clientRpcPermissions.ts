@@ -24,6 +24,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   // A check boots a machine on the server's compute, as storage cleanup acts on its disk.
   [WS_METHODS.sandboxCheckDriver]: AuthSettingsWriteScope,
+  // A build boots a machine and changes what every new cloud machine starts from.
+  [WS_METHODS.teamImageSaveRecipe]: AuthSettingsWriteScope,
+  [WS_METHODS.teamImageStartBuild]: AuthSettingsWriteScope,
+  [WS_METHODS.teamImageCancelBuild]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
   // Creates a worktree and a thread here.

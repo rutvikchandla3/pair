@@ -98,6 +98,7 @@ import Migration0091 from "./Migrations/091_ScheduledTaskCloudRuns.ts";
 import Migration0092 from "./Migrations/092_PeerLinkCloudLaunch.ts";
 import Migration0093 from "./Migrations/093_StagedCloudImports.ts";
 import Migration0094 from "./Migrations/094_OutboxAggregateKey.ts";
+import Migration0095 from "./Migrations/095_TeamImages.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -195,6 +196,7 @@ const migrationEntries = [
   [92, "PeerLinkCloudLaunch", Migration0092],
   [93, "StagedCloudImports", Migration0093],
   [94, "OutboxAggregateKey", Migration0094],
+  [95, "TeamImages", Migration0095],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

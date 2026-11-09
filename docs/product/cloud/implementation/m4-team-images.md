@@ -619,8 +619,8 @@ yet: the launch effect has no implementation until 4.14, so `startBuild` refuses
     No `orchestration_v2_` prefix: these tables are the source of truth and are never rebuilt
     from events (see the track notes).
   - New `apps/server/src/sandbox/image/TeamImageCommands.ts`, pure, no Effect services:
-    - `TeamImageState` (the latest revision number, the live build or null, the active build id,
-      the next number, each build's status).
+    - `TeamImageState` (the latest revision number, the next number, the live build or null, and
+      the build the command names or null); the service reads only those rows.
     - `TeamImageCommand`, server-internal, each with `commandId`:
       - `team-image.recipe.save { baseRevision, recipe, savedBy }`
       - `team-image.build.request { imageBuildId, machineSandboxId, recipeRevision, driverId,
@@ -653,7 +653,8 @@ yet: the launch effect has no implementation until 4.14, so `startBuild` refuses
       - Machine-destroyed records the time only.
     - Events, each carrying the whole build or revision, so the projection writes rows and the
       service publishes changes without re-reading: `team-image.recipe-saved {
-      TeamImageRecipeRevision }` and `team-image.build-updated { TeamImageBuild }`.
+      TeamImageRecipeRevision }` and `team-image.build-updated { TeamImageBuild, machine }`, where
+      `machine` is `{ sandboxId, driverRef, destroyedAt }` (the build machine's columns).
   - New `apps/server/src/sandbox/image/TeamImageStore.ts` (`SqlClient`, `SqlSchema`,
     `PersistenceSqlError`, as `RunnerGrants.ts`): `state`, `latestRevision`, `readRevision(n)`,
     `build(id)`, `recentBuilds(limit)`, `liveBuild`, `machines` (builds whose machine is not
@@ -666,8 +667,9 @@ yet: the launch effect has no implementation until 4.14, so `startBuild` refuses
     - `dispatch(command)`: under the service's one `Semaphore`, return the receipt of a replayed
       `commandId` (as `ProjectService.commit`, 261–330), else decide, then
       `EventSinkV2.commitTeamImageCommand` with `apply: store.apply(events)`, or
-      `commitRejectedTeamImageCommand`. After commit, set `LiveTeamImageBuild` and publish the
-      change. Effects call `dispatch`; so do 4.14's fibers and 4.19's tools.
+      `commitRejectedTeamImageCommand`. A no-op step commits nothing. After commit, set
+      `LiveTeamImageBuild` and publish the change. Effects call `dispatch`; so do 4.14's fibers and
+      4.19's tools.
     - `snapshot` and `changes` (a `Stream` that emits the snapshot, then one per committed
       command), built from the store. `keepSucceeded` comes from settings (absent: 5).
     - `saveRecipe({ actorId, input })`, `startBuild({ actorId, input })`, `cancelBuild({ actorId,
@@ -703,8 +705,9 @@ yet: the launch effect has no implementation until 4.14, so `startBuild` refuses
     subscribe and readRecipe under `AuthOrchestrationReadScope`, as `sandboxOverview` (91).
   - `apps/server/src/ws.ts`: resolve `TeamImageService` beside the sandbox services (1593); one
     line per handler beside 2913–2917, passing `actorId: currentSession.memberId`.
-  - `apps/server/src/server.ts`: provide the store, `LiveTeamImageBuild` (below `SandboxAdmission`
-    and `ServerDrain`), the service and the worker, on every server; the service answers
+  - `apps/server/src/orchestration-v2/runtimeLayer.ts` (`layerProduction`, which `server.ts`
+    provides): the store, `LiveTeamImageBuild` (one reference, below `SandboxAdmission` and
+    `ServerDrain`), the service and the worker, on every server; the service answers
     `not-available` when `ServerConfig.cloudOnly` is false.
 - **Types and services:** `TeamImageService` (the stream's only writer), `TeamImageStore`,
   `LiveTeamImageBuild`, `TeamImageWorker`; the decider is plain functions.

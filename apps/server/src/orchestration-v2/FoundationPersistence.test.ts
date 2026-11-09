@@ -25,6 +25,7 @@ import {
   RunAttemptId,
   RunId,
   SandboxId,
+  TeamImageBuildId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1463,7 +1464,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         {
           id: "effect:foundation-team-image-commit:old-launch",
           commandId: CommandId.make("command:foundation-team-image-commit:old"),
-          request: { type: "team-image.build.launch", imageBuildId: "build-old" },
+          request: {
+            type: "team-image.build.launch",
+            imageBuildId: TeamImageBuildId.make("tib_00000000000000000001"),
+          },
         },
       ]);
       const commandId = CommandId.make("command:foundation-team-image-commit");
@@ -1476,14 +1480,17 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             eventId: EventId.make("event:foundation-team-image-commit"),
             type: "team-image.build.requested",
             occurredAt: DateTime.formatIso(now),
-            payload: { imageBuildId: "build-new" },
+            payload: { imageBuildId: "tib_00000000000000000002" },
           },
         ],
         effects: [
           {
             id: "effect:foundation-team-image-commit:new-launch",
             commandId,
-            request: { type: "team-image.build.launch", imageBuildId: "build-new" },
+            request: {
+              type: "team-image.build.launch",
+              imageBuildId: TeamImageBuildId.make("tib_00000000000000000002"),
+            },
           },
         ],
         cancelUnsettledEffects: {
@@ -2426,12 +2433,18 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         {
           id: "effect:foundation-team-image-key:a-launch",
           commandId,
-          request: { type: "team-image.build.launch", imageBuildId: "build-1" },
+          request: {
+            type: "team-image.build.launch",
+            imageBuildId: TeamImageBuildId.make("tib_00000000000000000011"),
+          },
         },
         {
           id: "effect:foundation-team-image-key:b-launch",
           commandId,
-          request: { type: "team-image.build.launch", imageBuildId: "build-2" },
+          request: {
+            type: "team-image.build.launch",
+            imageBuildId: TeamImageBuildId.make("tib_00000000000000000012"),
+          },
         },
         {
           id: "effect:foundation-team-image-key:c-title",

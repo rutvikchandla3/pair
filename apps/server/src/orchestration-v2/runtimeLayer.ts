@@ -61,6 +61,10 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
+import * as LiveTeamImageBuild from "../sandbox/image/LiveTeamImageBuild.ts";
+import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
+import * as TeamImageStore from "../sandbox/image/TeamImageStore.ts";
+import * as TeamImageWorker from "../sandbox/image/TeamImageWorker.ts";
 import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "../sandbox/lifecycle/SandboxLifecycleWorker.ts";
@@ -226,14 +230,32 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+// One per process: admission, the drain and the team image service see the same build.
+const layerLiveTeamImageBuild = LiveTeamImageBuild.layer;
+
 // One per process: admission, the sweep, `t3 drain` and the self-update share one drain state.
 const layerServerDrainProvided = ServerDrain.layer.pipe(
-  Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
+  Layer.provide(Layer.mergeAll(layerEventSink, ProjectionStore.layer, layerLiveTeamImageBuild)),
 );
 
 // One per process: the orchestrator and the lifecycle worker share its lock and start bucket.
 const layerSandboxAdmissionProvided = SandboxAdmission.layer.pipe(
-  Layer.provide(Layer.merge(ProjectionStore.layer, layerServerDrainProvided)),
+  Layer.provide(
+    Layer.mergeAll(ProjectionStore.layer, layerServerDrainProvided, layerLiveTeamImageBuild),
+  ),
+);
+
+// TeamState, settings and the server config come from the server.
+const layerTeamImageServiceProvided = TeamImageService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      TeamImageStore.layer,
+      layerLiveTeamImageBuild,
+      layerSandboxAdmissionProvided,
+      layerEventSink,
+      layerCommandReceiptStoreProvided,
+    ),
+  ),
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
@@ -456,10 +478,15 @@ export const layerProduction = Layer.mergeAll(
         layerOrchestratorProvided,
         layerSandboxAdmissionProvided,
         layerServerDrainProvided,
+        layerLiveTeamImageBuild,
       ),
     ),
   ),
   layerServerDrainProvided,
+  TeamImageWorker.layer.pipe(
+    Layer.provideMerge(layerTeamImageServiceProvided),
+    Layer.provide(Layer.merge(TeamImageStore.layer, layerLiveTeamImageBuild)),
+  ),
   SandboxReconciler.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

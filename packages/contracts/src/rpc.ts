@@ -15,6 +15,16 @@ import {
   SandboxViewingInput,
 } from "./sandbox.ts";
 import {
+  TeamImageBuild,
+  TeamImageBuildRef,
+  TeamImageError,
+  TeamImageReadRecipeInput,
+  TeamImageRecipeRevision,
+  TeamImageSaveRecipeInput,
+  TeamImageSnapshot,
+  TeamImageStartBuildInput,
+} from "./sandboxImage.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -580,6 +590,11 @@ export const WS_METHODS = {
   sandboxOverview: "sandbox.overview",
   sandboxViewing: "sandbox.viewing",
   sandboxCheckDriver: "sandbox.checkDriver",
+  teamImageSubscribe: "teamImage.subscribe",
+  teamImageSaveRecipe: "teamImage.saveRecipe",
+  teamImageStartBuild: "teamImage.startBuild",
+  teamImageCancelBuild: "teamImage.cancelBuild",
+  teamImageReadRecipe: "teamImage.readRecipe",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -1068,6 +1083,39 @@ const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
   payload: SandboxDriverCheckInput,
   success: SandboxDriverCheckResult,
   error: Schema.Union([SandboxDriverCheckError, EnvironmentAuthorizationError]),
+});
+
+const TeamImageRpcError = Schema.Union([TeamImageError, EnvironmentAuthorizationError]);
+
+const WsTeamImageSubscribeRpc = Rpc.make(WS_METHODS.teamImageSubscribe, {
+  payload: Schema.Struct({}),
+  success: TeamImageSnapshot,
+  error: TeamImageRpcError,
+  stream: true,
+});
+
+const WsTeamImageSaveRecipeRpc = Rpc.make(WS_METHODS.teamImageSaveRecipe, {
+  payload: TeamImageSaveRecipeInput,
+  success: TeamImageRecipeRevision,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageStartBuildRpc = Rpc.make(WS_METHODS.teamImageStartBuild, {
+  payload: TeamImageStartBuildInput,
+  success: TeamImageBuild,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageCancelBuildRpc = Rpc.make(WS_METHODS.teamImageCancelBuild, {
+  payload: TeamImageBuildRef,
+  success: Schema.Void,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageReadRecipeRpc = Rpc.make(WS_METHODS.teamImageReadRecipe, {
+  payload: TeamImageReadRecipeInput,
+  success: TeamImageRecipeRevision,
+  error: TeamImageRpcError,
 });
 
 const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
@@ -2321,6 +2369,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxOverviewRpc,
   WsSandboxViewingRpc,
   WsSandboxCheckDriverRpc,
+  WsTeamImageSubscribeRpc,
+  WsTeamImageSaveRecipeRpc,
+  WsTeamImageStartBuildRpc,
+  WsTeamImageCancelBuildRpc,
+  WsTeamImageReadRecipeRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

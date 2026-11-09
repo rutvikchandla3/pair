@@ -287,6 +287,7 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ComputeDriverCheck from "./sandbox/compute/ComputeDriverCheck.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
+import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1594,6 +1595,7 @@ export const layerWsRpc = (
       const sandboxWake = yield* SandboxWake;
       const serverDrain = yield* ServerDrain.ServerDrain;
       const computeDriverCheck = yield* ComputeDriverCheck.ComputeDriverCheck;
+      const teamImages = yield* TeamImageService.TeamImageService;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
@@ -2923,6 +2925,14 @@ export const layerWsRpc = (
         [WS_METHODS.sandboxViewing]: ({ threadId }) =>
           sandboxWake.viewed({ threadId, actorId: currentSession.memberId }),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
+        [WS_METHODS.teamImageSubscribe]: (_input) => teamImages.changes,
+        [WS_METHODS.teamImageSaveRecipe]: (input) =>
+          teamImages.saveRecipe({ actorId: currentSession.memberId, input }),
+        [WS_METHODS.teamImageStartBuild]: (input) =>
+          teamImages.startBuild({ actorId: currentSession.memberId, input }),
+        [WS_METHODS.teamImageCancelBuild]: ({ imageBuildId }) =>
+          teamImages.cancelBuild({ actorId: currentSession.memberId, imageBuildId }),
+        [WS_METHODS.teamImageReadRecipe]: ({ revision }) => teamImages.readRecipeRevision(revision),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>

@@ -19,6 +19,7 @@ import {
   type RunId,
   SandboxId,
   type ServerSettings as ServerSettingsSnapshot,
+  TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -73,6 +74,7 @@ import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { GitHubAppInstallationTokens } from "../credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
+import * as LiveTeamImageBuild from "../image/LiveTeamImageBuild.ts";
 import {
   CheckpointMirror,
   sandboxBranchRef,
@@ -111,6 +113,7 @@ const makeLayerTest = (
     | ProjectionStore.ProjectionStoreV2
     | ServerSettings.ServerSettingsService
     | ServerDrain.ServerDrain
+    | LiveTeamImageBuild.LiveTeamImageBuild
   >,
 ) => {
   // One instance, so the admission's cap reads the settings a test updates.
@@ -2198,6 +2201,38 @@ it.layer(layerAdmissionTest(2))("sandbox admission of shared sandboxes", (it) =>
       const third = yield* provisioned("shared-c");
       assert.equal((yield* getSandbox(third.sandboxId))?.admission?.reason, "team-cap");
     }),
+  );
+});
+
+it.layer(layerAdmissionTest(1))("sandbox admission with a team image build", (it) => {
+  it.effect("a live build on the driver holds a slot until it ends", () =>
+    Effect.gen(function* () {
+      const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
+      yield* liveBuild.set({
+        imageBuildId: TeamImageBuildId.make("tib_00000000000000000001"),
+        driverId: ComputeDriverId.make("docker"),
+      });
+      const held = yield* provisioned("build-held");
+      assert.equal((yield* getSandbox(held.sandboxId))?.admission?.reason, "team-cap");
+
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(
+          Layer.merge(
+            FakeComputeDriver.layerRegistry((yield* AdmissionDriver).fake.driver),
+            layerCloudOnly,
+          ),
+        ),
+        Effect.provideServiceEffect(
+          SandboxActivity.SandboxActivity,
+          Effect.map(SandboxActivity.makeTest, (activity) => activity.service),
+        ),
+      );
+      yield* sweep();
+      assert.equal((yield* getSandbox(held.sandboxId))?.admission?.reason, "team-cap");
+      yield* liveBuild.set(null);
+      yield* sweep();
+      assert.equal((yield* getSandbox(held.sandboxId))?.admission, null);
+    }).pipe(Effect.scoped),
   );
 });
 

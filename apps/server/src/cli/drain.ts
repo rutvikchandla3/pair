@@ -28,6 +28,7 @@ export class CliDrainError extends Schema.TaggedError<CliDrainError>()("CliDrain
 }
 
 const turns = (count: number) => `${count} ${count === 1 ? "turn" : "turns"}`;
+const builds = (count: number) => `${count} team image ${count === 1 ? "build" : "builds"}`;
 
 const timeoutFlag = Flag.String("timeout").pipe(
   Flag.withSchema(DurationFromString),
@@ -64,19 +65,26 @@ const runDrain = Effect.fn("cli.drain.run")(function* (
       Stream.runForEach((status) =>
         Ref.set(last, status).pipe(
           Effect.andThen(Console.log(`Draining: ${turns(status.runningTurns)} running`)),
+          Effect.andThen(
+            (status.runningBuilds ?? 0) > 0
+              ? Console.log(`Waiting for ${builds(status.runningBuilds ?? 0)}`)
+              : Effect.void,
+          ),
         ),
       ),
       Effect.mapError(failed),
       Effect.timeoutOption(flags.timeout),
     );
-    const running = (yield* Ref.get(last))?.runningTurns ?? 0;
+    const status = yield* Ref.get(last);
+    const running = status?.runningTurns ?? 0;
+    const building = status?.runningBuilds ?? 0;
     if (Option.isNone(finished)) {
-      return yield* Console.log(
-        `${turns(running)} still running; they continue after the restart.`,
-      );
+      const still = building > 0 ? `${turns(running)} and ${builds(building)}` : turns(running);
+      return yield* Console.log(`${still} still running; they continue after the restart.`);
     }
     // The stream ends early only when someone cancels the drain.
-    if (running > 0) return yield* new CliDrainError({ reason: "The drain was cancelled." });
+    if (running > 0 || building > 0)
+      return yield* new CliDrainError({ reason: "The drain was cancelled." });
     yield* Console.log("No turns running. New turns wait until the server restarts.");
   }).pipe(
     Effect.scoped,

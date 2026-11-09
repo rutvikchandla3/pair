@@ -17,6 +17,7 @@ import {
   RunId,
   RuntimeRequestId,
   SandboxId,
+  TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -173,11 +174,11 @@ export const TeamImageEffectRequestV2 = Schema.Union([
       "team-image.build.capture",
       "team-image.build.destroy-machine",
     ]),
-    imageBuildId: Schema.String,
+    imageBuildId: TeamImageBuildId,
   }),
   Schema.Struct({
     type: Schema.Literal("team-image.build.delete-image"),
-    imageBuildId: Schema.String,
+    imageBuildId: TeamImageBuildId,
     driverId: ComputeDriverId,
     imageRef: Schema.String,
   }),

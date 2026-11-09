@@ -9,13 +9,17 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerDrain from "../../drain/ServerDrain.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import * as LiveTeamImageBuild from "../image/LiveTeamImageBuild.ts";
 
 /** 04 §4 and D5; there is no member cap in M1. */
 export const STARTS_PER_MINUTE = 10;
 const TOKEN_INTERVAL_MS = 60_000 / STARTS_PER_MINUTE;
 
 export interface AdmissionSnapshot {
-  /** Sandboxes on this driver that are ready, or provisioning or waking without admission. */
+  /**
+   * Sandboxes on this driver that are ready, or provisioning or waking without admission, plus a
+   * live team image build on it.
+   */
   readonly running: number;
   /** Sandboxes on this driver waiting for admission; a new start queues behind them. */
   readonly waiting: number;
@@ -48,6 +52,7 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
     const drain = yield* ServerDrain.ServerDrain;
+    const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
     const lock = yield* Semaphore.make(1);
     // In memory: a restart refills the bucket, which is fine for a spend guard.
     let tokens = STARTS_PER_MINUTE;
@@ -71,7 +76,14 @@ export const layer = Layer.effect(
       const cap = yield* registry.runningCap(driverId).pipe(Effect.orElseSucceed(() => Infinity));
       yield* refill();
       const draining = (yield* drain.current) !== null;
-      return { ...counts, cap, startAvailable: tokens > 0, draining } satisfies AdmissionSnapshot;
+      const building = (yield* liveBuild.current)?.driverId === driverId ? 1 : 0;
+      return {
+        ...counts,
+        running: counts.running + building,
+        cap,
+        startAvailable: tokens > 0,
+        draining,
+      } satisfies AdmissionSnapshot;
     });
 
     return SandboxAdmission.of({
