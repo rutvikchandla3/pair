@@ -52,6 +52,7 @@ import {
   DockerEngineError,
   type DockerHost,
   type EngineContainer,
+  type EngineImage,
   type EngineInfo,
   makeDockerEngine,
   mapEngineError,
@@ -67,6 +68,8 @@ const TRANSIENT_RETRY = { times: 3, schedule: Schedule.spaced("2 seconds") } as 
 const SERVER_SOCKET_MOUNT = "/run/pair-host";
 /** Where a local server's runner bundles are mounted, one directory per build. */
 const RUNNER_BUNDLE_MOUNT = "/opt/pair-runner";
+const TEAM_IMAGE_BUILD_LABEL = "pair.team-image.build";
+const TEAM_IMAGE_MACHINE_LABEL = "pair.team-image.machine";
 const RUNNING_STATES = new Set(["running", "restarting", "paused"]);
 
 const SIZES: ComputeCapabilities["sizes"] = [
@@ -856,6 +859,30 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     yield* engine.removeImage(imageRef);
   }, run("deleteImage"));
 
+  const snapshot = Effect.fn("DockerComputeDriver.snapshot")(function* (
+    driverRef: string,
+    name: string,
+  ) {
+    const { engine } = yield* engineFor("snapshot");
+    const colon = name.lastIndexOf(":");
+    if (colon <= name.lastIndexOf("/")) return yield* failure("snapshot", "invalid-request");
+    const repo = name.slice(0, colon);
+    const tag = name.slice(colon + 1);
+    // The machine label tells this commit's image from another install's of the same name.
+    const labels = { [TEAM_IMAGE_BUILD_LABEL]: tag, [TEAM_IMAGE_MACHINE_LABEL]: driverRef };
+    const made = (image: EngineImage | null) =>
+      image !== null &&
+      image.Config?.Labels?.[TEAM_IMAGE_BUILD_LABEL] === tag &&
+      image.Config.Labels[TEAM_IMAGE_MACHINE_LABEL] === driverRef;
+    let image = yield* engine.inspectImage(name);
+    if (!made(image)) {
+      const imageId = yield* engine.commit({ container: driverRef, repo, tag, labels });
+      image = yield* engine.inspectImage(imageId);
+    }
+    if (image === null) return yield* failure("snapshot", "not-found");
+    return { imageRef: image.Id, sizeBytes: image.Size ?? null };
+  }, run("snapshot"));
+
   const health = Effect.gen(function* () {
     const { engine } = yield* engineFor("health");
     const info = yield* engine.info;
@@ -901,6 +928,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     status,
     list,
     deleteImage,
+    snapshot,
     health,
   });
 });

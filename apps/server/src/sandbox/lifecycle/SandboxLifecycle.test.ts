@@ -85,6 +85,8 @@ import * as RunnerGrants from "../runnerHub/RunnerGrants.ts";
 import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
 import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
+import * as TeamImageService from "../image/TeamImageService.ts";
+import * as TeamImageStore from "../image/TeamImageStore.ts";
 import * as RunnerHubFacts from "../runnerHub/RunnerHubFacts.ts";
 import * as SandboxActivity from "./SandboxActivity.ts";
 import * as SandboxAdmission from "./SandboxAdmission.ts";
@@ -898,6 +900,8 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
                 ThreadCommandExecutor.layer,
                 SandboxRestoreMode.layer,
                 Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
+                Layer.mock(TeamImageStore.TeamImageStore)({ machines: Effect.succeed([]) }),
+                Layer.mock(TeamImageService.TeamImageService)({}),
               ),
             ),
           ),

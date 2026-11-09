@@ -27,6 +27,9 @@ import {
   sandboxBackendName,
 } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
+import { isLiveTeamImageBuild } from "../image/TeamImageCommands.ts";
+import { TeamImageService } from "../image/TeamImageService.ts";
+import { TeamImageStore, type TeamImageBuildMachineRow } from "../image/TeamImageStore.ts";
 import { SANDBOX_BACKEND_MISSING } from "./SandboxDecisions.ts";
 import { getSandboxes, listLiveSandboxes } from "./SandboxProjection.ts";
 import { SandboxRestoreMode } from "./SandboxRestoreMode.ts";
@@ -145,6 +148,8 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const settings = yield* ServerSettingsService;
   const restoreModeMachines = yield* SandboxRestoreMode;
+  const imageStore = yield* TeamImageStore;
+  const teamImages = yield* TeamImageService;
   const startupRestoreMode = yield* Ref.make(
     (yield* ServerConfig.ServerConfig).restoreMode === true,
   );
@@ -262,12 +267,67 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** A finished build's machine whose destroy effect gave up; a live build's is left alone. */
+  const destroyFinishedBuildMachines = Effect.fnUntraced(function* (
+    driver: ComputeDriver["Service"],
+    backends: ReadonlyArray<BackendSandbox>,
+    machines: ReadonlyMap<SandboxId, TeamImageBuildMachineRow>,
+  ) {
+    for (const backend of backends) {
+      const machine = backend.sandboxId === null ? undefined : machines.get(backend.sandboxId);
+      if (
+        machine === undefined ||
+        machine.driverId !== driver.driverId ||
+        isLiveTeamImageBuild(machine.status) ||
+        backend.status === "missing"
+      ) {
+        continue;
+      }
+      const destroyed = yield* driver.destroy(backend.driverRef).pipe(
+        Effect.timeout(DRIVER_CALL_TIMEOUT),
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Sandbox reconciliation driver call failed", {
+            operation: "destroy",
+            driverRef: backend.driverRef,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (!destroyed) continue;
+      // The destroy effect's id, so whichever lands second is dropped by its receipt.
+      yield* teamImages
+        .dispatch({
+          type: "team-image.build.machine-destroyed",
+          commandId: CommandId.make(
+            `server:team-image.build.machine-destroyed:${machine.imageBuildId}`,
+          ),
+          imageBuildId: machine.imageBuildId,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not record a build machine as destroyed", {
+              imageBuildId: machine.imageBuildId,
+              cause,
+            }),
+          ),
+        );
+    }
+  });
+
   const reconcileDriver = Effect.fn("SandboxReconciler.reconcileDriver")(function* (
     driver: ComputeDriver["Service"],
     liveRecords: ReadonlyArray<OrchestrationV2Sandbox>,
     installId: EnvironmentId,
   ) {
-    const backends = yield* driver.list({ "pair.install": installId });
+    const found = yield* driver.list({ "pair.install": installId });
+    // A build machine has the install's tags and no sandbox record; its build owns it.
+    const buildMachines = new Map(
+      (yield* imageStore.machines).map((machine) => [machine.sandboxId, machine]),
+    );
+    const backends = found.filter(
+      (backend) => backend.sandboxId === null || !buildMachines.has(backend.sandboxId),
+    );
     const listedIds = backends.flatMap((backend) =>
       backend.sandboxId === null ? [] : [backend.sandboxId],
     );
@@ -309,6 +369,7 @@ const make = Effect.gen(function* () {
           ),
         );
     }
+    if (!restoreMode) yield* destroyFinishedBuildMachines(driver, found, buildMachines);
     const pairs = pairBackends(Array.from(records.values()), backends, installId);
     for (const pair of pairs) {
       yield* execute(driver, pair, planReconciliation(pair.record, pair.backend, now, restoreMode));

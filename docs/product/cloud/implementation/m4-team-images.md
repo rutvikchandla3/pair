@@ -316,15 +316,18 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
 - **The committed image keeps the container's config.** `containerCreateBody` sets `Env: []` and
   writes the bootstrap through `putArchive` (DockerComputeDriver.ts 165, 605–644), and
   pair-bootstrap.sh deletes the bootstrap file at start, so nothing secret is in the config or the
-  layer. The container's `pair.*` labels may carry into the image; every session's create sets
-  the same keys, which win. The commit adds `pair.team-image.build=<number>` for `docker image
-  ls`, and 4.14's contract test records which labels the image ends up with.
+  layer. `docker commit` merges the container's labels into the image, so its `pair.*` labels
+  carry over; every session's create sets the same keys, which win. The commit adds
+  `pair.team-image.build=<tag>` for `docker image ls` and `pair.team-image.machine=<driverRef>`,
+  and a replay returns an image only when both match, so two installs sharing a daemon cannot
+  take each other's image. 4.14's contract test asserts the resulting label set.
 - **The runner bundle is not baked on a local daemon.** It is bind-mounted (DockerComputeDriver.ts
   187–200), and sessions fetch or bind the server's bundle at boot as today. So 05 §3's verify step
   skips `t3 runner prefetch`, and the manifest records the server version instead of a bundle id.
 - **Restore mode.** See [What the code changed](#what-the-code-changed-in-10-2). The reconciler gets
   the build machines from `TeamImageStore.machines()`; an unknown tagged backend still means a
-  restore.
+  restore. In restore mode it leaves a finished build's machine alone, as it does any machine it
+  would destroy.
 - **Phases come from the program.** It prints `::t3-phase::<phase>` lines; the log writer strips
   them and the service dispatches `team-image.build.phase`. Leaks print `::t3-leak::<NAME>::<path>`
   (4.15), never the value.
@@ -759,41 +762,48 @@ running build as interrupted and destroys its machine, without entering restore 
     })` as `POST /commit?container=…&repo=…&tag=…&pause=true` with body `{ Labels: labels }`,
     returning the image id. Beside `inspectImage` (367) and `removeImage` (417).
   - `apps/server/src/sandbox/compute/DockerComputeDriver.ts`: `snapshot(driverRef, name)`: first
-    `inspectImage(name)`; when it exists and its `pair.team-image.build` label matches the label
-    this call would set, return it (replay). Else `commit` with repo `t3-team-image`, the tag
-    from `name`, and `Labels: { "pair.team-image.build": <tag> }` only (the container's `pair.*`
-    labels would otherwise carry over; a session's create sets its own anyway). `sizeBytes` from
-    the inspected `Size`. `deleteImage` (854–857) already removes by ref and treats a missing
+    `inspectImage(name)`; when it exists and its `pair.team-image.build` and
+    `pair.team-image.machine` labels match the ones this call would set, return it (replay). Else
+    `commit` with repo `t3-team-image`, the tag from `name`, and those two labels; the engine
+    merges them over the container's, which carry over (a session's create sets its own anyway).
+    `imageRef` is the image id and `sizeBytes` the inspected `Size`. `deleteImage` (854–857) already removes by ref and treats a missing
     image as success.
-  - `apps/server/src/sandbox/compute/ComputeDriverTesting.ts`: the fake records snapshots,
-    returns `fake-image:<name>`, and can be told to fail one.
+  - `apps/server/src/sandbox/compute/ComputeDriverTesting.ts`: the fake's `snapshot` is a call
+    the test answers or fails; `answerFromMemory` returns `fake-image:<name>`.
   - New `apps/server/src/sandbox/image/teamImageBuildProgram.ts`, pure: `teamImageBuildProgram({
-    repos: Array<{ projectId, url, path, tokenVariable: string | null }> })` returns the Bash text
-    of `t3-build.sh`. `set -euo pipefail`, and each phase starts with a line `::t3-phase::<phase>`
-    on stdout:
-    1. `preflight`: `id -un` is `t3`; `bash`, `git`, `sudo` exist; at least 2 GiB free on `/`.
+    repos: Array<{ projectId, url, path, tokenVariable: string | null }>, excludedEnvNames,
+    paths? })` returns the Bash text of `t3-build.sh` (`paths` moves the image root, output and
+    base info for the test). `set -euo pipefail`, stderr joins stdout, and each phase starts with
+    a line `::t3-phase::<phase>`:
+    1. `preflight`: `id -un` is `t3`; `bash`, `git`, `sudo`, `jq` exist; at least 2 GiB free on
+       `/`; `~/.t3-build`, written by the root runner, is chowned to t3.
     2. `clone`: `sudo install -d -o t3 -g t3 /t3-sandbox/.image` (`/t3-sandbox` is root-owned
        0755, provision.sh 103; t3 has passwordless sudo, 78–81), then for each repo
-       `git -c credential.helper='!f() { echo username=x-access-token; echo "password=${VAR}"; }; f'
-       clone -- <url> <path>` with `VAR` its token variable, or no helper when null. The helper
-       is passed with `-c`, never written to a config file. Record `git -C <path> rev-parse HEAD`.
-    3. `install`: `env -0 > ~/.t3-build/env.before` through `bash -lc`, then `bash -euo pipefail
-       ~/.t3-build/install.sh` from `$HOME`.
-    4. `env`: `bash -lc 'env -0'` diffed against `env.before`; added or changed names (not
-       `PWD`, `SHLVL`, `_`, `OLDPWD` or any build env, secret or token name) become `imageEnv`.
+       `git -c credential.helper= -c credential.helper='!f() { echo username=x-access-token; echo
+       "password=${VAR}"; }; f' clone -- <url> <path>` with `VAR` its token variable, or no
+       helper when null. The empty helper first clears the base's own. The helper is passed with
+       `-c`, never written to a config file. Record `git -C <path> rev-parse HEAD`.
+    3. `install`: `env -0` from a clean login shell (`env -i HOME USER LOGNAME SHELL PATH bash
+       -lc`, so the spawn's env does not count) into `~/.t3-build/env.before`, then `bash -euo
+       pipefail ~/.t3-build/install.sh` from `$HOME`.
+    4. `env`: the same capture diffed against `env.before` with `jq --rawfile`; added or changed
+       names (not `PWD`, `SHLVL`, `_`, `OLDPWD` or `excludedEnvNames`) become `imageEnv`.
     5. `verify`: each provider CLI the base installs (read the list from `/etc/pair-image.json`)
        answers `--version`; each repo's head resolves.
     6. `clean`: remove `~/.t3-build` and `~/.bash_history`; 4.15 adds the leak check here.
-    7. `manifest`: `sudo install -d /etc/t3` and write `/etc/t3/build.json` (`imageEnv`,
-       `repos`, `providers`, and the base from `/etc/pair-image.json`), readable by everyone.
+    7. `manifest`: `sudo install -d /etc/t3` and write `/etc/t3/build.json` as
+       `TeamImageBuildOutput` (`pairVersion` and `providers` from `/etc/pair-image.json`, `repos`
+       with their heads, `imageEnv`), readable by everyone. The server adds the rest.
        The server writes the install script and the env baseline under `~/.t3-build`; the program
        never echoes an environment value.
   - New `apps/server/src/sandbox/image/TeamImageBuildLog.ts`: `<ServerConfig.stateDir>/team-image/
-    builds/<number>.log`. `open(build)` returns a writer; lines go to the file until it holds 1
-    MiB, and after that to a 4 MiB in-memory ring that replaces the tail when the build ends, with
-    a line "… <n> bytes left out …" between (**proposed**; a crash loses the ring). Live readers
-    get every line. `read(number)` streams the file then the live lines. `delete(number)` is
-    4.16's. `::t3-phase::` lines are stripped from the log and returned to the caller.
+    builds/<number>.log`. `open(number)` is scoped and returns a writer (`write(line)`, `tail`, the
+    last 30 lines); lines go to the file until it holds 1 MiB, and after that to a 4 MiB
+    in-memory ring that is appended when the writer's scope closes, after a line "… <n> bytes left
+    out …" when the ring dropped lines (**proposed**; a crash loses the ring). `read(number)` is
+    what is written so far, then live lines while the writer is open, then `done`; with no writer
+    it is the file. `whenOpen(number)` waits for a writer. `delete(number)` is 4.16's.
+    `::t3-phase::` lines are stripped from the log and returned to the caller.
   - New `apps/server/src/sandbox/image/TeamImageEffectsLive.ts`, the `TeamImageEffects` layer
     (4.11's tag). Each case reads the build and its machine columns first and succeeds without
     doing anything when the build is no longer in the status it expects.
@@ -803,8 +813,9 @@ running build as interrupted and destroys its machine, without entering restore 
       generation: 1, image: { type: "base" }, size: the driver's, tags: sandboxTags(…),
       bootstrap })`, then dispatch `team-image.build.launched { driverRef }`. A replayed create
       returns the same `driverRef` (ComputeDriver.ts create comment).
-    - `run-program`: resolve everything the program needs, start it in a fiber the service holds
-      (keyed by build id), and succeed. The fiber:
+    - `run-program`: start the program in a fiber of this layer's scope (one per build id) and
+      succeed. The fiber races `LiveTeamImageBuild.changes`, so a cancel, fail or timeout that
+      takes the build off the live slot interrupts it and its scope kills the process. The fiber:
       1. Resolves `buildSecrets` with `requireSettingsSecret` (secrets/settingsSecretValue.ts 41);
          an unresolved one fails the build at `install` naming the variable, never the value.
       2. For each recipe project: the origin URL from the project's root (`git.readRemoteUrl`,
@@ -819,36 +830,41 @@ running build as interrupted and destroys its machine, without entering restore 
          resolved secrets and `T3_CLONE_TOKEN_<i>`. Lines go through `TeamImageBuildLog`; each
          phase marker dispatches `team-image.build.phase`.
       4. Exit 0: read `/etc/t3/build.json` through `host.fileSystem`, decode it, add `base.ref`
-         and `digest` from the driver's base and `serverVersion`, and dispatch
-         `program-finished`. Non-zero: dispatch `fail { phase: <last phase>, exitCode, logTail:
-         the last 30 lines }`.
+         and `digest` from `create`'s base (`"unknown"` and null when the driver gave none) and
+         `serverVersion`, and dispatch `program-finished`. Non-zero: dispatch `fail { phase:
+         <last phase>, exitCode, logTail: the last 30 lines }`. Any other failure fails the build
+         at the last phase with "Pair Cloud lost the build machine."
       5. Always: `GitHubAppInstallationTokens.revoke(machineSandboxId)`.
-         The service interrupts the fiber when a cancel, fail or timeout commits.
     - `capture`: `driver.snapshot(driverRef, `t3-team-image:${number}`)`, then dispatch
       `captured`.
     - `destroy-machine`: `driver.destroy(driverRef ?? backend name)`, `hub.revoke(sandboxId)`,
       `revoke` the tokens, dispatch `machine-destroyed`. A build with no machine yet succeeds.
-    - `reportExhausted`: dispatch `fail` with the phase the effect was for (`launch` or
-      `capture`) and "Pair Cloud could not reach the build machine's driver." For destroy, log.
-  - `TeamImageService.ts`:
+    - `reportExhausted`: dispatch `fail` with the phase the effect was for (`launch`, `capture`,
+      or `preflight` for run-program) and "Pair Cloud could not reach the build machine's
+      driver." For destroy and delete-image, log. A refusal, a missing driver or a driver error
+      marked not retryable skips the remaining attempts.
+    - `delete-image`: `driver.deleteImage(imageRef)`.
     - At start, a scoped fiber over `RunnerHub.boots` (RunnerHub.ts 175) dispatches `attached`
-      for a boot whose `sandboxId` is the live build's machine. No `RunnerHubFacts` change.
+      for a boot whose `sandboxId` is the live build's machine. No `RunnerHubFacts` change. It
+      lives here, not in the service, so the service does not depend on its effects.
+  - `TeamImageService.ts`:
     - Restart recovery, after the event store is ready: a `launching` or `running` build fails
-      with phase `interrupted` ("Pair Cloud restarted during this build."); `queued` and
-      `capturing` continue, since their effects are replay-safe.
-    - `subscribeBuildLog(imageBuildId)`: `TeamImageBuildLog.read`, as `TeamImageBuildLogChunk`s.
+      with phase `interrupted` ("Pair Cloud restarted during this build.", an empty `logTail`);
+      `queued` and `capturing` continue, since their effects are replay-safe.
+    - `subscribeBuildLog(imageBuildId)`: for a live build, waits until its writer opens (or the
+      build ends), then `TeamImageBuildLog.read`, as `TeamImageBuildLogChunk`s.
   - `apps/server/src/sandbox/lifecycle/SandboxReconciler.ts` `reconcileDriver` (265–315): read
     `TeamImageStore.machines` first and drop those backends from `backends` before `unrecorded`
-    (288–297) and `pairBackends` (312). A live build's machine is skipped; a finished build's
-    machine is destroyed and `machine-destroyed` dispatched. Any other unrecorded backend keeps
-    today's behavior.
+    (288–297) and `pairBackends` (312). A live build's machine is skipped; outside restore mode a
+    finished build's listed machine is destroyed and `machine-destroyed` dispatched with the
+    destroy effect's command id. Any other unrecorded backend keeps today's behavior.
   - `packages/contracts/src/rpc.ts`, `RpcAuthorization.ts`, `ws.ts`: `teamImage.subscribeBuildLog`
     (`stream: true`, `AuthOrchestrationReadScope`).
   - `apps/server/src/environment/ServerEnvironment.ts` 271: `cloudOnly` also sets `teamImages:
     true`.
 - **Types and services:** `ComputeDriver.snapshot`; the `TeamImageEffects` layer;
   `TeamImageBuildLog`; `TeamImageService.subscribeBuildLog`. No new service for the program: it
-  is a fiber of `TeamImageService`.
+  is a fiber of the `TeamImageEffects` layer.
 - **Commands and events:** none new; this row implements 4.13's.
 - **Migrations:** none.
 - **Tests:**
@@ -857,7 +873,7 @@ running build as interrupted and destroys its machine, without entering restore 
     print in order, `imageEnv` holds a `PATH` change made in `~/.profile` and not a build secret's
     name, a failing install stops before `env`. Snapshot nothing.
   - `DockerComputeDriver.contract.test.ts`: `snapshot` commits once, replays without a second
-    commit, and sets only the build label.
+    commit, and the image's labels are the container's plus the two team-image labels.
   - `TeamImageEffectsLive.test.ts` over the fake driver, a fake `RunnerHub` whose `boots` the test
     offers into, and a fake host whose spawner prints phase lines and exits: request to
     succeeded with `imageRef`; a cancel mid-program interrupts the fiber and destroys the machine;
@@ -871,8 +887,8 @@ running build as interrupted and destroys its machine, without entering restore 
   install -y postgresql-client`, calling `teamImage.saveRecipe` and `teamImage.startBuild` from a
   throwaway script outside the worktree that connects as `cli/drain.ts` does (the page is 4.18),
   watch it reach `succeeded`, then `docker image
-  ls t3-team-image` and `docker image inspect` (labels: only the build label; `Config.Env` holds
-  no secret). Record the build time and image size. Stop the server by the PID captured at spawn.
+  ls t3-team-image` and `docker image inspect` (labels: the container's plus the two team-image
+  labels; `Config.Env` holds no secret). Record the build time and image size. Stop the server by the PID captured at spawn.
 - **Reviewer checks:** no secret or token in a config file, a command line, the log or an error;
   the reconciler change covers build machines only; the program fiber is interrupted on every end
   state; nothing reads `/etc/t3/build.json` as trusted beyond its schema. Surfaces: server and the

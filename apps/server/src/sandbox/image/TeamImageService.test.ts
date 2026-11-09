@@ -22,7 +22,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as TeamState from "../../team/TeamState.ts";
 import * as SandboxAdmission from "../lifecycle/SandboxAdmission.ts";
 import * as LiveTeamImageBuild from "./LiveTeamImageBuild.ts";
-import * as TeamImageEffects from "./TeamImageEffects.ts";
+import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
 import * as TeamImageService from "./TeamImageService.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
 import * as TeamImageWorker from "./TeamImageWorker.ts";
@@ -61,8 +61,8 @@ const freeSlots: SandboxAdmission.AdmissionSnapshot = {
 
 const layerDatabase = SqlitePersistence.layerMemory;
 
-/** The real service over SQLite; admission answers a fixed snapshot. */
-const layerTest = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
+/** The real service; admission answers a fixed snapshot. Each build is a fresh process. */
+const layerService = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
   TeamImageService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -75,7 +75,7 @@ const layerTest = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
           snapshot: () => Effect.succeed(slots),
           takeStart: Effect.void,
         }),
-        Layer.mock(TeamImageEffects.TeamImageEffects)({}),
+        Layer.mock(TeamImageBuildLog.TeamImageBuildLog)({}),
         ServerSettings.layerTest({ sandbox: { drivers: [dockerDriver], defaultDriverId: docker } }),
         TeamState.layerTest([memberRecord(admin, "admin"), memberRecord(member, "member")]),
         NodeCrypto.layer,
@@ -84,9 +84,15 @@ const layerTest = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
         } as ServerConfig.ServerConfig["Service"]),
       ),
     ),
-    Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-    Layer.provideMerge(layerDatabase),
   );
+
+const layerStorage = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provideMerge(layerDatabase),
+);
+
+/** The service over its own SQLite database. */
+const layerTest = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
+  layerService(slots).pipe(Layer.provideMerge(layerStorage));
 
 const saveFirstRecipe = Effect.gen(function* () {
   const service = yield* TeamImageService.TeamImageService;
@@ -186,4 +192,37 @@ it.effect("the live build follows a build until it times out", () =>
       .pipe(Effect.flip);
     assert.strictEqual(cancel.reason, "wrong-state");
   }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("a restart fails a running build as interrupted", () =>
+  Effect.gen(function* () {
+    const imageBuildId = yield* Effect.gen(function* () {
+      const { revision } = yield* saveFirstRecipe;
+      const service = yield* TeamImageService.TeamImageService;
+      const build = yield* service.startBuild({
+        actorId: admin,
+        input: { recipeRevision: revision },
+      });
+      yield* service.dispatch({
+        type: "team-image.build.attached",
+        commandId: CommandId.make("attached"),
+        imageBuildId: build.id,
+      });
+      assert.strictEqual((yield* service.snapshot).builds[0]?.status, "running");
+      return build.id;
+    }).pipe(Effect.provide(layerService()));
+
+    const restarted = yield* Effect.gen(function* () {
+      const service = yield* TeamImageService.TeamImageService;
+      const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
+      return { build: (yield* service.snapshot).builds[0], live: yield* liveBuild.current };
+    }).pipe(Effect.provide(layerService()));
+    assert.strictEqual(restarted.build?.id, imageBuildId);
+    assert.strictEqual(restarted.build?.status, "failed");
+    assert.deepInclude(restarted.build?.failure, {
+      phase: "interrupted",
+      detail: "Pair Cloud restarted during this build.",
+    });
+    assert.isNull(restarted.live);
+  }).pipe(Effect.provide(layerStorage)),
 );

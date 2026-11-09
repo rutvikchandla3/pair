@@ -244,6 +244,8 @@ const fakeEngine = (
   const archives: Array<Uint8Array> = [];
   /** The image each created container was asked to boot from. */
   const createdImages = new Map<string, string | undefined>();
+  /** Committed images by tag and by id; a commit keeps the container's labels, as the daemon does. */
+  const committed = new Map<string, { Id: string; Size: number; Config: { Labels: object } }>();
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       const path = decodeURIComponent(url.pathname.replace(/^\/v1\.41/, ""));
@@ -263,6 +265,23 @@ const fakeEngine = (
         const ref = `${url.searchParams.get("fromImage")}:${url.searchParams.get("tag")}`;
         return HttpClientResponse.fromWeb(request, images!.pull(ref));
       }
+      if (path === "/commit") {
+        const source = containers.get(url.searchParams.get("container")!);
+        if (source === undefined) return reply(404, {});
+        const body = JSON.parse(new TextDecoder().decode(bodyBytes)) as {
+          readonly Labels: Record<string, string>;
+        };
+        const image = {
+          Id: `sha256:commit${committed.size}`,
+          Size: 2048,
+          Config: { Labels: { ...source.labels, ...body.Labels } },
+        };
+        committed.set(`${url.searchParams.get("repo")}:${url.searchParams.get("tag")}`, image);
+        committed.set(image.Id, image);
+        return reply(201, { Id: image.Id });
+      }
+      const committedImage = committed.get(path.slice("/images/".length, -"/json".length));
+      if (committedImage !== undefined) return reply(200, committedImage);
       if (path.startsWith("/images/")) {
         const id =
           images === undefined
@@ -330,7 +349,13 @@ const fakeEngine = (
       return reply(204);
     }),
   );
-  return { engine: makeDockerEngine(client, "http://docker"), calls, archives, createdImages };
+  return {
+    engine: makeDockerEngine(client, "http://docker"),
+    calls,
+    archives,
+    createdImages,
+    committed,
+  };
 };
 
 const withDriver = <A, E>(
@@ -402,6 +427,32 @@ describe("DockerComputeDriver", () => {
       );
     },
   );
+
+  it.effect("snapshot commits once with its labels, and a replay returns that image", () => {
+    const containers = new Map([[name, { labels: { ...tags }, status: "exited", generation: 1 }]]);
+    return withDriver(containers, (driver, fake) =>
+      Effect.gen(function* () {
+        // Another install's image under the same name is not this build's.
+        fake.committed.set("t3-team-image:7", {
+          Id: "sha256:other",
+          Size: 1,
+          Config: { Labels: { "pair.team-image.build": "7" } },
+        });
+        const first = yield* driver.snapshot(name, "t3-team-image:7");
+        const replay = yield* driver.snapshot(name, "t3-team-image:7");
+        assert.deepStrictEqual(first, { imageRef: "sha256:commit1", sizeBytes: 2048 });
+        assert.deepStrictEqual(replay, first);
+        assert.lengthOf(
+          fake.calls.filter((call) => call === "POST /commit"),
+          1,
+        );
+        assert.deepInclude(fake.committed.get("sha256:commit1")!.Config.Labels, {
+          "pair.team-image.build": "7",
+          "pair.team-image.machine": name,
+        });
+      }),
+    );
+  });
 
   it.effect("refuses a create whose name holds another sandbox generation", () => {
     const containers = new Map([

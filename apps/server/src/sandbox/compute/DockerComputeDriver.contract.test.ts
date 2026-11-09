@@ -219,4 +219,53 @@ describe.runIf(process.env.T3_TEST_DOCKER === "1")("DockerComputeDriver on a rea
       assert.deepStrictEqual(health.privateNetworkBlock, { applied: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("snapshot commits a machine once and replays to the same image", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProbeServer;
+      const installId = EnvironmentId.make(NodeCrypto.randomUUID());
+      const driver = yield* makeContractDriver(installId);
+      const sandboxId = SandboxId.make(`sbx_${NodeCrypto.randomBytes(10).toString("hex")}`);
+      const name = `t3-team-image-contract:${installId.slice(0, 8)}`;
+      yield* Effect.addFinalizer(() =>
+        driver
+          .deleteImage(name)
+          .pipe(
+            Effect.andThen(driver.destroy(sandboxBackendName(installId, sandboxId, 1))),
+            Effect.ignore,
+          ),
+      );
+      const { driverRef } = yield* driver.create({
+        name: sandboxBackendName(installId, sandboxId, 1),
+        sandboxId,
+        generation: 1,
+        image: { type: "base" },
+        size: "small",
+        tags: sandboxTags({ installId, sandboxId, generation: 1, driverId: driver.driverId }),
+        bootstrap: {
+          sandboxId,
+          generation: 1,
+          runnerBuildId: "contract",
+          serverUrl: probe.serverUrl,
+          enrollmentSecret: Redacted.make("enroll"),
+        },
+      });
+
+      const first = yield* driver.snapshot(driverRef, name);
+      const replay = yield* driver.snapshot(driverRef, name);
+      assert.deepStrictEqual(replay, first);
+      assert.isNumber(first.sizeBytes);
+      const image = yield* testEngine.pipe(
+        Effect.flatMap((engine) => engine.inspectImage(name)),
+        Effect.scoped,
+      );
+      assert.strictEqual(image?.Id, first.imageRef);
+      // The daemon merges the container's labels into the commit's; this records which survive.
+      assert.deepStrictEqual(image?.Config?.Labels, {
+        ...sandboxTags({ installId, sandboxId, generation: 1, driverId: driver.driverId }),
+        "pair.team-image.build": installId.slice(0, 8),
+        "pair.team-image.machine": driverRef,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

@@ -38,6 +38,7 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
       "status",
       "list",
       "deleteImage",
+      "snapshot",
       "health",
     ]),
     reason: ComputeDriverErrorReason,
@@ -153,7 +154,7 @@ export interface ComputeDriverCreateResult {
   readonly baseImage: BaseImageInfo | null;
 }
 
-// snapshot and buildImage join in M3 (04 §10 #17); nothing calls them in M1.
+// `snapshot` is M4's; `buildImage` is Later (05 §3).
 export class ComputeDriver extends Context.Service<
   ComputeDriver,
   {
@@ -181,6 +182,17 @@ export class ComputeDriver extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<BackendSandbox>, ComputeDriverError>;
     /** A missing image succeeds. */
     readonly deleteImage: (imageRef: string) => Effect.Effect<void, ComputeDriverError>;
+    /**
+     * Captures a stopped or running sandbox's disk as an image named `name`. Replaying it for the
+     * same name returns the image it made.
+     */
+    readonly snapshot: (
+      driverRef: string,
+      name: string,
+    ) => Effect.Effect<
+      { readonly imageRef: string; readonly sizeBytes: number | null },
+      ComputeDriverError
+    >;
     /** What Settings → Cloud's Test button shows. */
     readonly health: Effect.Effect<ComputeDriverHealth, ComputeDriverError>;
   }

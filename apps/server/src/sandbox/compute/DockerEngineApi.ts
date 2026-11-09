@@ -205,6 +205,7 @@ const EngineImage = Schema.Struct({
   Id: Schema.String,
   RepoDigests: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   Config: Schema.optionalKey(Schema.NullOr(Schema.Struct({ Labels: Schema.optionalKey(Labels) }))),
+  Size: Schema.optionalKey(Schema.Number),
 });
 export type EngineImage = typeof EngineImage.Type;
 
@@ -414,6 +415,24 @@ export const makeDockerEngine = (client: HttpClient.HttpClient, origin: string) 
         }),
       );
     },
+    /** Pauses the container while it copies its writable layer; volumes and binds are left out. */
+    commit: (input: {
+      readonly container: string;
+      readonly repo: string;
+      readonly tag: string;
+      readonly labels: Readonly<Record<string, string>>;
+    }) =>
+      send({
+        method: "POST",
+        endpoint: "/commit",
+        path: "/commit",
+        query: { container: input.container, repo: input.repo, tag: input.tag, pause: "true" },
+        json: { Labels: input.labels },
+        ok: [201],
+      }).pipe(
+        Effect.flatMap(decode(Schema.Struct({ Id: Schema.String }), "POST /commit")),
+        Effect.map((created) => created.Id),
+      ),
     removeImage: (ref: string) =>
       send({
         method: "DELETE",

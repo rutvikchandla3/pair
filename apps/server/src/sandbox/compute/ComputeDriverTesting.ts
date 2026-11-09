@@ -66,9 +66,20 @@ export type FakeComputeCall =
       readonly reply: Deferred.Deferred<ReadonlyArray<BackendSandbox>, ComputeDriverError>;
     }
   | {
+      readonly _tag: "snapshot";
+      readonly driverRef: string;
+      readonly name: string;
+      readonly reply: Deferred.Deferred<FakeSnapshot, ComputeDriverError>;
+    }
+  | {
       readonly _tag: "health";
       readonly reply: Deferred.Deferred<ComputeDriverHealth, ComputeDriverError>;
     };
+
+export interface FakeSnapshot {
+  readonly imageRef: string;
+  readonly sizeBytes: number | null;
+}
 
 /** Every call waits on a `Deferred` the test completes or fails, so the test is the backend. */
 export const make = Effect.fn("FakeComputeDriver.make")(function* (
@@ -131,6 +142,9 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
     ),
     deleteImage: Effect.fn("FakeComputeDriver.deleteImage")((ref: string) =>
       ask<void>((reply) => ({ _tag: "deleteImage", ref, reply })),
+    ),
+    snapshot: Effect.fn("FakeComputeDriver.snapshot")((driverRef: string, name: string) =>
+      ask<FakeSnapshot>((reply) => ({ _tag: "snapshot", driverRef, name, reply })),
     ),
     health: ask<ComputeDriverHealth>((reply) => ({ _tag: "health", reply })).pipe(
       Effect.withSpan("FakeComputeDriver.health"),
@@ -299,6 +313,13 @@ export const answerFromMemory: (
           return yield* Deferred.succeed(call.reply, undefined);
         case "deleteImage":
           return yield* Deferred.succeed(call.reply, undefined);
+        case "snapshot":
+          return sandboxes.has(call.driverRef)
+            ? yield* Deferred.succeed(call.reply, {
+                imageRef: `fake-image:${call.name}`,
+                sizeBytes: null,
+              })
+            : yield* Deferred.fail(call.reply, failure("snapshot", "not-found"));
         case "status": {
           const sandbox = sandboxes.get(call.driverRef);
           const missing: BackendSandbox = {

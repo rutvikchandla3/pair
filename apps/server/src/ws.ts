@@ -2933,6 +2933,8 @@ export const layerWsRpc = (
         [WS_METHODS.teamImageCancelBuild]: ({ imageBuildId }) =>
           teamImages.cancelBuild({ actorId: currentSession.memberId, imageBuildId }),
         [WS_METHODS.teamImageReadRecipe]: ({ revision }) => teamImages.readRecipeRevision(revision),
+        [WS_METHODS.teamImageSubscribeBuildLog]: ({ imageBuildId }) =>
+          teamImages.subscribeBuildLog(imageBuildId),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>

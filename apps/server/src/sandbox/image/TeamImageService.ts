@@ -6,6 +6,7 @@ import {
   SandboxId,
   type TeamImageBuild,
   TeamImageBuildId,
+  type TeamImageBuildLogChunk,
   TeamImageError,
   type TeamImageRecipeRevision,
   type TeamImageSaveRecipeInput,
@@ -39,7 +40,7 @@ import {
   TeamImageEvent,
   type TeamImageState,
 } from "./TeamImageCommands.ts";
-import * as TeamImageEffects from "./TeamImageEffects.ts";
+import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
 
 /** The snapshot's history: the newest builds, plus the active one when it is older. */
@@ -79,6 +80,10 @@ export class TeamImageService extends Context.Service<
     readonly readRecipeRevision: (
       revision: number,
     ) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
+    /** The log so far, then its lines while the build runs, then `done`. */
+    readonly subscribeBuildLog: (
+      imageBuildId: TeamImageBuildId,
+    ) => Stream.Stream<TeamImageBuildLogChunk, TeamImageError>;
   }
 >()("t3/sandbox/image/TeamImageService") {}
 
@@ -112,11 +117,8 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const teamState = yield* TeamState.TeamState;
   const random = yield* SecureRandom.SecureRandom;
+  const buildLog = yield* TeamImageBuildLog.TeamImageBuildLog;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
-  // Without the effects that launch a machine a build could only fail.
-  const buildsAvailable = Option.isSome(
-    yield* Effect.serviceOption(TeamImageEffects.TeamImageEffects),
-  );
   const lock = yield* Semaphore.make(1);
   const version = yield* SubscriptionRef.make(0);
 
@@ -271,9 +273,6 @@ const make = Effect.gen(function* () {
   )(function* ({ actorId, input }) {
     yield* ensureAvailable;
     yield* ensureAdmin(actorId);
-    if (!buildsAvailable) {
-      return yield* refusal("not-available", "This server cannot build team images yet.");
-    }
     const driverId = yield* buildDriver();
     const imageBuildId = TeamImageBuildId.make(`tib_${yield* randomHex}`);
     const machineSandboxId = SandboxId.make(`sbx_${yield* randomHex}`);
@@ -339,6 +338,44 @@ const make = Effect.gen(function* () {
     return found.value;
   }, onlyTeamImageErrors);
 
+  const subscribeBuildLog: TeamImageService["Service"]["subscribeBuildLog"] = (imageBuildId) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        yield* ensureAvailable;
+        const record = yield* store.build(imageBuildId);
+        if (Option.isNone(record)) {
+          return yield* refusal("not-found", "That build does not exist.");
+        }
+        const { number } = record.value.build;
+        // A live build's writer opens once its program starts; wait for it or for the end.
+        yield* Effect.raceFirst(
+          buildLog.whenOpen(number),
+          liveBuild.changes.pipe(
+            Stream.filter((live) => live?.imageBuildId !== imageBuildId),
+            Stream.runHead,
+          ),
+        );
+        return buildLog.read(number).pipe(Stream.orDie);
+      }).pipe(onlyTeamImageErrors),
+    ).pipe(Stream.withSpan("TeamImageService.subscribeBuildLog"));
+
+  // A restart ends the program and the runner wait; queued and capturing builds replay safely.
+  if (
+    seeded !== null &&
+    (seeded.build.status === "launching" || seeded.build.status === "running")
+  ) {
+    yield* lockedDispatch({
+      type: "team-image.build.fail",
+      commandId: CommandId.make(`server:team-image.build.interrupted:${seeded.build.id}`),
+      imageBuildId: seeded.build.id,
+      failure: {
+        phase: "interrupted",
+        detail: "Pair Cloud restarted during this build.",
+        logTail: [],
+      },
+    }).pipe(Effect.orDie);
+  }
+
   return TeamImageService.of({
     dispatch: lockedDispatch,
     snapshot,
@@ -347,6 +384,7 @@ const make = Effect.gen(function* () {
     startBuild,
     cancelBuild,
     readRecipeRevision,
+    subscribeBuildLog,
   });
 });
 

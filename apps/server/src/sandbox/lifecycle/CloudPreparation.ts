@@ -239,7 +239,7 @@ export const awaitSandboxReady = Effect.fn("CloudPreparation.awaitSandboxReady")
 });
 
 /** `repos/<host>/<owner>/<name>` for a hosted remote, else one folder per project. */
-const clonePathFor = (root: string, url: string, projectId: ProjectId) => {
+export const clonePathFor = (root: string, url: string, projectId: ProjectId) => {
   const repository = parseGitRemoteRepository(url);
   const segments =
     repository === null ? [] : [repository.host, ...repository.path.split("/")].filter(Boolean);

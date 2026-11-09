@@ -16,6 +16,7 @@ import {
 } from "./sandbox.ts";
 import {
   TeamImageBuild,
+  TeamImageBuildLogChunk,
   TeamImageBuildRef,
   TeamImageError,
   TeamImageReadRecipeInput,
@@ -595,6 +596,7 @@ export const WS_METHODS = {
   teamImageStartBuild: "teamImage.startBuild",
   teamImageCancelBuild: "teamImage.cancelBuild",
   teamImageReadRecipe: "teamImage.readRecipe",
+  teamImageSubscribeBuildLog: "teamImage.subscribeBuildLog",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -1116,6 +1118,13 @@ const WsTeamImageReadRecipeRpc = Rpc.make(WS_METHODS.teamImageReadRecipe, {
   payload: TeamImageReadRecipeInput,
   success: TeamImageRecipeRevision,
   error: TeamImageRpcError,
+});
+
+const WsTeamImageSubscribeBuildLogRpc = Rpc.make(WS_METHODS.teamImageSubscribeBuildLog, {
+  payload: TeamImageBuildRef,
+  success: TeamImageBuildLogChunk,
+  error: TeamImageRpcError,
+  stream: true,
 });
 
 const WsServerPrepareTriageRpc = Rpc.make(WS_METHODS.serverPrepareTriage, {
@@ -2374,6 +2383,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamImageStartBuildRpc,
   WsTeamImageCancelBuildRpc,
   WsTeamImageReadRecipeRpc,
+  WsTeamImageSubscribeBuildLogRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

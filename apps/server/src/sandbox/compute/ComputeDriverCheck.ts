@@ -59,7 +59,8 @@ const networkFailure = (curlExit: number) => {
 /**
  * Settings → Cloud's Test: boots a machine with no thread, so nothing is projected or counted
  * against caps (P16). Its runner's facts name no sandbox record, so `RunnerHubFacts` drops them.
- * A machine left by a crash carries the install tags, and the reconciler destroys it as an orphan.
+ * A machine left by a crash carries the install tags and no sandbox record, so past the
+ * reconciler's grace it turns restore mode on (SandboxReconciler `unrecorded`).
  */
 export class ComputeDriverCheck extends Context.Service<
   ComputeDriverCheck,

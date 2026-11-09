@@ -1,10 +1,12 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
+  CommandId,
   ComputeDriverId,
   EnvironmentId,
   type OrchestrationV2Sandbox,
   ProjectId,
   SandboxId,
+  TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +27,9 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { type BackendSandbox, sandboxBackendName } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import type { ComputeDriver } from "../compute/ComputeDriver.ts";
+import type { TeamImageCommand } from "../image/TeamImageCommands.ts";
+import { TeamImageService } from "../image/TeamImageService.ts";
+import { type TeamImageBuildMachineRow, TeamImageStore } from "../image/TeamImageStore.ts";
 import {
   pairBackends,
   planReconciliation,
@@ -303,7 +308,11 @@ describe("planReconciliation", () => {
 
 const reconciler = (
   driver: ComputeDriver["Service"],
-  options: { readonly restoreMode?: boolean } = {},
+  options: {
+    readonly restoreMode?: boolean;
+    readonly buildMachines?: ReadonlyArray<TeamImageBuildMachineRow>;
+    readonly dispatched?: Array<TeamImageCommand>;
+  } = {},
 ) =>
   reconcilerLayer.pipe(
     Layer.provideMerge(
@@ -324,6 +333,10 @@ const reconciler = (
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({}),
         ThreadCommandExecutor.layer,
+        Layer.mock(TeamImageStore)({ machines: Effect.succeed(options.buildMachines ?? []) }),
+        Layer.mock(TeamImageService)({
+          dispatch: (command) => Effect.sync(() => (options.dispatched?.push(command), [])),
+        }),
       ),
     ),
   );
@@ -429,5 +442,46 @@ it.effect("turns restore mode on once from --restore-mode, so leaving it holds",
       assert.deepEqual(yield* answerPass(fake.calls, []), []);
       assert.isUndefined(yield* restoreModeSince);
     }).pipe(Effect.provide(reconciler(fake.driver, { restoreMode: true })));
+  }),
+);
+
+it.effect("leaves a live build's machine alone and destroys a finished build's", () =>
+  Effect.gen(function* () {
+    const fake = yield* FakeComputeDriver.make();
+    const buildMachine = (id: string, status: TeamImageBuildMachineRow["status"]) => ({
+      imageBuildId: TeamImageBuildId.make(`tib_0000000000000000000${id}`),
+      status,
+      sandboxId: SandboxId.make(`sbx_0000000000000000000${id}`),
+      driverRef: `build-${id}`,
+      driverId: fake.driver.driverId,
+    });
+    const live = buildMachine("1", "running");
+    const finished = buildMachine("2", "succeeded");
+    // Both are past the grace, with no sandbox record.
+    const machineBackend = (machine: TeamImageBuildMachineRow) =>
+      backend({
+        driverRef: machine.driverRef ?? "",
+        sandboxId: machine.sandboxId,
+        createdAt: DateTime.makeUnsafe(-60 * 60_000),
+      });
+    const dispatched: Array<TeamImageCommand> = [];
+    yield* Effect.gen(function* () {
+      assert.deepEqual(
+        yield* answerPass(fake.calls, [machineBackend(live), machineBackend(finished)]),
+        ["destroy build-2"],
+      );
+      assert.isUndefined(yield* restoreModeSince);
+      assert.deepEqual(dispatched, [
+        {
+          type: "team-image.build.machine-destroyed",
+          commandId: CommandId.make(
+            `server:team-image.build.machine-destroyed:${finished.imageBuildId}`,
+          ),
+          imageBuildId: finished.imageBuildId,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(reconciler(fake.driver, { buildMachines: [live, finished], dispatched })),
+    );
   }),
 );

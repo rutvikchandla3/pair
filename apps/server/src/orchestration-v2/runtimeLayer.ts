@@ -62,6 +62,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.ts";
 import * as LiveTeamImageBuild from "../sandbox/image/LiveTeamImageBuild.ts";
+import * as TeamImageBuildLog from "../sandbox/image/TeamImageBuildLog.ts";
+import * as TeamImageEffectsLive from "../sandbox/image/TeamImageEffectsLive.ts";
 import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import * as TeamImageStore from "../sandbox/image/TeamImageStore.ts";
 import * as TeamImageWorker from "../sandbox/image/TeamImageWorker.ts";
@@ -250,10 +252,24 @@ const layerTeamImageServiceProvided = TeamImageService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       TeamImageStore.layer,
+      TeamImageBuildLog.layer,
       layerLiveTeamImageBuild,
       layerSandboxAdmissionProvided,
       layerEventSink,
       layerCommandReceiptStoreProvided,
+    ),
+  ),
+);
+
+// Drivers, runners, hosts, credentials and secrets come from the server.
+const layerTeamImageEffectsProvided = TeamImageEffectsLive.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerTeamImageServiceProvided,
+      TeamImageStore.layer,
+      layerLiveTeamImageBuild,
+      TeamImageBuildLog.layer,
+      layerProjectService,
     ),
   ),
 );
@@ -435,8 +451,13 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
-  // Sandbox release and startup recovery re-arm cloud checkouts through the launch service.
-  layer.pipe(Layer.provide(Layer.merge(layerProjectService, layerThreadLaunchProvided))),
+  // Sandbox release and startup recovery re-arm cloud checkouts through the launch service; the
+  // executor finds the team image effects here.
+  layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerProjectService, layerThreadLaunchProvided, layerTeamImageEffectsProvided),
+    ),
+  ),
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
@@ -493,6 +514,8 @@ export const layerProduction = Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
         ThreadCommandExecutor.layer,
+        layerTeamImageServiceProvided,
+        TeamImageStore.layer,
       ),
     ),
   ),
