@@ -571,7 +571,7 @@ clients build against one set of names. Schemas only: each RPC method lands with
 - **Types and services, Commands and events, Migrations:** none.
 - **Tests:** `packages/contracts/src/sandboxImage.test.ts`: the recipe refuses a name in both maps,
   51 projects and a 64,001-character script; a newer `TeamImageErrorReason` decodes as null;
-  `sandboxImageLabel` returns "Build 14". Nothing else: the rest is types.
+  `sandboxImageLabel` returns "Build 14" (a row in `sandbox.test.ts`'s existing table). Nothing else: the rest is types.
 - **Verify:** `vp test run packages/contracts/src/sandboxImage.test.ts`, `vp run typecheck` in
   `packages/contracts`.
 - **Reviewer checks:** knip runs on this PR, so a non-schema constant no other file imports yet

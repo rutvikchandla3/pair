@@ -970,6 +970,8 @@ export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent
 export const ServerDrainStatus = Schema.Struct({
   since: Schema.DateTimeUtc,
   runningTurns: NonNegativeInt,
+  /** A team image build still running; absent on servers without team images. */
+  runningBuilds: Schema.optionalKey(NonNegativeInt),
 });
 export type ServerDrainStatus = typeof ServerDrainStatus.Type;
 

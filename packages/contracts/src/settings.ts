@@ -1217,6 +1217,11 @@ export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver]);
 export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
 
 /** Days a stopped machine keeps its disk; null never destroys it (04 §2). */
+const SandboxTeamImageSettings = Schema.Struct({
+  /** Succeeded builds kept besides the active one and those a live sandbox uses. */
+  keepSucceeded: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),
+});
+
 const SandboxDiskRetention = Schema.Struct({
   /** Asleep with every thread archived. */
   archivedAfterDays: StorageRetentionDays,
@@ -1235,6 +1240,8 @@ export const SandboxSettings = Schema.Struct({
   restoreModeSince: Schema.optionalKey(Schema.DateTimeUtcFromString),
   /** Absent: `DEFAULT_DISK_RETENTION` in `@t3tools/shared/sandbox`. */
   diskRetention: Schema.optionalKey(SandboxDiskRetention),
+  /** Absent: keep 5 succeeded builds. */
+  teamImage: Schema.optionalKey(SandboxTeamImageSettings),
 });
 export type SandboxSettings = typeof SandboxSettings.Type;
 
@@ -1800,6 +1807,7 @@ export const ServerSettingsPatch = Schema.Struct({
         env: Schema.optionalKey(ProviderInstanceEnvironment),
         restoreModeSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
         diskRetention: Schema.optionalKey(Schema.NullOr(SandboxDiskRetention)),
+        teamImage: Schema.optionalKey(Schema.NullOr(SandboxTeamImageSettings)),
       }),
     ),
   ),

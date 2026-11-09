@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import type { OrchestrationV2Sandbox } from "./orchestrationV2.ts";
 
 /** Path-safe: the server addresses a sandbox's files under `/t3-sandbox/<id>/`. */
@@ -8,6 +8,19 @@ export const SandboxId = TrimmedNonEmptyString.check(Schema.isPattern(/^sbx_[0-9
   Schema.brand("SandboxId"),
 );
 export type SandboxId = typeof SandboxId.Type;
+
+/** A team image build's id; the sandbox record carries it so machine details can name the build. */
+export const TeamImageBuildId = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^tib_[0-9a-f]{20}$/),
+).pipe(Schema.brand("TeamImageBuildId"));
+export type TeamImageBuildId = typeof TeamImageBuildId.Type;
+
+/** The team build a sandbox booted from; `number` is the per-team build number clients show. */
+export const SandboxImageBuildRef = Schema.Struct({
+  id: TeamImageBuildId,
+  number: PositiveInt,
+});
+export type SandboxImageBuildRef = typeof SandboxImageBuildRef.Type;
 
 /**
  * Names a team or project cannot set on sandbox processes (06 §6): the agent's identity, Pair's
@@ -118,13 +131,17 @@ export const SandboxBaseImageInfo = Schema.Struct({
 });
 export type SandboxBaseImageInfo = typeof SandboxBaseImageInfo.Type;
 
-/** What clients show as the machine's image; null once a team build replaces the base (M3). */
-export const sandboxImageLabel = (sandbox: Pick<OrchestrationV2Sandbox, "baseImage">): string =>
-  sandbox.baseImage === undefined
-    ? "Pair base"
-    : sandbox.baseImage.version !== null
-      ? `Pair base ${sandbox.baseImage.version}`
-      : `Base image ${sandbox.baseImage.ref}`;
+/** What clients show as the machine's image: its team build, else the base it booted from. */
+export const sandboxImageLabel = (
+  sandbox: Pick<OrchestrationV2Sandbox, "baseImage" | "imageBuild">,
+): string =>
+  sandbox.imageBuild !== undefined
+    ? `Build ${sandbox.imageBuild.number}`
+    : sandbox.baseImage === undefined
+      ? "Pair base"
+      : sandbox.baseImage.version !== null
+        ? `Pair base ${sandbox.baseImage.version}`
+        : `Base image ${sandbox.baseImage.ref}`;
 
 /** What Settings → Cloud shows of a driver's isolation; `runc` is not a security boundary (01 J1). */
 export const SandboxDriverIsolation = Schema.Literals(["rootless", "gvisor", "runc", "unknown"]);

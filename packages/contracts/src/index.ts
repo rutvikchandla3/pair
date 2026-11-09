@@ -43,6 +43,7 @@ export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./sandbox.ts";
+export * from "./sandboxImage.ts";
 export * from "./cloudMove.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";

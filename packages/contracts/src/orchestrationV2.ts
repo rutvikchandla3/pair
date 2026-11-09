@@ -93,6 +93,7 @@ import {
   ComputeDriverId,
   SandboxAdmissionReason,
   SandboxBaseImageInfo,
+  SandboxImageBuildRef,
   SandboxFailure,
   SandboxId,
   SandboxSize,
@@ -518,6 +519,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   failure: Schema.NullOr(SandboxFailure),
   /** Set once the driver created from a base image; absent on records from before. */
   baseImage: Schema.optionalKey(SandboxBaseImageInfo),
+  /** The team build it booted from; absent when it booted the base. */
+  imageBuild: Schema.optionalKey(SandboxImageBuildRef),
   /** When this sleep's working-tree snapshot reached the mirror; null until it does. */
   sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
   /** A scheduled run's machine: its disk is destroyed instead of kept once its threads settle. */
@@ -4011,6 +4014,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     driverId: ComputeDriverId,
     size: SandboxSize,
     discardOnSettle: Schema.optionalKey(Schema.Boolean),
+    imageBuild: Schema.optionalKey(SandboxImageBuildRef),
   }),
   Schema.Struct({ type: Schema.Literal("sandbox.admit"), ...SandboxGenerationCommandFields }),
   Schema.Struct({
