@@ -20,7 +20,10 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
-import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
+import {
+  EffectOutboxV2,
+  type OrchestrationEffectRequestV2,
+} from "../../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
@@ -153,6 +156,7 @@ const make = Effect.gen(function* () {
   const bootstraps = yield* SandboxBootstrapSource.SandboxBootstrapSource;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const outbox = yield* EffectOutboxV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const credentials = yield* SandboxCredentialRevocation.SandboxCredentialRevocation;
   // The server provides it; lifecycle tests run without a mirror.
@@ -302,6 +306,7 @@ const make = Effect.gen(function* () {
   /**
    * Runs parked on this machine: on `ready` those with no checkout to make are released and those
    * with one are re-armed (a no-op while a fiber prepares them); on `failed` the former fail.
+   * Parked restores then run: on `failed` they fail on the unavailable host with its message.
    */
   const releaseWaiters = Effect.fn("SandboxEffects.releaseWaiters")(function* (
     record: OrchestrationV2Sandbox,
@@ -346,6 +351,12 @@ const make = Effect.gen(function* () {
         );
       }
     }
+    yield* outbox
+      .expedite({
+        threadIds: rows.map(({ threadId }) => threadId),
+        effectTypes: ["provider-thread.rollback"],
+      })
+      .pipe(Effect.mapError(fail));
   });
 
   const driverFor = Effect.fn("SandboxEffects.driverFor")(function* (
@@ -617,6 +628,7 @@ export const layer: Layer.Layer<
   | ComputeDriverRegistry.ComputeDriverRegistry
   | SandboxBootstrapSource.SandboxBootstrapSource
   | ProjectionStore.ProjectionStoreV2
+  | EffectOutboxV2
   | ThreadManagement.ThreadManagementService
   | ServerEnvironment.ServerEnvironment
   | SandboxCredentialRevocation.SandboxCredentialRevocation

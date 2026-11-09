@@ -339,6 +339,7 @@ const layerSandboxEffectsProvided = SandboxEffects.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       ProjectionStore.layer,
+      EffectOutbox.layer,
       layerThreadManagementProvided,
       layerCheckpointServiceProvided,
     ),

@@ -128,6 +128,7 @@ import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as SandboxActivity from "./sandbox/lifecycle/SandboxActivity.ts";
 import * as SandboxRestoreMode from "./sandbox/lifecycle/SandboxRestoreMode.ts";
+import * as SandboxWake from "./sandbox/lifecycle/SandboxWake.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
@@ -732,6 +733,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   MemberProviderAccounts.layer,
+  SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   // Above the orchestration layers: a git credential's audit event is dispatched through them.
   // Forwards also reach the broker, the hub below and the MCP registry provided at the root.

@@ -661,7 +661,9 @@ other half of 2.1's policy.
 
 - **Needs:** 2.1. **Unblocks:** 2.8's terminal Wake (Track D), G2 step 8.
 - **Files:**
-  - New `apps/server/src/sandbox/lifecycle/SandboxWake.ts`:
+  - New `apps/server/src/sandbox/lifecycle/SandboxWakeService.ts` (the tag alone, as
+    `StoppedSandboxReadsService.ts` is: the terminal manager imports it, and the layer reaches
+    `ThreadLaunchService`, which imports the terminal manager) and `SandboxWake.ts` (`layer`):
     ```ts
     export class SandboxWake extends Context.Service<
       SandboxWake,
@@ -674,21 +676,23 @@ other half of 2.1's policy.
         /** Renews the lease; wakes on a new one, unless the thread is settled or archived. */
         readonly viewed: (input: {
           readonly threadId: ThreadId;
-          readonly actorId: MemberId | null;
+          readonly actorId?: MemberId;
         }) => Effect.Effect<void>;
       }
-    >()("t3/sandbox/SandboxWake") {}
+    >()("t3/sandbox/lifecycle/SandboxWakeService/SandboxWake") {}
     ```
     `wake` reads the shell's sandbox and does nothing unless it is `sleeping`. It dispatches
-    through `ThreadMessageIntake.dispatchCommand` (195), which hands sandbox commands to the
-    module-private `dispatchSandboxCommand` (112). It routes to the owner thread. Only sleep and
-    discard check the owner or an admin, so any member who can reach the thread may wake it. The command id is `sandbox-wake:<sandboxId>:<ownerThreadId>:<generation>`,
+    through `ThreadMessageIntake.dispatchSandboxCommand` (now exported, so the layer needs only
+    `ThreadManagementService` and `TeamState`, not the attachment services). It routes to the
+    owner thread. Only sleep and discard check the owner or an admin, so any member who can reach
+    the thread may wake it. The command id is `sandbox-wake:<sandboxId>:<ownerThreadId>:<generation>`,
     the one `request-wake` uses (SandboxEffects.ts 323–328), so the triggers dedupe. Failures are
     logged, never raised into the caller's RPC.
   - `apps/server/src/ws.ts`: the `sandbox.viewing` handler (from 2.1) calls `sandboxWake.viewed`.
   - `apps/server/src/terminal/Manager.ts` `write` (3377): when the session is not running and
     `sandboxIdFromPath(session.cwd)` (`WorkspaceHost.ts` 44) is set, call `SandboxWake.wake` (read
-    with `Effect.serviceOption`; the runner bundle has none), then fail as today. Attaching or
+    per call with `Effect.serviceOption`: the layer sits above the terminal layer, so it comes from
+    the RPC handler's context), then fail as today. Attaching or
     viewing a terminal does not wake. Track D's 2.8 drawer **Wake** button sends the existing
     `sandbox.wake` command (`wakeSandbox`, `packages/client-runtime/src/operations/commands.ts`
     464).
@@ -704,6 +708,8 @@ other half of 2.1's policy.
       effect (13192) with `availableAt: now + RESTORE_PARK_MS` (10 minutes,
       `PendingOrchestrationEffectV2.availableAt`, EffectOutbox.ts 221). Enqueue it after the wake
       effects, so their rowids come first.
+    - `takesSandboxSlot`: a `checkpoint.rollback` on a cloud thread takes the admission lock, as
+      a prompt does, since it can start the machine.
   - `apps/server/src/orchestration-v2/EffectOutbox.ts`:
     - New `expedite({ threadIds, effectTypes })`: `UPDATE ... SET available_at = now WHERE status =
       'pending' AND thread_id IN (...) AND effect_type IN (...) AND available_at > now`, then
@@ -732,18 +738,19 @@ other half of 2.1's policy.
 **Tests.**
 
 - `apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts`:
-  - New case "a restore on a sleeping machine wakes it and runs once it is ready". Replace the
+  - New `it.layer` block "restores" (the prompt cases leave a provider turn queued), case "a
+    restore on a sleeping machine wakes it and runs once it is ready". Replace the
     runtime's `Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({})` (makeSandboxRuntime, 201) with an `execute` that records its input. Dispatch `checkpoint.rollback` on a cloud
     thread whose machine sleeps: the record is `waking` and the rollback is not run. Answer the
     start, attach the runner, and drain the worker. The machine is `ready` and the rollback ran
     once. No clock advance.
-  - New case "a wake on a settled thread stays up until the idle deadline". After the settle
-    stops the machine, `TestClock.adjust("1 minute")`, then `SandboxWake.wake`, start answered,
-    runner attached, `sweep()`: still `ready`. Covers the G1 finding through the 2.2 entry point.
+  - Extend "stops a ready Docker sandbox once its owner settles, and not before": its
+    `sandbox.wake` dispatch becomes `SandboxWake.viewed` (still `sleeping`), then
+    `SandboxWake.wake`. Covers the G1 finding through the 2.2 entry points.
   - Extend "two side-chat prompts make one wake" (1107): a `viewed` on the owner and a terminal
     `wake` in the same generation still make one `sandbox.wake` event.
-- `apps/server/src/sandbox/lifecycle/SandboxActivity.test.ts` (new, the service's first test):
-  "`view` reports a new lease once, then again after 6 minutes". `it.effect`, `TestClock.adjust`.
+- `apps/server/src/terminal/Manager.test.ts`: extend "keeps a stopped machine's terminal exited…":
+  a write to the exited sandbox terminal calls `SandboxWake.wake` with its thread.
 - `apps/server/src/orchestration-v2/FoundationPersistence.test.ts`: new case "a parked rollback
   lets the thread's sandbox effects pass and runs once expedited". A rollback enqueued with a
   future `availableAt` blocks a `provider-turn.start` and lets a `sandbox.release-waiters` claim.
@@ -752,7 +759,7 @@ other half of 2.1's policy.
   calls `SandboxWake`.
 
 **Verify.** `vp test run apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts
-apps/server/src/sandbox/lifecycle/SandboxActivity.test.ts
+apps/server/src/terminal/Manager.test.ts
 apps/server/src/orchestration-v2/FoundationPersistence.test.ts`; `vp run typecheck` for
 `apps/server`; `vp run check:changed`. Client pass (`test-t3-app`, Docker driver, Replay
 provider): sleep a machine, refocus its unsettled thread, and it wakes once (one `sandbox.wake`

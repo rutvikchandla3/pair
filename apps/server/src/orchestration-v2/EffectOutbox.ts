@@ -259,6 +259,11 @@ export interface EffectOutboxV2Shape {
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
+  /** Makes these threads' pending effects of these types claimable now, then wakes workers. */
+  readonly expedite: (input: {
+    readonly threadIds: ReadonlyArray<ThreadId>;
+    readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+  }) => Effect.Effect<void, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
   readonly clearCancellation: (effectId: string) => Effect.Effect<void>;
@@ -358,6 +363,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
     // Retry backoff must block later effects so turns cannot race a pending rollback.
+    // A rollback parked for its machine still lets the thread's `sandbox.*` effects wake it.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -384,6 +390,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                     : sql`1 = 1`
                 }
               )
+            )
+            AND NOT (
+              active.status = 'pending'
+              AND active.effect_type = 'provider-thread.rollback'
+              AND candidate.effect_type LIKE 'sandbox.%'
             )
             AND (
               (
@@ -503,6 +514,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           return rows.map(({ effect_id }) => effect_id);
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause })),
+      ),
+      expedite: Effect.fn("EffectOutbox.expedite")(
+        function* ({ threadIds, effectTypes }) {
+          if (threadIds.length === 0 || effectTypes.length === 0) return;
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const rows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET available_at = ${now}, updated_at = ${now}
+            WHERE status = 'pending'
+              AND thread_id IN ${sql.in(threadIds)}
+              AND effect_type IN ${sql.in(effectTypes)}
+              AND available_at > ${now}
+            RETURNING effect_id
+          `;
+          if (rows.length > 0) yield* notifyAvailable(rows.length);
+        },
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "expedite", cause })),
       ),
       signalCancellations: Effect.fn("EffectOutbox.signalCancellations")(function* (effectIds) {
         yield* Effect.forEach(

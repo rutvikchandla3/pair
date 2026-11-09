@@ -2,10 +2,13 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  type CheckpointRef,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   ComputeDriverId,
   EnvironmentId,
+  EventId,
   MemberId,
   MessageId,
   NodeId,
@@ -63,6 +66,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as TeamState from "../../team/TeamState.ts";
 import { type BackendSandbox, ComputeDriverError } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
@@ -82,6 +86,8 @@ import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "./SandboxReconciler.ts";
 import * as SandboxRestoreMode from "./SandboxRestoreMode.ts";
+import * as SandboxWakeLive from "./SandboxWake.ts";
+import { SandboxWake } from "./SandboxWakeService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -243,6 +249,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
     }),
   );
   const activity = yield* SandboxActivity.makeTest;
+  const rollbacks = yield* Ref.make<ReadonlyArray<CheckpointId>>([]);
   const layerDriver = Layer.mergeAll(
     FakeComputeDriver.layerRegistry(fake.driver),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -269,7 +276,10 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
           Layer.mergeAll(
             layerSandboxEffects,
             Layer.mock(RunFinalization.RunFinalizationService)({}),
-            Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
+            Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({
+              execute: ({ checkpointId }) =>
+                Ref.update(rollbacks, (restored) => [...restored, checkpointId]),
+            }),
             Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
             Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({}),
             Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
@@ -281,7 +291,22 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
   );
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(Effect.provide(layerWorker));
   const effects = yield* SandboxEffects.SandboxEffects.pipe(Effect.provide(layerSandboxEffects));
-  return { ...fake, bootstraps, worker, effects, layerDriver, activity, ...credentials };
+  const wake = yield* SandboxWake.pipe(
+    Effect.provide(
+      SandboxWakeLive.layer.pipe(Layer.provide(Layer.merge(layerDriver, TeamState.layerTest()))),
+    ),
+  );
+  return {
+    ...fake,
+    bootstraps,
+    worker,
+    effects,
+    wake,
+    rollbacks,
+    layerDriver,
+    activity,
+    ...credentials,
+  };
 });
 
 type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
@@ -490,6 +515,72 @@ const answerStop = (call: FakeComputeDriver.FakeComputeCall) =>
 
 const answerStart = (call: FakeComputeDriver.FakeComputeCall) =>
   call._tag === "start" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag);
+
+/** A restorable checkpoint on the thread's provider thread, as a finished turn leaves one. */
+const seedCheckpoint = (threadId: ThreadId, runId: RunId, key: string) =>
+  Effect.gen(function* () {
+    const { providerThreads, nodes } = yield* ProjectionStore.ProjectionStoreV2.use((projections) =>
+      projections.getThreadRecords(threadId, ["providerThreads", "nodes"]),
+    );
+    const [providerThread] = providerThreads;
+    const [node] = nodes;
+    if (providerThread === undefined || node === undefined) {
+      return yield* Effect.die("Expected the prompt's provider thread and node");
+    }
+    const scopeId = CheckpointScopeId.make(`scope:${key}`);
+    const checkpointId = CheckpointId.make(`checkpoint:${key}`);
+    const now = yield* DateTime.now;
+    yield* EventSink.EventSinkV2.use((sink) =>
+      sink.write({
+        commandId: CommandId.make(`seed:${key}`),
+        events: [
+          {
+            id: EventId.make(`seed:${key}:scope`),
+            type: "checkpoint-scope.created",
+            threadId,
+            runId,
+            nodeId: node.id,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: scopeId,
+              threadId,
+              runId,
+              nodeId: node.id,
+              parentScopeId: null,
+              providerThreadId: providerThread.id,
+              kind: "root_run",
+              ordinalWithinParent: 0,
+              advancesAppRunCount: true,
+              cwd: "/t3-sandbox/restore",
+              createdAt: now,
+            },
+          },
+          {
+            id: EventId.make(`seed:${key}:checkpoint`),
+            type: "checkpoint.captured",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: checkpointId,
+              threadId,
+              scopeId,
+              runId: null,
+              nodeId: node.id,
+              parentCheckpointId: null,
+              ordinalWithinScope: 0,
+              appRunOrdinal: null,
+              ref: CheckpointRef.make(`refs/t3/${key}`),
+              status: "ready",
+              files: [],
+              capturedAt: now,
+            },
+          },
+        ],
+      }),
+    );
+    return { scopeId, checkpointId };
+  });
 
 const effectsOf = (commandId: string) =>
   EffectOutbox.EffectOutboxV2.use((outbox) => outbox.listByCommandId(CommandId.make(commandId)));
@@ -1056,6 +1147,57 @@ it.layer(layerTest)("cloud prompts", (it) => {
   );
 });
 
+// The prompt test above leaves a provider turn queued, which this worker must not claim.
+it.layer(layerTest)("restores", (it) => {
+  it.effect("a restore on a sleeping machine wakes it and runs once it is ready", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const { threadId, sandboxId } = yield* provisioned("restore");
+      // Parked while the machine boots, then failed: the thread gets a provider thread, no run.
+      const { run } = yield* prompt(threadId, "restore-source");
+      yield* dispatch({
+        type: "prepared-run.fail",
+        commandId: CommandId.make("fail:restore"),
+        threadId,
+        runId: run.id,
+        failure: makeProviderFailure({
+          message: "Stopped for the test.",
+          class: "validation_error",
+          retryable: false,
+        }),
+      });
+      const checkpoint = yield* seedCheckpoint(threadId, run.id, "restore");
+      yield* runAnswering(runtime, answerCreate);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 1);
+      yield* dispatch({
+        type: "sandbox.sleep",
+        commandId: CommandId.make("sleep:restore"),
+        threadId,
+        sandboxId,
+      });
+      yield* runAnswering(runtime, answerStop);
+
+      yield* dispatch({
+        type: "checkpoint.rollback",
+        commandId: CommandId.make("rollback:restore"),
+        threadId,
+        checkpointId: checkpoint.checkpointId,
+        scopeId: checkpoint.scopeId,
+        restoreFiles: false,
+      });
+      assert.deepInclude(yield* getSandbox(sandboxId), { state: "waking", generation: 2 });
+      yield* runAnswering(runtime, answerStart);
+      assert.deepEqual(yield* Ref.get(runtime.rollbacks), []);
+
+      // The hello's release runs past the parked restore, then lets it run.
+      yield* attach(threadId, sandboxId, 2);
+      assert.equal(yield* runtime.worker.drain(), 2);
+      assert.equal((yield* getSandbox(sandboxId))?.state, "ready");
+      assert.deepEqual(yield* Ref.get(runtime.rollbacks), [checkpoint.checkpointId]);
+    }),
+  );
+});
+
 it.layer(layerTest)("shared sandboxes", (it) => {
   it.effect.each([
     { name: "hands over to a fork after the owner's queued effects", forkDeleted: false },
@@ -1218,6 +1360,11 @@ it.layer(layerTest)("side chat prompts", (it) => {
         ),
       );
 
+      // Opening the owner wakes the machine; a key in a side chat's terminal joins that wake.
+      yield* runtime.wake.viewed({ threadId: owner });
+      assert.equal((yield* getSandbox(sandboxId))?.state, "waking");
+      yield* runtime.wake.wake({ threadId: sideChats[0] ?? owner });
+
       // Both requests run; the one wake they make is the only driver call.
       const run = yield* runtime.worker.drain().pipe(Effect.forkChild);
       const start = yield* Effect.raceFirst(
@@ -1292,14 +1439,12 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       assert.deepEqual(yield* Ref.get(snapshots.captures), [[worktreePath, ref]]);
       assert.deepEqual(yield* Ref.get(snapshots.synced), [ref]);
 
-      // A wake on the still-settled thread stays up until it has been idle for the window.
+      // Viewing the settled thread leaves it asleep; a wake on it stays up until it has been idle
+      // for the window.
       yield* TestClock.adjust("1 minute");
-      yield* dispatch({
-        type: "sandbox.wake",
-        commandId: CommandId.make("wake:settle"),
-        threadId,
-        sandboxId,
-      });
+      yield* runtime.wake.viewed({ threadId });
+      assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+      yield* runtime.wake.wake({ threadId });
       yield* runAnswering(runtime, answerStart);
       yield* attachAndRelease(runtime, threadId, sandboxId, 2);
       yield* sweep();

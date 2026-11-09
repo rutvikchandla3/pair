@@ -35,6 +35,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   ProviderInstanceId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -68,6 +69,7 @@ import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxProcessEnvironment from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import { SandboxWake } from "../sandbox/lifecycle/SandboxWakeService.ts";
 import { sandboxScriptEnvironment } from "../sandbox/scripts/sandboxScriptEnvironment.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -81,6 +83,7 @@ import {
   LOCAL_WORKSPACE_HOST_ID,
   type WorkspaceHostId,
   type WorkspaceHostInfo,
+  sandboxIdFromPath,
 } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
@@ -3390,6 +3393,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const session = yield* requireSession(input.threadId, terminalId);
     const process = session.process;
     if (!process || session.status !== "running") {
+      // A key in a sleeping machine's terminal wakes it. The waker is built above this layer, so
+      // it comes from the caller's context (the RPC handler's).
+      const waker = yield* Effect.serviceOption(SandboxWake);
+      if (Option.isSome(waker) && sandboxIdFromPath(session.cwd) !== undefined) {
+        yield* waker.value.wake({ threadId: ThreadId.make(input.threadId) });
+      }
       if (session.status === "exited") return;
       return yield* new TerminalNotRunningError({
         threadId: input.threadId,

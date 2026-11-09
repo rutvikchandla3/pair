@@ -215,6 +215,7 @@ import * as TeamState from "../team/TeamState.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import {
+  type CloudPromptDecision,
   decideGitCredentialRecord,
   decideCloudPrompt,
   decideSandboxCommand,
@@ -227,12 +228,18 @@ import {
   type SandboxDecision,
 } from "../sandbox/lifecycle/SandboxDecisions.ts";
 
-/** Commands that can start a machine; they, and prompts on cloud threads, take the admission lock. */
+/**
+ * Commands that can start a machine. They, and prompts and restores on cloud threads, take the
+ * admission lock.
+ */
 const startsSandbox = (type: OrchestrationV2ServerCommand["type"]) =>
   type === "sandbox.provision" ||
   type === "sandbox.wake" ||
   type === "sandbox.retry" ||
   type === "sandbox.admit";
+
+/** A restore waits this long for its machine at most, so it can never pin the thread's queue. */
+const RESTORE_PARK_MS = 10 * 60_000;
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -11042,6 +11049,75 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+  /** The owner's wake commits with the command; another thread asks the owner with an effect. */
+  const applyCloudWake = Effect.fn("Orchestrator.applyCloudWake")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "message.dispatch" | "checkpoint.rollback" }
+    >,
+    wake: Extract<CloudPromptDecision, { readonly _tag: "Defer" }>["wake"],
+    now: DateTime.Utc,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    if (wake?._tag === "Accept") {
+      yield* applySandboxDecision(command, wake, now, events, effects);
+    } else if (wake?._tag === "RequestWake") {
+      const { request } = wake;
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:${request.type}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request,
+        },
+      ]);
+    }
+  });
+
+  /**
+   * A restore on a cloud thread whose machine is not `ready` wakes it like a prompt would, and
+   * returns when its rollback may run: `release-waiters` expedites it once the machine is up.
+   */
+  const parkRestoreForMachine = Effect.fn("Orchestrator.parkRestoreForMachine")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
+    thread: OrchestrationV2ThreadProjection["thread"],
+    now: DateTime.Utc,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    if (thread.sandboxId === undefined) return undefined;
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
+    if (record === null || record.state === "ready") return undefined;
+    const refuse = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    if (hasNoDisk(record)) {
+      return yield* refuse("This machine's disk is gone, so there is nothing to restore.");
+    }
+    const decision = decideCloudPrompt({
+      record,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      dispatchMode: "start_immediately",
+      checkout: null,
+      admission: yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection),
+      now,
+    });
+    if (decision._tag === "Refuse") return yield* refuse(decision.message);
+    if (decision._tag === "Defer") {
+      yield* applyCloudWake(command, decision.wake, now, events, effects);
+    }
+    return DateTime.add(now, { milliseconds: RESTORE_PARK_MS });
+  });
+
   /**
    * A prompt to a cloud thread whose machine is not `ready` waits in `preparing`; on the owner the
    * same commit wakes the machine, or provisions a new one after a discard.
@@ -11116,20 +11192,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: decision.message,
       });
     }
-    if (decision.wake?._tag === "Accept") {
-      yield* applySandboxDecision(command, decision.wake, now, events, effects);
-    } else if (decision.wake?._tag === "RequestWake") {
-      const { request } = decision.wake;
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:${request.type}`,
-          commandId: command.commandId,
-          threadId: command.threadId,
-          request,
-        },
-      ]);
-    }
+    yield* applyCloudWake(command, decision.wake, now, events, effects);
     // A delivery intent resolves to a start mode later, which would undo the wait.
     const { deliveryIntent: _deliveryIntent, ...deferred } = command;
     return {
@@ -13189,6 +13252,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
+      // Enqueued after any wake effects, so they come first on the thread's queue.
+      const availableAt = yield* parkRestoreForMachine(
+        command,
+        projection.thread,
+        now,
+        events,
+        effects,
+      );
       yield* emit(
         events,
         command,
@@ -13236,6 +13307,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             checkpointId: targetCheckpoint.id,
             scopeId: targetScope.id,
           },
+          ...(availableAt === undefined ? {} : { availableAt }),
         } satisfies PendingOrchestrationEffectV2,
       ]);
     },
@@ -14981,9 +15053,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const promptThreadId =
       command.type === "delegated_task.request"
         ? command.parentThreadId
-        : command.type === "message.dispatch" &&
-            (command.dispatchMode.type === "start_immediately" ||
-              command.dispatchMode.type === "queue_after_active")
+        : (command.type === "message.dispatch" &&
+              (command.dispatchMode.type === "start_immediately" ||
+                command.dispatchMode.type === "queue_after_active")) ||
+            command.type === "checkpoint.rollback"
           ? command.threadId
           : null;
     if (promptThreadId === null) return false;

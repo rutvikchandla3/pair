@@ -310,10 +310,11 @@ read-only browsing while asleep; a wake whose disk is gone rebuilds it from the 
 `sandbox.sleep`) once every attached thread is settled or archived. While stopped, reads fall back to
 the mirror's latest checkpoint and terminals show exited.
 
-**Wake triggers.** In M1: a prompt from the owner or an attached thread. In M2: opening the thread
-(one `sandbox.wake` when the view mounts visible and focused), typing in a sleeping terminal or
-pressing its **Wake** (viewing it does not wake), MCP or `t3 thread` CLI calls that send messages,
-run commands or read files, scheduled tasks, and checkpoint restore (decision 11). Opening a preview
+**Wake triggers.** In M1: a prompt from the owner or an attached thread. In M2: opening a thread
+that is neither settled nor archived (one `sandbox.wake` on a new viewer lease), typing in a
+sleeping terminal or pressing its **Wake** (viewing it does not wake), MCP or `t3 thread` CLI calls
+that send messages (through the prompt path), scheduled tasks, and checkpoint restore, which waits
+for `ready` for at most 10 minutes (decision 11). A settled thread's reads come from the snapshot. Opening a preview
 wakes once previews land (Later). Never: the sidebar, the shell stream, search, push, mirror diffs,
 `subscribeThread`, or MCP lists.
 

@@ -2340,6 +2340,63 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
+  it.effect(
+    "a parked rollback lets the thread's sandbox effects pass and runs once expedited",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const workerId = "parked-rollback-worker";
+        const threadId = ThreadId.make("thread:foundation-parked-rollback");
+        const claim = outbox
+          .claimNext({ workerId })
+          .pipe(Effect.map((claimed) => Option.getOrUndefined(claimed)?.id));
+        yield* outbox.enqueue([
+          {
+            id: "effect:foundation-parked-rollback:rollback",
+            commandId: CommandId.make("command:foundation-parked-rollback"),
+            threadId,
+            request: {
+              type: "provider-thread.rollback",
+              providerThreadId: ProviderThreadId.make("provider-thread:foundation-parked-rollback"),
+              checkpointId: CheckpointId.make("checkpoint:foundation-parked-rollback"),
+              scopeId: CheckpointScopeId.make("scope:foundation-parked-rollback"),
+            },
+            availableAt: DateTime.add(yield* DateTime.now, { minutes: 10 }),
+          },
+          {
+            id: "effect:foundation-parked-rollback:release",
+            commandId: CommandId.make("command:foundation-parked-rollback:release"),
+            threadId,
+            request: {
+              type: "sandbox.release-waiters",
+              sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+              generation: 2,
+            },
+          },
+          {
+            id: "effect:foundation-parked-rollback:start",
+            commandId: CommandId.make("command:foundation-parked-rollback:start"),
+            threadId,
+            request: { type: "provider-turn.start", runId: RunId.make("run:foundation-parked") },
+          },
+        ]);
+
+        // The turn still waits behind the rollback; the machine's release does not.
+        assert.equal(yield* claim, "effect:foundation-parked-rollback:release");
+        yield* outbox.succeed({ effectId: "effect:foundation-parked-rollback:release", workerId });
+        assert.isUndefined(yield* claim);
+
+        yield* outbox.expedite({
+          threadIds: [threadId],
+          effectTypes: ["provider-thread.rollback"],
+        });
+        assert.equal(yield* claim, "effect:foundation-parked-rollback:rollback");
+        yield* outbox.succeed({ effectId: "effect:foundation-parked-rollback:rollback", workerId });
+        assert.equal(yield* claim, "effect:foundation-parked-rollback:start");
+        yield* outbox.succeed({ effectId: "effect:foundation-parked-rollback:start", workerId });
+      }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
+  );
+
   it.effect("runs distinct threads concurrently while serializing effects within a thread", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;

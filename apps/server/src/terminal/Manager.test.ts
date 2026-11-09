@@ -40,6 +40,7 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { SandboxEnvironmentError } from "../sandbox/credentials/SandboxProcessEnvironment.ts";
+import { SandboxWake } from "../sandbox/lifecycle/SandboxWakeService.ts";
 import { ProviderCloudLocalOnlyError } from "../provider/Errors.ts";
 import { SettingsSecretUnresolvedError } from "../secrets/settingsSecretValue.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -711,47 +712,65 @@ it.layer(
     }),
   );
 
-  it.effect("keeps a stopped machine's terminal exited and starts no new one there", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter, hosts } = yield* createManager();
-      const root = "/t3-sandbox/sbx_0000000000000000000b";
-      const cwd = `${root}/worktrees/main`;
-      const machine = yield* Scope.make();
-      yield* hosts
-        .register(root, {
-          ...hosts.local,
-          fileSystem: {
-            ...hosts.local.fileSystem,
-            stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
-          },
-        })
-        .pipe(Scope.provide(machine));
-      const exited = yield* Deferred.make<void>();
-      const unsubscribeEvents = yield* manager.subscribe((event) =>
-        event.type === "exited"
-          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
-          : Effect.void,
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeEvents));
-      yield* manager.open(openInput({ cwd }));
-      ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 });
-      yield* Deferred.await(exited);
-      // The machine stops: its root is no longer registered.
-      yield* Scope.close(machine, Exit.void);
+  it.effect(
+    "keeps a stopped machine's terminal exited, starts no new one there, and wakes on a key",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, hosts } = yield* createManager();
+        const root = "/t3-sandbox/sbx_0000000000000000000b";
+        const cwd = `${root}/worktrees/main`;
+        const machine = yield* Scope.make();
+        yield* hosts
+          .register(root, {
+            ...hosts.local,
+            fileSystem: {
+              ...hosts.local.fileSystem,
+              stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
+            },
+          })
+          .pipe(Scope.provide(machine));
+        const exited = yield* Deferred.make<void>();
+        const unsubscribeEvents = yield* manager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeEvents));
+        yield* manager.open(openInput({ cwd }));
+        ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(exited);
+        // The machine stops: its root is no longer registered.
+        yield* Scope.close(machine, Exit.void);
 
-      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
-      const unsubscribe = yield* manager.attachStream(
-        { ...openInput({ cwd }), restartIfNotRunning: true },
-        (event) => Ref.update(attachEvents, (events) => [...events, event]),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-      expect(yield* Ref.get(attachEvents)).toEqual([
-        { type: "snapshot", snapshot: expect.objectContaining({ status: "exited" }) },
-      ]);
-      const fresh = yield* manager.open(openInput({ cwd, terminalId: "second" })).pipe(Effect.flip);
-      expect(fresh._tag).toBe("TerminalNotRunningError");
-      expect(ptyAdapter.spawnInputs).toHaveLength(1);
-    }),
+        const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+        const unsubscribe = yield* manager.attachStream(
+          { ...openInput({ cwd }), restartIfNotRunning: true },
+          (event) => Ref.update(attachEvents, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        expect(yield* Ref.get(attachEvents)).toEqual([
+          { type: "snapshot", snapshot: expect.objectContaining({ status: "exited" }) },
+        ]);
+        const fresh = yield* manager
+          .open(openInput({ cwd, terminalId: "second" }))
+          .pipe(Effect.flip);
+        expect(fresh._tag).toBe("TerminalNotRunningError");
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+        const woken = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* manager
+          .write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "l" })
+          .pipe(
+            Effect.provideService(
+              SandboxWake,
+              SandboxWake.of({
+                wake: ({ threadId }) => Ref.update(woken, (threads) => [...threads, threadId]),
+                viewed: () => Effect.die("unused"),
+              }),
+            ),
+          );
+        expect(yield* Ref.get(woken)).toEqual(["thread-1"]);
+      }),
   );
 
   it.effect("refuses a server terminal on a cloud-only server and opens a machine's", () =>
