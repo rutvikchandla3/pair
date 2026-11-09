@@ -17,12 +17,12 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (8 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.4, 2.25, 2.31, 2.32, 2.33, 2.36, 2.44. In flight on the Mac (worktrees under
-`../pair-wt/`): 2.22, 2.43, 2.38, 2.34, 2.7, 2.2. Lead decision awaiting maintainer sign-off: 2.44
-reads pull requests with the server's own sign-in first and the App only where that can't (07 open
-question 1 recommended App-first). Open maintainer questions are under the spec page's "What the
-code changed in 10 §2".
+**M2 (13 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.4, 2.7, 2.22, 2.25, 2.31, 2.32, 2.33, 2.34, 2.36, 2.38, 2.43, 2.44. In flight on the
+Mac (worktrees under `../pair-wt/`): 2.2, 2.8, 2.23, 2.35, 2.37, 2.39. Lead decision awaiting
+maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the App only
+where that can't (07 open question 1 recommended App-first). Open maintainer questions are under the
+spec page's "What the code changed in 10 §2".
 
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
@@ -1004,6 +1004,85 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - Open gap: a run re-armed after restart/retry loses `existingBranch` and falls back to the base.
 - Owed: MCP tool description changed (`agentContextBudget.json` 47818 → 47927, needs the
   `agent-context-increase` label on a PR); the `mcp-tool-use` eval was not run (no API key).
+
+## 2.34 public URL for webhooks (landed)
+
+- `--public-url` / `T3CODE_PUBLIC_URL` → optional `ServerConfig.publicUrl?: URL`; startup refuses
+  anything but an http(s) origin. `webhookOrigin({ relayHookBaseUrl, publicUrl })` in
+  ScheduledTaskService.ts: tunnel wins, then `<publicUrl>/api/hooks`, else null; endpoints carry
+  `relayed` (contracts `ScheduledTask.webhook.relayed`, optionalKey). Web shows the hold-while-offline
+  control only when relayed (or `relayed` absent with a url, for older servers).
+- The CLI flag record is exact: every flag object (config.test.ts, `resolveCliAuthConfig`) lists
+  `publicUrl: Option.none()`. 2.21 documents the flag in the operator guide.
+- Owed: `ScheduledTasksSettings.browser.test.tsx` (no Playwright browser on the Mac); runtime transcript.
+
+## 2.43 team cap per driver (landed)
+
+- `DockerSandboxDriver.runningCap: optionalKey(PositiveInt)`; `ComputeDriverRegistry.runningCap(driverId)`
+  = `config.runningCap ?? defaultRunningCap`. `sync` compares configs without the cap, so a cap-only
+  edit swaps `entry.config` and never rebuilds the driver. Admission and SandboxOverview read the cap
+  only through the registry. `memberDriverView` includes `runningCap`.
+- `makeSweep` subscribes to `ServerSettingsService.subscribeChanges` and invalidates the due hint on
+  every settings change (a raised cap admits waiters on the next tick). Supersedes the 1.18 note that
+  a cap change sends no event.
+- `ComputeDriverTesting.layerRegistry` now needs `ServerSettingsService`
+  (`runningCapFromSettings(settings, fake)`); registry fakes that admission/overview reach must
+  implement `runningCap`. Web: "Machines at once" in the driver form. Captures owed in G2.
+
+## 2.38 restore mode (landed)
+
+- `SandboxSettings.restoreModeSince` (settings) and `SandboxOverview.restoreMode {since, machines}`
+  with `SandboxRestoreModeMachine`. `--restore-mode` / `T3CODE_RESTORE_MODE` → optional
+  `ServerConfig.restoreMode`; the startup flag is applied once, and a failed write fails the pass.
+- `planReconciliation(record, backend, now, restoreMode)` adds `StopOrphan`: in restore mode an
+  unrecorded backend is stopped, never destroyed. Auto-enable only for unrecorded backends older
+  than `ORPHAN_GRACE_MS`.
+- New `apps/server/src/sandbox/lifecycle/SandboxRestoreMode.ts` (key
+  `t3/sandbox/lifecycle/SandboxRestoreMode`) keeps the confirmed set, so leaving restore mode does
+  not re-trigger it for the same backends (fixes a spec gap). Layers building
+  `SandboxReconciler.layer` need ServerSettingsService, ServerConfig and SandboxRestoreMode.
+- Web CloudSettings "Restore mode" section; mobile Machines line. 2.21's runbook should name
+  `--restore-mode`. CloudSettings browser test owed (Playwright missing on the Mac).
+
+## 2.22 cloud-only mode (landed)
+
+- `ServerConfig.cloudOnly: boolean` (required), `--cloud-only` / `T3CODE_CLOUD_ONLY`; refused in
+  desktop mode; forces `autoBootstrapProjectFromCwd` off. Every `CliServerFlags` record lists
+  `cloudOnly` (next to `restoreMode`).
+- `CLOUD_ONLY_MESSAGE` and `CloudOnlyRefusedError {operation}` live in contracts
+  (`environment.ts`), re-exported from `apps/server/src/environment/CloudOnly.ts` with
+  `refuseLocalHost(operation, path)` and `localHostGuard` (services read once). A null path is the
+  server's own; a path under the sandbox root whose machine isn't connected passes (routing fails
+  closed).
+- Orchestrator: `OrchestratorLocalThreadReadOnlyError` for message.dispatch, prepared-run.retry and
+  checkpoint.rollback on a thread with no `sandboxId`; it is rethrown, not recorded as a rejected
+  receipt. `ProviderSessionManager.open` backstop fails `CloudOnlyRefusedError` for a non-sandbox
+  host. `ThreadLaunchService.launch` fails `CloudLaunchError "local-launch"` for any non-cloud
+  strategy. `ProviderRuntimeRecoveryService.recover` fails `CloudOnlyLocalWorkError` while a local
+  thread has runtime or queued work.
+- `TerminalCloudOnlyError` (contracts terminal.ts); `TerminalManagerOptions.cloudOnly` is required.
+  `ProjectFileFailure "cloud_only"` for workspace writes. MCP: `create_threads` refused (also on any
+  cloud parent), `delegate_task` needs isolation `"cloud"`. Also refused: git/VCS writes, scratch and
+  new projects, agent-session scan/import, ACP import, open-in-editor, stop local server, startup
+  auto-pull. `CloudOnlyRefusedError` joins those four RPC error unions.
+- Gotchas: `removeWorktree` refuses host paths on a cloud-only server; scheduled/webhook runs are
+  refused until 2.18's `cloudPlacement`. Read-side rows stay for 2.45.
+
+## 2.7 pre-sleep snapshot (landed)
+
+- `sleepSnapshotAt` (optional key) on `OrchestrationV2Sandbox` and the `sandbox.stopped` command.
+  `sandboxSnapshotRef(threadId)` = `<sandboxThreadRefPrefix>snapshot` in CheckpointMirror.ts.
+- `CheckpointServiceV2.captureSnapshot({cwd, ref})` → `ready | missing | error`, never fails, under
+  the workspace lock (a `turn` capture with previous = ref). `MirrorSyncWorker.syncRefs({threadId,
+  cwd, checkpointRefs})` → boolean, never fails.
+- `SandboxEffects.snapshotBeforeSleep` runs on `sandbox.stop` only when the record is `sleeping`,
+  before `flush`, bounded at 15 s; checkouts deduped by `worktreePath` (owner, else oldest attached,
+  names the ref). Records the time only when every checkout synced.
+- Decider: `sandbox.sleep`/`auto-sleep` patch `sleepSnapshotAt: null`; `sandbox.stopped` on
+  `sleeping` records it when given; an unplanned stop (ready/waking) resets it to null.
+- For 2.8/2.13: a failed snapshot sync isn't retried by the 30 s pass (time stays unset); after an
+  unplanned stop the field is null while an older snapshot ref may still be in the mirror. Docker
+  runtime transcript owed in G2.
 
 ## Open follow-ups and risks
 
