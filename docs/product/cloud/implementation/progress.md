@@ -17,9 +17,10 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (21 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.2, 2.4, 2.7, 2.8, 2.22, 2.23, 2.24, 2.25, 2.31–2.39, 2.43, 2.44, 2.47. In flight on
-the Mac (worktrees under `../pair-wt/`): 2.9, 2.13, 2.18, 2.26, 2.27, 2.42, 2.45. Lead decision
+**M2 (27 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.2, 2.4, 2.7, 2.8, 2.9, 2.13, 2.18, 2.22–2.27, 2.31–2.39, 2.42–2.44, 2.47. In flight
+on the Mac (worktrees under `../pair-wt/`): 2.12, 2.28, 2.29, 2.40, 2.45, 2.46. Then 2.30 (after
+2.28 and 2.29), 2.21 and 2.41. Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
@@ -1216,6 +1217,107 @@ Where the code differs from the spec, and what later PRs must know. Workers read
   FilePreviewPanel. Mobile notice placement under the iOS header needs a look in G2.
 - Lead fixes at landing: merged 2.2's wake-on-key check into 2.8's Manager.test case; removed
   duplicate imports from the auto-merge (Manager.ts `sandboxIdFromPath`, client-runtime DateTime).
+
+## 2.18 scheduled and webhook runs on Pair Cloud (landed 2482fc5d2)
+
+- Migration 091 `ScheduledTaskCloudRuns`: `discardOnSettle` (kept when an upsert omits it) and
+  `lastRunThreadId` on scheduled tasks. `ThreadLaunchInput.cloudPlacement` / `discardOnSettle`;
+  `ThreadLaunchService.placeInCloud` (before the local-launch refusal) turns any stored strategy into
+  `cloud` on a cloud-only server: worktree keeps its base (`origin/` stripped), others use the task
+  branch, else the checkout's current branch, else `main`.
+- `sandbox.provision.discardOnSettle` → record flag; the idle rule runs for it even without
+  `sleepOnSettle`, and the settled auto-sleep becomes `destroyed` + `sandbox.destroy`. Destroy now
+  flushes the mirror first. A woken discarded machine keeps the flag.
+- client-runtime `sandboxWaitingLabel`; web/mobile scheduled-task editors show Cloud placement
+  read-only, the discard switch, and "Waiting for a machine" on the last run (only after a
+  successful run). Browser test owed: ScheduledTasksSettings.
+
+## 2.42 smaller M1 defects (landed 038ee7005)
+
+- contracts `orchestrationV2PendingWorktreeBase(runs)`: the newest `preparing` worktree run's
+  baseRef. (a) Web `resolveBranchToolbarValue(..., cloudThread)` shows `branch ?? baseRef` for a cloud
+  thread without a worktree; ChatView `gitCwd`/`gitStatusCwd` are null then (ThreadDetailsPanel hides
+  its branch and git sections). Mobile had the same defect: `use-selected-thread-worktree` returns
+  null for such a thread, ThreadRouteScreen falls back to the pending base; mobile shell mocks need
+  `source`.
+- (b) client-runtime `deriveWorkspaceMutationId(..., runs)` keys on the newest rolled-back
+  `completedAt`, from a runs-only atom.
+- (c) runner `ownForAgent` chowns server writes for the agent user (atomic staging, plain writes,
+  recursive mkdir's new folders, copy trees minus symlinks, temp dirs, write streams at open,
+  `files.writeNoFollow`); `stateDir` and the bundle stay root's. `chown` follows symlinks, which is
+  fine only because the agent has passwordless sudo. Owed: `docker exec stat` transcript, captures,
+  ChatView.browser.test.
+
+## 2.13 rebuild a lost or destroyed disk from the mirror (landed f9fcd8b6d)
+
+- `MirrorSync.restore({threadId, projectId, clonePath, worktreePath, branch})`: bundles the
+  thread's mirror branch (+ the sleep snapshot only when its parent is the branch tip), fetches it
+  into the clone, `worktree add`s at the recorded path, and puts the snapshot in the working tree
+  (index reset). Null when the mirror has no branch. New `MirrorSyncError` reason
+  `"restore-failed"`. Bundle held in memory (512 MiB cap).
+- `CloudPreparation.checkoutInSandbox` takes `threadId`, returns `restoredFrom`/`snapshotAt`; order
+  kept disk → mirror → origin; a mirror rebuild is `created: false` (cancel never deletes it).
+- `ThreadLaunchService.restoreCheckout` (background, reruns setup, never fails the caller), a
+  per-machine checkout lock; `retryPreparation` refuses a no-disk machine off cloud-only.
+  `SandboxEffects.releaseWaiters` calls it on every `ready` for threads with no re-armed run.
+- New internal command `thread.notice.record` → `system_notice` row "Rebuilt from the snapshot of
+  2026-11-09 14:02 UTC" (UTC: fixed server text). Web never offers "Initialize Git" on a cloud thread.
+- Owed: Docker run (edit, sleep, `docker rm -f`, Retry) and captures; the "nothing to bundle" branch
+  is untested; an older snapshot still on the branch tip comes back after a later lost disk.
+
+## 2.27 Pair Cloud target resolver (landed 621af86a7)
+
+- `@t3tools/client-runtime/state/cloud-target`: `CloudTarget`, `CloudTargetOption`,
+  `isCloudLaunchEnvironment(Pick<ServerConfig,"environment"> | null)`, `resolveCloudTarget({project,
+  environments: {environmentId, label, connected, serverConfig: Pick<ServerConfig,"environment" |
+  "settings"> | null}[], projects})`. Web maps `connected` from `connection.phase`. Origin key
+  compared case-insensitively under `github.com/`. Lint rejects `Array#toSorted` in client-runtime.
+- Lead change at landing: rule 1 no longer hides Cloud for `not-configured` on the project's own
+  Pair Cloud; it returns the one target with `disabledReason` "Cloud is not set up on this
+  environment." (matches 2.24's pickers: local modes are refused there). Spec and the
+  shared/sandbox.ts doc comment updated.
+- Filters: web `resolveLogicalProjectEnvironments` (pure, in BranchToolbar.logic.ts;
+  `useLogicalProjectEnvironments` wraps it), `useAddProjectTargets`, and mobile
+  `new-task-flow-provider` leave `cloudLaunch` environments out except the active project's own.
+
+## 2.9 PR discovery and status while asleep (landed c937dbf4c)
+
+- `SandboxHeadContext` (sandbox/mirror/SandboxHeadContext.ts): branch, upstream, remotes (tokens
+  stripped), defaultBranch, stored as a blob at `refs/t3/sandbox/<b64>/head`
+  (`CheckpointMirror.sandboxHeadRef`, `writeBlobRef`). `MirrorSync.recordHead` / `readHeadContext`;
+  `syncRefs({recordHead})`, which `snapshotBeforeSleep` passes. A failed record is only logged.
+- `StoppedSandboxReads.headContext(threadId)` (null without a record; read via `cat-file`).
+  `GitManager.pullRequestForRecordedHead` asks only the forge, own cache; head selectors from the
+  pure `branchHeadContextFrom`. No upstream → null; a worktree's base upstream is never the PR head.
+  `ThreadPullRequestService` uses it for an asleep machine's thread; a sandbox path never falls back
+  to the project root. Asleep discovery never clears a link.
+- Web Changes row and iOS git menu show `stoppedReadLabel(stoppedFilesFromProjection(projection))`
+  (Android has no git menu). Owed: runtime transcript (sleep, open a PR on GitHub, see it appear).
+- Lead fix at landing: merged with 2.13's `MirrorSync.restore` (service now `{ sync, restore,
+  recordHead }`) and removed a duplicate DateTime import.
+
+## 2.26 Pair Cloud projects by repo (landed 20212077c)
+
+- `ServerDerivedPaths.checkoutsDir` (`<stateDir>/checkouts`); a Pair Cloud project's folder must be
+  exactly `<checkoutsDir>/<projectId>` (`ProjectService.pairCloudCheckoutPath`).
+- `project/PairCloudProjects.ts`: `add(input, {memberId})` (URL → `parsePairCloudRemote`: https
+  github.com owner/name only, no port/query/fragment/userinfo; serialized duplicate check incl.
+  in-progress clones; member read access via api.github.com with the member's token, fails closed;
+  `github-not-connected` for an anonymous 404), `gitEnvFor` (App token, else member token, as an
+  env-only `http.https://github.com/.extraHeader`; `ISOLATED_GIT_ENV`), `fetchCheckout` (before
+  each launch, failures logged). `HARDENED_CHECKOUT_CONFIG` persisted with `git clone -c`.
+  `PairCloudProjectError` reasons `unsupported-remote | already-added | no-access |
+  github-not-connected`.
+- `ProjectCloneHooks.ts` (hooks moved out of ws.ts); `ProjectCloneHooks.cloneOptions`;
+  `SourceControlCloneOptions.config/env`. Contracts: `destinationPath` optional, clone result gains
+  `projectId`. ws.ts and MCP route cloud-only clones to PairCloudProjects and refuse
+  `sourceControlCloneRepository`.
+- Web CommandPalette, NewThreadLinkView, addProjectToMachine and mobile AddProjectScreen skip the
+  folder step on Pair Cloud and use the https URL.
+- Not done: picking from the GitHub repo list still asks the server's `gh` (a pasted URL works);
+  background git status fetch runs without credentials; deleting a project leaves its checkout.
+  Owed: mcp-tool-use eval, runtime transcript, browser tests (CommandPalette ×3, NewThreadLinkView,
+  AddProjectToMachineDialog), mobile AddProjectScreen.test (jsdom missing here).
 
 ## Open follow-ups and risks
 
