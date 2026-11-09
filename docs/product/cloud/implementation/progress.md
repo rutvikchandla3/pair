@@ -26,9 +26,10 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (4 of 8), specs written 2026-11-09:** full specs in
+**M3 (5 of 8), specs written 2026-11-09:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
-(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), so wave 2 is done. In flight: 3.25. Next: waves 4–5, a release with M3 (maintainer approval), then G3 by the spec's
+(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7), so waves 1–3 are done. In flight: 3.23. Next: wave 5
+(3.24 is built, but its testing and G3 step 5 on the phone wait: maintainer, 2026-11-09), a release with M3 (maintainer approval), then G3 by the spec's
 [integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
 
 ### M3 maintainer answers (2026-11-09)
@@ -1800,6 +1801,24 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - 3.23 calls `ContextExports.build` and `thread.move.record`; 3.25 passes
   `ThreadLaunchInput.contextExport`.
 - Owes, with 3.25's: the runtime curl transcript and `test-t3-app` captures.
+
+## 3.25 continue locally (landed 9018429b7)
+
+- `MirrorSync.bundleThread` (`restore` calls it) keeps only the haves the mirror holds
+  (`rev-list --ignore-missing`) before the prerequisite tiers; the cap fails as `too-large`.
+- `CloudMoveSource` (`contextExport`, `seed`, `continued`) and three thread routes through one
+  `threadRoute` helper in `CloudMoveHttp.ts` (404 off cloud-only, link auth, thread id). Seed
+  headers (branch, base, origin) are URI-encoded. `CloudMoveRefusal` has an optional `text`.
+- Laptop: `CloudMoveClient` (`send` is the shared helper for 3.23's uploads), `CloudMoves`
+  (beside `PeerLinks` in `server.ts`), RPC `threadMove.toLocal` behind operate scope.
+  `createThreadMoveAtoms` returns `{ toLocal }` (`./state/threadMove`).
+- The `origin/<name>` taken-check applies to copies only (a move's branch is already on origin).
+  Continue locally is exempt from `threadActionRequiresOperate`: its permission is on the primary
+  environment.
+- Gaps: a `toLocal` retried with the same `commandId` after a partial run makes a second worktree;
+  a launch that fails after creating the thread removes the worktree and branch, not the thread.
+- Browser tests (3 files) could not launch here (no Playwright Chromium). Owes, with G3: runtime
+  transcripts and `test-t3-app` captures.
 
 ## Open follow-ups and risks
 
