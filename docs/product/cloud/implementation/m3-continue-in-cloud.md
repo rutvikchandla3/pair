@@ -139,7 +139,7 @@ Open questions for a maintainer, each with a proposed answer in its spec:
 - What an export carries (3.22). Proposed: user and assistant text only, capped at 2 MiB, 1,000
   messages and 64 KiB a message.
 - Continue locally on an asleep machine with no usable snapshot (3.25). Proposed: refused, with
-  "wake the session first".
+  "Wake the machine first".
 - The row wording (3.22, 3.25). Proposed: "Continued on `<environment label>`", and
   "`<member>` continued a copy on `<environment label>`".
 - Continue locally in `npx t3`'s web as well as the desktop (3.25). Proposed: yes. It shows
@@ -568,8 +568,9 @@ keeps using.
   first user message is always kept and the gap is right after it, as AgentSessionScanner does.
 - The `move` row carries the server-written sentence (`message`), so MCP reads and every client
   show the same words; clients add an Open link when connected to the other environment.
-- An asleep machine without a usable snapshot is refused ("wake the session first") rather than
-  moved without its uncommitted files; a destroyed disk moves what the mirror has.
+- An asleep machine without a usable snapshot is refused ("Wake the machine, then try again", the
+  menu's **Wake machine**) rather than moved without its uncommitted files; a destroyed disk moves
+  what the mirror has.
 - Branches: a move keeps the session's branch, else `<branch>-<n>`; a copy is `<branch>-copy[-n]`,
   created from an oid so it tracks nothing.
 - The local report to Pair Cloud is retried twice; then the local thread records a notice and the
@@ -819,9 +820,10 @@ ThreadRouteScreen.tsx 549).
     - `withThreadTools` (273) gets it. With `--url` or `T3CODE_URL` set it is a `ThreadUsageError`:
       "--environment goes through this machine's server. Drop --url or unset T3CODE_URL."
     - After the local session opens, call `t3_environment_links` and match `environmentId` exactly,
-      else the label case-insensitively. No match: "No linked environment '<value>'. Link it in
-      Settings → Connections, or with t3 environment link." Two labels match: "Several linked
-      environments are named '<value>'. Pass its id."
+      else the label case-insensitively. No match: "No linked environment matches '<value>'. Link
+      it in Settings → Environments, or with t3 environment link." Two labels match: "More than
+      one linked environment is named '<value>'. Pass its id instead." (the wording of the CLI's
+      "More than one project is titled …").
     - New `inEnvironment(tools, environmentId)` returns `{ call, here }`. `call` adds
       `environmentId` to every tool's arguments; `here` is the unwrapped tools. `ThreadTools` (230)
       gains `here?: ThreadTools`.
@@ -832,8 +834,8 @@ ThreadRouteScreen.tsx 549).
     - `resolveProject` (363): with `environmentId`, after the remote id, folder and title rules,
       resolve the identifier locally through `tools.here` and take the one project there with the
       same `repositoryIdentity.canonicalKey`, the rule `RemoteDelegation.resolveRemoteProject` uses.
-      None: `ThreadProjectNotFoundError { remote: true }`. Several: "Several projects there have this
-      repository: … Pass its id."
+      None: `ThreadProjectNotFoundError { remote: true }`. Several: "More than one project there has
+      this repository: … Pass its id instead."
     - `start` with `--environment` on a link listed `cloud: true`, without `--cloud` or
       `--worktree`: "<label> runs every thread on a cloud machine. Pass --cloud <base-ref>."
   - `packages/contracts/src/orchestratorMcp.ts`:
@@ -867,15 +869,17 @@ ThreadRouteScreen.tsx 549).
     - while `offersLinkedEnvironmentsAtom(environmentId)` (state/peerLinks.ts 23) is false, the
       dialog lists only `cloud` machines and preselects one when it is the only one (`selected`,
       184);
-    - the empty state (76–78) then reads "Link Pair Cloud so agents here can start cloud sessions
-      there as you.";
+    - the empty state (76–78) then reads "Link Pair Cloud so you can move threads there and back,
+      and agents here can start cloud threads there as you." (the UI's noun is "cloud thread");
     - `mayMint` (190) checks `AuthAccessReadScope`, which is what the `pairingCredential` route
       requires (auth/http.ts 480, `requireAccessManagement` 233).
   - `apps/web/src/components/chat/LinkRequestCard.tsx` (238) and
     `apps/mobile/src/features/threads/LinkRequestCard.tsx` (259): `mayMint` checks
     `AuthAccessReadScope`.
   - `apps/web/src/components/settings/LabsSettingsPanel.tsx` `LinkedEnvironmentsRow` (135–163):
-    append "A link to Pair Cloud works without it."
+    its last sentence, "While it is off, nothing new starts over a link; tasks already running
+    finish.", becomes "While it is off, only a link to Pair Cloud starts anything new; tasks
+    already running finish." Appending a sentence would contradict the one before it.
   - `apps/mobile/src/features/connection/LinkedEnvironmentsSection.tsx` (21–22): `supported` also
     holds when `offersAgentLink(config, <connected environments>)`, so the phone lists the Mac's
     agent link.
@@ -888,9 +892,10 @@ ThreadRouteScreen.tsx 549).
     environment's agents start work only over its agent links". Rewrite the setup-script bullet
     (117–120): "skipped unless the thread runs on a machine of its own".
     `docs/user/remote-access.md` (329–333) gains one sentence: "A link to your team's Pair Cloud
-    needs neither." 3.26 writes the agent link's own section.
+    doesn't need the beta on either machine." 3.26 writes the agent link's own section.
 - **Types and services:**
   - `ResolvedPeerLink` (the shared name, fixed here for 3.20, 3.23 and 3.25):
+
     ```ts
     export interface ResolvedPeerLink {
       readonly link: PeerLink;
@@ -911,6 +916,7 @@ ThreadRouteScreen.tsx 549).
     - It never checks the Labs beta. Callers that start MCP work go through `PeerForwarding`, which
       does. 3.20's HTTP routes, 3.23 and 3.25 need no check, because a peer that reports
       `cloudImport` is cloud-only, so its link is an agent link.
+
   - `PeerLinks.agentLinks: Effect.Effect<ReadonlySet<EnvironmentId>>`: the links whose row has
     `cloud_launch = 1`, expired ones included. It reads through `NodeSqliteClient.readOnly` on each
     call, not from a cache, because `t3 environment link` writes the table from another process. A
@@ -1076,7 +1082,7 @@ ThreadRouteScreen.tsx 549).
   4. Pair Cloud's Sharing & access lists the "Pair · <Mac>" session under that member, not the
      owner, and the session's thread owner is that member.
 - One `test-t3-app` pass on desktop with the beta off, connected to both servers. Settings →
-  Connections shows Linked environments with Pair Cloud preselected. A member account links it
+  Environments shows Linked environments with Pair Cloud preselected. A member account links it
   without pasting a code. A local agent's `delegate_task` to it starts a cloud session marked "From
   Pair · <Mac>", which the member can open and prompt from Pair Cloud. Capture the dialog and the
   session.
@@ -1497,10 +1503,12 @@ comes from, and the launch's claim, on the critical path.
       `firstCheckout !== undefined && firstCheckout.type !== "worktree"`, and pass `baseRef:
       firstCheckout?.baseRef ?? branch` (1516).
   - `apps/server/src/sandbox/lifecycle/CloudPreparation.ts`:
-    - `CloudLaunchError` (42) reasons gain `"seed-on-base"` (`` `Pick a new branch for this move:
-      ${this.branch} is the base branch.` ``, with `branch` set) and `"seed-unavailable"` ("The
-      changes staged for this move are no longer on Pair Cloud. Continue in cloud again."). Only
-      `message` reaches clients (ws.ts 2433, `failureDetail` 265), so new reasons are safe.
+    - `CloudLaunchError` (42) reasons gain `"seed-on-base"` (`` `${this.branch} is Pair Cloud's
+      base branch. Create a new branch for this work, then try again.` ``, with `branch` set; the
+      dialog has no branch picker, so the fix is on the Mac) and `"seed-unavailable"` ("The work
+      uploaded for this move is no longer on Pair Cloud. Continue in cloud again."; "staged"
+      reads as git's staging area). Only `message` reaches clients (ws.ts 2433, `failureDetail`
+      265), so new reasons are safe.
     - `checkoutInSandbox` (247): input gains `seeded: boolean`; the doc comment (242–246) names
       the seed. A local `worktreePathFor(root, branch)` = `` `${root}/worktrees/${branch.replaceAll("/", "-")}` ``
       replaces the inline path at 339 and serves the seed. The mirror case (295–315) becomes:
@@ -1689,7 +1697,7 @@ one review.
     - `readOwnHistoryItems` (158): `threadHasImportedHistory(source.thread.historyOrigin)`.
   - `apps/server/src/orchestration-v2/ProjectionStore.ts`: `isTurnItemAtOrBeforeRun` (1514) and
     `itemCountThroughRun` (1966) use the helper; the SQL at 3209 becomes `IN ('v1_import',
-'context_export')`. Leave 4151 alone: it reads `$.historyOrigin` from a _turn item_ payload,
+    'context_export')`. Leave 4151 alone: it reads `$.historyOrigin` from a _turn item_ payload,
     which never has one (pre-existing, flagged in the track notes).
   - `apps/server/src/orchestration-v2/ThreadTitleRegenerationService.ts` 84: the helper.
   - `apps/server/src/orchestration-v2/ThreadManagementService.ts` `getThreadTranscript`
@@ -1730,7 +1738,7 @@ one review.
          The import runs before `provisionCloud`, so a refused import starts no machine, and before
          the initial message (1342), so the history sits before run 1 and the run's handoff sees it.
   - `apps/server/src/sandbox/lifecycle/CloudPreparation.ts` `CloudLaunchError` (42): reason
-    `"export-unavailable"`, "The conversation staged for this move is no longer on Pair Cloud.
+    `"export-unavailable"`, "The conversation uploaded for this move is no longer on Pair Cloud.
     Continue in cloud again." Only `message` reaches clients (3.21's note on ws.ts 2433).
   - `apps/server/src/cloudMove/StagedCloudImports.ts` (3.20):
     - `StagedCloudImportKind = "seed" | "context-export"`; `StagedCloudImportError.reason` gains
@@ -1764,7 +1772,9 @@ one review.
     (item.type === "move") return <MoveDivider item={item} />`. `MoveDivider` renders
     `TimelineSystemDivider` (TimelineSystemDivider.tsx 7–17) with `label={item.message}`,
     `ArrowRightLeftIcon` (already imported), and, when `useEnvironment(item.thread.environmentId)`
-    is not null, `actionLabel="Open"` navigating to `/$environmentId/$threadId` with
+    is not null, `actionLabel` "Open new thread" for `to` and "Open original thread" for `from`
+    (the tooltip, as the fork row's "Open fork" and "Open source conversation"), navigating to
+    `/$environmentId/$threadId` with
     `buildThreadRouteParams(scopeThreadRef(item.thread.environmentId, item.thread.threadId))`, as
     `SubagentTimelineLink` opens a linked environment's thread (487–501).
   - `apps/mobile/src/lib/threadActivity.ts`, whose switches are exhaustive: `itemIsProminent`
@@ -1841,16 +1851,17 @@ one review.
       "too-large" | "not-empty" | "failed"`, `cause?`.
   - `capContextExport(messages) => { messages, omittedMessageCount }`, pure and exported:
     1. A message over `CONTEXT_EXPORT_MAX_MESSAGE_CHARS` keeps its first part (not splitting a
-       surrogate pair, as `compactText` in ContextHandoffService.ts 107–115) plus "\n\n[Cut
-       here; the rest is on the original thread.]".
+       surrogate pair, as `compactText` in ContextHandoffService.ts 107–115) plus "\n\n[Message
+       shortened; the rest is on the original thread.]".
     2. Keep the first user message. Then walk from the newest backwards, adding while the
        encoded export stays under `CONTEXT_EXPORT_MAX_BYTES` and the count under
        `CONTEXT_EXPORT_MAX_MESSAGES`; stop at the first that doesn't fit, so there is one gap,
        right after the first user message. This is AgentSessionScanner's rule (keep the first
        user message and the newest, 606–620) with a byte budget.
   - Row text, in ContextExports.ts: the gap notice "`n` earlier messages stayed on the original
-    thread on `label`."; the `from` row "Continued from “`title`” on `label`", or for a copy "Copy
-    of “`title`” from `label`". 3.23 and 3.25 compose their own `to` rows.
+    thread on `label`." ("1 earlier message" for one); the `from` row "Continued from “`title`”
+    on `label`", or for a copy "Copy of “`title`” from `label`". 3.23 and 3.25 compose their own
+    `to` rows.
 
 - **Commands and events:** two internal commands (clients can't send them;
   `OrchestrationV2InternalCommand` isn't in the client decode).
@@ -2047,7 +2058,8 @@ dropped `desktop` for the same reason.
     - 3.25's `CloudMoveError` gains reasons `run-active`, `cloud-thread`, `no-repository`,
       `no-branch`, `no-base`, `not-on-github`, `no-link`, `link-failed`, `not-supported`,
       `seed-too-large`, `seed-failed`, `upload-failed`, `launch-refused`. Clients show `message`
-      and never branch on `reason`.
+      and never branch on `reason`. `seed-failed` reads "Couldn't package this thread's changes
+      for the move. Try again."; the others' text is given where they are raised.
   - `packages/contracts/src/rpc.ts`: `WS_METHODS` (439) gains `threadMovePreview:
     "threadMove.preview"` and `threadMoveToCloud: "threadMove.toCloud"` beside 3.25's
     `threadMoveToLocal`; two `Rpc.make`s next to `WsSandboxCheckDriverRpc` (1037) with error
@@ -2109,29 +2121,36 @@ dropped `desktop` for the same reason.
   - `packages/client-runtime/src/state/threadMove.ts` (3.25's `createThreadMoveAtoms`) gains
     `preview` (`createEnvironmentRpcQueryAtomFamily`, `staleTimeMs: 0`) and `toCloud`
     (`createEnvironmentRpcCommand`, `concurrency: { mode: "singleFlight", key: ({ environmentId,
-    input }) => `${environmentId}:${input.threadId}` }`). Copy shared with mobile:
-    `CONTINUE_IN_CLOUD_LABEL = "Continue in cloud"`; `MOVE_STAYS_NOTE` ("Ignored files such as
-    .env and node_modules, earlier checkpoints, terminals and running processes stay here. The
-    setup script recreates ignored files."); `MOVE_EXCLUDE_NOTE` ("An unchecked file goes as last
-    committed."); `moveNothingToUpload(branch)` ("Nothing to upload: <branch> is pushed and
-    clean.").
+    input }) => `${environmentId}:${input.threadId}` }`). Copy shared with mobile, so it names no
+    control (web has checkboxes, mobile switches) and no "here" (the phone isn't the computer):
+    `CONTINUE_IN_CLOUD_LABEL = "Continue in cloud"` (the dialog and sheet title and the confirm
+    button; menu and palette items add "…", since they open the dialog);
+    `CONTINUE_IN_CLOUD_BUSY_LABEL = "Continuing in cloud…"` (the confirm button while the move
+    runs); `MOVE_STAYS_NOTE` ("Ignored files such as .env and node_modules, earlier turns' diffs,
+    terminals and running processes stay behind. The project's setup script can recreate ignored
+    files in the cloud."; a project may have no setup script); `MOVE_EXCLUDE_NOTE` ("A file you
+    leave out goes as last committed, or not at all if it's new."); `moveNothingToUpload(branch)`
+    ("Nothing to upload. The cloud thread starts from <branch> on origin."; it shows when files
+    exist but are all left out, so "clean" would be wrong); `MOVE_IN_PROGRESS_NOTE` ("This thread
+    is already moving to the cloud.", for `moving`).
   - `apps/web/src/state/sandbox.ts`: `readContinueInCloudOffer(threadRef)` (event time, for
     menus, as `readCloudTarget` 78) and `useContinueInCloudOffer(threadRef)` (the palette's active
     thread; a null ref subscribes to nothing, as `useCloudTarget` 66).
   - `apps/web/src/components/threadActionMenu.logic.ts`: `ThreadActionMenuId` (8) gains
     `"continue-in-cloud"`; `ThreadActionMenuState` (79) gains `readonly continueInCloud?: {
-    readonly reason: string | null }` (absent hides it). The item follows "Mark unread" (232),
+    readonly label: string | null }` (absent hides it). The item follows "Mark unread" (232),
     before the machine actions, `separatorBefore: true`, icon `cloud-upload`, labeled
-    `CONTINUE_IN_CLOUD_LABEL`, or `Continue in cloud (<reason>)` and disabled when `reason` is set,
-    as "Delete (owner or admin only)" does. It stays out of `threadActionRequiresOperate`'s exempt
-    list (132), so a read-only connection sees it disabled.
+    `${CONTINUE_IN_CLOUD_LABEL}…` (it opens a dialog), or `Continue in cloud (<label>)` and
+    disabled when `label` is set (the offer's short `label`, never its sentence `reason`), as "Delete (owner or admin only)" does. It stays out of
+    `threadActionRequiresOperate`'s exempt list (132), so a read-only connection sees it
+    disabled.
   - `apps/web/src/hooks/useThreadActionMenu.ts` (147, 206) and `apps/web/src/components/Sidebar.tsx`
     `handleThreadContextMenu` (2730, 2787): pass `continueInCloud` from
     `readContinueInCloudOffer`; the action calls `openContinueInCloudDialog(threadRef)`.
   - `apps/web/src/components/CommandPalette.tsx`, the `activeThread !== null` block (1520): item
-    `action:continue-in-cloud`, `CONTINUE_IN_CLOUD_LABEL`, search terms `["continue", "cloud",
-    "move", "send", "pair cloud", "machine"]`, `CloudUploadIcon`, disabled with `description:
-    reason` when the offer says why, absent when it is hidden.
+    `action:continue-in-cloud`, `${CONTINUE_IN_CLOUD_LABEL}…` (as "Assign thread to…"), search
+    terms `["continue", "cloud", "move", "send", "pair cloud", "machine"]`, `CloudUploadIcon`,
+    disabled with `description: reason` when the offer says why, absent when it is hidden.
   - `apps/web/src/components/sandbox/ContinueInCloudDialog.tsx` (new): `openContinueInCloudDialog`
     and `ContinueInCloudDialogHost` on a keep-alive atom, as `AssignThreadDialog.tsx` (25–44); the
     host mounts in `routes/__root.tsx` beside `<AssignThreadDialogHost />` (222).
@@ -2169,13 +2188,17 @@ dropped `desktop` for the same reason.
     `aheadCount` and `workingTree.files` (tracked changes with counts, an untracked directory
     once, as `build/`); the base (below); `GitVcsDriver.getReviewBranchCommits({ cwd, baseRef:
     "origin/<base>" })` for the commits (merge-base to HEAD, at most 100, `truncated`); the link
-    from `PeerLinks.get(cloudEnvironmentId)` with no network: none is "Link this machine to <label>
-    first.", past `expiresAt` is "The link to <label> expired. Link it again." `pushed` is
-    `upstreamRef === "origin/<branch>" && aheadCount === 0`. Fails `no-repository`, `no-branch`,
-    `no-base`. 3.19 drops the Labs gate for agent links, so there is no "off" state.
+    from `PeerLinks.get(cloudEnvironmentId)` with no network: none is "Link <this environment's
+    label> to <label> first." (any client may show it, so not "this machine", which Cloud uses
+    for its machines), past `expiresAt` is "The link to <label> expired. Link it again." `pushed`
+    is `upstreamRef === "origin/<branch>" && aheadCount === 0`. Fails `no-repository` ("This
+    thread's folder isn't a Git repository."), `no-branch` ("This thread isn't on a branch. Check
+    one out, then try again."), `no-base`. 3.19 drops the Labs gate for agent links, so there is
+    no "off" state.
   - The base: `GitVcsDriver.readBranchBase(cwd, branch)` without `origin/` when
     `refs/remotes/origin/<it>` exists, else `resolveDefaultBranchName(cwd, "origin")`, else
-    `no-base` ("origin has no default branch here. Fetch origin, then try again.").
+    `no-base` ("Can't find origin's default branch on this computer. Fetch origin, then try
+    again.").
   - `CloudMoves.continueInCloud(input: { threadId; cloudEnvironmentId?; cloudProjectId?;
     excludePaths; message; createdBy: "user" | "agent"; creationSource; allowRunId?: RunId }) =>
     Effect<ThreadMoveToCloudResult, CloudMoveError>`, span `CloudMoves.continueInCloud`:
@@ -2186,12 +2209,16 @@ dropped `desktop` for the same reason.
        with `sandboxId` (`cloud-thread`: "This thread already runs in the cloud."); `activeRunId
        !== null && activeRunId !== allowRunId` (`run-active`: "Wait for the turn to end, or stop
        it."); `no-repository`, `no-branch`, `no-base` as for `preview`; the project's
-       `repositoryGroupingKeyOf(repositoryIdentity)` not under `github.com/` (`not-on-github`).
+       `repositoryGroupingKeyOf(repositoryIdentity)` not under `github.com/` (`not-on-github`,
+       with client-runtime's text: "Cloud needs this project's origin on github.com.").
     3. **The link.** `PeerLinks.resolve(cloudEnvironmentId)`; a `PeerLinkError` becomes `no-link`
-       (`unknown_link`) or `link-failed` with its message; `capabilities.cloudImport !== true` is
-       `not-supported` ("<label> can't take moves yet. Update Pair Cloud."). Without
+       (`unknown_link`, the preview's "Link … first." text) or `link-failed` with its message;
+       `capabilities.cloudImport !== true` is `not-supported` ("<label> needs an update to move
+       threads. Ask an admin."; a member can't update Pair Cloud). Without
        `cloudEnvironmentId` (the tool): `PeerLinks.agentLinks`, each resolved, those reporting
-       `cloudImport`; one is used, none is `no-link`, several is `no-link` naming them.
+       `cloudImport`; one is used, none is `no-link` ("No Pair Cloud is linked here. Link one in
+       Settings → Environments."), several is `no-link` naming them ("More than one Pair Cloud is
+       linked here: <labels>. Pass cloudEnvironmentId.").
     4. **The key.** `n` = the thread's `move` items with `direction: "to"`
        (`getThreadRecords(threadId, ["turnItems"])`). The `CloudStagingKey` is `mv_` plus the
        first 32 hex digits of sha256(`<this environment id>\0<threadId>\0<n>`). A retry before the
@@ -2280,24 +2307,34 @@ dropped `desktop` for the same reason.
     non-legacy); any usable instance with its default; else null.
   - `continueInCloudOffer({ thread: { sandboxId?, runActive }, cloud: CloudTarget, importsTo })`:
     hidden for a cloud thread, a thread whose environment reports `cloudLaunch`, `cloud.kind ===
-    "hidden"`, or no target that imports; disabled with `reason` for `unavailable` (its message),
-    a running turn ("A turn is running"), or no target that can take it (the first target's
-    `disabledReason`, or "Add <owner/name> to <label> first"); else `{ kind: "ready", targets }`,
+    "hidden"`, or no target that imports; disabled with a short `label` for the menu suffix and a
+    sentence `reason` for the palette description and tooltip, as `resolveContinueLocally` has:
+    `unavailable` ("Pair Cloud unavailable" / its message), a running turn ("a turn is running" /
+    "A turn is running. Continue in cloud once it ends."), or no target that can take it ("not
+    available" / the first target's `disabledReason`, or "Add <owner/name> to <label> first."); else `{ kind: "ready", targets }`,
     those with a project, no `disabledReason`, and `importsTo`.
-  - **The dialog.** A Pair Cloud picker when there are several targets; "feature/login from
-    main"; the commits ("and more" when truncated); the files, each checked; `MOVE_EXCLUDE_NOTE`
-    and `MOVE_STAYS_NOTE`; `moveNothingToUpload` when `pushed` and every file is unchecked; a
-    **First message** field prefilled with `CLOUD_MOVE_DEFAULT_MESSAGE`. Notices:
+  - **The dialog.** Titled `CONTINUE_IN_CLOUD_LABEL`. A Pair Cloud picker when there are several
+    targets; "feature/login from main"; the commits ("and more" when truncated); the files, each
+    checked ("and more" when `filesTruncated`); `MOVE_EXCLUDE_NOTE` and `MOVE_STAYS_NOTE`;
+    `moveNothingToUpload` when `pushed` and every file is unchecked; a **First message** field
+    prefilled with `CLOUD_MOVE_DEFAULT_MESSAGE`. Notices:
     - no link or an expired one: the message and **Link**, which runs 3.19's
       `useLinkMachine(threadRef.environmentId)` for the Pair Cloud machine with an access picker
-      (`LinkAccessPicker`, default Supervised), then refetches the preview;
+      (`LinkAccessPicker`, default Supervised, with the note "Threads you move there start with
+      at most this access, and agents here never get more."; the launch caps the cloud thread's
+      mode at the link's access), then refetches the preview;
     - `cloudAccountNotice` of the target (`cloudAccountNoticeAtom`, web state/sandbox.ts 25) with
       **Open Settings** to Pair Cloud's Settings → Team, as `cloudAccountBanner.tsx` does;
-    - a running turn.
+    - a running turn: "A turn is running. Continue in cloud once it ends.";
+    - `moving`: `MOVE_IN_PROGRESS_NOTE`.
       A link notice, a `provider` notice, a running turn or an empty message disable **Continue in
-      cloud**; a `github` notice only warns, as in M2. Success: toast "Continued in <label>", close,
-      and navigate to `/$environmentId/$threadId` with `buildThreadRouteParams` (threadRoutes.ts 58).
-      Failure: a toast with the message; the dialog stays, and a retry reuses the key.
+      cloud**; a `github` notice only warns, as in M2. While the move runs, and while `moving`, the
+      button reads `CONTINUE_IN_CLOUD_BUSY_LABEL`; a move can take minutes, so the button is the
+      visible state. Success: toast "Continued in cloud on <label>" (the local row's words),
+      close, and navigate to `/$environmentId/$threadId` with `buildThreadRouteParams`
+      (threadRoutes.ts 58). Failure: a toast "Could not continue in cloud" with the message (the
+      phone's alert title, and the product's "Could not …" failure titles); the dialog stays, and
+      a retry reuses the key.
   - **The tool.**
     ```ts
     Tool.make("t3_thread_continue_in_cloud", {
@@ -2428,8 +2465,8 @@ dropped `desktop` for the same reason.
   `threadMoveToCloud`'s operate scope; `clientRpcRequiredScopes(threadMoveToCloud, {})` is
   `[AuthOrchestrationOperateScope]`.
 - `apps/web/src/components/threadActionMenu.logic.test.ts`: extend "disables archive and turning
-  into a project while the thread is running" (69) with `continueInCloud: { reason: "A turn is
-  running" }`: disabled, labeled "Continue in cloud (A turn is running)".
+  into a project while the thread is running" (69) with `continueInCloud: { label: "a turn is
+  running" }`: disabled, labeled "Continue in cloud (a turn is running)".
 - Evals, `evals/mcp-tool-use/cases/threads-vs-tasks.ndjson`, with `setup.linkedEnvironments: true`
   and `t3_environment_links` mocked with one Pair Cloud:
   - `cloud-move-unpushed-work` (`bad`; source 01 J9, 08 §6, Pair Cloud 3.23): on
@@ -2528,31 +2565,36 @@ with the header and row entries dropped.
     unchanged.
   - `apps/mobile/src/features/threads/thread-list-v2-items.tsx`: in `menuActions` (955), after
     the `new-thread-on-branch` entry, `{ id: "continue-in-cloud", title:
-    CONTINUE_IN_CLOUD_LABEL, image: "icloud.and.arrow.up", ...(reason ? { attributes: { disabled:
-    true }, subtitle: reason } : {}) }` when the offer isn't hidden (the row reads
+    CONTINUE_IN_CLOUD_LABEL + "…", image: "icloud.and.arrow.up", ...(reason ? { attributes: {
+    disabled: true }, subtitle: reason } : {}) }` (the header menu's label) when the offer isn't
+    hidden (the row reads
     `useContinueInCloudOffer`, beside `useSandboxThreadMachine` at 802, and joins the `useMemo`'s
     dependencies); `handleMenuAction` (1053) opens the sheet on `"continue-in-cloud"`.
   - `apps/mobile/src/features/threads/ContinueInCloudSheet.tsx` (new, under `features/threads`,
     never `features/cloud`, which is T3 Connect). Params `{ environmentId, threadId }`. It reads
     the thread from `useThreadSelection` (as `ThreadPullRequestsSheet` does), the offer, and the
     preview (`useEnvironmentQuery(threadMoveEnvironment.preview({ environmentId, input: { threadId,
-    cloudEnvironmentId } }))`). Content, top to bottom:
+    cloudEnvironmentId } }))`). Titled `CONTINUE_IN_CLOUD_LABEL`. Content, top to bottom:
     - a Pair Cloud row with a menu when the offer has several targets;
     - "<branch> from <base>", the commits, then the files with a `Switch` each (on = goes);
     - `MOVE_EXCLUDE_NOTE`, `MOVE_STAYS_NOTE`, and `moveNothingToUpload(branch)` when `pushed`
       and every switch is off;
     - **First message**, a multiline input prefilled with `CLOUD_MOVE_DEFAULT_MESSAGE`;
-    - notices: the link message ("Link this Mac to <label> in the Mac's Settings → Connections.";
-      a phone can't make the Mac's link), `useCloudAccountNotice(cloudEnvironmentId)` (state/
-      sandbox.ts 50) with **Open Settings** → `openSettings(navigation, "SettingsTeam")` as
-      NewTaskDraftScreen.tsx 1067 does, and a running turn;
-    - the confirm button, disabled under the same rules as web, which runs
+    - notices: the link message, the phone's own since it can't make the Mac's link, naming the
+      thread's environment by its label rather than "Mac" ("On <computer label>, link <label> in
+      Settings → Environments."; expired: "The link to <label> expired. On <computer label>,
+      link it again in Settings → Environments."), `useCloudAccountNotice(cloudEnvironmentId)`
+      (state/sandbox.ts 50) with **Open Settings** → `openSettings(navigation, "SettingsTeam")` as
+      NewTaskDraftScreen.tsx 1067 does, a running turn (web's text), and `moving`
+      (`MOVE_IN_PROGRESS_NOTE`);
+    - the confirm button, `CONTINUE_IN_CLOUD_LABEL`, `CONTINUE_IN_CLOUD_BUSY_LABEL` while the move
+      runs or `moving`, disabled under the same rules as web, which runs
       `useAtomCommand(threadMoveEnvironment.toCloud)` with `creationSource: "mobile"` on the Mac's
       environment.
       Success: `useSelectWorkspaceDetail()` selects `{ name: "Thread", params: {
-    environmentId: String(cloudThread.environmentId), threadId: String(cloudThread.threadId) } }`
+      environmentId: String(cloudThread.environmentId), threadId: String(cloudThread.threadId) } }`
       (as ReviewSheet.tsx 553–556), which replaces the sheet. Failure: `Dialog.alert("Could not
-    continue in cloud", message)`; the sheet stays for a retry.
+      continue in cloud", message)`; the sheet stays for a retry.
   - `apps/mobile/src/Stack.tsx`: a `ThreadContinueInCloud` route beside `ThreadPullRequests`
     (917), `screen: ContinueInCloudSheet`, `HORIZONTAL_FORM_SHEET_OPTIONS`, `sheetAllowedDetents:
     formSheetDetents(0.6, 0.95)`, `sheetGrabberVisible: true`; on iOS
@@ -2682,11 +2724,15 @@ which 3.23 and 3.21 reuse.
     `resolveProjectSettings(…).settings.defaultModelSelection ??
     resolveProjectDefaultProviderModelSelection(providers, settings, projectId)`
     (providerInstanceEntries.ts 202; useHandleNewThread.ts 146–161 does the same for a new
-    draft), `defaultRuntimeMode`, `DEFAULT_PROVIDER_INTERACTION_MODE`; no model is a toast "Set up
-    a provider on this computer first." Then `toLocal` on the primary environment. On success it
-    navigates to `/$environmentId/$threadId` for the new thread; a copy toasts "Continued a copy on
-    branch `<branch>`. The cloud session stays open."; `reported: false` toasts a warning with the
-    local notice's text. A failure toasts "Couldn't continue locally" with the error's message.
+    draft), `defaultRuntimeMode`, `DEFAULT_PROVIDER_INTERACTION_MODE`; no model is a toast "Could
+    not continue locally" with "Set up a provider on this computer first." Then `toLocal` on the
+    primary environment, under a loading toast "Continuing locally…" (the item acts at once and a
+    download can take minutes, so this is its visible state). On success the toast closes and it
+    navigates to `/$environmentId/$threadId` for the new thread; a copy toasts "Continued a copy
+    on `<branch>`" with "The cloud thread stays with its owner." (UI says "cloud thread", and
+    "stays open" said nothing about whose it is); `reported: false` toasts a warning with the
+    local notice's text. A failure turns the toast into "Could not continue locally" (the
+    product's failure-title form) with the error's message.
   - `apps/web/src/components/threadActionMenu.logic.ts`: `ThreadActionMenuId` (8–39) gains
     `"continue-locally"`; `ThreadActionMenuState` (79–121) gains `continueLocally?: { readonly
     disabledLabel: string | null }`; the item `{ id: "continue-locally", label, icon: "laptop" }`
@@ -2821,31 +2867,36 @@ which 3.23 and 3.21 reuse.
       `settled: false`. A retried POST replays both receipts.
     - `CloudMoveSourceError`: `reason: "not-found" | "not-movable" | "run-active" |
       "snapshot-missing" | "snapshot-failed" | "too-large" | "failed"`, `message`, `cause?`. The
-      messages are the user's words: "This session is working; continue it locally once its turn
-      ends." / "Continue locally from the thread this one belongs to." / "This session has no
-      checkout yet." / "Its machine went to sleep without saving its uncommitted changes. Wake the
-      session, then try again." / "Couldn't save the machine's working tree. Try again in a
-      moment." / "This branch is over 512 MiB as a bundle. Fetch origin on this computer and try
-      again."
+      messages are the user's words, read on the laptop, in the UI's nouns (cloud thread,
+      machine, **Wake machine**; no bundle or session): "A turn is running or waiting for an
+      answer. Continue locally once it ends." (`run-active` also covers open requests) /
+      "Continue locally from the thread this one belongs to." / "This thread's machine hasn't
+      cloned the repository yet." (true while it starts and after it fails) / "Pair Cloud has no
+      saved copy of this thread's uncommitted changes. Wake the machine, then try again." (true
+      while its stop is still running, too) / "Couldn't save the machine's uncommitted changes.
+      Try again in a moment." / "The download would be over 512 MB. Fetch origin on this
+      computer, then try again." (MB, as 3.23's upload limit)
   - `CloudMoveClient` (`t3/cloudMove/CloudMoveClient`), on the laptop, needing `PeerLinks`,
     `HttpClient`, `FileSystem`:
     - `contextExport({ environmentId, threadId })`, `downloadSeed({ environmentId, threadId,
       haves, file, check })` and `reportContinued({ environmentId, threadId, body })`.
     - Each resolves the link (`PeerLinks.resolve`): `unknown_link` and `expired` are `not-linked`
-      ("Link this computer to `<label>` in Settings → Connections."); other `PeerLinkError`s are
-      `failed` with their message. `capabilities.cloudImport !== true` is `unsupported`
-      ("`<label>` can't take moves. Update Pair Cloud."). Requests carry `authorization: Bearer
-      <token>`. 401 is `not-linked` ("`<label>` no longer accepts this computer's link. Link it
-      again."); any other non-2xx decodes the body as `CloudMoveFailure` and is `refused` with
-      its message; a transport error is `failed`. Outcomes go to `PeerLinks.recordOutcome`, as
+      ("Link this computer to `<label>` in Settings → Environments.", the page's name in the
+      UI); other `PeerLinkError`s are `failed` with their message. `capabilities.cloudImport !==
+      true` is `unsupported` ("`<label>` needs an update to move threads. Ask an admin.", 3.23's
+      text). Requests carry `authorization: Bearer <token>`. 401 is `not-linked`
+      ("`<label>` no longer accepts this computer's link. Link it again in Settings →
+      Environments."); any other non-2xx decodes the body as `CloudMoveFailure` and is `refused`
+      with its message; a transport error is `failed`. Outcomes go to `PeerLinks.recordOutcome`, as
       `PeerMcpClient` does.
     - `downloadSeed` decodes the headers with `CloudMoveSeedHeaders` and runs `check(headers)`
       before it reads the body. Then it streams the body to `file`, counting bytes; past
-      `CLOUD_SEED_MAX_BYTES` it stops with `refused`. 204 writes nothing (`written: false`).
+      `CLOUD_SEED_MAX_BYTES` it stops with `refused` and Pair Cloud's `too-large` text. 204 writes
+      nothing (`written: false`).
   - `CloudMoves` (`t3/cloudMove/CloudMoves`), on the laptop. `continueLocally(input &
     { actorId?: MemberId }) => Effect<ThreadMoveToLocalResult, ThreadMoveError>`:
-    1. A cloud-only server is `unsupported` ("Continue locally from the desktop app."). The
-       project must exist.
+    1. A cloud-only server is `unsupported` ("Continue locally from Pair on your own computer.";
+       `npx t3`'s web offers it too, so not "the desktop app"). The project must exist.
     2. `moveId = "mv_" + sha256(commandId).slice(0, 32)` hex: a `CloudStagingKey` stable across
        the method's own retries.
     3. `client.contextExport(source)`. It is small and refuses a busy thread before any bundle.
@@ -2856,8 +2907,9 @@ which 3.23 and 3.21 reuse.
        local) send only the new commits.
     5. `client.downloadSeed` to `<stateDir>/cloud-moves/<moveId>.bundle` (dir 0700; a finalizer
        removes it). Its `check` refuses when the headers' origin and the project's
-       `repositoryGroupingKeyOf` differ (compared case-insensitively): `project-mismatch`,
-       before the body is read.
+       `repositoryGroupingKeyOf` differ (compared case-insensitively): `project-mismatch` ("The
+       cloud thread's origin, `<origin>`, doesn't match this project's."), before the body is
+       read.
     6. Under a per-project `KeyedLock`: if written, `git fetch --quiet --no-tags
        --no-write-fetch-head -- <file> +refs/*:refs/t3/moves/<moveId>/*`; then `cat-file -e
        <oid>^{commit}` for the head and the snapshot (else `failed`). The branch name: a move
@@ -2881,19 +2933,20 @@ which 3.23 and 3.21 reuse.
     8. `client.reportContinued({ moveId, thread: { environmentId: <this server>, threadId },
        environmentLabel: <this server's label>, copy })`, retried twice on a schedule (TestClock in
        tests). When it still fails, `thread.notice.record` on the local thread: "Pair Cloud
-       didn't record this move, so the cloud session wasn't settled there." and `reported:
-       false`. The local thread is the result either way.
+       didn't record this move, so the cloud thread there stays as it was and doesn't link
+       here." (true for a move and a copy; "wasn't settled" meant nothing for a copy) and
+       `reported: false`. The local thread is the result either way.
   - `resolveContinueLocally(input) => { kind: "hidden" } | { kind: "disabled"; label: string;
     reason: string } | { kind: "ready"; localEnvironmentId; projectId }`, pure. Hidden: no
     primary environment, the primary is the thread's own or reports `cloudLaunch`, no `toLocal`
     permission there, the thread isn't a listed cloud thread, its environment doesn't report
     `cloudImport`, or the primary has no link to it. Disabled: the link expired ("link expired" /
-    "The link to `<label>` expired. Link it again in Settings → Connections."); no local project
+    "The link to `<label>` expired. Link it again in Settings → Environments."); no local project
     matches the origin, chosen as `resolveCloudTarget` chooses (the oldest non-archived project
     with the same `repositoryGroupingKeyOf`, case-insensitive) ("no matching project" / "No
     project on this computer has origin `<key>`."); a run is active (`runtime.activeRunId`)
-    ("turn running" / "Wait for this session's turn to finish."). Pair Cloud re-checks every one
-    of these it can see.
+    ("turn running" / "Wait for the turn to end, or stop it.", 3.23's `run-active` text). Pair
+    Cloud re-checks every one of these it can see.
 
 - **Commands and events:** on Pair Cloud, `thread.move.record` and `thread.settle` on the cloud
   thread; on the laptop, `thread.create`, 3.22's `thread.history.import`, the launch's
@@ -3074,20 +3127,22 @@ and lands last in M3 (10 §5).
   - `docs/user/cloud.md`:
     - New section **Move a thread between your Mac and Pair Cloud**, after **Start a cloud
       thread** (60–89), with the two subsections below. Its text, in the guide's voice:
-      - **Continue in cloud.** "On a thread on your Mac, choose **Continue in cloud** in the
+      - **Continue in cloud.** "On a thread on your Mac, choose **Continue in cloud…** in the
         thread's menu or the command palette. Pair shows what goes: the commits not yet on
         `origin`'s base branch, and the files you changed or added that Git doesn't ignore.
-        Uncheck a file to leave it out; it goes as last committed. Write the first message for
-        the cloud thread, and confirm. The thread continues on Pair Cloud in the project with the
-        same `origin`, as a new thread you own, on your account there, with the conversation so
-        far as read-only history (`[handoffs](./portable-handoffs.md)`). Your Mac's thread says
-        **Continued in cloud** and links to it; its worktree and branch stay as they were.
-        Nothing is pushed to GitHub, so this works for a branch you never pushed. Working on the
-        base branch itself, the cloud thread gets a new branch."
+        Uncheck a file to leave it out; it goes as last committed, or not at all if it's new.
+        Write the first message for the cloud thread, and confirm. The thread continues on Pair
+        Cloud in the project with the same `origin`, as a new thread you own, on your account
+        there, with the conversation so far as read-only history
+        (`[handoffs](./portable-handoffs.md)`). It starts with at most the access you gave your
+        Mac's link. Your Mac's thread says **Continued in cloud** and links to it; its worktree
+        and branch stay as they were. Nothing is pushed to GitHub, so this works for a branch you
+        never pushed. If you're on the base branch itself, the cloud thread gets a new branch."
       - What stays, as one short list: ignored files such as `.env`, `node_modules` and build
-        output (the setup script recreates them); earlier checkpoints, whose diffs stay on the
-        Mac's thread; terminals, running processes and previews; approvals and pull request
-        links; the provider's own session (the cloud agent starts a new one from the handoff).
+        output (the project's setup script can recreate them); earlier checkpoints, whose diffs
+        stay on the Mac's thread; terminals, running processes and previews; approvals and pull
+        request links; the provider's own session (the cloud agent starts a new one from the
+        handoff).
       - "An untracked file that isn't ignored, such as a local secrets file, goes along unless you
         uncheck it."
       - What it needs: Pair Cloud has the project (**Add to Pair Cloud** otherwise), an account
@@ -3098,13 +3153,15 @@ and lands last in M3 (10 §5).
       - **Continue locally.** "In the desktop app, choose **Continue locally** on a cloud thread.
         Pair brings its branch, its uncommitted work and its conversation into a new worktree and
         thread in your project with the same `origin`. When the thread is yours, it moves: the
-        cloud thread says **Continued on <name>'s Mac**, settles, and its machine sleeps. When it
+        cloud thread says it continued on your computer, settles, and its machine sleeps. When it
         is a teammate's, you get a copy on a new branch, and their cloud thread keeps going. An
         asleep machine isn't woken: Pair uses what it saved when it went to sleep." (3.25's facts:
-        the label, the branch name of a copy, what happens to a waiting turn.)
+        the row's final wording, the branch name of a copy, what happens to a waiting turn. 3.25
+        names the computer by its environment label, not "<name>'s Mac".)
     - **Phone** (185–191): add "On a thread on your Mac, the **Cloud** menu in the thread header,
-      or the thread's long-press menu, offers **Continue in cloud** too; your Mac does the
-      upload, so the phone needs both connections. Continue locally is desktop only." (3.24.)
+      or the thread's long-press menu, offers **Continue in cloud…** too. Your Mac does the
+      upload, so the phone must be connected to both your Mac and Pair Cloud. Continue locally is
+      desktop only." (3.24.)
     - **Start a cloud thread** (60–70): after "Push the branch first: …", add "To take unpushed
       work along, start the thread on your Mac and
       `[continue it in cloud](#move-a-thread-between-your-mac-and-pair-cloud)`."
@@ -3114,10 +3171,11 @@ and lands last in M3 (10 §5).
       - What it is: "Link your Mac to your team's Pair Cloud once, and agents in threads on your
         Mac can start cloud threads there that belong to you: on your accounts, under the team's
         machine limit."
-      - How: "In **Settings → Connections → Linked environments**, choose **Link**; Pair Cloud is
+      - How: "In **Settings → Environments → Linked environments**, choose **Link**; Pair Cloud is
         preselected, and your app makes the sign-in code. Pick the access: the most an agent from
-        your Mac may do there." Then the facts 3.19 lands: no Labs beta is needed for a Pair Cloud
-        link; a member's link goes up to **Auto**; it lasts 30 days, like any link; **Forget**
+        your Mac, or a thread you move, may do there." (The page is **Environments** in the UI
+        and in remote-access.md.) Then the facts 3.19 lands: no Labs beta is needed for a Pair
+        Cloud link; a member's link goes up to **Auto**; it lasts 30 days, like any link; **Forget**
         removes it on the Mac and revoking it in Pair Cloud's **Settings → Sharing & access** ends
         it there; removing you from the team ends it too.
       - What agents do with it: "`t3_thread_launch` with Pair Cloud's environment, or
@@ -3171,8 +3229,8 @@ and lands last in M3 (10 §5).
     sessions** (10 §5's M3 row):
     - **Continue in cloud** from a thread on the Mac (menu, palette, phone), unpushed commits and
       uncommitted files included, with a preview to leave files out; nothing pushed to GitHub.
-    - **Continue locally** on desktop: the owner moves a cloud session home; anyone else gets a
-      copy and the session stays live.
+    - **Continue locally** on desktop: the owner moves a cloud thread home; anyone else gets a
+      copy and the cloud thread stays live.
     - **The agent link**: one member-scoped link from the Mac to Pair Cloud; local agents launch,
       delegate and move threads there as the member.
     - User guide: `[Move a thread](../user/cloud.md#move-a-thread-between-your-mac-and-pair-cloud)`.
@@ -3235,9 +3293,9 @@ tag. Subagents don't start their own servers.
      <login>` on the VM) with their own Claude account (setup token) and GitHub.
    - **Links (3.19).** Leave Linked environments off in Labs on every server. For each member,
      add Pair Cloud to that worktree's client, signed in as that member, then link its local
-     server to Pair Cloud from Settings → Connections → **Link** (Pair Cloud is preselected).
-     Passes when each link lists as reachable without the beta and Pair Cloud's Connections shows
-     each as its own member's.
+     server to Pair Cloud from Settings → Environments → **Link** (Pair Cloud is preselected).
+     Passes when each link lists as reachable without the beta and Pair Cloud's Sharing & access
+     shows each "Pair · …" session under its own member (as 3.19's transcript step 4).
 1. **Continue in cloud (Mac, Credentials).** In `g3-a`, start a local worktree thread on
    `pair-cloud-test` and run two Haiku turns that leave: two commits not on origin, a changed
    tracked file, an untracked `notes/seed.md`, an untracked `scratch.env` that isn't ignored, and
