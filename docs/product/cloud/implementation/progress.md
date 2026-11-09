@@ -46,6 +46,26 @@ Continue locally on an asleep machine with no snapshot is refused ("Wake the mac
 shows in `npx t3`'s web too; the cloud model is the member's own instance of the same model first;
 Connect GitHub is a warning; no keybinding. The evals key is still open.
 
+### Maintainer answers (2026-11-10)
+
+The lead is back on the Mac (`../pair-wt/`, as for M2) for the rest of M3, G3, M4's specs and
+build, and G4. The maintainer is away for the run, so every open question takes the spec's
+proposal and is recorded in the row's notes.
+
+- **Pairing.** The lead mints pairing and invite links on the VM and pairs the G3 test clients
+  itself. Links stay out of commits and transcripts.
+- **Member B** for G3 step 3 is the GitHub login `rutvik-netizen`, with no Claude account or
+  GitHub connection of their own: the step only needs B to copy A's session.
+- **Evals.** The maintainer adds `ANTHROPIC_API_KEY` to the repo's `.env`; the lead then runs the
+  live evals that 1.42, 3.19 and 3.23 owe. Until the key is there they stay owed.
+- **Releases.** Any prerelease the run needs is approved: V4 with M3, fix releases after G3, and
+  one with M4 for G4.
+- **Phone.** 3.24 is built but not tested on a phone, and G3 step 5 is set aside. The same holds
+  for M4's mobile row.
+- **G4** runs step 1 only (the Docker driver on the G3 server). Steps 2–6 need M5 and an AWS
+  account.
+- **Workers:** Opus high for critical rows, Sonnet high for small ones.
+
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
 PR-level runtime evidence workers could not (each PR's note below says what it owes). Nothing is
