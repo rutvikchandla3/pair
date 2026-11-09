@@ -36,6 +36,7 @@ import {
 } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
+import * as TeamImageStore from "../image/TeamImageStore.ts";
 import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
 import { sandboxSnapshotRef, snapshotNamers } from "../mirror/CheckpointMirror.ts";
@@ -175,6 +176,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const credentials = yield* SandboxCredentialRevocation.SandboxCredentialRevocation;
   const drain = yield* ServerDrain.ServerDrain;
+  const teamImages = yield* TeamImageStore.TeamImageStore;
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
   const checkpoints = yield* Effect.serviceOption(CheckpointService.CheckpointServiceV2);
@@ -428,6 +430,28 @@ const make = Effect.gen(function* () {
     return { fail, driver, call, callIgnoringMissing };
   });
 
+  /**
+   * The record's team build, else the base. GC keeps the build of every machine that is not
+   * destroyed, so a collected one means a discarded machine came back; it boots the base, and
+   * `sandbox.created` then drops the build from the record.
+   */
+  const bootImage = Effect.fn("SandboxEffects.bootImage")(function* (
+    record: OrchestrationV2Sandbox,
+  ) {
+    const base = { type: "base" } as const;
+    if (record.imageBuild === undefined) return base;
+    const stored = yield* teamImages.build(record.imageBuild.id);
+    const build = Option.isSome(stored) ? stored.value.build : null;
+    if (build?.imageRef !== undefined && build.imageDeletedAt === null) {
+      return { type: "build", imageRef: build.imageRef } as const;
+    }
+    yield* Effect.logWarning("A machine's team build was removed; it boots the base image", {
+      sandboxId: record.id,
+      imageBuildId: record.imageBuild.id,
+    });
+    return base;
+  });
+
   const execute: SandboxEffects["Service"]["execute"] = Effect.fn("SandboxEffects.execute")(
     function* (request) {
       const record = yield* currentRecord(request);
@@ -459,12 +483,13 @@ const make = Effect.gen(function* () {
       switch (request.type) {
         case "sandbox.create": {
           const installId = yield* environment.getEnvironmentId;
+          const image = yield* bootImage(record).pipe(Effect.mapError(fail(true)));
           const created = yield* call(
             driver.create({
               name: sandboxBackendName(installId, record.id, record.generation),
               sandboxId: record.id,
               generation: record.generation,
-              image: { type: "base" },
+              image,
               size: record.size,
               tags: sandboxTags({
                 installId,
@@ -667,4 +692,5 @@ export const layer: Layer.Layer<
   | ServerEnvironment.ServerEnvironment
   | SandboxCredentialRevocation.SandboxCredentialRevocation
   | ServerDrain.ServerDrain
+  | TeamImageStore.TeamImageStore
 > = Layer.effect(SandboxEffects, make);

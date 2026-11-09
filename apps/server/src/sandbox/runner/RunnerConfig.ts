@@ -8,6 +8,8 @@ import * as Schema from "effect/Schema";
 import type { RunnerInfo } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { TEAM_IMAGE_BUILD_OUTPUT } from "../image/teamImageBuildProgram.ts";
+
 /** What the runner tells the server about the machine in `runner.hello`. */
 export type RunnerHostFacts = Pick<
   RunnerInfo,
@@ -56,6 +58,27 @@ const passwdEntry = (passwd: string, user: string) => {
   return undefined;
 };
 
+const decodeBuildManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ imageEnv: Schema.Record(Schema.String, Schema.String) })),
+);
+
+/**
+ * What the image sets on every process: the runner's own environment, then a team build's
+ * `imageEnv` from its manifest (a base image has none; an unreadable one counts as none).
+ */
+export const imageEnvironmentFrom = (
+  env: Readonly<Record<string, string | undefined>>,
+  manifestText: string | null,
+): Record<string, string> => {
+  const manifest = manifestText === null ? Option.none() : decodeBuildManifest(manifestText);
+  const merged = { ...env, ...(Option.isSome(manifest) ? manifest.value.imageEnv : {}) };
+  const imageEnvironment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(merged)) {
+    if (value !== undefined && !name.startsWith("PAIR_")) imageEnvironment[name] = value;
+  }
+  return imageEnvironment;
+};
+
 /**
  * Reads the bootstrap's values. The enrollment secret comes from the bootstrap's
  * `<stateDir>/enroll`, never the environment (`/proc/<pid>/environ`), and is deleted before
@@ -82,10 +105,10 @@ export const readRunnerConfig = Effect.fn("RunnerConfig.read")(function* () {
   if (agent === undefined) {
     return yield* new RunnerConfigError({ missing: `the agent user ${agentUser}` });
   }
-  const imageEnvironment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined && !name.startsWith("PAIR_")) imageEnvironment[name] = value;
-  }
+  const imageEnvironment = imageEnvironmentFrom(
+    env,
+    yield* fs.readFileString(TEAM_IMAGE_BUILD_OUTPUT).pipe(Effect.orElseSucceed(() => null)),
+  );
 
   const enrollFile = path.join(stateDir, "enroll");
   const secret = yield* fs.readFileString(enrollFile).pipe(

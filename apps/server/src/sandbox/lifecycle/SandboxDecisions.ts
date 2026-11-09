@@ -529,6 +529,7 @@ const decideProvision = (
       sleepReason: null,
       failure: null,
       ...(command.discardOnSettle === true ? { discardOnSettle: true } : {}),
+      ...(command.imageBuild === undefined ? {} : { imageBuild: command.imageBuild }),
       createdAt: now,
       updatedAt: now,
     },
@@ -689,14 +690,17 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
         record.driverRef === null ? "sandbox.create" : "sandbox.start",
       ]);
     }
-    case "sandbox.created":
+    case "sandbox.created": {
       // The runner's hello can beat the create's answer, so any live state takes the ref.
-      return record.state === "destroyed"
-        ? refuse("wrong-state")
-        : update({
-            driverRef: command.driverRef,
-            ...(command.baseImage === undefined ? {} : { baseImage: command.baseImage }),
-          });
+      if (record.state === "destroyed") return refuse("wrong-state");
+      if (command.baseImage === undefined) return update({ driverRef: command.driverRef });
+      // A create that names its base booted it, so a build it was meant to boot is not on it.
+      const { imageBuild: _booted, ...next } = patched({
+        driverRef: command.driverRef,
+        baseImage: command.baseImage,
+      });
+      return accept(next, []);
+    }
     case "sandbox.runner.attached":
       if (record.state === "ready") {
         return record.runnerLostAt === null ? noOp : update({ runnerLostAt: null });

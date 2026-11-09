@@ -2061,7 +2061,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.provide(layerSingleMemberViews),
         Layer.provide(
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            checkCloudLaunch: () => Effect.succeed(placement),
+            checkCloudLaunch: () => Effect.succeed({ ...placement, imageBuild: null }),
             prepareRun: (input) => record({ prepare: input }),
           }),
         ),

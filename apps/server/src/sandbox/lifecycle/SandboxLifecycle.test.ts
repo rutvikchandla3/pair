@@ -15,9 +15,11 @@ import {
   type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
+  PositiveInt,
   ProviderInstanceId,
   type RunId,
   SandboxId,
+  type SandboxImageBuildRef,
   type ServerSettings as ServerSettingsSnapshot,
   TeamImageBuildId,
   ThreadId,
@@ -285,6 +287,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
       Layer.mergeAll(
         layerDriver,
         layerBootstrap,
+        TeamImageStore.layer,
         Layer.succeedContext(credentials.context),
         snapshots ?? Layer.empty,
         threadLaunch ?? Layer.empty,
@@ -397,6 +400,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
   key: string,
   beforeProvision: Effect.Effect<void> = Effect.void,
   discardOnSettle = false,
+  imageBuild?: SandboxImageBuildRef,
 ) {
   const threadId = ThreadId.make(`thread:${key}`);
   const sandboxId = SandboxId.make(
@@ -429,6 +433,7 @@ const provisioned = Effect.fn("SandboxLifecycleTest.provisioned")(function* (
     driverId: ComputeDriverId.make("docker"),
     size: "default",
     ...(discardOnSettle ? { discardOnSettle: true } : {}),
+    ...(imageBuild === undefined ? {} : { imageBuild }),
   });
   return { threadId, sandboxId };
 });
@@ -641,6 +646,24 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         state: "provisioning",
         driverRef: `pair-0f1e2d3c-${sandboxId}-g1`,
       });
+    }),
+  );
+
+  it.effect("boots the base image when the machine's team build is gone", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSandboxRuntime();
+      const imageBuild = {
+        id: TeamImageBuildId.make("tib_00000000000000000009"),
+        number: PositiveInt.make(9),
+      };
+      const { sandboxId } = yield* provisioned("collected", Effect.void, false, imageBuild);
+      assert.deepEqual((yield* getSandbox(sandboxId))?.imageBuild, imageBuild);
+      const answered = yield* Deferred.make<FakeComputeDriver.FakeComputeCall>();
+      yield* runAnswering(runtime, (call) =>
+        Deferred.succeed(answered, call).pipe(Effect.andThen(answerCreate(call))),
+      );
+      const call = yield* Deferred.await(answered);
+      assert.deepEqual(call._tag === "create" ? call.input.image : undefined, { type: "base" });
     }),
   );
 

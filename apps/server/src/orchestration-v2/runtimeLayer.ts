@@ -344,6 +344,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerCommandReceiptStoreProvided,
       IdAllocator.layer,
       ProjectionStore.layer,
+      TeamImageStore.layer,
     ),
   ),
 );
@@ -393,6 +394,7 @@ const layerSandboxEffectsProvided = SandboxEffects.layer.pipe(
       layerThreadManagementProvided,
       layerCheckpointServiceProvided,
       layerServerDrainProvided,
+      TeamImageStore.layer,
     ),
   ),
 );

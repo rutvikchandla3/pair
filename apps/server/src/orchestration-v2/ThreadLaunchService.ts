@@ -67,10 +67,12 @@ import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TeamImageStore from "../sandbox/image/TeamImageStore.ts";
 import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
 import { hasNoDisk } from "../sandbox/lifecycle/SandboxDecisions.ts";
 import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 import * as RunnerHub from "../sandbox/runnerHub/RunnerHub.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -313,6 +315,9 @@ const make = Effect.gen(function* () {
   // The server provides the hub; a cloud checkout then waits for the machine's runner to dial in.
   const runnerHub = yield* Effect.serviceOption(RunnerHub.RunnerHub);
   const mirrorSync = yield* Effect.serviceOption(MirrorSync.MirrorSync);
+  // The server provides the hosts; a checkout copies a team image's clone through them.
+  const workspaceHosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
+  const teamImages = yield* TeamImageStore.TeamImageStore;
   // One checkout at a time per machine: threads on it share a clone.
   const sandboxCheckouts = yield* KeyedLock.make<SandboxId>();
   // The server provides it; on a cloud-only server it fetches and authenticates the checkout.
@@ -324,6 +329,11 @@ const make = Effect.gen(function* () {
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
     Context.add(ServerConfig.ServerConfig, serverConfig),
     Context.add(ThreadManagement.ThreadManagementService, threads),
+    Context.add(TeamImageStore.TeamImageStore, teamImages),
+    (context) =>
+      Option.isSome(workspaceHosts)
+        ? Context.add(context, WorkspaceHosts.WorkspaceHosts, workspaceHosts.value)
+        : context,
     (context) =>
       Option.isSome(runnerHub)
         ? Context.add(context, RunnerHub.RunnerHub, runnerHub.value)
@@ -351,6 +361,22 @@ const make = Effect.gen(function* () {
           Effect.logWarning("Could not record a rebuilt checkout", { threadId, cause }),
         ),
       );
+  // Only the first checkout of a project on a machine clones it, so this records once per both.
+  const recordNotInImage = Effect.fn("ThreadLaunchService.recordNotInImage")(
+    function* (commandId: CommandId, threadId: ThreadId, sandboxId: SandboxId, title: string) {
+      const record = yield* projections.getSandbox(sandboxId);
+      if (record?.imageBuild === undefined) return;
+      yield* threads.dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`${commandId}:not-in-image`),
+        threadId,
+        message: `Not in the team image. ${title} was cloned when this session started; an admin can add it to the team image so sessions start faster.`,
+      });
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not record a project missing from the team image", { cause }),
+    ),
+  );
 
   const mapError =
     (
@@ -449,6 +475,7 @@ const make = Effect.gen(function* () {
       driverId: input.placement.driverId,
       size: input.placement.size,
       ...(input.discardOnSettle ? { discardOnSettle: true } : {}),
+      ...(input.placement.imageBuild === null ? {} : { imageBuild: input.placement.imageBuild }),
     });
   });
 
@@ -761,9 +788,13 @@ const make = Effect.gen(function* () {
         yield* Effect.logInfo("Prepared a cloud checkout", {
           threadId,
           restoredFrom: checkout.restoredFrom,
+          cloneSource: checkout.cloneSource,
         });
         if (existingWorktreePath !== null && checkout.restoredFrom !== "disk") {
           yield* recordRebuild(input.commandId, threadId, checkout);
+        }
+        if (checkout.cloneSource === "origin") {
+          yield* recordNotInImage(input.commandId, threadId, sandboxId, project.title);
         }
         yield* setupTracker.stageStatus(threadId, "fetch", "done");
         worktreeRepository = checkout.clonePath;

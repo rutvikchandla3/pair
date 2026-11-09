@@ -1034,27 +1034,37 @@ engineering call at the top).
   - `apps/server/src/sandbox/lifecycle/CloudPreparation.ts`:
     - `resolveCloudLaunch` (130–168) also returns `imageBuild: SandboxImageBuildRef | null`: the
       active build when its `driverId` is the resolved driver and its image is not deleted, else
-      null. Both callers pass it on: ThreadLaunchService.ts 1266 and OrchestratorMcpService.ts
-      2500 (the delegated provision, Orchestrator.ts 8887, takes it from there).
+      null. A store error logs and boots the base, so the launch's error types do not change.
+      Both callers pass it on: ThreadLaunchService.ts 1266 and OrchestratorMcpService.ts 2500.
+      The delegated provision (Orchestrator.ts 8887) takes it from `delegated_task.request`'s
+      `sandbox`, which gains an optional `imageBuild`.
     - `checkoutInSandbox` (257–371): before the clone-or-fetch at 303–307, when `clonePath` is not
-      a checkout and `clonePathFor("/t3-sandbox/.image", url, projectId)` is, copy it through the
-      sandbox's host (`WorkspaceHosts.forPath(root)`, `mkdir -p <parent>` then `cp -a <image clone>
-      <clonePath>`), and fetch instead of clone. Return `cloneSource: "image" | "origin" |
-      "existing"` beside the current fields. A failed copy removes the partial folder and clones
-      as today.
+      a checkout and `clonePathFor(TeamImageCloneRoot, url, projectId)` has a `.git`, copy it
+      through the host of the sandbox's root (`forPath` cannot route `/t3-sandbox/.image`): the
+      agent user runs `mkdir -p <parent>` and `cp -a <image clone> <clonePath>.image-copy`, then
+      the copy is renamed into place, so a failed one leaves nothing at `clonePath` and the
+      checkout clones as today. Then it fetches instead of cloning. `TeamImageCloneRoot` is a
+      `Context.Reference` defaulting to `/t3-sandbox/.image`, so the live test copies from a temp
+      folder. Return `cloneSource: "image" | "origin" | "existing"` beside the current fields.
+      The copy's span `CloudPreparation.copyImageClone` carries `team_image.copied` and
+      `team_image.copy_ms`, the checkout's span carries `checkout.clone_source`, and a copy logs
+      "Copied a project from the team image" with `copyMs`.
   - `apps/server/src/orchestration-v2/ThreadLaunchService.ts`: `provisionCloud` (444) passes
     `imageBuild` into `sandbox.provision`. After the checkout call (750–766), when the sandbox has
     an `imageBuild` and `cloneSource` is `origin`, record a notice through `thread.notice.record`,
-    as `recordRebuild` (341–353) does: "Not in the team image. `<project>` was cloned when this
+    as `recordRebuild` (341–353) does: "Not in the team image. <project> was cloned when this
     session started; an admin can add it to the team image so sessions start faster." Once per
-    sandbox and project.
+    launch (its command id keys the notice); a restore's checkout records none. A copy that
+    failed and fell back to a clone records it too.
   - `apps/server/src/sandbox/lifecycle/SandboxDecisions.ts` `decideProvision` (506–537): copy the
     command's `imageBuild` onto the record.
   - `apps/server/src/sandbox/lifecycle/SandboxEffects.ts` `sandbox.create` (460–485): a record with
     `imageBuild` creates with `image: { type: "build", imageRef }`, the ref read from
     `TeamImageStore.build(id)`. The Docker driver already boots that shape (`bootImage`,
-    DockerComputeDriver.ts 646–658). A missing image fails the create as `bootImage` does today;
-    GC never deletes a referenced build, so that means someone removed it by hand.
+    DockerComputeDriver.ts 646–658). A build with no image left (GC only protects builds of
+    sandboxes not destroyed, so a discarded machine woken from scratch can outlive its build)
+    logs and boots the base instead of failing forever, and `sandbox.created` with a
+    `baseImage` drops `imageBuild` from the record, so the machine stops reading "Build N".
   - `apps/server/src/sandbox/runner/RunnerConfig.ts` (85–88): after the process env, read
     `/etc/t3/build.json` through `fs` and lay its `imageEnv` over `imageEnvironment` (a missing or
     unreadable file is the base: no build). Extract the merge as `imageEnvironmentFrom(env,
@@ -1074,17 +1084,20 @@ engineering call at the top).
   volume. Record the setup script's time with and without the build in the transcript.
 - **Types and services:** `resolveCloudLaunch`'s result and `checkoutInSandbox`'s result grow a
   field each; `imageEnvironmentFrom` in the runner.
-- **Commands and events:** `sandbox.provision` gains `imageBuild`; no new type.
+- **Commands and events:** `sandbox.provision` and `delegated_task.request`'s `sandbox` gain
+  `imageBuild`; no new type.
 - **Migrations:** none (the record is JSON in migration 088's table).
 - **Tests:**
-  - `SandboxDecisions.test.ts`: a row for provision with `imageBuild`.
+  - `SandboxDecisions.test.ts`: a row for provision with `imageBuild`, and one for a create from
+    the base dropping it.
   - `ThreadLaunchService.test.ts`: a launch with an active build on the same driver provisions
-    with it; on another driver, without. A checkout whose image clone exists copies and fetches
-    (`cloneSource: "image"`, no clone call); one without records the notice once.
-  - `SandboxLifecycle.test.ts`: the create effect passes `{ type: "build", imageRef }` for a
-    record with `imageBuild`.
+    with it; on another driver, without; one without an image clone records the notice once. The
+    live end-to-end launch runs twice: from a clone of origin, and from a copy of an image clone
+    with real `cp -a`, no clone call, a fetch that reaches a commit pushed after the build, and a
+    create with `{ type: "build", imageRef }`.
+  - `SandboxLifecycle.test.ts`: a record whose build is gone creates from the base.
   - New `RunnerConfig.test.ts` for `imageEnvironmentFrom`: a manifest's `PATH` wins over the
-    process env; a broken file is ignored.
+    process env; a broken file is ignored; `PAIR_*` names never pass.
 - **Verify:** the tests above. Runtime transcript (as 4.14's): with build 1 active, a new cloud
   session's machine is created from `t3-team-image:1` (`docker inspect` of its container),
   `which psql` answers in its terminal, `echo $PATH` shows the `imageEnv` addition, and the

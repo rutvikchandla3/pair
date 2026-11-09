@@ -4,10 +4,12 @@ import {
   ComputeDriverId,
   MemberId,
   type OrchestrationV2Sandbox,
+  PositiveInt,
   ProjectId,
   RunId,
   type SandboxDiskRetention,
   SandboxId,
+  TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
@@ -89,7 +91,13 @@ type Row = readonly [
   command: SandboxCommand,
   current: OrchestrationV2Sandbox | null,
   expected:
-    | { readonly next: Partial<OrchestrationV2Sandbox>; readonly effects: ReadonlyArray<string> }
+    | {
+        /** A key set to `undefined` must be absent from the record. */
+        readonly next: {
+          readonly [K in keyof OrchestrationV2Sandbox]?: OrchestrationV2Sandbox[K] | undefined;
+        };
+        readonly effects: ReadonlyArray<string>;
+      }
     | "NoOp"
     | string,
   attachedThreads?: ReadonlyArray<SandboxAttachedThread>,
@@ -118,6 +126,11 @@ const provision: SandboxCommand = {
   projectId: ProjectId.make("project"),
   driverId: ComputeDriverId.make("docker"),
   size: "small",
+};
+
+const imageBuild = {
+  id: TeamImageBuildId.make("tib_00000000000000000004"),
+  number: PositiveInt.make(4),
 };
 
 const rows: ReadonlyArray<Row> = [
@@ -149,6 +162,12 @@ const rows: ReadonlyArray<Row> = [
     { ...provision, discardOnSettle: true },
     null,
     { next: { state: "provisioning", discardOnSettle: true }, effects: ["sandbox.create"] },
+  ],
+  [
+    "provision records the team build the machine boots from",
+    { ...provision, imageBuild },
+    null,
+    { next: { state: "provisioning", imageBuild }, effects: ["sandbox.create"] },
   ],
   ["provision over a live record", provision, record(), "wrong-state"],
   [
@@ -273,6 +292,17 @@ const rows: ReadonlyArray<Row> = [
       },
       effects: [],
     },
+  ],
+  [
+    "created from the base image drops a build that is gone",
+    {
+      type: "sandbox.created",
+      ...at(2),
+      driverRef: "new-ref",
+      baseImage: { ref: "t3-sandbox:dev", digest: "sha256:a", version: null },
+    },
+    record({ state: "provisioning", driverRef: null, imageBuild }),
+    { next: { driverRef: "new-ref", imageBuild: undefined }, effects: [] },
   ],
   [
     "created for an older generation",
@@ -704,7 +734,14 @@ describe("decideSandboxCommand", () => {
       return expect(decision).toEqual({ _tag: "Refuse", reason: expected });
     }
     if (decision._tag !== "Accept") throw new Error(`Expected Accept, got ${decision._tag}`);
-    expect(decision.next).toMatchObject({ ...expected.next, updatedAt: now });
+    const absent = Object.keys(expected.next).filter(
+      (key) => expected.next[key as keyof typeof expected.next] === undefined,
+    );
+    expect(Object.keys(decision.next).filter((key) => absent.includes(key))).toEqual([]);
+    expect(decision.next).toMatchObject({
+      ...Object.fromEntries(Object.entries(expected.next).filter(([key]) => !absent.includes(key))),
+      updatedAt: now,
+    });
     expect(decision.effects).toEqual(
       expected.effects.map((type) => ({
         type,

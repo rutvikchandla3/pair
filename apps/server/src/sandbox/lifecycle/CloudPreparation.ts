@@ -10,6 +10,7 @@ import {
   type ProviderInstanceId,
   SandboxFailure,
   SandboxId,
+  type SandboxImageBuildRef,
   type SandboxSize,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -18,7 +19,9 @@ import { cloudAvailability, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandb
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -32,9 +35,12 @@ import {
   ProviderCloudUnsupportedError,
 } from "../../provider/Errors.ts";
 import { sandboxInstanceConfig } from "../credentials/SandboxProcessEnvironment.ts";
+import { TEAM_IMAGE_ROOT } from "../image/teamImageBuildProgram.ts";
+import * as TeamImageStore from "../image/TeamImageStore.ts";
 import * as MirrorSync from "../mirror/MirrorSync.ts";
 import * as RunnerHub from "../runnerHub/RunnerHub.ts";
-import { SANDBOX_ROOT } from "../../workspaceHost/WorkspaceHost.ts";
+import { SANDBOX_ROOT, type WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 
 const NETWORK_FAILURE =
   /Could not resolve host|Failed to connect|timed out|Network is unreachable/i;
@@ -117,6 +123,12 @@ export const SandboxCheckoutRoot = Context.Reference<(sandboxId: SandboxId) => s
   { defaultValue: () => (sandboxId) => `${SANDBOX_ROOT}/${sandboxId}` },
 );
 
+/** Where a team image keeps its pre-cloned projects, in the image's own layer. */
+export const TeamImageCloneRoot = Context.Reference<string>(
+  "t3/sandbox/lifecycle/CloudPreparation/TeamImageCloneRoot",
+  { defaultValue: () => TEAM_IMAGE_ROOT },
+);
+
 /** Deterministic, so a replayed launch provisions the same sandbox. */
 export const sandboxIdForLaunch = (commandId: CommandId): SandboxId =>
   SandboxId.make(
@@ -124,8 +136,34 @@ export const sandboxIdForLaunch = (commandId: CommandId): SandboxId =>
   );
 
 /**
+ * The active team build when it was built on `driverId` and its image is still there; else null,
+ * and the machine boots the base. An unreadable store boots the base too.
+ */
+const activeImageBuild = Effect.fn("CloudPreparation.activeImageBuild")(
+  function* (driverId: ComputeDriverId) {
+    const store = yield* TeamImageStore.TeamImageStore;
+    const { activeBuildId } = yield* store.state;
+    if (activeBuildId === null) return null;
+    const record = yield* store.build(activeBuildId);
+    if (Option.isNone(record)) return null;
+    const { build } = record.value;
+    return build.driverId === driverId &&
+      build.imageDeletedAt === null &&
+      build.imageRef !== undefined
+      ? ({ id: build.id, number: build.number } satisfies SandboxImageBuildRef)
+      : null;
+  },
+  Effect.catch((cause) =>
+    Effect.logWarning("Could not read the active team image; booting the base", { cause }).pipe(
+      Effect.as(null),
+    ),
+  ),
+);
+
+/**
  * The driver and size a cloud launch in this project gets, checked before anything is created,
- * as is the provider account: one that cannot sign in on a machine never starts one.
+ * as is the provider account: one that cannot sign in on a machine never starts one. The machine
+ * boots the active team build when it was built on that driver.
  */
 export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch")(function* (
   projectId: ProjectId,
@@ -158,7 +196,12 @@ export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch
   return {
     driverId: driver.id,
     size: driver.size ?? "default",
-  } satisfies { readonly driverId: ComputeDriverId; readonly size: SandboxSize };
+    imageBuild: yield* activeImageBuild(driver.id),
+  } satisfies {
+    readonly driverId: ComputeDriverId;
+    readonly size: SandboxSize;
+    readonly imageBuild: SandboxImageBuildRef | null;
+  };
 });
 
 type WaitingPhase = "sandbox-admission" | "sandbox-start";
@@ -249,10 +292,59 @@ export const clonePathFor = (root: string, url: string, projectId: ProjectId) =>
 };
 
 /**
- * Keeps a kept disk's checkout, else clones or fetches origin and checks the thread out of the
- * mirror (a rebuild at its recorded path, or a claimed seed at a new one; a `seeded` launch never
- * falls back to origin), else adds a worktree from `origin/<branch>` or `origin/<baseRef>` (README
- * P4; an `existingBranch` must be pushed). Git runs as the sandbox's agent user.
+ * Copies a team image's clone of the project into the sandbox's disk, which is another filesystem
+ * than the image's layer. The agent user copies, so it owns the result; a copy lands under a
+ * temporary name and is renamed into place, so a failed one leaves nothing at `to`.
+ */
+const copyImageClone = Effect.fn("CloudPreparation.copyImageClone")(function* (
+  host: Pick<WorkspaceHost, "spawner" | "fileSystem">,
+  from: string,
+  to: string,
+) {
+  if (!(yield* host.fileSystem.exists(`${from}/.git`).pipe(Effect.orElseSucceed(() => false)))) {
+    return false;
+  }
+  const staging = `${to}.image-copy`;
+  const run = (command: string, args: ReadonlyArray<string>) =>
+    host.spawner
+      .exitCode(ChildProcess.make(command, args, { stdin: "ignore" }))
+      .pipe(
+        Effect.flatMap((code) =>
+          code === 0 ? Effect.void : Effect.fail(`${command} exited with ${code}`),
+        ),
+      );
+  const [elapsed, copied] = yield* Effect.gen(function* () {
+    yield* host.fileSystem.remove(staging, { recursive: true, force: true });
+    yield* run("mkdir", ["-p", to.slice(0, to.lastIndexOf("/"))]);
+    yield* run("cp", ["-a", from, staging]);
+    yield* host.fileSystem.rename(staging, to);
+    return true;
+  }).pipe(
+    Effect.catch((cause) =>
+      host.fileSystem.remove(staging, { recursive: true, force: true }).pipe(
+        Effect.ignore,
+        Effect.andThen(
+          Effect.logWarning("Could not copy a project from the team image; cloning it", {
+            from,
+            cause,
+          }),
+        ),
+        Effect.as(false),
+      ),
+    ),
+    Effect.timed,
+  );
+  const copyMs = Duration.toMillis(elapsed);
+  // The first-boot copy's cost: the M4 pass reads it from the trace and the log.
+  yield* Effect.annotateCurrentSpan({ "team_image.copied": copied, "team_image.copy_ms": copyMs });
+  if (copied) yield* Effect.logInfo("Copied a project from the team image", { to, copyMs });
+  return copied;
+});
+
+/**
+ * Keeps a kept disk's checkout, else copies the team image's clone (or clones origin), fetches,
+ * and checks the thread out of the mirror (a `seeded` launch never falls back to origin), else adds
+ * a worktree from `origin/<branch>` or `origin/<baseRef>` (an `existingBranch` must be pushed).
  */
 export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
   readonly sandboxId: SandboxId;
@@ -284,9 +376,24 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       created: false,
       restoredFrom: "disk" as const,
       snapshotAt: null,
+      cloneSource: "existing" as const,
     };
   }
-  const cloning = !(yield* isCheckout(clonePath));
+  let cloneSource: "image" | "origin" | "existing" = (yield* isCheckout(clonePath))
+    ? "existing"
+    : "origin";
+  // The server provides the hosts. `forPath` cannot route the image's path, so the copy runs on
+  // the host of the sandbox's own root.
+  const hosts = yield* Effect.serviceOption(WorkspaceHosts.WorkspaceHosts);
+  if (cloneSource === "origin" && Option.isSome(hosts)) {
+    const host = yield* hosts.value.forPath(root).pipe(Effect.option);
+    const imageClone = clonePathFor(yield* TeamImageCloneRoot, url, input.projectId);
+    if (Option.isSome(host) && (yield* copyImageClone(host.value, imageClone, clonePath))) {
+      cloneSource = "image";
+    }
+  }
+  yield* Effect.annotateCurrentSpan({ "checkout.clone_source": cloneSource });
+  const cloning = cloneSource === "origin";
   const remote = normalizeGitRemoteUrl(url);
   // Git can't tell a missing credential from one without access; both are fixed in Settings → Team.
   const cloneOrFetchFailed = (error: GitCommandError) =>
@@ -329,6 +436,7 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
         created: !rebuilt,
         restoredFrom: rebuilt ? ("mirror" as const) : ("seed" as const),
         snapshotAt: restored.snapshotAt,
+        cloneSource,
       };
     }
   }
@@ -367,5 +475,6 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     created: true,
     restoredFrom: "origin" as const,
     snapshotAt: null,
+    cloneSource,
   };
 });

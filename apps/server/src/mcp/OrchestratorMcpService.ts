@@ -2496,7 +2496,7 @@ const make = Effect.gen(function* () {
             "A cloud task starts from a pushed branch; this thread has none. Use isolation 'worktree'.",
           );
         }
-        const placement = yield* threadLaunch
+        const { imageBuild, ...placement } = yield* threadLaunch
           .checkCloudLaunch({
             projectId: parent.thread.projectId,
             instanceId: target.modelSelection.instanceId,
@@ -2509,7 +2509,11 @@ const make = Effect.gen(function* () {
             ),
           );
         workspaceStrategy = { type: "worktree", baseRef };
-        sandbox = { sandboxId: CloudPreparation.sandboxIdForLaunch(commandId), ...placement };
+        sandbox = {
+          sandboxId: CloudPreparation.sandboxIdForLaunch(commandId),
+          ...placement,
+          ...(imageBuild === null ? {} : { imageBuild }),
+        };
       }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
