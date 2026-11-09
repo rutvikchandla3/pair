@@ -4353,9 +4353,9 @@ lines of copy, and G2 step 1 checks them together.
   - Finding 4: `WelcomeWizard.tsx` `WelcomeWizard` (116). Derive
     `importIds = setupIds.filter((id) => !isCloudLaunchEnvironment(<its serverConfig>))` from
     `useEnvironments()` (126). Use it for `useProjectScans` (160) and `isLoadingProjects`
-    (161–164). When `importIds` is empty, the stages are `["Connect", "Agents"]` instead of
-    `ONBOARDING_STAGES` (113), and `AgentsStep`'s `onContinue` (275) calls `finish()` instead of
-    `setStep("import")`. `AgentsStep` takes a `last` flag for its button label. The server
+    (161–164). When setup has started (`setupIds` is not empty) and `importIds` is empty, the
+    stages are `["Connect", "Agents"]` instead of `ONBOARDING_STAGES` (113), and `AgentsStep`'s
+    `onContinue` (275) calls `finish()` instead of `setStep("import")`. `AgentsStep` takes a `last` flag for its button label. The server
     refuses the scan on cloud-only (`AgentSessionScanner.ts` 1509–1513), so today's Retry can
     never help.
   - Finding 5: `apps/web/src/components/settings/SourceControlSettings.tsx`. Read the atom in

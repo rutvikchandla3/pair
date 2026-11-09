@@ -57,6 +57,11 @@ The setup terminal uses the home directory and environment configured for the
 selected provider instance. Sensitive values remain redacted in Settings and
 terminal metadata while the terminal process can use them.
 
+On Pair Cloud, agents run in cloud machines, so there is no terminal sign-in.
+Add accounts in **Settings → Team** or **Settings → Providers** (see [Provider
+accounts](./cloud.md#provider-accounts)). Setup skips project import there; add
+projects by Git URL (see [Add projects](./pair-cloud.md#add-projects)).
+
 ## Import your projects
 
 The Pair app finds directories that Claude Code, Codex or Pi has used. Git repositories

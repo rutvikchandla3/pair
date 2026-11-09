@@ -10,6 +10,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -111,6 +112,7 @@ const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
+const CLOUD_ONBOARDING_STAGES = ["Connect", "Agents"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -157,7 +159,15 @@ export function WelcomeWizard({
   }, [autoSelectedComputers, environments]);
   const selectedIds =
     selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
-  const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
+  // A cloud-only server refuses the project scan, so Pair Cloud gets no Projects stage.
+  const importIds = setupIds.filter(
+    (id) =>
+      !isCloudLaunchEnvironment(
+        environments.find((environment) => environment.environmentId === id)?.serverConfig ?? null,
+      ),
+  );
+  const skipsImport = setupIds.length > 0 && importIds.length === 0;
+  const scans = useProjectScans(step === "import" ? importIds : NO_ENVIRONMENTS);
   const isLoadingProjects =
     step === "import" &&
     scans.every((scan) => scan.data === null) &&
@@ -239,7 +249,7 @@ export function WelcomeWizard({
       >
         <WizardHeader title="Set up Pair" identity={<PairLockup className="text-2xl" />}>
           <WizardSteps
-            steps={ONBOARDING_STAGES}
+            steps={skipsImport ? CLOUD_ONBOARDING_STAGES : ONBOARDING_STAGES}
             currentStep={stageIndex}
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
@@ -272,7 +282,11 @@ export function WelcomeWizard({
               }}
             />
           ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+            <AgentsStep
+              environmentIds={setupIds}
+              last={skipsImport}
+              onContinue={() => (skipsImport ? void finish() : setStep("import"))}
+            />
           ) : (
             <ImportStep
               scans={scans}
@@ -667,9 +681,11 @@ interface AgentTerminalSession {
 
 function AgentsStep({
   environmentIds,
+  last,
   onContinue,
 }: {
   readonly environmentIds: readonly EnvironmentId[];
+  readonly last: boolean;
   readonly onContinue: () => void;
 }) {
   const { environments } = useEnvironments();
@@ -694,8 +710,8 @@ function AgentsStep({
       </ScrollArea>
       <div className="mt-6 flex justify-end">
         <Button autoFocus onClick={onContinue}>
-          Continue
-          <ArrowRightIcon className="size-3.5" />
+          {last ? "Finish" : "Continue"}
+          {last ? null : <ArrowRightIcon className="size-3.5" />}
         </Button>
       </div>
     </StepShell>
