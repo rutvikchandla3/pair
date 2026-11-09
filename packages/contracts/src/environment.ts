@@ -170,6 +170,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   oneTimeSchedules: Schema.optionalKey(Schema.Boolean),
   /** True only on a cloud-only server, the only kind that starts cloud machines (D12). */
   cloudLaunch: Schema.optionalKey(Schema.Boolean),
+  /** True only on a cloud-only server: it takes seeds and context exports over `/api/cloud-moves` (M3). */
+  cloudImport: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

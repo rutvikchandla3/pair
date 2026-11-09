@@ -141,6 +141,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       );
       expect(capabilities.serverBrowser).toBe(cloudOnly ? undefined : true);
       expect(capabilities.cloudLaunch).toBe(cloudOnly ? true : undefined);
+      expect(capabilities.cloudImport).toBe(cloudOnly ? true : undefined);
     }),
   );
 

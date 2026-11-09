@@ -143,6 +143,9 @@ import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
+import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
+import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
+import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
 import * as StoppedSandboxReads from "./sandbox/mirror/StoppedSandboxReads.ts";
 import * as MirrorSync from "./sandbox/mirror/MirrorSync.ts";
@@ -651,6 +654,8 @@ const layerPairCloudProjects = PairCloudProjects.layer.pipe(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  // Merged, so launches claim staged imports and the cloud-move routes stage them.
+  Layer.provideMerge(StagedCloudImports.layer.pipe(Layer.provide(Scheduler.layer))),
   // Merged, so launches fetch Pair Cloud checkouts and ws.ts and MCP add projects with it.
   Layer.provideMerge(layerPairCloudProjects),
   Layer.provide(layerMirrorSync),
@@ -920,6 +925,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    CloudMoveHttp.layer,
     GuestHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

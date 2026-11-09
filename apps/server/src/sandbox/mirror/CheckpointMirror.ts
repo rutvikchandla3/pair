@@ -60,12 +60,22 @@ export class CheckpointMirror extends Context.Service<
       projectId: ProjectId,
       refs: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyMap<string, string>, CheckpointMirrorError>;
-    /** Checks every object strictly, then moves only the named refs. Others in the bundle are ignored. */
+    /**
+     * Checks every object strictly, then moves only the named refs. Others in the bundle are
+     * ignored, or refused with `exactRefs`.
+     */
     readonly importBundle: (input: {
       readonly projectId: ProjectId;
       readonly bundlePath: string;
       readonly refs: ReadonlyArray<MirrorRefUpdate>;
+      /** The bundle must carry exactly the requested sources, `HEAD` included. */
+      readonly exactRefs?: true;
     }) => Effect.Effect<ReadonlyMap<string, string>, CheckpointMirrorError>;
+    /** A commit's parents, or null when the oid is not a commit the mirror holds. */
+    readonly commitParents: (
+      projectId: ProjectId,
+      oid: string,
+    ) => Effect.Effect<ReadonlyArray<string> | null, CheckpointMirrorError>;
     /** Points refs (target -> oid) at objects the mirror already holds; a missing object fails. */
     readonly updateRefs: (
       projectId: ProjectId,
@@ -348,7 +358,7 @@ const make = Effect.gen(function* () {
 
   const importBundle: CheckpointMirror["Service"]["importBundle"] = Effect.fn(
     "CheckpointMirror.importBundle",
-  )(function* ({ projectId, bundlePath, refs }) {
+  )(function* ({ projectId, bundlePath, refs, exactRefs }) {
     const invalid = fail(projectId, "import", "invalid-objects");
     const info = yield* fs.stat(bundlePath).pipe(Effect.mapError(fail(projectId, "import", "git")));
     if (Number(info.size) > MAX_BUNDLE_BYTES) {
@@ -356,6 +366,14 @@ const make = Effect.gen(function* () {
     }
     const header = yield* readBundleHeader(projectId, bundlePath);
     if (header === null) return yield* invalid("Not a v2 git bundle.");
+    const sources = new Set(refs.map((ref) => ref.source));
+    if (
+      exactRefs &&
+      (header.refs.size !== sources.size ||
+        [...header.refs.keys()].some((name) => !sources.has(name)))
+    ) {
+      return yield* invalid(`The bundle must carry exactly ${[...sources].join(", ")}.`);
+    }
     const updates = new Map<string, string>();
     for (const { source, target } of refs) {
       const oid = header.refs.get(source);
@@ -412,6 +430,20 @@ const make = Effect.gen(function* () {
         return updates;
       }),
     );
+  });
+
+  const commitParents: CheckpointMirror["Service"]["commitParents"] = Effect.fn(
+    "CheckpointMirror.commitParents",
+  )(function* (projectId, oid) {
+    if (!OID_ONLY.test(oid) || !(yield* mirrorExists(projectId, "import"))) return null;
+    const result = yield* runInMirror(
+      projectId,
+      "import",
+      ["rev-list", "--parents", "--max-count=1", `${oid}^{commit}`],
+      { allowNonZeroExit: true },
+    );
+    const [commit, ...parents] = result.stdout.trim().split(" ");
+    return result.exitCode === 0 && commit === oid ? parents : null;
   });
 
   const updateRefs: CheckpointMirror["Service"]["updateRefs"] = Effect.fn(
@@ -551,6 +583,7 @@ const make = Effect.gen(function* () {
     ensure,
     tips,
     importBundle,
+    commitParents,
     updateRefs,
     writeBlobRef,
     deleteRefs,

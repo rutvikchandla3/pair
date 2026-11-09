@@ -166,6 +166,35 @@ it.effect("imports only the requested refs from a bundle whose prerequisite it h
     const tips = yield* mirror.tips(projectId, [target, "refs/heads/work", "refs/heads/extra"]);
     assert.deepEqual([...tips], [[target, work]]);
     assert.equal(yield* mirrorGit(["show", `${work}:work.txt`]), "work");
+    assert.deepEqual(yield* mirror.commitParents(projectId, work), [
+      yield* git(checkout, ["rev-parse", "main"]),
+    ]);
+    const tree = yield* mirrorGit(["rev-parse", `${work}^{tree}`]);
+    assert.isNull(yield* mirror.commitParents(projectId, tree));
+
+    // With exactRefs, a ref the caller didn't ask for refuses the whole bundle.
+    const exactTarget = "refs/t3/exact/work";
+    const extraTarget = "refs/t3/exact/extra";
+    const partial = yield* mirror
+      .importBundle({
+        projectId,
+        bundlePath: file,
+        refs: [{ source: "refs/heads/work", target: exactTarget }],
+        exactRefs: true,
+      })
+      .pipe(Effect.flip);
+    assert.equal(partial.reason, "invalid-objects");
+    assert.deepEqual([...(yield* mirror.tips(projectId, [exactTarget]))], []);
+    const exact = yield* mirror.importBundle({
+      projectId,
+      bundlePath: file,
+      refs: [
+        { source: "refs/heads/work", target: exactTarget },
+        { source: "refs/heads/extra", target: extraTarget },
+      ],
+      exactRefs: true,
+    });
+    assert.deepEqual([...exact.keys()], [exactTarget, extraTarget]);
 
     // Oids from a sandbox can't smuggle a second update-ref command.
     const smuggled = yield* mirror

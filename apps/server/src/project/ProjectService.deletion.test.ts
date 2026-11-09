@@ -164,6 +164,7 @@ it.effect("retries a partial project deletion without repeating child events or 
         ensure: unused,
         tips: unused,
         importBundle: unused,
+        commitParents: unused,
         updateRefs: unused,
         writeBlobRef: unused,
         deleteRefs: unused,
