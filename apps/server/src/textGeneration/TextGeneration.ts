@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import {
   isProviderAvailable,
   isProviderTextGenerationCapable,
@@ -13,6 +13,7 @@ import {
   defaultTextGenerationModel,
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
 import * as ServerSettings from "../serverSettings.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -68,6 +69,13 @@ const resolveInstance = (
 const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
 // On cloud-only text generation runs on the server, so only drivers whose tools turn off may run it.
 const TOOL_FREE_DRIVERS = new Set(["codex", "claudeAgent"]);
+
+const canGenerate = (provider: ServerProvider | undefined) =>
+  provider?.enabled === true &&
+  provider.installed &&
+  provider.auth.status !== "unauthenticated" &&
+  isProviderAvailable(provider) &&
+  isProviderTextGenerationCapable(provider);
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -126,12 +134,9 @@ export const make = Effect.gen(function* () {
       ),
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const limited = exhaustedUsageWindow(
-      snapshots.find((provider) => provider.instanceId === selection.instanceId),
-      now,
-      selection.model,
-    );
-    if (limited) {
+    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
+    const limited = exhaustedUsageWindow(selected, now, selection.model);
+    if (limited || (cloudOnly && !canGenerate(selected))) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -149,12 +154,10 @@ export const make = Effect.gen(function* () {
             const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
             return (
               instanceId !== selection.instanceId &&
-              provider?.enabled === true &&
+              canGenerate(provider) &&
               resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
-              provider.installed &&
-              provider.auth.status !== "unauthenticated" &&
-              isProviderAvailable(provider) &&
-              isProviderTextGenerationCapable(provider) &&
+              // A member's own account is theirs to pick; it never writes text for others.
+              providerInstanceOwner(settings, instanceId) === undefined &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
               (!cloudOnly || TOOL_FREE_DRIVERS.has(driver)) &&
               !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))

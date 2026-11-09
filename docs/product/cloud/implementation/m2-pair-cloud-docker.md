@@ -4661,6 +4661,12 @@ server only and unrelated to 2.52. It ships as one commit with the row's title.
       `canGenerate(provider)`. The rest stays: not the selected instance,
       `resolveProjectProviderInstanceEnabled`, `INVESTIGATING_DRIVERS` for guides,
       `TOOL_FREE_DRIVERS` on cloud-only, and not out of usage.
+    - Also skip a member's own account (`providerInstanceOwner(settings, instanceId) !== undefined`,
+      `@t3tools/shared/providerInstanceOwnership`) on every server. Members' own accounts are
+      configured instances (`MemberProviderAccounts.create` writes `ownerMemberId`), the registry
+      hydrates them, and `includeConfiguredInstances: true` lists them, so without this the wider
+      trigger would write everyone's commit text on the first member's subscription (01 §"Provider
+      accounts in cloud": Pair does not pool personal subscriptions).
     - When no candidate qualifies, `?? selection` (164) keeps the chosen provider, so its own error
       shows as it does today.
   - No change in `GitManager.ts` `textGenerationSettings` (3447–3475), `ThreadLaunchService.ts`
@@ -4677,9 +4683,10 @@ server only and unrelated to 2.52. It ships as one commit with the row's title.
   request text and [review guides](./source-control.md#review-guides) can't use a member's own
   account, so add a team Claude or Codex account in **Settings → Providers** too. When the model
   under **Settings → Threads → Text generation** isn't signed in, Pair Cloud uses one that is."
-  The worker confirms the first claim: `TextGeneration` resolves instances only through
-  `ProviderInstanceRegistry` (`resolveInstance`, 51), and `MemberProviderAccounts` is not
-  referenced in `textGeneration/` or `GitManager.ts`.
+  As landed, the first sentence reads "Commit messages and pull request text never fall back to a
+  member's own account, and review guides can't use one, …": the fallback skips owned instances,
+  but **Settings → Threads → Text generation** lists every instance, so an admin can still pick one
+  on purpose (review guides refuse that on cloud-only, 2.46).
 - **Proposed gap answers.**
   - The fallback applies only on cloud-only. On a local server, a chosen provider that isn't signed
     in still fails with its own sign-in advice, which the user can follow on their own machine.
@@ -4689,7 +4696,7 @@ server only and unrelated to 2.52. It ships as one commit with the row's title.
     order (`packages/shared/src/serverSettings.ts` 72). That order is the default `codex` and
     `claudeAgent` instances, then configured instances (team accounts in **Settings → Providers**)
     through `includeConfiguredInstances: true` (163). On cloud-only, only `codex` and `claudeAgent`
-    drivers qualify. Members' own accounts are not instances, so the fallback never reads them.
+    drivers qualify, and never a member's own account (see **Files**).
   - A provider isn't ready when it has no snapshot or is disabled, not installed, unavailable,
     unable to generate text, or has `auth.status: "unauthenticated"`. The last is what Codex
     reports when it needs sign-in (`CodexProvider.ts` 724–728). `auth.status: "unknown"` counts as
@@ -4700,8 +4707,8 @@ server only and unrelated to 2.52. It ships as one commit with the row's title.
 
 **Tests.** `apps/server/src/textGeneration/CodexTextGeneration.test.ts`, case "text generation
 preflight: exhausted=%s" (578). Turn `it.effect.each([false, true])` into object rows named
-"text generation preflight: exhausted=$exhausted signedIn=$signedIn cloudOnly=$cloudOnly", and
-assert on `fallsBack`:
+"text generation preflight: exhausted=$exhausted signedIn=$signedIn cloudOnly=$cloudOnly
+memberOwned=$memberOwned", and assert on `fallsBack` (rows below omit `memberOwned: false`):
 
 - `{ exhausted: false, signedIn: true, cloudOnly: false, fallsBack: false }` (today's `false` row)
 - `{ exhausted: true, signedIn: true, cloudOnly: false, fallsBack: true }` (today's `true` row)
@@ -4709,6 +4716,9 @@ assert on `fallsBack`:
   `feat/pair`)
 - `{ exhausted: false, signedIn: false, cloudOnly: false, fallsBack: false }` (new; a local server
   keeps upstream's behavior)
+- `{ exhausted: false, signedIn: false, cloudOnly: true, memberOwned: true, fallsBack: false }`
+  (new; `claude_work` carries an `ownerMemberId`; passes on `feat/pair` and fails with only the
+  wider trigger)
 
 When `signedIn` is false, the primary snapshot gets `status: "error", auth: { status:
 "unauthenticated" }`. Set `cloudOnly` on `TextGeneration.make` with
@@ -4732,6 +4742,7 @@ the Claude instance.
 - On a local server, a chosen provider that isn't signed in fails as it does upstream.
 - On cloud-only, candidates are only Claude and Codex instances (`TOOL_FREE_DRIVERS`), so the 2.45
   refusal (167–172) still never runs another driver.
+- No candidate is a member's own account, on any server.
 - Review guides on a cloud-only server still hit `confinedCwd`'s refusal (94–99) before any
   fallback.
 

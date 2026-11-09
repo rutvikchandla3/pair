@@ -148,8 +148,10 @@ in **Settings → Team** with Pair Cloud picked under **Showing the team on**, t
   (see [Provider accounts](./cloud.md#provider-accounts)). Their Mac's own sign-ins stay on their
   Mac.
 
-[Review guides](./source-control.md#review-guides) can't use a member's own account, so add a team
-account in **Settings → Providers** too if your team uses them.
+Commit messages and pull request text never fall back to a member's own account, and
+[review guides](./source-control.md#review-guides) can't use one, so add a team Claude or Codex
+account in **Settings → Providers** too. When the model under **Settings → Threads → Text
+generation** isn't signed in, Pair Cloud uses a team account that is.
 
 ## Add projects
 

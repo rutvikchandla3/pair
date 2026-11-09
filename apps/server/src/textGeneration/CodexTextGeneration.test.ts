@@ -26,7 +26,12 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  MemberId,
+  ProviderInstanceId,
+  TextGenerationError,
+} from "@t3tools/contracts";
 
 import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
@@ -575,98 +580,111 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
-  Effect.gen(function* () {
-    const primary = ProviderInstanceId.make("codex");
-    const fallback = ProviderInstanceId.make("claude_work");
-    const selection = {
-      instanceId: primary,
-      model: "chat-model",
-      options: [{ id: "effort", value: "high" }],
-    };
-    const calls: ModelSelection[] = [];
-    const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
-      const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
-      const snapshot: ServerProvider = {
-        instanceId,
-        driver,
-        enabled: true,
-        installed: true,
-        status: "ready",
-        auth: { status: "authenticated" },
-        version: null,
-        checkedAt: "1970-01-01T00:00:00Z",
-        models: [],
-        slashCommands: [],
-        skills: [],
-        ...(exhausted && instanceId === primary
-          ? {
-              usageLimits: {
-                checkedAt: "1970-01-01T00:00:00Z",
-                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
-              },
-            }
-          : {}),
+it.effect.each([
+  { exhausted: false, signedIn: true, cloudOnly: false, memberOwned: false, fallsBack: false },
+  { exhausted: true, signedIn: true, cloudOnly: false, memberOwned: false, fallsBack: true },
+  { exhausted: false, signedIn: false, cloudOnly: true, memberOwned: false, fallsBack: true },
+  { exhausted: false, signedIn: false, cloudOnly: false, memberOwned: false, fallsBack: false },
+  { exhausted: false, signedIn: false, cloudOnly: true, memberOwned: true, fallsBack: false },
+])(
+  "text generation preflight: exhausted=$exhausted signedIn=$signedIn cloudOnly=$cloudOnly memberOwned=$memberOwned",
+  ({ exhausted, signedIn, cloudOnly, memberOwned, fallsBack }) =>
+    Effect.gen(function* () {
+      const primary = ProviderInstanceId.make("codex");
+      const fallback = ProviderInstanceId.make("claude_work");
+      const selection = {
+        instanceId: primary,
+        model: "chat-model",
+        options: [{ id: "effort", value: "high" }],
       };
-      return {
-        instanceId,
-        driverKind: driver,
-        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
-        displayName: undefined,
-        enabled: true,
-        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
-        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        textGeneration: TextGeneration.TextGeneration.of({
-          generateCommitMessage: () => Effect.die("unused"),
-          generatePrContent: () => Effect.die("unused"),
-          generateBranchName: () => Effect.die("unused"),
-          generateReviewGuide: () => Effect.die("unused"),
-          generateThreadTitle: (input) =>
-            Effect.sync(() => {
-              calls.push(input.modelSelection);
-              return { title: "Generated title" };
+      const calls: ModelSelection[] = [];
+      const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
+        const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
+        const ready = signedIn || instanceId !== primary;
+        const snapshot: ServerProvider = {
+          instanceId,
+          driver,
+          enabled: true,
+          installed: true,
+          status: ready ? "ready" : "error",
+          auth: { status: ready ? "authenticated" : "unauthenticated" },
+          version: null,
+          checkedAt: "1970-01-01T00:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          ...(exhausted && instanceId === primary
+            ? {
+                usageLimits: {
+                  checkedAt: "1970-01-01T00:00:00Z",
+                  windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+                },
+              }
+            : {}),
+        };
+        return {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+          displayName: undefined,
+          enabled: true,
+          snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: TextGeneration.TextGeneration.of({
+            generateCommitMessage: () => Effect.die("unused"),
+            generatePrContent: () => Effect.die("unused"),
+            generateBranchName: () => Effect.die("unused"),
+            generateReviewGuide: () => Effect.die("unused"),
+            generateThreadTitle: (input) =>
+              Effect.sync(() => {
+                calls.push(input.modelSelection);
+                return { title: "Generated title" };
+              }),
+          }),
+        };
+      });
+      const service = yield* TextGeneration.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              listInstances: Effect.succeed(instances),
+              getInstance: (id) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === id)),
             }),
-        }),
-      };
-    });
-    const service = yield* TextGeneration.make.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-            listInstances: Effect.succeed(instances),
-            getInstance: (id) =>
-              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
-          }),
-          ServerSettings.layerTest({
-            providerInstances: {
-              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
-            },
-          }),
-          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
-            resolveLink: () => Effect.die("unused"),
-          }),
-          layerCodexTextGenerationTest,
+            ServerSettings.layerTest({
+              providerInstances: {
+                [fallback]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: {},
+                  ...(memberOwned ? { ownerMemberId: MemberId.make("member-alice") } : {}),
+                },
+              },
+            }),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveLink: () => Effect.die("unused"),
+            }),
+          ),
         ),
-      ),
-    );
-    expect(
-      yield* service.generateThreadTitle({
-        cwd: "/tmp",
-        message: "hello",
-        linkedContext: "",
-        modelSelection: selection,
-      }),
-    ).toEqual({ title: "Generated title" });
-    expect(calls).toEqual([
-      exhausted
-        ? {
-            instanceId: fallback,
-            model:
-              DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
-          }
-        : selection,
-    ]);
-  }),
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+      );
+      expect(
+        yield* service.generateThreadTitle({
+          cwd: "/tmp",
+          message: "hello",
+          linkedContext: "",
+          modelSelection: selection,
+        }),
+      ).toEqual({ title: "Generated title" });
+      expect(calls).toEqual([
+        fallsBack
+          ? {
+              instanceId: fallback,
+              model:
+                DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+            }
+          : selection,
+      ]);
+    }).pipe(Effect.provide(layerCodexTextGenerationTest)),
 );
 
 it.effect.each([
