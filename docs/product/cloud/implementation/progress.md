@@ -1494,7 +1494,8 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   ignores the project/all scope, and takes `?machine=` to choose. Load balancing leaves out Pair
   Cloud. A draft on Pair Cloud offers no other machine (web `BranchToolbar.logic.ts`,
   `useAddProjectTargets.ts`; mobile `new-task-flow-provider.tsx`).
-- Owes: `AddProjectToMachineDialog.browser.test.tsx` in CI and before/after captures.
+- `AddProjectToMachineDialog.browser.test.tsx` passes locally (with 2.49's and 2.52's: 7 files, 30
+  tests). Owes: before/after captures.
 - Follow-up: a routed Cloud draft on a local project with two local machines still offers Run on /
   Auto balance (ChatView `canChangeEnvironment` ~1320, `automaticEnvironment` 1327; moving drops
   `cloudEnvironmentId`, composerDraftStore.ts 1527–1529). Gate on `envMode !== "cloud"`.
@@ -1520,9 +1521,9 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   ("Finish"); the 2-stage header shows once setup starts. Source control reads
   `isCloudLaunchEnvironment(environment?.serverConfig ?? null)` (its `environmentId` can be null).
   "Backend added" → environment.
-- Owes: browser tests `DesktopWebLinkCoordinator`, `WelcomeWizard.import`, `AddEnvironmentDialog`,
-  `ProviderSettingsPanel.environment`, `AddCodexAccountDialog` in CI; a `t3 service install`
-  transcript on the VM; captures.
+- Browser tests `DesktopWebLinkCoordinator`, `WelcomeWizard.import`, `AddEnvironmentDialog`,
+  `ProviderSettingsPanel.environment`, `AddCodexAccountDialog` pass locally. Owes: a
+  `t3 service install` transcript on the VM; captures.
 - Not changed: other "backend" copy (PairingRouteSurface.tsx 259/282, ConnectionsSettings.logic.ts
   277, the `backend.example.com` placeholder). `claudeSignedOutMessage` (Drivers/ClaudeHome.ts
   127–135) still says `claude auth login` in a cloud thread's turn error.
@@ -1537,8 +1538,33 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Perf, kept in the snapshot (paid once per snapshot refresh, at most every 2 min): `snapshotRefs`
   p50 12.7 → 14.9 ms on this repo; 13.3 → 31.3 ms with 301 tracking branches; raw `for-each-ref`
   42 → 86 ms with 300 branches up to 3000 behind (Mac under load). Recheck on a large real repo.
-- Owes: `ChatView.browser.test.tsx` in CI, the video and a phone capture. Follow-up: a `gone`
+- `ChatView.browser.test.tsx` passes locally. Owes: the video and a phone capture. Follow-up: a `gone`
   upstream checks ok on the client; 2.31 refuses after send ("Push <branch> first." before send).
+
+## 2.50 why adding or cloning a Pair Cloud project failed (landed 1ae6c9281, f173b8bbf, 54f22138a)
+
+- `SourceControlRepositoryError.message` is its `detail` alone (no "Source control repository
+  operation … failed for github:" prefix). Old clients keep the prefixed text.
+- `PairCloudProjects` without a GitHub App Client ID says `github-token-needed` ("Add a GitHub token
+  to clone private repos, in Settings → Team."). `GitHubDeviceFlow.requestCode` reads GitHub's 4xx
+  `device_flow_disabled` body and says the App's admin must enable Device Flow.
+- A failed Pair Cloud clone says git's reason (`cloneFailureDetail` in GitVcsDriverCore), with URL
+  credentials removed by `redactUrlCredentials`, now in `@t3tools/shared/git`.
+- Follow-up: `repo-unreadable` CloudLaunchError still says Connect GitHub without a Client ID.
+
+## 2.51 machines stopped outside Pair, and the Cloud Test reaches github.com (landed 0efaa17ca, 4a01f0d8d)
+
+- `RunnerHub.drops`: 5 s after a connected runner's socket ends, `RunnerHubFacts` asks the driver
+  (10 s bound). Stopped, missing or failed dispatches the same `lost` as the lease; running keeps the
+  lease; a status error changes nothing. `RunnerHubFacts.layer` now needs `ComputeDriverRegistry`,
+  and a `RunnerHub` mock needs `drops: Stream.never`.
+- The sweep checks a created `provisioning` machine every 30 s until its hello: stopped or failed is
+  `boot-stopped` ("The machine stopped before it was ready."), missing is `missing`. Wakes and
+  admission waiters are not checked.
+- Test: no new `network` step. `SandboxDriverCheckStep` is closed and V1 shipped, so the github.com
+  probe (curl, messages by exit code) runs inside `git`, labelled "Run git and reach github.com".
+- Owes: on the VM, `docker stop` mid-turn and during boot; Test passing, then failing without the
+  gVisor DNS shim; captures.
 
 ## Open follow-ups and risks
 
