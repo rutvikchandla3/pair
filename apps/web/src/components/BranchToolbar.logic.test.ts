@@ -1,4 +1,9 @@
-import { SandboxId, type VcsRef } from "@t3tools/contracts";
+import {
+  SandboxId,
+  orchestrationV2PendingWorktreeBase,
+  type OrchestrationV2Run,
+  type VcsRef,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
@@ -7,6 +12,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveBranchToolbarValue,
   resolveCloudEnvModeItem,
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeSeed,
@@ -44,6 +50,36 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
         effectiveEnvMode: "cloud",
       }),
     ).toBe("cloud");
+  });
+});
+
+describe("resolveBranchToolbarValue", () => {
+  it("a cloud thread waiting for its machine shows its base, not the host branch", () => {
+    const runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "workspacePreparation">> = [
+      { status: "completed", workspacePreparation: { type: "worktree", baseRef: "old-base" } },
+      { status: "preparing", workspacePreparation: { type: "worktree", baseRef: "main" } },
+    ];
+    const waiting = {
+      envMode: "cloud",
+      activeWorktreePath: null,
+      currentGitBranch: "host-checkout-branch",
+      cloudThread: { baseRef: orchestrationV2PendingWorktreeBase(runs) },
+    } as const;
+    expect(resolveBranchToolbarValue({ ...waiting, activeThreadBranch: null })).toBe("main");
+    expect(resolveBranchToolbarValue({ ...waiting, activeThreadBranch: "feature/x" })).toBe(
+      "feature/x",
+    );
+    expect(
+      resolveBranchToolbarValue({
+        ...waiting,
+        activeThreadBranch: null,
+        cloudThread: { baseRef: orchestrationV2PendingWorktreeBase([]) },
+      }),
+    ).toBeNull();
+    // A cloud draft has no machine yet either, but defaults its base to the host branch.
+    expect(
+      resolveBranchToolbarValue({ ...waiting, activeThreadBranch: null, cloudThread: null }),
+    ).toBe("host-checkout-branch");
   });
 });
 

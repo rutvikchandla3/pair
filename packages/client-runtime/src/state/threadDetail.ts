@@ -1,9 +1,11 @@
 import {
   OrchestrationV2AppThread,
   OrchestrationV2TurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -42,16 +44,27 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 const EMPTY_THREAD_STRUCTURE_TURN_ITEMS: ReadonlyArray<ThreadStructureVisibleTurnItem> =
   Object.freeze([]);
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
+const EMPTY_RUNS: OrchestrationV2ThreadProjection["runs"] = Object.freeze([]);
 
 /**
  * Changes when the agent may have changed the workspace, so file views and host images refresh.
  * File tools are explicit; commands, MCP or dynamic tools and subagents are included because
- * they can mutate the workspace without reporting the paths they touched.
+ * they can mutate the workspace without reporting the paths they touched. A restore rewrites the
+ * workspace while it can leave both of those in place, so it counts too.
  */
 export function deriveWorkspaceMutationId(
   visibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>,
   latestCheckpointCompletedAt: string | null,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "completedAt">>,
 ) {
+  let latestRolledBackAt: number | null = null;
+  for (const run of runs) {
+    if (run.status !== "rolled_back" || run.completedAt === null) continue;
+    const completedAt = DateTime.toEpochMillis(run.completedAt);
+    if (latestRolledBackAt === null || completedAt > latestRolledBackAt) {
+      latestRolledBackAt = completedAt;
+    }
+  }
   let itemId: string | null = null;
   for (let index = visibleTurnItems.length - 1; index >= 0; index -= 1) {
     const item = visibleTurnItems[index]?.item;
@@ -70,9 +83,9 @@ export function deriveWorkspaceMutationId(
     itemId = item.id;
     break;
   }
-  return itemId === null && latestCheckpointCompletedAt === null
+  return itemId === null && latestCheckpointCompletedAt === null && latestRolledBackAt === null
     ? null
-    : JSON.stringify([itemId, latestCheckpointCompletedAt]);
+    : JSON.stringify([itemId, latestCheckpointCompletedAt, latestRolledBackAt]);
 }
 
 type TurnItem = OrchestrationV2ThreadProjection["turnItems"][number];
@@ -533,11 +546,18 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ),
   );
 
+  // Runs change on run events alone, so streamed output does not re-derive the id.
+  const runsAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get) => Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.runs ?? EMPTY_RUNS,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-runs:${key}`)),
+  );
   const workspaceMutationIdAtomFamily = Atom.family((key: string) =>
     Atom.make((get) =>
       deriveWorkspaceMutationId(
         get(quietVisibleTurnItemsAtomFamily(key)),
         get(checkpointSummariesAtomFamily(key)).at(-1)?.completedAt ?? null,
+        get(runsAtomFamily(key)),
       ),
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-workspace-mutation-id:${key}`)),
   );

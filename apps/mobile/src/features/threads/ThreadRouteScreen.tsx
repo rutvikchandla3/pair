@@ -22,6 +22,7 @@ import {
   EnvironmentId,
   MessageId,
   ThreadId,
+  orchestrationV2PendingWorktreeBase,
   type ProjectScript,
 } from "@t3tools/contracts";
 import {
@@ -830,7 +831,11 @@ function ThreadRouteContent(
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
         : undefined,
-    currentBranch: selectedThread?.branch ?? null,
+    currentBranch:
+      selectedThread?.branch ??
+      (selectedThread?.source.sandboxId === undefined
+        ? null
+        : orchestrationV2PendingWorktreeBase(selectedThreadDetail?.runs ?? [])),
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:

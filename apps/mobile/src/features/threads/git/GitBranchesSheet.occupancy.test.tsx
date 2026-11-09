@@ -34,7 +34,11 @@ vi.mock("../../../state/entities", () => ({}));
 vi.mock("../../../state/threads", () => ({}));
 vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({
-    selectedThread: { environmentId: "environment-1", worktreePath: checkout.worktreePath },
+    selectedThread: {
+      environmentId: "environment-1",
+      worktreePath: checkout.worktreePath,
+      source: {},
+    },
     selectedThreadProject: { workspaceRoot: checkout.projectRoot },
   }),
 }));

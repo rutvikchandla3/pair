@@ -85,6 +85,7 @@ interface BranchToolbarBranchSelectorProps {
   effectiveEnvMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
+  cloudBaseRef: string | null;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -107,6 +108,7 @@ export function BranchToolbarBranchSelector({
   effectiveEnvMode,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
+  cloudBaseRef,
   startFromOrigin,
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
@@ -156,7 +158,9 @@ export function BranchToolbarBranchSelector({
     ? null
     : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const branchCwd = activeWorktreePath ?? activeProjectCwd;
+  const isCloudThread = serverThread?.source.sandboxId !== undefined;
+  // A cloud thread's refs and status are its machine's; the host checkout has neither.
+  const branchCwd = activeWorktreePath ?? (isCloudThread ? null : activeProjectCwd);
   const hasServerThread = serverThread !== null;
   const canUpdateThreadBranch = !hasServerThread || canOperateThread;
   const canChangeThreadBranch = canWriteSourceControl && canUpdateThreadBranch;
@@ -219,7 +223,7 @@ export function BranchToolbarBranchSelector({
         }),
   );
   const projectStatusQuery = useEnvironmentQuery(
-    activeProjectCwd === null
+    activeProjectCwd === null || isCloudThread
       ? null
       : vcsEnvironment.status({ environmentId, input: { cwd: activeProjectCwd } }),
   );
@@ -281,6 +285,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
+    cloudThread: isCloudThread ? { baseRef: cloudBaseRef } : null,
   });
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,

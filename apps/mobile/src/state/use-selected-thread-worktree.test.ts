@@ -2,8 +2,12 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  shell: null as { projectId: string; worktreePath: string | null } | null,
-  detail: null as { thread: { projectId: string } } | null,
+  shell: null as {
+    projectId: string;
+    worktreePath: string | null;
+    source: { sandboxId?: string };
+  } | null,
+  detail: null as { thread: { projectId: string; sandboxId?: string } } | null,
   detailWorktreePath: null as string | null,
   projects: new Map<string, { workspaceRoot: string }>(),
 }));
@@ -44,8 +48,15 @@ describe("useThreadCwd", () => {
   });
 
   it("prefers the thread worktree over the project root", () => {
-    setup({ shell: { projectId: "project", worktreePath: "/repo/.worktrees/a" } });
+    setup({ shell: { projectId: "project", worktreePath: "/repo/.worktrees/a", source: {} } });
     expect(useThreadCwd(ref)).toBe("/repo/.worktrees/a");
+  });
+
+  it("is null for a cloud thread whose machine has no worktree yet, never the host checkout", () => {
+    setup({ shell: { projectId: "project", worktreePath: null, source: { sandboxId: "sbx" } } });
+    expect(useThreadCwd(ref)).toBeNull();
+    setup({ detail: { thread: { projectId: "project", sandboxId: "sbx" } } });
+    expect(useThreadCwd(ref)).toBeNull();
   });
 
   it("is null without a thread", () => {

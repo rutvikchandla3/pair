@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts/runner";
 
 import { coalesceWatchEvents } from "./handlers.ts";
+import { RunnerConfig } from "./RunnerConfig.ts";
 import * as RunnerTesting from "./runnerTesting.ts";
 import { RunnerCredential } from "./RunnerSocketServer.ts";
 
@@ -49,10 +50,33 @@ const readText = (client: Client, handle: RunnerHandleId, fd: number, fromSeq = 
     })),
   );
 
-const withRunner = <A, E, R>(body: (client: Client) => Effect.Effect<A, E, R>) =>
+const withRunner = <A, E, R>(
+  body: (client: Client) => Effect.Effect<A, E, R>,
+  layer = RunnerTesting.layer,
+) =>
   Effect.gen(function* () {
     return yield* body(yield* makeClient);
-  }).pipe(Effect.scoped, Effect.provide(RunnerTesting.layer));
+  }).pipe(Effect.scoped, Effect.provide(layer));
+
+const AGENT_UID = 1000;
+
+/** A runner whose agents run as uid 1000, with each chown recorded instead of made. */
+const withAgentRunner = <A, E, R>(
+  body: (client: Client, chowns: Array<string>) => Effect.Effect<A, E, R>,
+) => {
+  const chowns: Array<string> = [];
+  return withRunner(
+    (client) => body(client, chowns),
+    RunnerTesting.layerWith({
+      agentUid: AGENT_UID,
+      chown: (path, uid, gid) =>
+        Effect.sync(() => {
+          expect([uid, gid]).toEqual([AGENT_UID, AGENT_UID]);
+          chowns.push(path);
+        }),
+    }),
+  );
+};
 
 describe("runner process handles", () => {
   it.effect("serves output from any seq it still holds, stamped with byte offsets", () =>
@@ -275,7 +299,7 @@ describe("runner output bursts", () => {
 
 describe("runner files", () => {
   it.effect("maps the FileSystem calls and their errors", () =>
-    withRunner((client) =>
+    withAgentRunner((client, chowns) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -283,6 +307,8 @@ describe("runner files", () => {
         const file = path.join(dir, "a.txt");
 
         yield* client["fs.writeFile"]({ path: file, data: bytes("0123456789"), atomic: true });
+        // The staging file is the agent's before the rename, so the final path never is root's.
+        expect(chowns).toEqual([expect.stringMatching(/a\.txt\.t3tmp-/)]);
         expect(yield* client["fs.readDirectory"]({ path: dir })).toEqual(["a.txt"]);
         expect(
           decoder.decode(yield* client["fs.readFile"]({ path: file, offset: 2, maxBytes: 3 })),
@@ -295,8 +321,23 @@ describe("runner files", () => {
           size: 10n,
         });
 
+        chowns.length = 0;
+        yield* client["fs.writeFile"]({ path: path.join(dir, "plain.txt"), data: bytes("p") });
+        yield* client["files.writeNoFollow"]({
+          path: path.join(dir, "edited.txt"),
+          data: bytes("e"),
+          append: false,
+        });
+        yield* client["fs.makeDirectory"]({ path: path.join(dir, "x/y"), recursive: true });
         yield* client["fs.makeDirectory"]({ path: path.join(dir, "x/y"), recursive: true });
         yield* client["fs.copy"]({ fromPath: file, toPath: path.join(dir, "x/y/b.txt") });
+        const { stateDir } = yield* RunnerConfig;
+        yield* client["fs.writeFile"]({ path: path.join(stateDir, "own"), data: bytes("r") });
+        yield* client["fs.makeDirectory"]({ path: path.join(stateDir, "a/b"), recursive: true });
+        expect(chowns).toEqual(
+          ["plain.txt", "edited.txt", "x", "x/y", "x/y/b.txt"].map((name) => path.join(dir, name)),
+        );
+
         yield* client["fs.rename"]({
           oldPath: path.join(dir, "x/y/b.txt"),
           newPath: path.join(dir, "x/c.txt"),
@@ -332,7 +373,7 @@ describe("runner files", () => {
   );
 
   it.effect("streams files in and out with seqs, writing atomically", () =>
-    withRunner((client) =>
+    withAgentRunner((client, chowns) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -348,6 +389,7 @@ describe("runner files", () => {
         expect(yield* fs.exists(file)).toBe(false);
         yield* client["fs.writeStream.close"]({ handle });
         expect(yield* fs.readDirectory(dir)).toEqual(["stream.txt"]);
+        expect(chowns).toEqual([expect.stringMatching(/stream\.txt\.t3tmp-/)]);
 
         const read = yield* client["fs.readStream"]({ path: file, offset: 1, chunkBytes: 3 }).pipe(
           Stream.runCollect,

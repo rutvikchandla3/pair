@@ -489,6 +489,8 @@ export class HandleTable extends Context.Service<
     readonly openFileWriter: (input: {
       readonly path: string;
       readonly atomic: boolean;
+      /** Gives the file its owner as it is created, before any rename. */
+      readonly own: (path: string) => Effect.Effect<void, PlatformError.PlatformError>;
     }) => Effect.Effect<RunnerHandleId, RunnerCallError>;
     readonly closeFileWriter: (handle: RunnerHandleId) => Effect.Effect<void, RunnerCallError>;
     /**
@@ -855,6 +857,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
         const file = yield* fs
           .open(target, { flag: "w" })
           .pipe(Scope.provide(allocated.scope), Effect.mapError(toSystemError));
+        yield* input.own(target).pipe(Effect.mapError(toSystemError));
         const commit = Effect.suspend(() => {
           committed = true;
           return Scope.close(allocated.scope, Exit.void);

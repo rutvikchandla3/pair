@@ -60,6 +60,7 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
+  orchestrationV2PendingWorktreeBase,
   orchestrationV2WorktreePending,
   type EnvironmentId,
   type MessageId,
@@ -1632,14 +1633,19 @@ export default function ChatView(props: ChatViewProps) {
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
     turnDiffSummaries.at(-1)?.completedAt ?? null,
+    serverProjection?.runs ?? [],
   );
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
+  // Until its machine has a worktree, a cloud thread has no checkout here to read.
+  const awaitingCloudWorktree =
+    serverThread?.source.sandboxId !== undefined && (activeThread?.worktreePath ?? null) === null;
+  const gitCwd =
+    activeProject && !awaitingCloudWorktree
+      ? projectScriptCwd({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThread?.worktreePath ?? null,
+        })
+      : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -3814,6 +3820,13 @@ export default function ChatView(props: ChatViewProps) {
                                 startFromOrigin={startFromOrigin}
                                 onStartFromOriginChange={onStartFromOriginChange}
                                 envMode={envMode}
+                                cloudBaseRef={
+                                  awaitingCloudWorktree
+                                    ? orchestrationV2PendingWorktreeBase(
+                                        serverProjection?.runs ?? [],
+                                      )
+                                    : null
+                                }
                                 {...(canOverrideServerThreadEnvMode
                                   ? {
                                       activeThreadBranchOverride: activeThreadBranch,

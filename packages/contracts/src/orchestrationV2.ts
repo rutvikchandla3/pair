@@ -839,6 +839,19 @@ export function orchestrationV2WorktreePending(
   );
 }
 
+/** The base a still-preparing worktree branches from: a waiting cloud thread's only ref. */
+export function orchestrationV2PendingWorktreeBase(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "status" | "workspacePreparation">>,
+): string | null {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const run = runs[index];
+    if (run?.status === "preparing" && run.workspacePreparation?.type === "worktree") {
+      return run.workspacePreparation.baseRef;
+    }
+  }
+  return null;
+}
+
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.

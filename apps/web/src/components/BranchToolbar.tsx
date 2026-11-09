@@ -102,6 +102,7 @@ interface BranchToolbarProps {
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
+  cloudBaseRef?: string | null;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   autoEnvironmentLabel?: string | undefined;
@@ -649,6 +650,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   envMode,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
+  cloudBaseRef = null,
   startFromOrigin,
   onStartFromOriginChange,
   autoEnvironmentLabel,
@@ -777,6 +779,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
             {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+            cloudBaseRef={cloudBaseRef}
             startFromOrigin={startFromOrigin}
             onStartFromOriginChange={onStartFromOriginChange}
             {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
@@ -874,6 +877,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           effectiveEnvMode={effectiveEnvMode}
           {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
           {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          cloudBaseRef={cloudBaseRef}
           startFromOrigin={startFromOrigin}
           onStartFromOriginChange={onStartFromOriginChange}
           {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}

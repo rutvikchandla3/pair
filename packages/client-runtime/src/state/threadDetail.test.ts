@@ -361,28 +361,36 @@ describe("deriveWorkspaceMutationId", () => {
       item: { id: TurnItemId.make(id), type, status },
     }) as unknown as ThreadStructureVisibleTurnItem;
 
-  it("keys on the latest finished command or file change and the latest checkpoint", () => {
-    expect(
-      deriveWorkspaceMutationId(
-        [
-          item("edit", "file_change", "completed"),
-          item("reply", "assistant_message", "completed"),
-          item("command", "command_execution", "running"),
-        ],
-        "2026-01-01T00:00:00.000Z",
-      ),
-    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
+  it("keys on the latest finished command or file change, the latest checkpoint and the latest restore", () => {
+    const edited = [
+      item("edit", "file_change", "completed"),
+      item("reply", "assistant_message", "completed"),
+      item("command", "command_execution", "running"),
+    ];
+    const checkpointAt = "2026-01-01T00:00:00.000Z";
+    const beforeRestore = deriveWorkspaceMutationId(edited, checkpointAt, [
+      { status: "completed", completedAt: v2Now },
+      { status: "completed", completedAt: v2Now },
+    ]);
+    expect(beforeRestore).toBe(JSON.stringify(["edit", checkpointAt, null]));
+    // A restore that rolls back a run with no file tools leaves the other two inputs in place.
+    const afterRestore = deriveWorkspaceMutationId(edited, checkpointAt, [
+      { status: "completed", completedAt: v2Now },
+      { status: "rolled_back", completedAt: DateTime.add(v2Now, { minutes: 1 }) },
+    ]);
+    expect(afterRestore).not.toBe(beforeRestore);
     expect(
       deriveWorkspaceMutationId(
         [item("edit", "file_change", "completed"), item("mcp", "dynamic_tool", "completed")],
         null,
+        [],
       ),
-    ).toBe(JSON.stringify(["mcp", null]));
+    ).toBe(JSON.stringify(["mcp", null, null]));
   });
 
   it("is null before anything could have touched the workspace", () => {
-    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
-      null,
-    );
+    expect(
+      deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null, []),
+    ).toBe(null);
   });
 });

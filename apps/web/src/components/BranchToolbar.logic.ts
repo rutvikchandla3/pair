@@ -243,8 +243,14 @@ export function resolveBranchToolbarValue(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  /** A cloud server thread's pending base; a cloud draft still defaults to the host branch. */
+  cloudThread: { readonly baseRef: string | null } | null;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  // The host checkout's branch says nothing about a machine that has no worktree yet.
+  if (input.cloudThread !== null && !activeWorktreePath) {
+    return activeThreadBranch ?? input.cloudThread.baseRef;
+  }
   if (envMode !== "local" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }

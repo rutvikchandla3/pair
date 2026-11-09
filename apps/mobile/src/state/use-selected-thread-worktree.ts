@@ -18,7 +18,11 @@ export function useSelectedThreadWorktree() {
 
   return {
     selectedThreadWorktreePath,
-    selectedThreadCwd: selectedThreadWorktreePath ?? selectedThreadProject?.workspaceRoot ?? null,
+    selectedThreadCwd:
+      selectedThreadWorktreePath ??
+      (selectedThread?.source.sandboxId === undefined
+        ? (selectedThreadProject?.workspaceRoot ?? null)
+        : null),
   };
 }
 
@@ -38,12 +42,11 @@ export function useThreadCwd(ref: ScopedThreadRef | null): string | null {
   const project = useProject(
     ref === null || projectId === null ? null : { environmentId: ref.environmentId, projectId },
   );
-  return (
-    resolvePreferredThreadWorktreePath({
-      threadShellWorktreePath: shell?.worktreePath ?? null,
-      threadDetailWorktreePath: detailWorktreePath,
-    }) ??
-    project?.workspaceRoot ??
-    null
-  );
+  const worktreePath = resolvePreferredThreadWorktreePath({
+    threadShellWorktreePath: shell?.worktreePath ?? null,
+    threadDetailWorktreePath: detailWorktreePath,
+  });
+  // A cloud thread's files are on its machine; until it has a worktree there is nothing to read.
+  const cloud = (shell?.source.sandboxId ?? detailThread?.sandboxId) !== undefined;
+  return worktreePath ?? (cloud ? null : (project?.workspaceRoot ?? null));
 }

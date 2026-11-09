@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -23,6 +24,7 @@ import {
 } from "@t3tools/contracts/runner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalWorkspaceHost from "../../workspaceHost/LocalWorkspaceHost.ts";
 import type { WorkspaceHostFileError } from "../../workspaceHost/WorkspaceHost.ts";
 import { HandleTable, runnerBadArgument, toSystemError } from "./HandleTable.ts";
@@ -104,7 +106,47 @@ export const layer = RunnerCoreRpcGroup.toLayer(
     const config = yield* RunnerConfig;
     const credential = yield* RunnerCredential;
     const arch = yield* HostProcess.Architecture;
+    const pathService = yield* Path.Path;
     let gitForward: RunnerForwardId | undefined;
+
+    // Agents run as their own user, so what the server writes for them is theirs. The runner's
+    // own state and bundle stay root's.
+    const runnerRoots = [config.stateDir, config.facts.bundleDirectory].map((root) =>
+      pathService.resolve(root),
+    );
+    const ownForAgent = (target: string) => {
+      const { uid } = config.facts.agent;
+      const resolved = pathService.resolve(target);
+      return uid === null ||
+        runnerRoots.some((root) => WorkspacePaths.isWithinRoot(pathService, resolved, root))
+        ? Effect.void
+        : fs.chown(target, uid, uid);
+    };
+
+    /** The folders a recursive mkdir of `target` will make, outermost first. */
+    const missingDirectories = Effect.fn("runner.fs.missingDirectories")(function* (
+      target: string,
+    ) {
+      const missing: Array<string> = [];
+      let current = pathService.resolve(target);
+      while (!(yield* fs.exists(current))) {
+        missing.push(current);
+        const parent = pathService.dirname(current);
+        if (parent === current) break;
+        current = parent;
+      }
+      return missing.reverse();
+    });
+
+    const ownTreeForAgent = Effect.fn("runner.fs.ownTreeForAgent")(function* (root: string) {
+      yield* ownForAgent(root);
+      if ((yield* fs.lstat(root)).type !== "Directory") return;
+      for (const entry of yield* fs.readDirectory(root, { recursive: true })) {
+        const target = pathService.join(root, entry);
+        // chown follows a link, which may point anywhere.
+        if ((yield* fs.lstat(target)).type !== "SymbolicLink") yield* ownForAgent(target);
+      }
+    });
 
     const writeAtomic = Effect.fn("runner.fs.writeAtomic")(function* (
       path: string,
@@ -113,6 +155,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
     ) {
       const staging = `${path}.t3tmp-${SecureRandom.uuidV4Unsafe()}`;
       yield* fs.writeFile(staging, data, options).pipe(
+        Effect.andThen(ownForAgent(staging)),
         Effect.andThen(fs.rename(staging, path)),
         Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
       );
@@ -209,17 +252,22 @@ export const layer = RunnerCoreRpcGroup.toLayer(
       [RUNNER_METHODS.fsWriteFile]: ({ path, data, flag, mode, atomic }) =>
         (atomic === true
           ? writeAtomic(path, data, { mode })
-          : fs.writeFile(path, data, { flag, mode })
+          : fs.writeFile(path, data, { flag, mode }).pipe(Effect.andThen(ownForAgent(path)))
         ).pipe(systemErrors),
       [RUNNER_METHODS.fsMakeDirectory]: ({ path, recursive, mode }) =>
-        // Node answers a recursive mkdir with the first folder it made.
-        fs.makeDirectory(path, { recursive, mode }).pipe(Effect.asVoid, systemErrors),
+        (recursive === true ? missingDirectories(path) : Effect.succeed([path])).pipe(
+          Effect.tap(() => fs.makeDirectory(path, { recursive, mode })),
+          Effect.flatMap((made) => Effect.forEach(made, ownForAgent, { discard: true })),
+          systemErrors,
+        ),
       [RUNNER_METHODS.fsRemove]: ({ path, recursive, force }) =>
         fs.remove(path, { recursive, force }).pipe(systemErrors),
       [RUNNER_METHODS.fsRename]: ({ oldPath, newPath }) =>
         fs.rename(oldPath, newPath).pipe(systemErrors),
       [RUNNER_METHODS.fsCopy]: ({ fromPath, toPath, overwrite, preserveTimestamps }) =>
-        fs.copy(fromPath, toPath, { overwrite, preserveTimestamps }).pipe(systemErrors),
+        fs
+          .copy(fromPath, toPath, { overwrite, preserveTimestamps })
+          .pipe(Effect.andThen(ownTreeForAgent(toPath)), systemErrors),
       [RUNNER_METHODS.fsRealPath]: ({ path }) => fs.realPath(path).pipe(systemErrors),
       [RUNNER_METHODS.fsReadLink]: ({ path }) => fs.readLink(path).pipe(systemErrors),
       [RUNNER_METHODS.fsSymlink]: ({ fromPath, toPath }) =>
@@ -232,10 +280,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
         fs.makeTempDirectory({ directory, prefix }).pipe(
           // The server makes these for agent processes (a review index for git), which drop to the
           // agent user; a root-owned 0700 directory would shut them out.
-          Effect.tap((created) => {
-            const { uid } = config.facts.agent;
-            return uid === null ? Effect.void : fs.chown(created, uid, uid);
-          }),
+          Effect.tap(ownForAgent),
           systemErrors,
         ),
       [RUNNER_METHODS.fsReadStream]: ({ path, offset, chunkBytes }) =>
@@ -252,7 +297,7 @@ export const layer = RunnerCoreRpcGroup.toLayer(
         }),
       [RUNNER_METHODS.fsWriteStreamOpen]: ({ path, atomic }) =>
         table
-          .openFileWriter({ path, atomic: atomic === true })
+          .openFileWriter({ path, atomic: atomic === true, own: ownForAgent })
           .pipe(Effect.map((handle) => ({ handle }))),
       [RUNNER_METHODS.fsWriteStreamChunk]: ({ handle, seq, data }) =>
         table
@@ -292,7 +337,16 @@ export const layer = RunnerCoreRpcGroup.toLayer(
       [RUNNER_METHODS.filesWriteNoFollow]: ({ path, data, append }) =>
         append
           ? appendNoFollow(path, data)
-          : LocalWorkspaceHost.files.writeNoFollow(path, data).pipe(fileErrors),
+          : LocalWorkspaceHost.files
+              .writeNoFollow(path, data)
+              .pipe(
+                fileErrors,
+                Effect.andThen(
+                  ownForAgent(path).pipe(
+                    Effect.mapError(() => new RunnerFileError({ operation: "write" })),
+                  ),
+                ),
+              ),
       [RUNNER_METHODS.filesRealPath]: ({ path }) =>
         LocalWorkspaceHost.files.realPath(path).pipe(fileErrors),
       [RUNNER_METHODS.filesRemoveEmptyDirectory]: ({ path }) =>

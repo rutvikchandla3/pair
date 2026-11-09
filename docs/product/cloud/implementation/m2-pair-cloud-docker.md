@@ -3541,8 +3541,9 @@ all three.
 - **Files:**
   - (a)
     - `apps/web/src/components/BranchToolbar.logic.ts` `resolveBranchToolbarValue` (233): add
-      `cloudBaseRef: string | null`. For a cloud thread with no `activeWorktreePath`, return
-      `activeThreadBranch ?? cloudBaseRef`, never `currentGitBranch`.
+      `cloudThread: { baseRef } | null` (null for a cloud draft, which still defaults its base to
+      the host branch). For a cloud thread with no `activeWorktreePath`, return
+      `activeThreadBranch ?? baseRef`, never `currentGitBranch`.
     - `cloudBaseRef` comes from a new pure helper beside `orchestrationV2WorktreePending`
       (orchestrationV2.ts 819): `orchestrationV2PendingWorktreeBase(runs)`, the `baseRef` of the
       newest `preparing` run's `workspacePreparation` of type `worktree`.
@@ -3551,11 +3552,14 @@ all three.
       lists no host refs and reads no host status. `apps/web/src/components/ChatView.tsx`
       `gitCwd` (1637) and `gitStatusCwd` (1643): the same null, so Changes does not query the host
       checkout.
-    - Mobile shows no host branch for these threads (no `worktreePath ??` host fallback in
-      `apps/mobile/src`). The worker confirms on the thread screen.
+    - Mobile had the same host fallback: `useSelectedThreadWorktree` and `useThreadCwd`
+      (`apps/mobile/src/state/use-selected-thread-worktree.ts`) answered the project root, so the
+      thread screen's `vcs.status` read the host checkout and `ThreadGitControls` showed its
+      branch. Both answer null for a cloud thread with no worktree, and the thread screen's
+      `currentBranch` falls back to the pending base.
   - (b)
     - `packages/client-runtime/src/state/threadDetail.ts` `deriveWorkspaceMutationId` (51) gains a
-      third input, `latestRolledBackAt: string | null`: the newest `completedAt` among runs with
+      third input, the thread's runs, and keys on the newest `completedAt` among runs with
       `status === "rolled_back"`. A successful restore sets it
       (`CheckpointRollbackService.ts` 365). Neither old input changes when a rollback leaves the
       last finished item and the last ready checkpoint in place.
@@ -3571,8 +3575,9 @@ all three.
     - `fsMakeDirectory` (214): chown each directory from the first one made (Node's answer, which
       `Effect.asVoid` drops today) down to `path`.
     - `fsCopy` (221): chown the destination tree.
-    - `fsWriteStreamClose` (262): chown on close, through the `HandleTable` close path the worker
-      finds from `table.closeFileWriter`.
+    - `fsWriteStreamOpen`: `HandleTable.openFileWriter` takes an `own` hook and chowns the file
+      (the staging file when atomic) as it opens it, so close needs nothing.
+    - `filesWriteNoFollow`: chown after a non-append write. The web editor saves through it.
     - `fsSymlink` (225) stays: Linux ignores a link's owner outside sticky directories.
 - **Types and services:** `orchestrationV2PendingWorktreeBase`; `deriveWorkspaceMutationId`'s new
   input; `ownForAgent` (local).

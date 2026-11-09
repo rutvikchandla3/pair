@@ -35,9 +35,20 @@ const layerMemoryCredential = Layer.effect(
 export interface RunnerTestingOptions {
   /** Where the runner says its bundle is: a test puts a `t3` or a Replay agent there. */
   readonly bundleDirectory?: string;
+  /** Without it agents run as the test's own user, with no setpriv. */
+  readonly agentUid?: number;
+  /** Replaces the FileSystem's `chown`, which a test that is not root cannot make. */
+  readonly chown?: FileSystem.FileSystem["chown"];
 }
 
-/** Agents run as the test's own user: no uid, so no setpriv. */
+const layerFileSystem = (chown: RunnerTestingOptions["chown"]) =>
+  chown === undefined
+    ? NodeServices.layer
+    : Layer.effect(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.use((fs) => Effect.succeed({ ...fs, chown })),
+      ).pipe(Layer.provideMerge(NodeServices.layer));
+
 export const layerConfig = (options: RunnerTestingOptions = {}) =>
   Layer.effect(
     RunnerConfig,
@@ -52,7 +63,11 @@ export const layerConfig = (options: RunnerTestingOptions = {}) =>
         enrollment: Option.none(),
         stateDir,
         facts: {
-          agent: { uid: null, homeDirectory: NodeOS.homedir(), shell: "/bin/sh" },
+          agent: {
+            uid: options.agentUid ?? null,
+            homeDirectory: NodeOS.homedir(),
+            shell: "/bin/sh",
+          },
           tmpDirectory: NodeOS.tmpdir(),
           bundleDirectory: options.bundleDirectory ?? `/opt/pair-runner/${TEST_RUNNER_BUILD_ID}`,
           imageEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
@@ -72,7 +87,7 @@ export const layerWith = (options: RunnerTestingOptions = {}) =>
     Layer.provideMerge(layerMemoryCredential),
     Layer.provideMerge(layerConfig(options)),
     Layer.provide(NodePtyAdapter.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(layerFileSystem(options.chown)),
   );
 
 export const layer = layerWith();
