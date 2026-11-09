@@ -386,8 +386,42 @@ committed). The VM has a `shutdown -h` timer as a guard while the maintainer is 
    1,829 bytes, upload 261 ms, 1.6 s in all (`cloud move` in g3-a's trace). Still to run: the
    pushed-branch move with no seed, and the palette entry.
 
+2. **Continue locally, owner: passed, after two refusals (finding 1).** On the step 1 session
+   Haiku appended a line to `README.md` and made `cloud/note.txt`, uncommitted. **Continue
+   locally** from g3-a made a local worktree with both commits, the uncommitted `README.md` change,
+   `cloud/` and `notes/`, and a thread with the history and "Continued from … on
+   pair-cloud-pass…". The cloud session shows "Continued locally on Rutvik Chandla", settled, and
+   its container exited. Then Wake, **Sleep now**, and Continue locally again: the container
+   stayed stopped (same `FinishedAt`) and the local worktree matched. The local branch is
+   `g3/move-1-2`, then `g3/move-1-3`: the first move's local worktree still holds `g3/move-1`.
+3. **Continue locally, another member: passed, after one refusal (finding 1).** Member B
+   (`Teammate`, GitHub `rutvik-netizen`, role member, no accounts of their own) joined from g3-b's
+   client with an invite link and linked g3-b without the beta. A fresh session as member A
+   (`t3 thread start --environment <Pair Cloud> --cloud main` from g3-a's terminal) left a
+   `README.md` change. From g3-b, **Continue locally** made a thread on `g3/step3-a-copy` with the
+   change; the cloud session shows "Teammate copied this thread to Rutvik Chandla", stayed awake
+   and answered member A's next prompt; `git ls-remote` shows no `g3/*` branch.
+4. **The agent link: partly run.** From g3-a's terminal, `t3 thread start --environment <Pair
+   Cloud's id>` without `--cloud` answers "… runs every thread on a cloud machine. Pass --cloud
+   <base-ref>.", and with `--cloud main` it launches there as member A (step 3's session). Still
+   to run: `delegate_task` from a local Haiku thread, `t3_thread_continue_in_cloud`, and the
+   refused `cloud` delegation to g3-b with the beta on.
+5. **Phone: set aside** (maintainer, 2026-11-10).
+
 Findings so far:
 
+- **Finding 1 (fix row 3.28, in flight): Continue locally fails about every other try.** The
+  laptop refuses with "The cloud thread's origin, github.com/…, doesn't match this project's.",
+  or Pair Cloud answers 500 "couldn't prepare this thread to continue locally". Both sides read
+  the project's origin from `ProjectService.getShell`, which only peeks the repository-identity
+  cache (`ProjectEnrichmentService.getAvailable`) and is null when the cache has no entry, as it
+  is after the previous move's git work. `CloudMoves.continueLocally`, `CloudMoves.move` and
+  `CloudMoveSource.seed` all do it. Trying again works. The laptop half is in neither V4 nor the
+  g3 worktrees; the cloud half needs a release.
+- A failed Continue locally showed no toast in captures taken 2 s and 9 s after the click. The
+  code updates the "Continuing locally…" toast to an error; check that it stays long enough to read.
+- Both local servers on this Mac are labeled "Rutvik Chandla" (the host's name), so the move rows
+  for g3-a and g3-b read alike. Expected with two servers on one Mac.
 - The preview lists an untracked folder as `notes/` with `+0 −0`, not its files (the spec's step
   expects `notes/seed.md`). Cosmetic.
 - The live evals (Sonnet 5.5 and Opus 5.5, nine cloud cases, `m3-sonnet/`, `m3-opus/`): seven pass
