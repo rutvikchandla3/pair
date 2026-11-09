@@ -10,9 +10,13 @@ import {
   CloudMoveFailure,
   MemberId,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -21,6 +25,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as CloudMoveHttp from "./CloudMoveHttp.ts";
+import * as CloudMoveSource from "./CloudMoveSource.ts";
 import * as StagedCloudImports from "./StagedCloudImports.ts";
 
 const KEY = `mv_${"a".repeat(32)}`;
@@ -69,14 +74,25 @@ const layerConfig = (cloudOnly: boolean) =>
 
 type Stage = StagedCloudImports.StagedCloudImports["Service"]["stage"];
 type StageInput = Parameters<Stage>[0];
+type Source = CloudMoveSource.CloudMoveSource["Service"];
 
-const serve = (options: { readonly cloudOnly: boolean; readonly stage: Stage }) =>
+const serve = (options: {
+  readonly cloudOnly: boolean;
+  readonly stage?: Stage;
+  readonly source?: Partial<Source>;
+}) =>
   Effect.gen(function* () {
     const services = yield* Layer.build(
       HttpRouter.serve(CloudMoveHttp.layer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provide(layerAuth),
-        Layer.provide(Layer.mock(StagedCloudImports.StagedCloudImports)({ stage: options.stage })),
+        Layer.provide(
+          Layer.mock(StagedCloudImports.StagedCloudImports)(
+            options.stage === undefined ? {} : { stage: options.stage },
+          ),
+        ),
+        Layer.provide(Layer.mock(CloudMoveSource.CloudMoveSource)(options.source ?? {})),
+        Layer.provide(NodeServices.layer),
         Layer.provide(layerConfig(options.cloudOnly)),
       ),
     );
@@ -216,6 +232,238 @@ it.live("stages a linked member's upload and maps the staging refusals", () =>
       { status: 422, reason: "invalid-seed" },
       { status: 409, reason: "claimed" },
       { status: 422, reason: "invalid-export" },
+    ]);
+  }).pipe(Effect.scoped),
+);
+
+/** Any request, keeping the response's headers and raw bytes. */
+const call = (
+  port: number,
+  method: "GET" | "POST",
+  path: string,
+  headers: Record<string, string>,
+  body?: string,
+) =>
+  Effect.callback<
+    {
+      readonly status: number;
+      readonly headers: NodeHttp.IncomingHttpHeaders;
+      readonly body: Buffer;
+    },
+    Error
+  >((resume) => {
+    const request = NodeHttp.request(
+      { host: "127.0.0.1", port, path, method, headers },
+      (response) => {
+        const chunks: Array<Buffer> = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resume(
+            Effect.succeed({
+              status: response.statusCode ?? 0,
+              headers: response.headers,
+              body: Buffer.concat(chunks),
+            }),
+          ),
+        );
+      },
+    );
+    request.on("error", (error) => resume(Effect.fail(error)));
+    request.end(body);
+    return Effect.sync(() => request.destroy());
+  });
+
+const THREAD = "thread-1";
+const threadRoutes = [
+  { method: "GET", route: "context-export" },
+  { method: "GET", route: "seed" },
+  { method: "POST", route: "continued" },
+] as const;
+
+it.live.each(
+  threadRoutes.flatMap(({ method, route }) =>
+    [
+      { name: "401 with no bearer", headers: {}, status: 401 },
+      { name: "401 to a browser credential", headers: bearer("cookie"), status: 401 },
+      { name: "403 to an API token", headers: bearer("api-token"), status: 403 },
+      { name: "403 to a read-only link", headers: bearer("read-only-link"), status: 403 },
+      {
+        name: "404 with an empty body off a cloud-only server",
+        headers: bearer("link"),
+        status: 404,
+        cloudOnly: false,
+      },
+    ].map((testCase) => ({ ...testCase, method, route, name: `${route}: ${testCase.name}` })),
+  ),
+)("answers $name", ({ method, route, headers, status, cloudOnly = true }) =>
+  Effect.gen(function* () {
+    let reached = 0;
+    const reach = () => Effect.sync(() => void reached++).pipe(Effect.andThen(Effect.never));
+    const port = yield* serve({
+      cloudOnly,
+      source: { contextExport: reach, seed: reach, continued: reach },
+    });
+
+    const response = yield* call(
+      port,
+      method,
+      `/api/cloud-moves/threads/${THREAD}/${route}`,
+      headers,
+    );
+
+    assert.equal(response.status, status);
+    if (status === 404) assert.equal(response.body.length, 0);
+    else assert.equal(decodeFailure(response.body.toString()).reason !== null, true);
+    assert.equal(reached, 0);
+  }).pipe(Effect.scoped),
+);
+
+it.live("streams a seed's bundle with its facts and removes the file once sent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "cloud-move-http-seed-" });
+    const bytes = new Uint8Array(70_000).map((_, index) => index % 251);
+    const closed = yield* Deferred.make<void>();
+    let file: string | null = null;
+    const asked: Array<ReadonlyArray<string>> = [];
+    const port = yield* serve({
+      cloudOnly: true,
+      source: {
+        seed: ({ haves, memberId }) =>
+          Effect.gen(function* () {
+            assert.equal(memberId, linkMember);
+            asked.push(haves);
+            const written = asked.length === 1;
+            if (written) {
+              file = `${dir}/seed.bundle`;
+              yield* fs.writeFile(file, bytes).pipe(Effect.orDie);
+            }
+            yield* Effect.addFinalizer(() =>
+              (file === null
+                ? Effect.void
+                : fs.remove(file, { force: true }).pipe(Effect.ignore)
+              ).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
+            );
+            return {
+              file: written ? file : null,
+              head: "a".repeat(40),
+              snapshot: {
+                oid: "b".repeat(40),
+                takenAt: DateTime.makeUnsafe("2026-11-09T14:02:00Z"),
+              },
+              mode: "copy" as const,
+              branch: "feature/ünïcode",
+              baseRef: "main",
+              origin: "github.com/acme/app",
+            };
+          }),
+      },
+    });
+    const have = `${"c".repeat(40)}`;
+
+    const streamed = yield* call(
+      port,
+      "GET",
+      `/api/cloud-moves/threads/${THREAD}/seed?have=${have}&have=${"d".repeat(40)}`,
+      bearer("link"),
+    );
+    yield* Deferred.await(closed);
+
+    assert.equal(streamed.status, 200);
+    assert.deepEqual([...streamed.body], [...bytes]);
+    assert.deepEqual(asked, [[have, "d".repeat(40)]]);
+    assert.deepEqual(
+      {
+        type: streamed.headers["content-type"],
+        length: streamed.headers["content-length"],
+        mode: streamed.headers["t3-move-mode"],
+        branch: decodeURIComponent(String(streamed.headers["t3-move-branch"])),
+        base: streamed.headers["t3-move-base"],
+        head: streamed.headers["t3-move-head"],
+        snapshot: streamed.headers["t3-move-snapshot"],
+        snapshotAt: streamed.headers["t3-move-snapshot-at"],
+      },
+      {
+        type: "application/x-git-bundle",
+        length: String(bytes.length),
+        mode: "copy",
+        branch: "feature/ünïcode",
+        base: "main",
+        head: "a".repeat(40),
+        snapshot: "b".repeat(40),
+        snapshotAt: "2026-11-09T14:02:00.000Z",
+      },
+    );
+    assert.isFalse(yield* fs.exists(file!));
+
+    const empty = yield* call(
+      port,
+      "GET",
+      `/api/cloud-moves/threads/${THREAD}/seed`,
+      bearer("link"),
+    );
+    assert.equal(empty.status, 204);
+    assert.equal(empty.headers["t3-move-head"], "a".repeat(40));
+    assert.equal(empty.body.length, 0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses bad input and maps a move's refusals", () =>
+  Effect.gen(function* () {
+    let refusal: CloudMoveSource.CloudMoveSourceError["reason"] = "run-active";
+    const refuse = () =>
+      Effect.fail(
+        new CloudMoveSource.CloudMoveSourceError({
+          threadId: ThreadId.make(THREAD),
+          reason: refusal,
+          message: `Refused: ${refusal}.`,
+        }),
+      );
+    const port = yield* serve({
+      cloudOnly: true,
+      source: { contextExport: refuse, seed: refuse, continued: refuse },
+    });
+    const seedPath = `/api/cloud-moves/threads/${THREAD}/seed`;
+    const tooManyHaves = Array.from(
+      { length: 33 },
+      (_, index) => `have=${index.toString(16).padStart(40, "0")}`,
+    ).join("&");
+
+    const answers = [];
+    for (const [method, path, body] of [
+      ["GET", `${seedPath}?${tooManyHaves}`, undefined],
+      ["GET", `${seedPath}?have=abc123`, undefined],
+      [
+        "POST",
+        `/api/cloud-moves/threads/${THREAD}/continued`,
+        JSON.stringify({
+          moveId: "move-1",
+          thread: { environmentId: "env-laptop", threadId: "local-1" },
+          environmentLabel: "Laptop",
+          copy: false,
+        }),
+      ],
+    ] as const) {
+      const response = yield* call(port, method, path, bearer("link"), body);
+      answers.push({
+        status: response.status,
+        reason: decodeFailure(response.body.toString()).reason,
+      });
+    }
+    for (const reason of ["run-active", "too-large", "snapshot-failed", "not-found"] as const) {
+      refusal = reason;
+      const response = yield* call(port, "GET", seedPath, bearer("link"));
+      answers.push({ status: response.status, ...decodeFailure(response.body.toString()) });
+    }
+
+    assert.deepEqual(answers, [
+      { status: 400, reason: "bad-request" },
+      { status: 400, reason: "bad-request" },
+      { status: 400, reason: "bad-request" },
+      { status: 409, reason: "run-active", message: "Refused: run-active." },
+      { status: 413, reason: "too-large", message: "Refused: too-large." },
+      { status: 503, reason: "snapshot-failed", message: "Refused: snapshot-failed." },
+      { status: 404, reason: "not-found", message: "Refused: not-found." },
     ]);
   }).pipe(Effect.scoped),
 );

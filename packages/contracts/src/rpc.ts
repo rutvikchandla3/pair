@@ -34,6 +34,7 @@ import {
   PeerLinkRequestError,
   PeerLinkSummary,
 } from "./peerLink.ts";
+import { ThreadMoveError, ThreadMoveToLocalInput, ThreadMoveToLocalResult } from "./cloudMove.ts";
 import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
@@ -545,6 +546,7 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  threadMoveToLocal: "threadMove.toLocal",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -871,6 +873,12 @@ const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
   payload: Schema.Struct({}),
   success: Schema.Struct({ links: Schema.Array(PeerLinkSummary) }),
   error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadMoveToLocalRpc = Rpc.make(WS_METHODS.threadMoveToLocal, {
+  payload: ThreadMoveToLocalInput,
+  success: ThreadMoveToLocalResult,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
@@ -2266,6 +2274,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
+  WsThreadMoveToLocalRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

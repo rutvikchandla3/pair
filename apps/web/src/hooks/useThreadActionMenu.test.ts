@@ -110,6 +110,9 @@ vi.mock("../components/Sidebar.snooze", () => ({
   ],
   snoozeWakeDescription: () => "later",
 }));
+vi.mock("./useContinueLocally", () => ({
+  useContinueLocally: () => ({ offerFor: () => ({ kind: "hidden" }), run: vi.fn() }),
+}));
 vi.mock("./useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: () => recordEffect("copy") }),
 }));

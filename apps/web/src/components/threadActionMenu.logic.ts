@@ -29,6 +29,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | `machine:${SandboxAction}`
+  | "continue-locally"
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -119,6 +120,11 @@ export interface ThreadActionMenuState {
     /** Shown disabled with the owner-or-admin suffix, not hidden. */
     readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
   };
+  /** Set only when the member's own server can take this cloud thread. */
+  readonly continueLocally?: {
+    /** Why it can't now, shown in the label as the owner-only items are. */
+    readonly disabledLabel: string | null;
+  };
 }
 
 const MACHINE_ACTION_ICONS: Readonly<Record<SandboxAction, string>> = {
@@ -128,9 +134,13 @@ const MACHINE_ACTION_ICONS: Readonly<Record<SandboxAction, string>> = {
   discard: "trash",
 };
 
-/** Local navigation, read markers, and copying remain available to read-only clients. */
+/**
+ * Local navigation, read markers, and copying remain available to read-only clients. Continue
+ * locally acts on the member's own server, which checks its own permission.
+ */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "continue-locally",
     "find",
     "new-thread-on-branch",
     "project-settings",
@@ -243,6 +253,20 @@ export function buildThreadActionMenuItems(
         ...(denied ? { disabled: true } : {}),
       };
     }),
+    ...(state.continueLocally
+      ? [
+          {
+            id: "continue-locally" as const,
+            label:
+              state.continueLocally.disabledLabel === null
+                ? "Continue locally"
+                : `Continue locally (${state.continueLocally.disabledLabel})`,
+            icon: "laptop",
+            ...((state.machine?.actions.length ?? 0) === 0 ? { separatorBefore: true } : {}),
+            ...(state.continueLocally.disabledLabel === null ? {} : { disabled: true }),
+          },
+        ]
+      : []),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),

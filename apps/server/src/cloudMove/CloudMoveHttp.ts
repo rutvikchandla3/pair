@@ -1,16 +1,27 @@
 import {
+  CLOUD_MOVE_MAX_HAVES,
   CLOUD_MOVE_ROUTE_PREFIX,
+  CLOUD_MOVE_SEED_HEADERS,
   CLOUD_SEED_MAX_BYTES,
+  CloudMoveContinuedInput,
+  CloudMoveContinuedResult,
   type CloudMoveFailure,
+  CloudMoveGitOid,
   CONTEXT_EXPORT_MAX_BYTES,
   CloudMoveFailureReason,
   CloudStagingKey,
+  OrchestrationV2ContextExport,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
@@ -18,6 +29,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { makeByteBudget } from "../sandbox/runnerHub/ByteBudget.ts";
+import * as CloudMoveSource from "./CloudMoveSource.ts";
 import * as StagedCloudImports from "./StagedCloudImports.ts";
 
 /** Every cloud-move transfer through one layer shares this rate, as runner downloads do (2.59). */
@@ -40,11 +52,20 @@ const FAILURE_MESSAGES: Record<CloudMoveFailureReason, string> = {
   claimed: "This move already started on Pair Cloud.",
   "key-in-use": "Pair Cloud has a different move under this id. Try again.",
   internal: "Pair Cloud couldn't take the upload. Try again.",
+  // A move out answers with CloudMoveSource's own words; these are for an error without them.
+  "not-found": "This cloud thread no longer exists.",
+  "not-movable": "This thread can't continue locally.",
+  "run-active": "A turn is running or waiting for an answer. Continue locally once it ends.",
+  "snapshot-missing":
+    "Pair Cloud has no saved copy of this thread's uncommitted changes. Wake the machine, then try again.",
+  "snapshot-failed": "Couldn't save the machine's uncommitted changes. Try again in a moment.",
 };
 
 class CloudMoveRefusal extends Schema.TaggedError<CloudMoveRefusal>()("CloudMoveRefusal", {
   status: Schema.Int,
   reason: CloudMoveFailureReason,
+  /** Fixed text from the service that refused; never git output. */
+  text: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
@@ -67,6 +88,24 @@ const STAGE_REFUSALS: Record<
   failed: [500, "internal"],
 };
 
+const SOURCE_REFUSALS: Record<
+  CloudMoveSource.CloudMoveSourceError["reason"],
+  readonly [number, CloudMoveFailureReason]
+> = {
+  "not-found": [404, "not-found"],
+  "not-movable": [409, "not-movable"],
+  "run-active": [409, "run-active"],
+  "snapshot-missing": [409, "snapshot-missing"],
+  "snapshot-failed": [503, "snapshot-failed"],
+  "too-large": [413, "too-large"],
+  failed: [500, "internal"],
+};
+
+const refuseSource = (error: CloudMoveSource.CloudMoveSourceError) => {
+  const [status, reason] = SOURCE_REFUSALS[error.reason];
+  return new CloudMoveRefusal({ status, reason, text: error.message, cause: error });
+};
+
 const respond = (refusal: CloudMoveRefusal) =>
   (refusal.status === 500
     ? Effect.logError("cloud move route failed", { cause: refusal.cause })
@@ -76,7 +115,7 @@ const respond = (refusal: CloudMoveRefusal) =>
       HttpServerResponse.jsonUnsafe(
         {
           reason: refusal.reason,
-          message: FAILURE_MESSAGES[refusal.reason],
+          message: refusal.text ?? FAILURE_MESSAGES[refusal.reason],
         } satisfies CloudMoveFailure,
         { status: refusal.status },
       ),
@@ -112,6 +151,35 @@ const authenticateLinkMember = Effect.fn("CloudMoveHttp.authenticateLinkMember")
 
 const decodeKey = Schema.decodeUnknownOption(CloudStagingKey);
 const decodeProjectId = Schema.decodeUnknownOption(ProjectId);
+const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
+const isGitOid = Schema.is(CloudMoveGitOid);
+const decodeContinued = Schema.decodeUnknownOption(Schema.fromJsonString(CloudMoveContinuedInput));
+const encodeContextExport = Schema.encodeEffect(OrchestrationV2ContextExport);
+const encodeContinued = Schema.encodeEffect(CloudMoveContinuedResult);
+
+/** The checks every move-out route makes, in order: cloud-only (else an empty 404), member, thread. */
+const threadRoute = <R>(
+  cloudOnly: boolean,
+  method: "GET" | "POST",
+  route: string,
+  handle: (input: {
+    readonly request: HttpServerRequest.HttpServerRequest;
+    readonly memberId: Effect.Success<ReturnType<typeof authenticateLinkMember>>["memberId"];
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<HttpServerResponse.HttpServerResponse, CloudMoveRefusal, R>,
+) =>
+  HttpRouter.add(
+    method,
+    `${CLOUD_MOVE_ROUTE_PREFIX}/threads/:threadId/${route}`,
+    Effect.gen(function* () {
+      if (!cloudOnly) return HttpServerResponse.empty({ status: 404 });
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const { memberId } = yield* authenticateLinkMember(request);
+      const threadId = decodeThreadId((yield* HttpRouter.params).threadId);
+      if (Option.isNone(threadId)) return yield* refuse(400, "bad-request")();
+      return yield* handle({ request, memberId, threadId: threadId.value });
+    }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
+  );
 
 /**
  * Every cloud-move route (07 §8): on a cloud-only server only, behind a linked environment's
@@ -165,9 +233,99 @@ export const layer = Layer.unwrap(
         }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
       );
 
+    const contextExport = threadRoute(
+      cloudOnly,
+      "GET",
+      "context-export",
+      ({ memberId, threadId }) =>
+        Effect.gen(function* () {
+          const source = yield* CloudMoveSource.CloudMoveSource;
+          const value = yield* source
+            .contextExport({ threadId, memberId })
+            .pipe(Effect.mapError(refuseSource));
+          const encoded = yield* encodeContextExport(value).pipe(
+            Effect.mapError(refuse(500, "internal")),
+          );
+          return HttpServerResponse.jsonUnsafe(encoded);
+        }),
+    );
+
+    const seed = threadRoute(cloudOnly, "GET", "seed", ({ request, memberId, threadId }) =>
+      Effect.gen(function* () {
+        const haves = Option.getOrElse(
+          Option.map(requestUrl(request), (url) => url.searchParams.getAll("have")),
+          () => [],
+        );
+        if (haves.length > CLOUD_MOVE_MAX_HAVES || !haves.every(isGitOid)) {
+          return yield* refuse(400, "bad-request")();
+        }
+        const source = yield* CloudMoveSource.CloudMoveSource;
+        const fs = yield* FileSystem.FileSystem;
+        // The bundle must outlive this handler: Node sends the body after it returns.
+        const scope = yield* Scope.make();
+        return yield* Effect.gen(function* () {
+          const seed = yield* source
+            .seed({ threadId, memberId, haves })
+            .pipe(Scope.provide(scope), Effect.mapError(refuseSource));
+          const headers: Record<string, string> = {
+            [CLOUD_MOVE_SEED_HEADERS.mode]: seed.mode,
+            [CLOUD_MOVE_SEED_HEADERS.branch]: encodeURIComponent(seed.branch),
+            [CLOUD_MOVE_SEED_HEADERS.origin]: encodeURIComponent(seed.origin),
+            [CLOUD_MOVE_SEED_HEADERS.head]: seed.head,
+            ...(seed.baseRef === null
+              ? {}
+              : { [CLOUD_MOVE_SEED_HEADERS.base]: encodeURIComponent(seed.baseRef) }),
+            ...(seed.snapshot === null
+              ? {}
+              : {
+                  [CLOUD_MOVE_SEED_HEADERS.snapshot]: seed.snapshot.oid,
+                  [CLOUD_MOVE_SEED_HEADERS.snapshotAt]: DateTime.formatIso(seed.snapshot.takenAt),
+                }),
+          };
+          if (seed.file === null) {
+            yield* Scope.close(scope, Exit.void);
+            return HttpServerResponse.empty({ status: 204, headers });
+          }
+          const { size } = yield* fs.stat(seed.file).pipe(Effect.mapError(refuse(500, "internal")));
+          return HttpServerResponse.stream(
+            fs.stream(seed.file).pipe(
+              Stream.tap((chunk) => budget.take(chunk.length)),
+              Stream.ensuring(Scope.close(scope, Exit.void)),
+            ),
+            {
+              headers,
+              contentType: "application/x-git-bundle",
+              contentLength: Number(size),
+            },
+          );
+        }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))));
+      }),
+    );
+
+    const continued = threadRoute(
+      cloudOnly,
+      "POST",
+      "continued",
+      ({ request, memberId, threadId }) =>
+        Effect.gen(function* () {
+          const input = decodeContinued(yield* request.text.pipe(Effect.orElseSucceed(() => "")));
+          if (Option.isNone(input)) return yield* refuse(400, "bad-request")();
+          const source = yield* CloudMoveSource.CloudMoveSource;
+          const result = yield* source
+            .continued({ threadId, memberId, input: input.value })
+            .pipe(Effect.mapError(refuseSource));
+          return HttpServerResponse.jsonUnsafe(
+            yield* encodeContinued(result).pipe(Effect.mapError(refuse(500, "internal"))),
+          );
+        }),
+    );
+
     return Layer.mergeAll(
       stagedUpload("seed", CLOUD_SEED_MAX_BYTES),
       stagedUpload("context-export", CONTEXT_EXPORT_MAX_BYTES),
+      contextExport,
+      seed,
+      continued,
     );
   }),
 );

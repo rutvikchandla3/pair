@@ -1,5 +1,7 @@
 import {
   type EnvironmentId,
+  isListedThreadLineage,
+  type PeerLinkSummary,
   type ProjectId,
   repositoryGroupingKeyOf,
   type ServerConfig,
@@ -7,8 +9,9 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { cloudAvailability } from "@t3tools/shared/sandbox";
+import * as DateTime from "effect/DateTime";
 
-import type { EnvironmentProject } from "./models.ts";
+import type { EnvironmentProject, EnvironmentThreadShell } from "./models.ts";
 
 export type CloudTarget =
   /** No paired environment reports cloudLaunch: Cloud stays hidden. */
@@ -114,6 +117,112 @@ export function resolveCloudTarget(input: {
     })
     .sort((left, right) => left.label.localeCompare(right.label));
   return { kind: "targets", targets };
+}
+
+/** The local project a move from Pair Cloud lands in: the oldest one with the same origin. */
+function oldestProjectWithOrigin(
+  projects: ReadonlyArray<EnvironmentProject>,
+  environmentId: EnvironmentId,
+  originKey: string,
+): EnvironmentProject | null {
+  const key = originKey.toLowerCase();
+  return projects
+    .filter(
+      (candidate) =>
+        candidate.environmentId === environmentId &&
+        !candidate.archivedAt &&
+        candidate.repositoryIdentity != null &&
+        repositoryGroupingKeyOf(candidate.repositoryIdentity).toLowerCase() === key,
+    )
+    .reduce<EnvironmentProject | null>(
+      (oldest, candidate) =>
+        oldest === null || candidate.createdAt < oldest.createdAt ? candidate : oldest,
+      null,
+    );
+}
+
+export type ContinueLocallyOffer =
+  | { readonly kind: "hidden" }
+  /** `label` is the menu's short reason; `reason` the palette's sentence. */
+  | { readonly kind: "disabled"; readonly label: string; readonly reason: string }
+  | {
+      readonly kind: "ready";
+      readonly localEnvironmentId: EnvironmentId;
+      readonly projectId: ProjectId;
+    };
+
+/**
+ * Whether a cloud thread can continue on the member's own server, the client's primary
+ * environment (the desktop's server, or the `npx t3` one the page came from). Pair Cloud checks
+ * each of these again.
+ */
+export function resolveContinueLocally(input: {
+  readonly thread: Pick<
+    EnvironmentThreadShell,
+    "environmentId" | "projectId" | "lineage" | "runtime"
+  > & { readonly source: { readonly sandboxId?: unknown } };
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly serverConfigs: ReadonlyMap<
+    EnvironmentId,
+    Pick<ServerConfig, "environment"> | null | undefined
+  >;
+  /** The primary environment grants `threadMove.toLocal`. */
+  readonly canMove: boolean;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  /** The primary environment's links. */
+  readonly links: ReadonlyArray<
+    Pick<PeerLinkSummary, "environmentId" | "label" | "status" | "expiresAt">
+  >;
+  readonly now: DateTime.Utc;
+}): ContinueLocallyOffer {
+  const { thread, primaryEnvironmentId: primary } = input;
+  if (
+    primary === null ||
+    primary === thread.environmentId ||
+    isCloudLaunchEnvironment(input.serverConfigs.get(primary) ?? null) ||
+    !input.canMove ||
+    !isListedThreadLineage(thread.lineage) ||
+    thread.source.sandboxId === undefined ||
+    input.serverConfigs.get(thread.environmentId)?.environment.capabilities.cloudImport !== true
+  ) {
+    return { kind: "hidden" };
+  }
+  const link = input.links.find((candidate) => candidate.environmentId === thread.environmentId);
+  if (link === undefined) return { kind: "hidden" };
+  if (link.status === "expired" || DateTime.isLessThanOrEqualTo(link.expiresAt, input.now)) {
+    return {
+      kind: "disabled",
+      label: "link expired",
+      reason: `The link to ${link.label} expired. Link it again in Settings → Environments.`,
+    };
+  }
+  const cloudProject = input.projects.find(
+    (candidate) =>
+      candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+  );
+  const originKey = cloudProject?.repositoryIdentity
+    ? repositoryGroupingKeyOf(cloudProject.repositoryIdentity)
+    : null;
+  const local =
+    originKey === null ? null : oldestProjectWithOrigin(input.projects, primary, originKey);
+  if (local === null) {
+    return {
+      kind: "disabled",
+      label: "no matching project",
+      reason:
+        originKey === null
+          ? "No project on this computer has this thread's origin."
+          : `No project on this computer has origin ${originKey}.`,
+    };
+  }
+  if (thread.runtime?.activeRunId != null) {
+    return {
+      kind: "disabled",
+      label: "turn running",
+      reason: "Wait for the turn to end, or stop it.",
+    };
+  }
+  return { kind: "ready", localEnvironmentId: primary, projectId: local.id };
 }
 
 const ORIGIN_PREFIX = "origin/";

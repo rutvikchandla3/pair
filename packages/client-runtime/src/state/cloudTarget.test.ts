@@ -1,11 +1,14 @@
-import { EnvironmentId, ProjectId, type ServerConfig } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, RunId, type ServerConfig } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type CloudTarget,
   type CloudTargetOption,
   cloudBranchCheck,
+  type ContinueLocallyOffer,
   resolveCloudTarget,
+  resolveContinueLocally,
   routedCloudLaunch,
 } from "./cloudTarget.ts";
 import type { EnvironmentProject } from "./models.ts";
@@ -321,5 +324,129 @@ describe("cloudBranchCheck", () => {
     },
   ])("checks $name before a cloud send", ({ ref, status, expected }) => {
     expect(cloudBranchCheck({ branch: "feature", ref, status })).toEqual(expected);
+  });
+});
+
+describe("resolveContinueLocally", () => {
+  const now = DateTime.makeUnsafe("2026-11-09T12:00:00Z");
+  const configs = new Map<EnvironmentId, ServerConfig>([
+    [mac, config(false)],
+    [
+      cloud,
+      {
+        environment: { capabilities: { cloudLaunch: true, cloudImport: true } },
+      } as unknown as ServerConfig,
+    ],
+    [cloudB, config(true)],
+  ]);
+  const cloudProject = project("cloud-app", cloud, "github.com/acme/app");
+  const projects = [
+    cloudProject,
+    project("newer", mac, "GitHub.com/Acme/App", { createdAt: "2026-08-01T00:00:00.000Z" }),
+    project("older", mac, "github.com/acme/app", { createdAt: "2026-07-01T00:00:00.000Z" }),
+    project("archived", mac, "github.com/acme/app", {
+      createdAt: "2026-06-01T00:00:00.000Z",
+      archived: true,
+    }),
+  ];
+  const link = {
+    environmentId: cloud,
+    label: "Acme Cloud",
+    status: "reachable" as const,
+    expiresAt: DateTime.makeUnsafe("2026-12-01T00:00:00Z"),
+  };
+  type Input = Parameters<typeof resolveContinueLocally>[0];
+  const thread: Input["thread"] = {
+    environmentId: cloud,
+    projectId: cloudProject.id,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "t" as never },
+    runtime: null,
+    source: { sandboxId: "sbx_1" },
+  };
+  const base: Input = {
+    thread,
+    primaryEnvironmentId: mac,
+    serverConfigs: configs,
+    canMove: true,
+    projects,
+    links: [link],
+    now,
+  };
+
+  it.each<{
+    readonly name: string;
+    readonly input: Partial<Input>;
+    readonly expected: ContinueLocallyOffer;
+  }>([
+    {
+      name: "ready in the oldest unarchived project with the origin",
+      input: {},
+      expected: { kind: "ready", localEnvironmentId: mac, projectId: ProjectId.make("older") },
+    },
+    {
+      name: "hidden without a primary environment",
+      input: { primaryEnvironmentId: null },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden on the thread's own environment",
+      input: { primaryEnvironmentId: cloud },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden when the primary is a Pair Cloud",
+      input: { primaryEnvironmentId: cloudB },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden without the toLocal permission",
+      input: { canMove: false },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden for a side chat",
+      input: { thread: { ...thread, lineage: { ...thread.lineage, sideChat: true } } },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden for a thread with no machine",
+      input: { thread: { ...thread, source: {} } },
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "hidden when the thread's environment doesn't report cloudImport",
+      input: { thread: { ...thread, environmentId: cloudB } },
+      expected: { kind: "hidden" },
+    },
+    { name: "hidden without a link to it", input: { links: [] }, expected: { kind: "hidden" } },
+    {
+      name: "disabled when the link expired",
+      input: { links: [{ ...link, expiresAt: now }] },
+      expected: {
+        kind: "disabled",
+        label: "link expired",
+        reason: "The link to Acme Cloud expired. Link it again in Settings → Environments.",
+      },
+    },
+    {
+      name: "disabled without a project with the origin",
+      input: { projects: [cloudProject, project("other", mac, "github.com/acme/other")] },
+      expected: {
+        kind: "disabled",
+        label: "no matching project",
+        reason: "No project on this computer has origin github.com/acme/app.",
+      },
+    },
+    {
+      name: "disabled during a turn",
+      input: { thread: { ...thread, runtime: { activeRunId: RunId.make("run-1") } as never } },
+      expected: {
+        kind: "disabled",
+        label: "turn running",
+        reason: "Wait for the turn to end, or stop it.",
+      },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(resolveContinueLocally({ ...base, ...input })).toEqual(expected);
   });
 });

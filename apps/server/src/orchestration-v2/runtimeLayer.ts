@@ -25,6 +25,7 @@ import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ContextExports from "./ContextExports.ts";
+import * as CloudMoveSource from "../cloudMove/CloudMoveSource.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -420,6 +421,18 @@ export const layerProduction = Layer.mergeAll(
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
+  // Pair Cloud's side of Continue locally; the mirror and its worker come from the server.
+  CloudMoveSource.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerContextExportsProvided,
+        layerCheckpointServiceProvided,
+        layerThreadManagementProvided,
+        layerProjectService,
+        ProjectionStore.layer,
+      ),
+    ),
+  ),
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),

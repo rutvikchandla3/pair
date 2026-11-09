@@ -243,6 +243,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/threadMove": {
+      "types": "./src/state/threadMove.ts",
+      "default": "./src/state/threadMove.ts"
+    },
     "./state/memberPush": {
       "types": "./src/state/memberPush.ts",
       "default": "./src/state/memberPush.ts"

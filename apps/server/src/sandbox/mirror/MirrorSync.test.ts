@@ -208,7 +208,7 @@ it.effect("falls back a prerequisite tier when the sandbox pruned one the mirror
   }).pipe(Effect.scoped, Effect.provide(layerWith())),
 );
 
-it.effect("fails an oversized bundle as bundle-failed and leaves no temp file", () =>
+it.effect("fails an oversized bundle as too-large and leaves no temp file", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -222,7 +222,7 @@ it.effect("fails an oversized bundle as bundle-failed and leaves no temp file", 
       .sync({ threadId, cwd: sandbox, checkpointRefs: [turn] })
       .pipe(Effect.flip);
 
-    assert.equal(failure.reason, "bundle-failed");
+    assert.equal(failure.reason, "too-large");
     assert.deepEqual(yield* fs.readDirectory(path.join(stateDir, "sandbox", "tmp")), []);
     assert.deepEqual([...(yield* mirror.tips(projectId, [turn]))], []);
   }).pipe(Effect.scoped, Effect.provide(layerWith({ maxBundleBytes: 64 }))),
@@ -233,7 +233,7 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const threadId = ThreadId.make("thread:restore");
-    const { projectId, sandbox } = yield* setup(threadId);
+    const { projectId, sandbox, mirrorGit } = yield* setup(threadId);
     const sync = yield* MirrorSync.MirrorSync;
     const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
     const vcs = yield* VcsDriver.VcsDriver;
@@ -253,6 +253,44 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     });
     const branchTip = yield* git(sandbox, ["rev-parse", "HEAD"]);
     const project = (yield* git(sandbox, ["remote", "get-url", "origin"])).trim();
+    const originTip = yield* git(sandbox, ["rev-parse", "origin/main"]);
+    const snapshotOid = yield* git(sandbox, ["rev-parse", snapshotRef]);
+
+    // What Continue locally downloads: the branch and the snapshot on its tip, past the haves.
+    const bundled = (haves: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const bundle = yield* sync.bundleThread({
+          threadId,
+          projectId,
+          prerequisites: () => Effect.succeed(haves),
+        });
+        assert.isNotNull(bundle);
+        const file = bundle!.file;
+        const heads =
+          file === null
+            ? null
+            : (yield* git(sandbox, ["bundle", "list-heads", file]))
+                .split("\n")
+                .map((line) => line.split(" ")[1]);
+        const verified = file === null ? "" : yield* mirrorGit(["bundle", "verify", file]);
+        return { ...bundle!, heads, verified };
+      });
+    const kept = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const bundle = yield* bundled([originTip]);
+        assert.isTrue(yield* fs.exists(bundle.file!));
+        return bundle;
+      }),
+    );
+    assert.deepEqual(kept.heads, [CheckpointMirror.sandboxBranchRef(threadId), snapshotRef]);
+    assert.include(kept.verified, originTip);
+    assert.equal(kept.head, branchTip);
+    assert.equal(kept.snapshot?.oid, snapshotOid);
+    assert.isFalse(yield* fs.exists(kept.file!));
+    const unknown = yield* Effect.scoped(bundled(["f".repeat(40)]));
+    assert.include(unknown.verified, "complete history");
+    const empty = yield* Effect.scoped(bundled([snapshotOid]));
+    assert.deepEqual([empty.file, empty.head], [null, branchTip]);
 
     // The disk is gone: a fresh clone of origin, and the thread's worktree path is empty.
     const root = yield* SandboxRoot;
@@ -284,6 +322,7 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     yield* sync.sync({ threadId, cwd: sandbox, checkpointRefs: [] });
     const later = yield* rebuild("later");
     assert.deepEqual(later.restored, { snapshotAt: null });
+    assert.isNull((yield* Effect.scoped(bundled([]))).snapshot);
     assert.equal(
       yield* git(later.worktreePath, ["rev-parse", "HEAD"]),
       yield* git(sandbox, ["rev-parse", "HEAD"]),
@@ -299,6 +338,17 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
         branch: "work",
       }),
     );
+    let asked = false;
+    assert.isNull(
+      yield* Effect.scoped(
+        sync.bundleThread({
+          threadId: ThreadId.make("thread:never-synced"),
+          projectId,
+          prerequisites: () => Effect.sync(() => ((asked = true), [])),
+        }),
+      ),
+    );
+    assert.isFalse(asked);
   }).pipe(Effect.scoped, Effect.provide(layerWith())),
 );
 

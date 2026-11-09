@@ -149,4 +149,36 @@ describe("buildThreadActionMenuItems", () => {
     );
     expect(copyChildren(member)).not.toContain("copy-path");
   });
+
+  it("offers Continue locally after the machine actions, disabled with why", () => {
+    const ids = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).map((item) => item.id);
+    expect(ids(baseState)).not.toContain("continue-locally");
+
+    const machine = { actions: ["sleep" as const], ownerOnlyDenied: [] };
+    const ready = buildThreadActionMenuItems({
+      ...baseState,
+      machine,
+      continueLocally: { disabledLabel: null },
+    });
+    const item = ready.find((candidate) => candidate.id === "continue-locally");
+    expect(ready.indexOf(item!)).toBe(ready.findIndex((c) => c.id === "machine:sleep") + 1);
+    expect([item?.label, item?.disabled, item?.separatorBefore]).toEqual([
+      "Continue locally",
+      undefined,
+      undefined,
+    ]);
+
+    // Alone after Mark unread, it starts its own group.
+    const busy = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      continueLocally: { disabledLabel: "turn running" },
+    }).find((candidate) => candidate.id === "continue-locally");
+    expect([busy?.label, busy?.disabled, busy?.separatorBefore]).toEqual([
+      "Continue locally (turn running)",
+      true,
+      true,
+    ]);
+  });
 });

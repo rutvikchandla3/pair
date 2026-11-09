@@ -4,6 +4,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1565,6 +1566,7 @@ export const layerWsRpc = (
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const cloudMoves = yield* CloudMoves.CloudMoves;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2869,6 +2871,8 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
+        [WS_METHODS.threadMoveToLocal]: (input) =>
+          cloudMoves.continueLocally({ ...input, actorId: currentSession.memberId }),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
@@ -3704,6 +3708,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const cloudMoves = yield* CloudMoves.CloudMoves;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -3804,6 +3809,7 @@ export const layer = Layer.unwrap(
                 ),
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
+              Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(ProjectionStoreV2, projections)),
               Layer.provide(

@@ -50,6 +50,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { useContinueLocally } from "./useContinueLocally";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
@@ -102,6 +103,7 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const runSandboxAction = useSandboxActionRunner();
+  const continueLocally = useContinueLocally();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -145,6 +147,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const team = readThreadTeamMenu(thread);
       const machine = readSandboxThreadMachine(threadRef);
+      const moveOffer = continueLocally.offerFor(threadRef);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -163,6 +166,13 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         ...(team ? { team } : {}),
         ...(machine ? { machine } : {}),
+        ...(moveOffer.kind === "hidden"
+          ? {}
+          : {
+              continueLocally: {
+                disabledLabel: moveOffer.kind === "disabled" ? moveOffer.label : null,
+              },
+            }),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -217,6 +227,9 @@ export function useThreadActionMenu(input: {
       switch (action) {
         case "find":
           onFind?.(threadRef);
+          return;
+        case "continue-locally":
+          await continueLocally.run(threadRef);
           return;
         case "project-settings": {
           const project = projects.find(

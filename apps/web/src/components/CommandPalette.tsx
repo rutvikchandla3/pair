@@ -60,6 +60,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CloudIcon,
+  LaptopIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -146,6 +147,7 @@ import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useCloudTarget } from "../state/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
+import { useContinueLocally } from "../hooks/useContinueLocally";
 import { SANDBOX_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
 import { SANDBOX_ACTION_PALETTE_LABELS } from "./sandbox/sandboxActionLabels";
 import {
@@ -498,6 +500,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
   );
   const runSandboxAction = useSandboxActionRunner();
+  const continueLocally = useContinueLocally();
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1534,6 +1537,19 @@ function OpenCommandPaletteDialog(props: {
           run: () => runSandboxAction(threadRef, machine.sandboxId, action),
         });
       }
+    }
+    const activeThreadRef = scopeThreadRef(thread.environmentId, thread.id);
+    const moveOffer = continueLocally.offerFor(activeThreadRef);
+    if (moveOffer.kind !== "hidden") {
+      actionItems.push({
+        kind: "action",
+        value: "action:continue-locally",
+        searchTerms: ["continue", "locally", "local", "move", "computer", "mac", "bring back"],
+        title: "Continue locally",
+        icon: <LaptopIcon className={ITEM_ICON_CLASS} />,
+        ...(moveOffer.kind === "disabled" ? { disabled: true, description: moveOffer.reason } : {}),
+        run: () => continueLocally.run(activeThreadRef),
+      });
     }
     actionItems.push({
       kind: "action",

@@ -27,6 +27,7 @@ import {
   type SandboxId,
   type ThreadId,
   type ThreadEnvMode,
+  type ThreadMoveToLocalInput,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -35,7 +36,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -469,6 +470,19 @@ export const wakeSandbox = Effect.fn("EnvironmentCommands.wakeSandbox")(function
   input: SandboxCommandInput,
 ) {
   return yield* sandboxCommand("sandbox.wake", input);
+});
+
+export type MoveThreadToLocalInput = Omit<ThreadMoveToLocalInput, "commandId"> & CommandMetadata;
+
+/** Continue locally: the primary environment pulls the cloud thread over its agent link. */
+export const moveThreadToLocal = Effect.fn("EnvironmentCommands.moveThreadToLocal")(function* (
+  input: MoveThreadToLocalInput,
+) {
+  const { createdAt: _createdAt, creationSource: _creationSource, ...move } = input;
+  return yield* requestGuarded(WS_METHODS.threadMoveToLocal, {
+    ...move,
+    commandId: yield* allocateCommandId(input),
+  });
 });
 
 export const sleepSandbox = Effect.fn("EnvironmentCommands.sleepSandbox")(function* (

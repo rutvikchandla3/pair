@@ -143,7 +143,9 @@ import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
+import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
+import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
@@ -965,12 +967,12 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+  // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
   Layer.provide(
-    PeerForwarding.layer.pipe(
-      Layer.provideMerge(PeerMcpClient.layer),
-      Layer.provideMerge(PeerLinks.layer),
-    ),
+    Layer.merge(
+      PeerForwarding.layer,
+      CloudMoves.layer.pipe(Layer.provide(CloudMoveClient.layer)),
+    ).pipe(Layer.provideMerge(PeerMcpClient.layer), Layer.provideMerge(PeerLinks.layer)),
   ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

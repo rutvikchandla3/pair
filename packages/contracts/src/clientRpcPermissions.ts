@@ -26,6 +26,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sandboxCheckDriver]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
+  // Creates a worktree and a thread here.
+  [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,
