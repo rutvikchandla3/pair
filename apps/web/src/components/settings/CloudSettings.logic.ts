@@ -10,9 +10,12 @@ export function dockerDriverFormError(input: {
   readonly label: string;
   readonly dockerHost: string;
   readonly runnerUrl: string;
+  /** Empty is the driver's default. */
+  readonly runningCap: string;
 }): string | null {
   const host = input.dockerHost.trim();
   const runnerUrl = input.runnerUrl.trim();
+  const runningCap = input.runningCap.trim();
   if (input.label.trim() === "") return "Name the driver.";
   if (host.startsWith("ssh://"))
     return "Docker over ssh:// is not supported. Forward the socket and use unix://.";
@@ -22,6 +25,8 @@ export function dockerDriverFormError(input: {
     return "A remote Docker host needs a runner URL: an address of this server its machines can reach.";
   if (runnerUrl !== "" && !/^https?:\/\/./.test(runnerUrl))
     return "The runner URL must start with http:// or https://.";
+  if (runningCap !== "" && !/^[1-9]\d*$/.test(runningCap))
+    return "Enter a whole number of machines, 1 or more.";
   return null;
 }
 

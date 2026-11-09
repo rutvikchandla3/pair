@@ -61,8 +61,14 @@ it.effect("counts machines by state and reads health, caps and the image from th
         SandboxOverview.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              FakeComputeDriver.layerRegistry(driver),
-              ServerSettingsService.layerTest({ sandbox: { drivers: [local] } }),
+              FakeComputeDriver.layerRegistry(driver).pipe(
+                Layer.provideMerge(
+                  // The admin's cap wins over the driver's default of 3.
+                  ServerSettingsService.layerTest({
+                    sandbox: { drivers: [{ ...local, runningCap: 5 }] },
+                  }),
+                ),
+              ),
               ProjectionStore.layer,
               Layer.mock(CheckpointMirror)({ gitDir: () => "", diskBytes: Effect.succeed(4096) }),
             ),
@@ -72,7 +78,7 @@ it.effect("counts machines by state and reads health, caps and the image from th
     );
 
     assert.deepEqual(overview, {
-      drivers: [{ driverId, reachable: true, isolation: "runc", runningCap: 3 }],
+      drivers: [{ driverId, reachable: true, isolation: "runc", runningCap: 5 }],
       machines: { ready: 2, sleeping: 1, failed: 1, waiting: 2 },
       startsPerMinute: 10,
       baseImage: { ref: "ghcr.io/pair/t3-sandbox:1.2.3", label: "Pair base 1.2.3" },

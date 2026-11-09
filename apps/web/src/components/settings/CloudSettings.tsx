@@ -343,7 +343,10 @@ function CloudEnvironmentSettings({
                         <span key={driver.id}>
                           {drivers.length > 1 ? `${driver.label}: ` : "Team: "}
                           {cap === undefined ? "…" : `${cap} machine${cap === 1 ? "" : "s"}`} at
-                          once (a quarter of the host's vCPUs)
+                          once{" "}
+                          {driver.runningCap === undefined
+                            ? "(a quarter of the host's vCPUs)"
+                            : "(set by an admin)"}
                         </span>
                       );
                     })}
@@ -418,8 +421,9 @@ function DockerDriverFormRow({
   const [dockerHost, setDockerHost] = useState(initial?.dockerHost ?? "");
   const [runnerUrl, setRunnerUrl] = useState(initial?.runnerUrl ?? "");
   const [size, setSize] = useState<SandboxSize>(initial?.size ?? "default");
+  const [runningCap, setRunningCap] = useState(initial?.runningCap?.toString() ?? "");
   const [saving, setSaving] = useState(false);
-  const error = dockerDriverFormError({ label, dockerHost, runnerUrl });
+  const error = dockerDriverFormError({ label, dockerHost, runnerUrl, runningCap });
   const remote = isRemoteDockerHost(dockerHost);
   const field = (name: string) => `cloud-driver-${id}-${name}`;
 
@@ -441,6 +445,7 @@ function DockerDriverFormRow({
             ...(dockerHost.trim() === "" ? {} : { dockerHost: dockerHost.trim() }),
             ...(runnerUrl.trim() === "" ? {} : { runnerUrl: runnerUrl.trim() }),
             ...(size === "default" ? {} : { size }),
+            ...(runningCap.trim() === "" ? {} : { runningCap: Number(runningCap.trim()) }),
           });
           setSaving(false);
         }}
@@ -504,6 +509,17 @@ function DockerDriverFormRow({
               ))}
             </SelectPopup>
           </Select>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor={field("cap")}>Machines at once</Label>
+          <Input
+            id={field("cap")}
+            size="sm"
+            inputMode="numeric"
+            placeholder="Default: a quarter of the host's vCPUs"
+            value={runningCap}
+            onChange={(event) => setRunningCap(event.target.value)}
+          />
         </div>
         {error !== null ? (
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">

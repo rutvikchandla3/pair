@@ -67,8 +67,9 @@ const layerCheck = <E>(
     Layer.provideMerge(hub),
     Layer.provide(
       Layer.mergeAll(
-        FakeComputeDriver.layerRegistry(fake),
-        ServerSettingsService.layerTest({ sandbox: { drivers: [local] } }),
+        FakeComputeDriver.layerRegistry(fake).pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest({ sandbox: { drivers: [local] } })),
+        ),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(
             EnvironmentId.make("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"),

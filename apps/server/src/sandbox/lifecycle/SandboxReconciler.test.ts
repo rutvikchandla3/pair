@@ -20,6 +20,7 @@ import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExec
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { type BackendSandbox, sandboxBackendName } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import {
@@ -230,7 +231,9 @@ it.effect("lists backends on activation, then every 10 minutes", () =>
           Layer.provide(
             Layer.mergeAll(
               Scheduler.layer,
-              FakeComputeDriver.layerRegistry(fake.driver),
+              FakeComputeDriver.layerRegistry(fake.driver).pipe(
+                Layer.provide(ServerSettingsService.layerTest()),
+              ),
               SqlitePersistence.layerMemory,
               Layer.mock(ServerEnvironment.ServerEnvironment)({
                 getEnvironmentId: Effect.succeed(installId),

@@ -19,6 +19,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as DueHint from "../../scheduling/DueHint.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import type { ComputeDriver } from "../compute/ComputeDriver.ts";
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as SandboxActivity from "./SandboxActivity.ts";
@@ -88,12 +89,16 @@ export const makeSweep = Effect.gen(function* () {
   const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
   const admission = yield* SandboxAdmission.SandboxAdmission;
   const activity = yield* SandboxActivity.SandboxActivity;
+  const settings = yield* ServerSettingsService;
   const due = DueHint.make();
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
       affectsLifecycle(event) ? due.invalidate : Effect.void,
     ),
   );
+  // A raised cap sends no event, and a full queue's hint never comes due on its own.
+  const settingsChanges = yield* settings.subscribeChanges;
+  yield* forkParked(Stream.runForEach(settingsChanges, () => due.invalidate));
 
   // The decider re-checks each command under the owner's lock, so a race ends in a refusal.
   const dispatch = (sandbox: OrchestrationV2Sandbox, command: OrchestrationV2ServerCommand) =>

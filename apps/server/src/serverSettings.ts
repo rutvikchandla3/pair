@@ -172,6 +172,7 @@ const memberDriverView = (driver: SandboxDriverInstance): SandboxDriverInstance 
   id: driver.id,
   label: driver.label,
   ...(driver.size === undefined ? {} : { size: driver.size }),
+  ...(driver.runningCap === undefined ? {} : { runningCap: driver.runningCap }),
 });
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */

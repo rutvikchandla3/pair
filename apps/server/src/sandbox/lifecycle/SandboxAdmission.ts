@@ -64,10 +64,7 @@ export const layer = Layer.effect(
     const snapshot = Effect.fn("SandboxAdmission.snapshot")(function* (driverId: ComputeDriverId) {
       const counts = yield* projections.countSandboxAdmission(driverId);
       // A removed driver queues nothing: its start fails with `driver-removed` instead.
-      const cap = yield* registry.get(driverId).pipe(
-        Effect.map((driver) => driver.capabilities.defaultRunningCap),
-        Effect.orElseSucceed(() => Infinity),
-      );
+      const cap = yield* registry.runningCap(driverId).pipe(Effect.orElseSucceed(() => Infinity));
       yield* refill();
       return { ...counts, cap, startAvailable: tokens > 0 } satisfies AdmissionSnapshot;
     });

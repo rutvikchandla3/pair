@@ -31,9 +31,11 @@ page warns while any driver runs on plain Docker.
 
 Machines start from Pair's published base image for your server version, which the server
 downloads by itself. To use a registry mirror or your own build, enter its name under
-**Base image**. The page also shows the limits: how many machines may run at once (a quarter of the
-Docker host's CPUs) and how many may start each minute. A machine started past a limit waits for a
-free slot.
+**Base image**. The page also shows the limits: how many machines may run at once and how many may
+start each minute. A driver runs a quarter of its Docker host's CPUs at once unless you set
+**Machines at once** in its form; a change applies to the next start without restarting anything.
+A machine started past a limit waits for a free slot. Lowering the limit stops nothing that already
+runs.
 
 **Environment variables** in **Settings → Cloud** are set in every machine's terminals, scripts and
 agents. Projects can add their own.

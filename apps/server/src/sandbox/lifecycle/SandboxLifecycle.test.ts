@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   type RunId,
   SandboxId,
+  type ServerSettings as ServerSettingsSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -90,10 +91,12 @@ const makeLayerTest = (
   sandboxAdmission?: Layer.Layer<
     SandboxAdmission.SandboxAdmission,
     never,
-    ProjectionStore.ProjectionStoreV2
+    ProjectionStore.ProjectionStoreV2 | ServerSettings.ServerSettingsService
   >,
-) =>
-  ThreadManagement.layer.pipe(
+) => {
+  // One instance, so the admission's cap reads the settings a test updates.
+  const layerSettings = ServerSettings.layerTest();
+  return ThreadManagement.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         layerDatabase,
@@ -106,14 +109,22 @@ const makeLayerTest = (
           {
             databaseLayer: layerDatabase,
             runEffectWorker: false,
-            ...(sandboxAdmission === undefined ? {} : { sandboxAdmission }),
+            ...(sandboxAdmission === undefined
+              ? {}
+              : {
+                  sandboxAdmission: sandboxAdmission.pipe(
+                    Layer.provide(layerSettings),
+                    Layer.orDie,
+                  ),
+                }),
           },
         ),
       ),
     ),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(layerSettings),
     Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
   );
+};
 const layerTest = makeLayerTest();
 
 /** The fake driver the orchestrator's admission reads its cap from, built with the test layer. */
@@ -138,14 +149,18 @@ const layerAdmissionTest = (defaultRunningCap: number) => {
     Layer.provide(
       Layer.effect(
         ComputeDriverRegistry.ComputeDriverRegistry,
-        AdmissionDriver.use(({ fake, capRead }) =>
-          Effect.succeed(
-            ComputeDriverRegistry.ComputeDriverRegistry.of({
-              get: () => capRead.await.pipe(Effect.as(fake.driver)),
-              list: Effect.succeed([fake.driver]),
-            }),
-          ),
-        ),
+        Effect.gen(function* () {
+          const { fake, capRead } = yield* AdmissionDriver;
+          const runningCap = FakeComputeDriver.runningCapFromSettings(
+            yield* ServerSettings.ServerSettingsService,
+            fake.driver,
+          );
+          return ComputeDriverRegistry.ComputeDriverRegistry.of({
+            get: () => Effect.succeed(fake.driver),
+            list: Effect.succeed([fake.driver]),
+            runningCap: (driverId) => capRead.await.pipe(Effect.andThen(runningCap(driverId))),
+          });
+        }),
       ),
     ),
     Layer.provide(layerDriver),
@@ -1505,6 +1520,62 @@ it.layer(layerAdmissionTest(1))("sandbox admission at the team cap", (it) => {
         call._tag === "destroy" ? Deferred.succeed(call.reply, undefined) : Effect.die(call._tag),
       );
       yield* runAnswering(runtime, answerCreateOf(second.sandboxId));
+    }).pipe(Effect.scoped),
+  );
+});
+
+it.layer(layerAdmissionTest(1))("sandbox admission after a cap edit", (it) => {
+  it.effect("raising the cap admits a waiting machine on the next sweep", () =>
+    Effect.gen(function* () {
+      const { fake } = yield* AdmissionDriver;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const first = yield* provisioned("raise-a");
+      const second = yield* provisioned("raise-b");
+      assert.equal((yield* getSandbox(first.sandboxId))?.admission, null);
+      assert.equal((yield* getSandbox(second.sandboxId))?.admission?.reason, "team-cap");
+
+      // The test settings never emit, so the sweep gets a change stream that says when it was read.
+      const changed = yield* Deferred.make<ServerSettingsSnapshot>();
+      const handled = yield* Deferred.make<void>();
+      const changes = Stream.fromEffect(Deferred.await(changed)).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.succeed(handled, undefined)).pipe(Stream.drain)),
+        Stream.concat(Stream.never),
+      );
+      const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
+        Effect.provide(FakeComputeDriver.layerRegistry(fake.driver)),
+        Effect.provideServiceEffect(
+          SandboxActivity.SandboxActivity,
+          Effect.map(SandboxActivity.makeTest, (activity) => activity.service),
+        ),
+        Effect.provideService(
+          ServerSettings.ServerSettingsService,
+          ServerSettings.ServerSettingsService.of({
+            ...settings,
+            subscribeChanges: Effect.succeed(changes),
+          }),
+        ),
+      );
+      // A full queue records no due time, so only the settings change can wake the sweep.
+      yield* sweep();
+      assert.equal((yield* getSandbox(second.sandboxId))?.admission?.reason, "team-cap");
+
+      const driverId = ComputeDriverId.make("docker");
+      yield* Deferred.succeed(
+        changed,
+        yield* settings.updateSettings({
+          sandbox: {
+            drivers: {
+              [driverId]: { kind: "docker", id: driverId, label: "Docker", runningCap: 2 },
+            },
+          },
+        }),
+      );
+      yield* Deferred.await(handled);
+      yield* sweep();
+      assert.deepInclude(yield* getSandbox(second.sandboxId), {
+        state: "provisioning",
+        admission: null,
+      });
     }).pipe(Effect.scoped),
   );
 });

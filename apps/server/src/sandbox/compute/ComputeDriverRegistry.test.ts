@@ -48,6 +48,15 @@ it.effect("reuses a driver until its config changes, then closes the old one", (
       const first = yield* registry.get(local);
       assert.strictEqual(yield* registry.get(local), first);
       assert.deepStrictEqual(built, ["Local Docker"]);
+      assert.strictEqual(yield* registry.runningCap(local), first.capabilities.defaultRunningCap);
+
+      // A cap edit is read at admission; rebuilding would fail the driver's in-flight calls.
+      yield* settings.updateSettings({
+        sandbox: { drivers: { [local]: { ...localDocker, runningCap: 2 } } },
+      });
+      assert.strictEqual(yield* registry.runningCap(local), 2);
+      assert.strictEqual(yield* registry.get(local), first);
+      assert.deepStrictEqual(closed, []);
 
       yield* settings.updateSettings({
         sandbox: { drivers: { [local]: { ...localDocker, label: "Build host" } } },

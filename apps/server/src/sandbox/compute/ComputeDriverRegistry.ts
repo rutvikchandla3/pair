@@ -36,6 +36,10 @@ export class ComputeDriverRegistry extends Context.Service<
       ComputeDriverNotConfiguredError | ServerSettingsError
     >;
     readonly list: Effect.Effect<ReadonlyArray<ComputeDriver["Service"]>, ServerSettingsError>;
+    /** The admin's cap from settings, else the driver's default. */
+    readonly runningCap: (
+      driverId: ComputeDriverId,
+    ) => Effect.Effect<number, ComputeDriverNotConfiguredError | ServerSettingsError>;
   }
 >()("t3/sandbox/compute/ComputeDriverRegistry") {}
 
@@ -55,6 +59,9 @@ interface Entry {
 }
 
 const sameConfig = Schema.toEquivalence(SandboxDriverInstance);
+// Admission reads the cap from the entry, so a cap-only edit must not fail in-flight driver calls.
+const withoutCap = ({ runningCap: _, ...config }: SandboxDriverInstance): SandboxDriverInstance =>
+  config;
 
 // One value per instance rather than a layer each: instances come and go with Settings at runtime.
 const make = Effect.fn("ComputeDriverRegistry.make")(function* <R>(
@@ -87,7 +94,10 @@ const make = Effect.fn("ComputeDriverRegistry.make")(function* <R>(
     );
     for (const [driverId, entry] of entries) {
       const config = configs.get(driverId);
-      if (config !== undefined && sameConfig(entry.config, config)) continue;
+      if (config !== undefined && sameConfig(withoutCap(entry.config), withoutCap(config))) {
+        entries.set(driverId, { ...entry, config });
+        continue;
+      }
       entries.delete(driverId);
       // In-flight calls on the old driver fail `unavailable` once its resources close.
       yield* Scope.close(entry.scope, Exit.void);
@@ -97,15 +107,25 @@ const make = Effect.fn("ComputeDriverRegistry.make")(function* <R>(
     }
   });
 
-  const get = Effect.fn("ComputeDriverRegistry.get")(function* (driverId: ComputeDriverId) {
-    return yield* lock.withPermits(1)(
+  const entry = (driverId: ComputeDriverId) =>
+    lock.withPermits(1)(
       Effect.gen(function* () {
         yield* sync();
-        const entry = entries.get(driverId);
-        if (entry === undefined) return yield* new ComputeDriverNotConfiguredError({ driverId });
-        return entry.driver;
+        const found = entries.get(driverId);
+        if (found === undefined) return yield* new ComputeDriverNotConfiguredError({ driverId });
+        return found;
       }),
     );
+
+  const get = Effect.fn("ComputeDriverRegistry.get")(function* (driverId: ComputeDriverId) {
+    return (yield* entry(driverId)).driver;
+  });
+
+  const runningCap = Effect.fn("ComputeDriverRegistry.runningCap")(function* (
+    driverId: ComputeDriverId,
+  ) {
+    const { config, driver } = yield* entry(driverId);
+    return config.runningCap ?? driver.capabilities.defaultRunningCap;
   });
 
   const list = lock
@@ -117,7 +137,7 @@ const make = Effect.fn("ComputeDriverRegistry.make")(function* <R>(
     )
     .pipe(Effect.withSpan("ComputeDriverRegistry.list"));
 
-  return ComputeDriverRegistry.of({ get, list });
+  return ComputeDriverRegistry.of({ get, list, runningCap });
 });
 
 /** Needs `ServerSettingsService` plus whatever the factories need. */

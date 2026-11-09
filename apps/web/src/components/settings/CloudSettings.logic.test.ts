@@ -3,7 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { dockerDriverFormError } from "./CloudSettings.logic";
 
 describe("dockerDriverFormError", () => {
-  it.each([
+  it.each<{
+    readonly name: string;
+    readonly dockerHost?: string;
+    readonly runnerUrl?: string;
+    readonly runningCap?: string;
+    readonly refused: boolean;
+  }>([
     { name: "the local socket", dockerHost: "", runnerUrl: "", refused: false },
     {
       name: "a local unix socket",
@@ -35,9 +41,13 @@ describe("dockerDriverFormError", () => {
       runnerUrl: "ws://team.example",
       refused: true,
     },
-  ])("$name", ({ dockerHost, runnerUrl, refused }) => {
-    expect(dockerDriverFormError({ label: "Docker", dockerHost, runnerUrl }) !== null).toBe(
-      refused,
-    );
+    { name: "the default cap", runningCap: "", refused: false },
+    { name: "a cap of 30", runningCap: "30", refused: false },
+    { name: "a cap of 0", runningCap: "0", refused: true },
+    { name: "a fractional cap", runningCap: "2.5", refused: true },
+  ])("$name", ({ dockerHost = "", runnerUrl = "", runningCap = "", refused }) => {
+    expect(
+      dockerDriverFormError({ label: "Docker", dockerHost, runnerUrl, runningCap }) !== null,
+    ).toBe(refused);
   });
 });

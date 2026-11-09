@@ -67,9 +67,10 @@ const baseImageMessage = (baseImage: ComputeDriverHealth["baseImage"]): string |
 
 const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
   driver: ComputeDriver["Service"],
+  runningCap: number,
 ) {
   const health = yield* driver.health.pipe(Effect.timeoutOption(HEALTH_TIMEOUT), Effect.result);
-  const base = { driverId: driver.driverId, runningCap: driver.capabilities.defaultRunningCap };
+  const base = { driverId: driver.driverId, runningCap };
   if (health._tag === "Failure" || health.success._tag === "None") {
     const report: SandboxDriverHealth = {
       ...base,
@@ -103,7 +104,14 @@ const make = Effect.gen(function* () {
   const read = Effect.gen(function* () {
     const drivers = yield* registry.list;
     const override = (yield* settings.getSettings).sandbox?.baseImage;
-    const healths = yield* Effect.forEach(drivers, driverHealth, { concurrency: "unbounded" });
+    const healths = yield* Effect.forEach(
+      drivers,
+      (driver) =>
+        registry
+          .runningCap(driver.driverId)
+          .pipe(Effect.flatMap((runningCap) => driverHealth(driver, runningCap))),
+      { concurrency: "unbounded" },
+    );
     const machines = yield* projections.countSandboxStates;
     const mirrorBytes = yield* mirror.diskBytes;
     const resolved = healths.flatMap((entry) =>

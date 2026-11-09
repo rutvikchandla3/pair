@@ -3583,8 +3583,9 @@ its own PR because 2.40's load test sets it.
   - `SandboxOverview.ts` `driverHealth` (68–72): `runningCap` comes from the registry, passed in by
     `read`.
   - `SandboxLifecycleWorker.ts` `makeSweep`: fork a second `Stream.runForEach` on
-    `ServerSettingsService.streamChanges` (serverSettings.ts 367) that calls `due.invalidate`, beside
-    the domain-event one (80–84). A raised cap then admits on the next tick.
+    `ServerSettingsService.subscribeChanges` (subscribed before the first sweep, so no change is
+    lost) that calls `due.invalidate`, beside the domain-event one (80–84). A raised cap then admits
+    on the next tick.
   - Test fakes implement `runningCap` as the real registry does: read
     `ServerSettingsService.getSettings` and return `config.runningCap ??
     capabilities.defaultRunningCap`. They are `ComputeDriverTesting.ts` (139) and

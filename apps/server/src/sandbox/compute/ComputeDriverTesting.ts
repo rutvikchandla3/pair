@@ -20,6 +20,7 @@ import {
   parseSandboxTags,
   type SandboxBootstrap,
 } from "./ComputeDriver.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ComputeDriverRegistry } from "./ComputeDriverRegistry.ts";
 
 /**
@@ -138,15 +139,31 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
   return { driver, calls: calls as Queue.Dequeue<FakeComputeCall> };
 });
 
-/** Every driver id resolves to `fake`, whatever settings say. */
+/** What the real registry reports: the cap in the driver's settings, else the driver's default. */
+export const runningCapFromSettings = (
+  settings: ServerSettingsService["Service"],
+  fake: ComputeDriver["Service"],
+) =>
+  Effect.fn("FakeComputeDriverRegistry.runningCap")(function* (driverId: ComputeDriverId) {
+    const config = (yield* settings.getSettings).sandbox?.drivers.find(
+      (driver) => driver.id === driverId,
+    );
+    return config?.runningCap ?? fake.capabilities.defaultRunningCap;
+  });
+
+/** Every driver id resolves to `fake`, whatever settings say; only the cap reads them. */
 export const layerRegistry = (fake: ComputeDriver["Service"]) =>
-  Layer.succeed(
+  Layer.effect(
     ComputeDriverRegistry,
-    ComputeDriverRegistry.of({
-      get: Effect.fn("FakeComputeDriverRegistry.get")(function* () {
-        return yield* Effect.succeed(fake);
-      }),
-      list: Effect.succeed([fake]),
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsService;
+      return ComputeDriverRegistry.of({
+        get: Effect.fn("FakeComputeDriverRegistry.get")(function* () {
+          return yield* Effect.succeed(fake);
+        }),
+        list: Effect.succeed([fake]),
+        runningCap: runningCapFromSettings(settings, fake),
+      });
     }),
   );
 

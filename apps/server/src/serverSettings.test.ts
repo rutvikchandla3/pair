@@ -324,7 +324,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }),
   );
 
-  it.effect("sends members each driver's kind, id, label and size, and admins the rest", () =>
+  it.effect("sends members each driver's kind, id, label, size and cap, and admins the rest", () =>
     Effect.gen(function* () {
       const driver = {
         kind: "docker",
@@ -333,6 +333,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         dockerHost: "tcp://10.0.0.5:2376",
         runnerUrl: "http://10.0.0.1:3773",
         size: "large",
+        runningCap: 3,
       } as const;
       const settings = yield* decodeServerSettings({
         sandbox: {
@@ -350,7 +351,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const admin = redact(true);
       const member = redact(false);
       assert.deepStrictEqual<unknown>(member?.drivers, [
-        { kind: "docker", id: "remote", label: "Remote", size: "large" },
+        { kind: "docker", id: "remote", label: "Remote", size: "large", runningCap: 3 },
         { kind: "docker", id: "local", label: "This machine" },
       ]);
       assert.deepStrictEqual<unknown>(admin?.drivers, [

@@ -15,6 +15,7 @@ import {
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -1207,6 +1208,8 @@ export const DockerSandboxDriver = Schema.Struct({
   dockerHost: Schema.optionalKey(TrimmedNonEmptyString),
   runnerUrl: Schema.optionalKey(TrimmedNonEmptyString),
   size: Schema.optionalKey(SandboxSize),
+  /** Machines running at once; absent: the driver's default. */
+  runningCap: Schema.optionalKey(PositiveInt),
 });
 export type DockerSandboxDriver = typeof DockerSandboxDriver.Type;
 
