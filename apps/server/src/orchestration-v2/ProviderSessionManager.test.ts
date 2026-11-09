@@ -3887,6 +3887,42 @@ it.effect.each(["missing", "file"] as const)(
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("fails with the machine's error when a sandbox workspace has no connected machine", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadId = ThreadId.make("thread-unconnected-machine");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const error = yield* manager
+        .open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: {
+            ...runtimePolicy,
+            cwd: "/t3-sandbox/sbx_00000000000000000123/worktrees/thread-a",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "WorkspaceHostUnavailableError");
+      assert.equal((yield* Ref.get(state)).openCount, 0);
+      assert.deepEqual((yield* projectionStore.getThreadProjection(threadId)).providerSessions, []);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect(
   "rejects a deleted workspace before reusing a live session without changing its state",
   () =>

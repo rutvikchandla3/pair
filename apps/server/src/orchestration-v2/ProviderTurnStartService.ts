@@ -833,6 +833,23 @@ export const layer: Layer.Layer<
           isProviderAdapterOpenSessionError(failure.cause) &&
           failure.cause.requiresSignIn === true;
         if (input.willRetry === true && !requiresSignIn) return yield* failure;
+        if (failure._tag === "WorkspaceHostUnavailableError") {
+          const sandboxId = projection.thread.sandboxId;
+          const sandbox =
+            sandboxId === undefined
+              ? null
+              : yield* projectionStore.getSandbox(sandboxId).pipe(Effect.orElseSucceed(() => null));
+          yield* settleStartFailure({
+            signal: "machine-unavailable",
+            title: "This message didn't run",
+            error: failure,
+            message:
+              sandbox?.state === "failed" && sandbox.failure !== null
+                ? sandbox.failure.message
+                : "The machine stopped. Send your message again.",
+          });
+          return;
+        }
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",

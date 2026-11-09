@@ -60,7 +60,10 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
+import {
+  type WorkspaceHost,
+  WorkspaceHostUnavailableError,
+} from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -154,6 +157,7 @@ export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
   CloudOnly.CloudOnlyRefusedError,
   ProviderWorkspaceMissingError,
+  WorkspaceHostUnavailableError,
   ProviderCloudUnsupportedError,
   ProviderCloudLocalOnlyError,
   ProviderSessionLookupError,
@@ -2169,13 +2173,7 @@ export const layerWithOptions = (
               const cwd = input.runtimePolicy.cwd;
               let host: WorkspaceHost | undefined;
               if (cwd !== null) {
-                host = yield* hosts
-                  .forPath(cwd)
-                  .pipe(
-                    Effect.mapError(
-                      () => new ProviderWorkspaceMissingError({ threadId: input.threadId, cwd }),
-                    ),
-                  );
+                host = yield* hosts.forPath(cwd);
                 const workspaceIsDirectory = yield* host.fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
                   Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),

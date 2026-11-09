@@ -22,9 +22,12 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  type OrchestrationV2Sandbox,
   type OrchestrationV2SenderLabel,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
+  SandboxId,
+  ComputeDriverId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -47,6 +50,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
+import { WorkspaceHostUnavailableError } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
@@ -290,6 +294,9 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
+  /** `open` fails with this error as-is; `openFailure` wraps its error. */
+  readonly openError?: ProviderSessionManager.ProviderSessionManagerV2Error;
+  readonly sandbox?: OrchestrationV2Sandbox;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
   readonly resumeFailure?: ProviderAdapter.ProviderAdapterV2Error;
@@ -391,6 +398,7 @@ function makeLocalCommandHarness(input: {
       projectId: ProjectId.make("project-native-account-command"),
       branch: input.worktreePath === undefined ? null : "feature/restore",
       worktreePath: input.worktreePath ?? null,
+      ...(input.sandbox === undefined ? {} : { sandboxId: input.sandbox.id }),
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
@@ -851,7 +859,9 @@ function makeLocalCommandHarness(input: {
                     ensureThread: () => Effect.succeed(providerThread),
                     resumeThread: () => Effect.succeed(projection.providerThreads[0]),
                   } as never)
-                : Effect.die("A local command must not open a native session."),
+                : input.openError !== undefined
+                  ? Effect.fail(input.openError)
+                  : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -999,6 +1009,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
           getTurnStartContext,
+          getSandbox: () => Effect.succeed(input.sandbox ?? null),
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
               ...projection,
@@ -1696,6 +1707,63 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
           class: "provider_error",
           message: "DESCRIPTION is not valid ACP JSON",
         },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("fails the run with its machine's failure when the machine is not connected", () =>
+  Effect.gen(function* () {
+    const at = DateTime.makeUnsafe("2026-09-04T11:00:00Z");
+    const sandbox: OrchestrationV2Sandbox = {
+      id: SandboxId.make("sbx_00000000000000000123"),
+      projectId: ProjectId.make("project-native-account-command"),
+      ownerThreadId: ThreadId.make("thread-native-account-command"),
+      ownerMemberId: null,
+      driverId: ComputeDriverId.make("docker"),
+      size: "default",
+      state: "ready",
+      generation: 1,
+      driverRef: "container",
+      admission: null,
+      runnerLostAt: null,
+      sleepReason: null,
+      failure: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const openError = new WorkspaceHostUnavailableError({ sandboxId: sandbox.id });
+    const failed = makeLocalCommandHarness({
+      text: "Continue",
+      openError,
+      sandbox: {
+        ...sandbox,
+        state: "failed",
+        failure: {
+          code: "missing",
+          message: "The machine and its disk are gone. Retry starts a new one.",
+          retryable: true,
+        },
+      },
+    });
+    yield* failed.start;
+    expect(failed.startRootRun).not.toHaveBeenCalled();
+    expect(failed.projection().runs.at(-1)?.status).toBe("failed");
+    expect(failed.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "This message didn't run",
+        failure: { message: "The machine and its disk are gone. Retry starts a new one." },
+      },
+    ]);
+
+    const ready = makeLocalCommandHarness({ text: "Continue", openError, sandbox });
+    yield* ready.start;
+    expect(ready.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "This message didn't run",
+        failure: { message: "The machine stopped. Send your message again." },
       },
     ]);
   }),

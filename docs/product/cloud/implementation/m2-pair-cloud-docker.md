@@ -5226,8 +5226,8 @@ window is seconds, so a new reverse transition is not worth it.
     `.each` because the expected error differs.
 - `apps/server/src/orchestration-v2/ProviderTurnStartService.test.ts`:
   - `makeLocalCommandHarness` (282) gains two options:
-    - `openError?: unknown`: `open` fails with this error as-is, unlike `openFailure`, which wraps
-      its error (833–845).
+    - `openError?: ProviderSessionManagerV2Error`: `open` fails with this error as-is, unlike
+      `openFailure`, which wraps its error (833–845).
     - `sandbox?: OrchestrationV2Sandbox`: sets `thread.sandboxId` and adds `getSandbox` to the
       ProjectionStore mock (999).
   - New case beside "terminalizes a starting run when its provider session cannot open" (1669):
