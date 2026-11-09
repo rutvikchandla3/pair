@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
   type OrchestrationV2Run,
+  type Project,
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
@@ -32,6 +33,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as PairCloudProjects from "../project/PairCloudProjects.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -58,6 +60,9 @@ interface Seen {
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
+  /** The projects B lists, which pages of `t3_project_list` were asked for. */
+  readonly listing: ReadonlyArray<Project>;
+  readonly listPages: number;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
 }
@@ -67,6 +72,8 @@ const nothingSeen: Seen = {
   launches: [],
   projects: [],
   clones: [],
+  listing: [],
+  listPages: 0,
   stops: [],
 };
 
@@ -170,6 +177,16 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
   Layer.merge(
     Layer.mock(ProjectService.ProjectService)({
       getById: () => Effect.succeedNone,
+      listPage: ({ cursor, limit }) =>
+        Ref.updateAndGet(seen, (current) => ({
+          ...current,
+          listPages: current.listPages + 1,
+        })).pipe(
+          Effect.map(({ listing }) => ({
+            projects: listing.slice(cursor, cursor + limit),
+            nextCursor: cursor + limit < listing.length ? cursor + limit : null,
+          })),
+        ),
       create: (input) =>
         Ref.update(seen, (current) => ({
           ...current,
@@ -226,7 +243,10 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       ),
       Layer.provide(boxLaunches(seen)),
       Layer.provide(
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          ensureScratchProject: Effect.succeed({ projectId: boxProject } as never),
+        }),
       ),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(boxProjects(seen)),
@@ -331,7 +351,16 @@ const makeLaptop = Effect.gen(function* () {
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeedSome({
+              workspaceRoot: "/home/me/app",
+              repositoryIdentity: null,
+            } as never),
+        }),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+          resolve: () => Effect.succeed({ canonicalKey: "github.com/acme/app" } as never),
+        }),
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         Layer.mock(PairCloudProjects.PairCloudProjects)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
@@ -568,6 +597,83 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       expect(failureOf(withUpload)).toMatchObject({ code: "invalid_request" });
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* Ref.get(seen)).launches).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a launch there with no project finds the one with this thread's repository", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+      const entry = (id: string, canonicalKey: string | null): Project => ({
+        id: ProjectId.make(id),
+        title: id,
+        workspaceRoot: `/srv/${id}`,
+        repositoryIdentity:
+          canonicalKey === null
+            ? null
+            : {
+                canonicalKey,
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/app.git",
+                },
+              },
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        deletedAt: null,
+      });
+      const others = Array.from({ length: 100 }, (_, index) =>
+        entry(`project:other-${index}`, null),
+      );
+      const app = entry("project:box-app", "github.com/acme/app");
+      const launch = (args: Record<string, unknown> = {}) =>
+        a.call("thread:laptop-full", "t3_thread_launch", {
+          environmentId: box.environmentId,
+          title: "Run the suite there",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          message: "Run the suite.",
+          ...args,
+        });
+      const setListing = (listing: ReadonlyArray<Project>) =>
+        Ref.update(seen, (current) => ({ ...current, listing, launches: [], listPages: 0 }));
+
+      // The match is on a later page than the first.
+      yield* setListing([...others, app]);
+      const found = yield* launch({ clientRequestId: "found" });
+      expect(found.isError, JSON.stringify(found.content)).toBe(false);
+      expect((yield* Ref.get(seen)).launches.map(({ projectId }) => projectId)).toEqual([app.id]);
+
+      // Nothing there has it, or several do: the agent hears which, and nothing launches.
+      yield* setListing(others);
+      expect(failureOf(yield* launch({ clientRequestId: "none" }))).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("No project there has this repository"),
+      });
+      yield* setListing([app, entry("project:box-app-2", "github.com/acme/app")]);
+      expect(failureOf(yield* launch({ clientRequestId: "several" }))).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("Several projects there have this repository"),
+      });
+      expect((yield* Ref.get(seen)).launches).toEqual([]);
+
+      // A project the agent names, or no project at all, is never looked up.
+      yield* setListing([app]);
+      expect((yield* launch({ projectId: boxProject, clientRequestId: "named" })).isError).toBe(
+        false,
+      );
+      expect((yield* launch({ scratch: true, clientRequestId: "scratch" })).isError).toBe(false);
+      const { launches, listPages } = yield* Ref.get(seen);
+      expect(launches.map(({ projectId }) => projectId)).toEqual([boxProject, boxProject]);
+      expect(listPages).toBe(0);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

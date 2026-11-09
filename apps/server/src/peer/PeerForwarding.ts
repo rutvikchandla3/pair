@@ -8,6 +8,7 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -15,13 +16,17 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
@@ -47,7 +52,9 @@ export class PeerForwarding extends Context.Service<
   {
     /**
      * Runs `tool` in the linked environment `environmentId` with `params`. A
-     * `t3_thread_wait` goes in pieces short enough to survive any route.
+     * `t3_thread_wait` goes in pieces short enough to survive any route, and a
+     * `t3_thread_launch` naming no project goes to the one there with the
+     * calling thread's repository.
      */
     readonly call: <T extends Tool.Any>(
       scope: Scope,
@@ -73,6 +80,20 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadWaitInput,
     ) => Effect.Effect<OrchestratorMcpThreadWaitResult, OrchestratorMcpFailure>;
+    /**
+     * The project in `environmentId` with the repository of the project here
+     * that `parentProjectId` names, or `requested` when the caller named one.
+     * `argument` is what the caller passes to name one, for the message.
+     */
+    readonly resolveProject: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: {
+        readonly parentProjectId: ProjectId;
+        readonly requested: ProjectId | undefined;
+        readonly argument: "projectId" | "target.projectId";
+      },
+    ) => Effect.Effect<ProjectId, OrchestratorMcpFailure>;
     /** The environments this one links to, as an agent sees them. */
     readonly links: (
       scope: Scope,
@@ -103,6 +124,8 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectService.ProjectService;
+  const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
 
   /**
    * The caller's own limits, which travel with every forwarded call: the peer sees only the
@@ -236,6 +259,86 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const resolveProject: PeerForwarding["Service"]["resolveProject"] = Effect.fn(
+    "PeerForwarding.resolveProject",
+  )(function* (scope, environmentId, { parentProjectId, requested, argument }) {
+    if (requested !== undefined) return requested;
+    const here = yield* projects.getById(parentProjectId).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.orElseSucceed(() => undefined),
+    );
+    // The project's own identity is a one-minute cache that reads blank when
+    // cold, so resolve it here, as the other side's t3_project_list does.
+    const key =
+      here === undefined
+        ? undefined
+        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey;
+    if (key === undefined) {
+      return yield* new OrchestratorMcpFailure({
+        code: "target_required",
+        message: `Pass ${argument}: this thread's project has no repository to match there.`,
+      });
+    }
+    const list = ProjectToolkit.tools.t3_project_list;
+    const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
+    let cursor: number | null = 0;
+    while (cursor !== null) {
+      const listed: Tool.Success<typeof list> = yield* forward<Tool.Success<typeof list>>(
+        scope,
+        list.name,
+        list.parametersSchema,
+        list.successSchema,
+        environmentId,
+        { cursor, limit: 100 },
+      );
+      matches.push(
+        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
+      );
+      cursor = listed.nextCursor;
+    }
+    if (matches.length === 1) return matches[0]!.id;
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        matches.length === 0
+          ? `No project there has this repository (${key}). Pass ${argument}; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
+          : `Several projects there have this repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass ${argument}.`,
+    });
+  });
+
+  /**
+   * A launch that names no project and is not scratch inherits the calling thread's, which
+   * means nothing on a machine that has none of this one's projects: its project there is the
+   * one with the same repository. A caller outside a thread keeps the other side's error.
+   */
+  const launch = Effect.fn("PeerForwarding.launch")(function* (
+    scope: Scope,
+    tool: Tool.Any,
+    environmentId: EnvironmentId,
+    params: Record<string, unknown>,
+  ) {
+    const shell =
+      params.projectId !== undefined || params.scratch === true || scope.thread === undefined
+        ? null
+        : yield* threads.getThreadShell(scope.thread.threadId).pipe(Effect.mapError(unavailable));
+    const projectId =
+      shell === null
+        ? params.projectId
+        : yield* resolveProject(scope, environmentId, {
+            parentProjectId: shell.projectId,
+            requested: undefined,
+            argument: "projectId",
+          });
+    return yield* forward(
+      scope,
+      tool.name,
+      tool.parametersSchema,
+      tool.successSchema,
+      environmentId,
+      projectId === undefined ? params : { ...params, projectId },
+    );
+  });
+
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
@@ -246,7 +349,19 @@ const make = Effect.gen(function* () {
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : tool.name === "t3_thread_launch"
+        ? (launch(scope, tool, environmentId, params as Record<string, unknown>) as Effect.Effect<
+            Tool.Success<typeof tool>,
+            OrchestratorMcpFailure
+          >)
+        : forward(
+            scope,
+            tool.name,
+            tool.parametersSchema,
+            tool.successSchema,
+            environmentId,
+            params,
+          );
     return Effect.andThen(requireUsable(environmentId), forwarded);
   };
 
@@ -295,6 +410,7 @@ const make = Effect.gen(function* () {
     readThread,
     interruptThread,
     waitForThread,
+    resolveProject,
     links: listLinks,
   });
 });
