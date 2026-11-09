@@ -4358,8 +4358,9 @@ lines of copy, and G2 step 1 checks them together.
     `onContinue` (275) calls `finish()` instead of `setStep("import")`. `AgentsStep` takes a `last` flag for its button label. The server
     refuses the scan on cloud-only (`AgentSessionScanner.ts` 1509–1513), so today's Retry can
     never help.
-  - Finding 5: `apps/web/src/components/settings/SourceControlSettings.tsx`. Read the atom in
-    `SourceControlSettingsPanel` (370) for its `environmentId`, and pass `cloudLaunch` through
+  - Finding 5: `apps/web/src/components/settings/SourceControlSettings.tsx`. In
+    `SourceControlSettingsPanel` (370), read `isCloudLaunchEnvironment(environment?.serverConfig ??
+    null)` (its `environmentId` can be null, so not the atom), and pass `cloudLaunch` through
     `DiscoveryItemRow` (209, 495, 511) to `itemSummary` (147, 259). The unauthenticated branch
     (188–196) then uses the cloud-only text. GitHub is the only provider with `credentials`
     (`packages/source-control-github/src/shared/definition.ts` 84), and its details hold

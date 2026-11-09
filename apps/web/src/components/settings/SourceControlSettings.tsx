@@ -46,6 +46,7 @@ import {
 import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { isCloudLaunchEnvironment } from "@t3tools/client-runtime/state/cloud-target";
 import { sourceControlIcon } from "~/sourceControlPresentation";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -148,10 +149,12 @@ function itemSummary({
   item,
   auth,
   authAccount,
+  cloudLaunch,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
+  readonly cloudLaunch: boolean;
 }) {
   if (isVcsNotReady(item)) {
     return <span>Support for {item.label} is coming soon.</span>;
@@ -186,6 +189,16 @@ function itemSummary({
       return <span>{optionLabel(auth.detail) ?? `Every ${item.label} host is turned off.`}</span>;
     }
 
+    if (auth.status === "unauthenticated" && cloudLaunch) {
+      return (
+        <span>
+          {item.kind === "github"
+            ? "GitHub has no sign-in of its own on Pair Cloud. Cloud threads push with the GitHub App, set in its details, or with each member's GitHub."
+            : `${item.label} has no sign-in on Pair Cloud.`}
+        </span>
+      );
+    }
+
     if (auth.status === "unauthenticated") {
       return (
         <span>
@@ -208,9 +221,11 @@ function itemSummary({
 
 function DiscoveryItemRow({
   item,
+  cloudLaunch,
   children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  readonly cloudLaunch: boolean;
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
@@ -256,7 +271,7 @@ function DiscoveryItemRow({
               ) : null}
             </div>
             <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
-              {itemSummary({ item, auth, authAccount })}
+              {itemSummary({ item, auth, authAccount, cloudLaunch })}
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -372,6 +387,7 @@ export function SourceControlSettingsPanel() {
 
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
+  const cloudLaunch = isCloudLaunchEnvironment(environment?.serverConfig ?? null);
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
   const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
   const discovery = useEnvironmentQuery(
@@ -492,7 +508,7 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} cloudLaunch={cloudLaunch} />
               ))}
             </SettingsSection>
           ) : null}
@@ -508,7 +524,11 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                <DiscoveryItemRow
+                  key={`provider:${item.kind}`}
+                  item={item}
+                  cloudLaunch={cloudLaunch}
+                >
                   {hostSettingsPanel(item)}
                 </DiscoveryItemRow>
               ))}
