@@ -117,7 +117,8 @@ jobs:
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
         with:
-          install-args: --filter=t3...
+          # build-runner (apps/server/scripts/cli.ts) imports scripts/lib.
+          install-args: --filter=t3... --filter=@t3tools/scripts...
 
       - name: Plan the release
         id: plan
