@@ -279,6 +279,7 @@ export const CodexDriver: ProviderDriver<
       ),
     );
     const textGeneration = yield* makeCodexTextGeneration(
+      instanceId,
       effectiveConfig,
       processEnv,
       snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),

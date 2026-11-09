@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  type ModelSelection,
   PullRequestOperationError,
   type PullRequestDetail,
   type PullRequestRef,
@@ -20,26 +21,69 @@ import {
   type PullRequestStack,
   ProjectId,
   type RepositoryIdentity,
+  type ThreadId,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as SandboxActivity from "../sandbox/lifecycle/SandboxActivity.ts";
+import { makeSandboxTempDirectory } from "../sandbox/providers/SandboxProviderHome.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
+import { threadPullRequestKeysEqual } from "../sourceControl/threadPullRequests.ts";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
+
+export interface ReviewGuideRequester {
+  /** Holds `terminal:operate`: on Pair Cloud the guide runs in a linked thread's machine. */
+  readonly mayUseMachines: boolean;
+}
+
+/** Where the guide's git and investigation run: the project's checkout, or a cloud thread's. */
+interface ReviewGuideCheckout {
+  readonly root: string;
+  readonly host: WorkspaceHost;
+  readonly threadId: ThreadId | undefined;
+}
+
+const MACHINE_GUIDE =
+  "On Pair Cloud, a guide is written in the machine of a cloud thread on this pull request";
+
+/** Cloud threads of the project linked to the pull request, newest first. */
+const linkedMachineThreads = (
+  key: ThreadPullRequestKey,
+  projectId: ProjectId,
+  threads: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>,
+) =>
+  threads
+    .flatMap((thread) =>
+      thread.projectId === projectId &&
+      thread.sandboxId !== undefined &&
+      thread.worktreePath !== null &&
+      thread.lineage.sideChat !== true &&
+      (thread.pullRequests ?? []).some(
+        (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key),
+      )
+        ? [{ id: thread.id, title: thread.title, worktreePath: thread.worktreePath }]
+        : [],
+    )
+    .toReversed();
 
 export class PullRequestReviewGuideService extends Context.Service<
   PullRequestReviewGuideService,
@@ -49,6 +93,7 @@ export class PullRequestReviewGuideService extends Context.Service<
     ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestService.PullRequestError>;
     readonly generate: (
       input: PullRequestRef,
+      requester: ReviewGuideRequester,
     ) => Effect.Effect<
       PullRequestReviewGuideResult & { readonly started: boolean },
       PullRequestService.PullRequestError
@@ -72,6 +117,9 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const sandboxActivity = yield* SandboxActivity.SandboxActivity;
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
@@ -123,6 +171,67 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const refuse = (detail: string) =>
+    new PullRequestOperationError({ operation: "generateReviewGuide", detail });
+
+  // Never this server's host on Pair Cloud: the checkout and the agent's tools stay in a machine.
+  const machineCheckout = Effect.fn("PullRequestReviewGuideService.machineCheckout")(function* (
+    key: ThreadPullRequestKey,
+    projectId: ProjectId,
+    requester: ReviewGuideRequester,
+  ) {
+    const threads = yield* projections.getThreadsWithPullRequests().pipe(
+      Effect.mapError(
+        (cause) =>
+          new PullRequestOperationError({
+            operation: "generateReviewGuide",
+            detail: "Could not read the pull request's threads.",
+            cause,
+          }),
+      ),
+    );
+    const linked = linkedMachineThreads(key, projectId, threads);
+    const newest = linked[0];
+    if (newest === undefined) {
+      return yield* refuse(
+        `${MACHINE_GUIDE}, and none is linked to it. Link it to a cloud thread, then write the guide.`,
+      );
+    }
+    if (!requester.mayUseMachines) {
+      return yield* refuse(
+        `${MACHINE_GUIDE}, and this session can't use machines. Write it from a session that can open that thread's terminal.`,
+      );
+    }
+    for (const thread of linked) {
+      const host = yield* Effect.option(hosts.forPath(thread.worktreePath));
+      if (Option.isSome(host) && host.value.kind === "sandbox") {
+        return {
+          root: thread.worktreePath,
+          host: host.value,
+          threadId: thread.id,
+        } satisfies ReviewGuideCheckout;
+      }
+    }
+    return yield* refuse(`Wake the machine of ‘${newest.title}’, then write the guide.`);
+  });
+
+  // A machine's git runs as the agent and the runner's file calls as root, so the agent makes it.
+  const scratchDirectory = (host: WorkspaceHost) =>
+    host.kind === "local"
+      ? fileSystem.makeTempDirectoryScoped({
+          directory: config.worktreesDir,
+          prefix: "review-guide-",
+        })
+      : Effect.acquireRelease(
+          makeSandboxTempDirectory(host, "t3-review-guide-").pipe(
+            Effect.mapError((cause) => refuse(cause.message)),
+          ),
+          (directory) =>
+            host.fileSystem
+              .remove(directory, { recursive: true })
+              .pipe(Effect.ignore({ log: true })),
+        );
+
   const readStored = (key: ThreadPullRequestKey) =>
     guides.get(key).pipe(
       Effect.mapError(
@@ -152,13 +261,14 @@ const make = Effect.gen(function* () {
   });
 
   const checkoutHead = Effect.fn("PullRequestReviewGuideService.checkoutHead")(function* (
-    workspaceRoot: string,
+    checkout: ReviewGuideCheckout,
     locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     stack: PullRequestStack | null,
     runId: string,
   ) {
+    const workspaceRoot = checkout.root;
     // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
     const names = yield* git
       .execute({
@@ -297,10 +407,7 @@ const make = Effect.gen(function* () {
       },
       { concurrency: 4 },
     );
-    const directory = yield* fileSystem.makeTempDirectoryScoped({
-      directory: config.worktreesDir,
-      prefix: "review-guide-",
-    });
+    const directory = yield* scratchDirectory(checkout.host);
     const path = `${directory}/checkout`;
     yield* git.execute({
       operation: "PullRequestReviewGuideService.addWorktree",
@@ -366,47 +473,43 @@ const make = Effect.gen(function* () {
   const write = Effect.fn("PullRequestReviewGuideService.write")(function* (
     input: PullRequestRef,
     key: ThreadPullRequestKey,
-    workspaceRoot: string,
+    checkout: ReviewGuideCheckout,
+    model: { readonly modelSelection: ModelSelection; readonly instructions: string },
     locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     runId: string,
     owns: Effect.Effect<boolean>,
   ) {
-    const [activity, settings, providers, stack] = yield* Effect.all(
+    const { modelSelection, instructions } = model;
+    const [activity, stack] = yield* Effect.all(
       [
         pullRequests.activity(input),
-        serverSettings.getSettings,
-        providerRegistry.getProviders,
         pullRequests.stack(input).pipe(Effect.orElseSucceed(() => null)),
       ],
       { concurrency: "unbounded" },
     );
-    const projectSettings = resolveProjectSettings(settings, input.projectId).settings;
-    const modelSelection = ServerSettings.resolveReviewGuideModelSelection(
-      projectSettings,
-      providers,
-      input.projectId,
-    );
+    // A run can outlast the idle window; it counts as viewing the thread whose machine it uses.
+    if (checkout.threadId !== undefined) yield* sandboxActivity.view(checkout.threadId);
     const { generated, change } = yield* checkoutHead(
-      workspaceRoot,
+      checkout,
       locator,
       detail,
       headSha,
       stack,
       runId,
     ).pipe(
-      Effect.flatMap((checkout) =>
+      Effect.flatMap((scratch) =>
         Effect.all(
           {
             generated: textGeneration.generateReviewGuide({
-              ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
-              cwd: checkout.path,
+              ...reviewGuideInputFromPullRequest(detail, activity, scratch.baseCommit),
+              cwd: scratch.path,
               modelSelection,
-              instructions: projectSettings.reviewGuideInstructions,
-              stack: checkout.stack,
+              instructions,
+              stack: scratch.stack,
             }),
-            change: readChange(checkout.path, checkout.baseCommit),
+            change: readChange(scratch.path, scratch.baseCommit),
           },
           { concurrency: "unbounded" },
         ),
@@ -436,7 +539,7 @@ const make = Effect.gen(function* () {
 
   const generate: PullRequestReviewGuideService["Service"]["generate"] = Effect.fn(
     "PullRequestReviewGuideService.generate",
-  )(function* (input) {
+  )(function* (input, requester) {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(
         (cause) =>
@@ -455,6 +558,27 @@ const make = Effect.gen(function* () {
     }
     const { key, workspaceRoot, identity } = yield* keyFor(input);
     const locator = yield* requireOwnRepository(key, identity);
+    const projectSettings = resolveProjectSettings(settings, input.projectId).settings;
+    const model = {
+      modelSelection: ServerSettings.resolveReviewGuideModelSelection(
+        projectSettings,
+        yield* providerRegistry.getProviders,
+        input.projectId,
+      ),
+      instructions: projectSettings.reviewGuideInstructions,
+    };
+    // The machine's agent can read the credential, so a member's own account never goes there.
+    if (
+      config.cloudOnly &&
+      providerInstanceOwner(settings, model.modelSelection.instanceId) !== undefined
+    ) {
+      return yield* refuse(
+        "Review guides on Pair Cloud run on a team account, and this guide's model is a member's own. Pick a team account for Review guide model in Settings → Source Control.",
+      );
+    }
+    const checkout: ReviewGuideCheckout = config.cloudOnly
+      ? yield* machineCheckout(key, input.projectId, requester)
+      : { root: workspaceRoot, host: hosts.local, threadId: undefined };
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
@@ -505,7 +629,7 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(input, key, workspaceRoot, locator, detail, currentHeadSha, runId, owns).pipe(
+    yield* write(input, key, checkout, model, locator, detail, currentHeadSha, runId, owns).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

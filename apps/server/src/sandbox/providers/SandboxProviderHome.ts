@@ -72,3 +72,26 @@ export const ensureSandboxProviderHome = Effect.fn("SandboxProviderHome.ensure")
   if (exitCode !== 0) return yield* new SandboxProviderHomeError({ home });
   return home;
 });
+
+export class SandboxTempDirectoryError extends Schema.TaggedError<SandboxTempDirectoryError>()(
+  "SandboxTempDirectoryError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "Could not create a temporary directory in the machine.";
+  }
+}
+
+/** A temp directory the agent user owns, for files the agent writes. Callers remove it. */
+export const makeSandboxTempDirectory = Effect.fn("SandboxProviderHome.makeTempDirectory")(
+  function* (host: { readonly spawner: WorkspaceHost["spawner"] }, prefix: string) {
+    const directory = yield* host.spawner
+      .string(ChildProcess.make("mktemp", ["-d", "-t", `${prefix}XXXXXX`]))
+      .pipe(
+        Effect.map((stdout) => stdout.trim()),
+        Effect.mapError((cause) => new SandboxTempDirectoryError({ cause })),
+      );
+    if (!directory.startsWith("/")) return yield* new SandboxTempDirectoryError({});
+    return directory;
+  },
+);

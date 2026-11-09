@@ -72,7 +72,7 @@ release and runs the test. 2.47 unblocks G2 step 13, so it goes early.
 | 2.43 | M1                                                       |
 | 2.44 | M1                                                       |
 | 2.45 | 2.22, 2.24                                               |
-| 2.46 | M1                                                       |
+| 2.46 | 2.1, 2.22                                                |
 | 2.47 | M1                                                       |
 
 ## What the code changed in 10 §2
@@ -303,9 +303,10 @@ their own. Build order: 2.4, 2.1, 2.38, 2.42 (wave 1), then 2.2, 2.37, 2.39 (wav
   stalling other threads. Bounds go only on replay-safe types.
 - **2.42 keeps (a), (b) and (c). (d) and (e) become new rows, 2.46 and 2.47.** (d) runs review-guide
   investigations inside the machine with its env. It is a provider-shaped feature, not a small
-  defect, and today it already fails with a clear message
-  (`TextGenerationOperations.cloudInvestigationUnsupported`,
-  `packages/provider-core/src/server/textGenerationOperations.ts` 43). (e) is undiagnosed provider
+  defect. Its refusal (`TextGenerationOperations.cloudInvestigationUnsupported`) never fired,
+  because the guide's checkout was always on the server, so on Pair Cloud the investigation ran
+  on the server's host. 2.46 moves it into a linked thread's machine and removes the refusal.
+  (e) is undiagnosed provider
   auth and blocks G2 step 13 (a managed Codex turn), so it needs its own owner and urgency.
   Specs for both close this track.
 
@@ -3957,14 +3958,198 @@ test asserting the temp `cwd`. The trust text gets a capture, not a test.
 
 ### 2.46 (new) `feat(server): run review-guide investigations on cloud threads in their machine`
 
-Review-guide investigations on a cloud thread fail today with
-`cloudInvestigationUnsupported` (`packages/provider-core/src/server/textGenerationOperations.ts`
-43). Commit `dc9a23b9d` moved commit and PR text generation to the server, and set the pattern.
-This row runs the investigation with the machine's workspace host and the sandbox env
-(`SandboxSettings.env`, settings.ts 1216), per provider: `ClaudeTextGeneration.ts` (198) and
-`CodexTextGeneration.ts` (212) each decide whether their investigation can use a remote cwd, or
-keep the clear refusal. **Needs:** M1. Spec when scheduled. It is provider-shaped, so it needs one
-decision per adapter, and it is not a G2 step.
+On a cloud-only server, a review guide's investigation runs in the machine of the thread linked to
+the pull request, never on the server. Today it runs on the server on every server. Only
+`PullRequestReviewGuideService` asks for an investigation, and it always builds its scratch
+checkout from `project.workspaceRoot` under `ServerConfig.worktreesDir` (`checkoutHead`, 154–332;
+temp directory 300). So `cloudInvestigationUnsupported` (`textGenerationOperations.ts` 43;
+`ClaudeTextGeneration.ts` 197, `CodexTextGeneration.ts` 211) never fires. On Pair Cloud, Claude or
+Codex therefore runs with `Read`, `Grep` and `git` on the server host and the server's env. `Read`
+is not confined to the checkout, and the prompt carries text from the PR's author. That breaks
+cloud-only (06 §10: text generation gets "no tools … or run in a machine"). On every other server
+the guide keeps running in the project's checkout on the server, which is allowed there and works
+for cloud threads' PRs today. Line numbers are from `c937dbf4c`.
+
+- **Needs:** 2.22 (`ServerConfig.cloudOnly`) and 2.1 (`SandboxActivity`), both landed.
+  **Unblocks:** none; not a G2 step.
+- **Files:**
+  - `apps/server/src/pullRequest/PullRequestReviewGuideService.ts`:
+    - New pure `linkedMachineThreads(key, projectId, threads)`. It takes threads in the project
+      whose `pullRequests` hold the key (`threadPullRequestKeysEqual`, `stack-dismissed` links and
+      side chats left out, as `linkedThreads.ts` does) and that have a `sandboxId` and a
+      `worktreePath`, newest first.
+    - `generate(input, requester)` takes `{ mayUseMachines }` (see **Access and billing**). Before
+      claiming the run, `generate` resolves the guide's model, which `write` then uses. On
+      `config.cloudOnly`, a model on a member's own instance fails first (see **Access and
+      billing**). Then no candidate fails `PullRequestOperationError` "On
+      Pair Cloud, a guide is written in the machine of a cloud thread on this pull request, and
+      none is linked to it. Link it to a cloud thread, then write the guide." A requester who may
+      not use machines fails "…, and this session can't use machines. Write it from a session that
+      can open that thread's terminal." Otherwise resolve each candidate's host with
+      `WorkspaceHosts.forPath(worktreePath)` and take the first sandbox host. When none resolves,
+      fail "Wake the machine of ‘<newest title>’, then write the guide." These fail the request, so
+      no run is recorded. Off cloud-only, nothing changes.
+    - `checkoutHead` and `write` take a `checkout: { root, host }` instead of `workspaceRoot`. On
+      the machine, `root` is the thread's `worktreePath`, and every `git.execute` there already
+      routes to the machine by `cwd` (0.3). The scratch directory comes from a small
+      `scratchDirectory(host)`. The local host keeps today's `makeTempDirectoryScoped` under
+      `worktreesDir`. A sandbox host runs `mktemp -d -t t3-review-guide-XXXXXX` through
+      `host.spawner`, so the agent user owns it, and a finalizer removes it with
+      `host.fileSystem.remove`. The runner's file calls run as root (HANDOFF 1.11), and git runs as
+      the agent, so a runner-made temp directory can't take the worktree.
+    - Before the checkout, `SandboxActivity.view(threadId)` restarts the machine's idle clock, so
+      idle sleep doesn't cut a run that can take up to 15 minutes.
+  - `apps/server/src/ws.ts` passes `mayUseMachines: currentSession.scopes.includes(terminal:operate)`.
+    `apps/server/src/mcp/toolkits/pullRequests/handlers.ts` (`write_pull_request_guides`) passes
+    `true`.
+  - `apps/server/src/orchestration-v2/ProjectionStore.ts`: `ProjectionThreadPullRequests` (198)
+    adds `title`, `sandboxId` and `worktreePath` to its `Pick`. `getThreadsWithPullRequests`
+    (7000) already decodes the whole payload.
+  - New `apps/server/src/textGeneration/machineInvestigation.ts`: `makeMachineInvestigationFor`
+    resolves an investigation's `cwd` host. For a sandbox host it returns the host and its env,
+    `sandboxProviderSessionEnvironmentFor({ host, instanceId, threadId: undefined })` plus the
+    instance's home (`ensureSandboxProviderHome`), as `ClaudeAdapterV2` builds it (5192–5208). An
+    unreachable machine fails with its message.
+  - `apps/server/src/textGeneration/ClaudeTextGeneration.ts` (`runClaudeCommand`, 187): an
+    `investigate` request whose `cwd` is in a machine spawns there, with that env and
+    `CLAUDE_CONFIG_DIR`. It spawns the image's `claude` with no `resolveSpawnCommand` (the bridge
+    does the same, ClaudeSandboxProcess.ts 101). It always passes `--strict-mcp-config`, because the image has no
+    `managed-mcp.json`. The flags and `--tools Read,Grep,Glob,Bash` with the allow and deny lists
+    are unchanged. A `ProviderCloudLocalOnlyError` becomes a `TextGenerationError` whose detail is
+    `Local only. <reason>`, the text `cloudModelDisabledReason` uses. Every other request keeps
+    `dc9a23b9d`'s rule: it runs on the server in a temp directory. `makeClaudeTextGeneration` (84)
+    takes `instanceId` first, and `ClaudeDriver.ts` (170) passes it.
+  - `apps/server/src/textGeneration/CodexTextGeneration.ts` (`runCodexJson`, 186): the same
+    branch. It runs the image's `codex` with `CODEX_HOME` set to the instance's machine home and
+    the same session env. The schema and output files go in an `mktemp -d` directory that the
+    agent owns on that host, because Codex writes `--output-last-message` as the agent. `codex mcp
+    list` also runs there, and both resolve with the machine's platform. Managed Codex resolves with
+    `CodexManagedRuntime.resolveFor(host)` (143), its token forward, as the adapter does.
+    `makeCodexTextGeneration` (52) takes `instanceId` first, and its runtime argument becomes
+    `resolveRuntimeFor(host)`. `CodexDriver.ts` (281) passes the id, and `CodexManagedProvider.ts`
+    (263) passes `withAccess(runtime.resolveFor(host))`, which is `resolve` on the local host.
+  - `apps/server/src/sandbox/providers/SandboxProviderHome.ts`: `makeSandboxTempDirectory(host,
+    prefix)` runs `mktemp -d -t <prefix>XXXXXX` through the host's spawner. Codex and the guide's
+    scratch directory share it.
+  - `packages/provider-core/src/server/textGenerationOperations.ts`: delete
+    `cloudInvestigationUnsupported` (43). Nothing else refers to it.
+  - Docs: the text-generation row of `docs/product/cloud/02-workspace-host.md` (88). The review
+    guide row of `docs/product/cloud/07-access-and-data.md` (217) becomes "The linked thread's
+    machine | Refused, wake it". One sentence goes in `docs/user/source-control.md` "Review guides"
+    (257).
+- **Types and services:** `linkedMachineThreads` is module-private and tested through
+  `generate`. No new service. No contract change: the request already carries `cwd`, and the host
+  comes from it.
+- **Commands and events:** none. **Migrations:** none.
+
+**One decision per adapter.** Investigation means `generateReviewGuide` with
+`investigate` set (`textGenerationOperations.ts` 171).
+
+| Adapter     | Decision                     | Why                                                                                                                                                                                                                           |
+| ----------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude      | Runs in the machine          | It already investigates read-only (`--tools` with allow and deny lists, `dontAsk`). Its `claude` ships in the image, and setup tokens and API keys work there (1.26). A server-only sign-in fails with its Local only reason. |
+| Codex       | Runs in the machine          | `exec -s read-only` already investigates. The image ships `codex`. API keys and managed accounts work there (1.26, managed via `resolveFor(host)`). A server-only `codex login` fails with its Local only reason.             |
+| Cursor      | Keeps the refusal, no change | `withoutInvestigation` (`provider-cursor` textGeneration.ts 233) refuses on every server: its runner has no read-only tool mode. Its sessions don't run in machines either (`sandboxCredentialSupport` → `Unsupported`).      |
+| Grok        | Keeps the refusal, no change | `withoutInvestigation` (`provider-grok` textGeneration.ts 140), as for Cursor. Cloud credentials for Grok are Later (06 §11).                                                                                                 |
+| OpenCode    | Keeps the refusal, no change | `withoutInvestigation` in v1 (`provider-opencode` textGeneration.ts 395) and v2 (`v2/textGeneration.ts` 212), as for Cursor. Cloud credentials are Later.                                                                     |
+| Antigravity | Keeps the refusal, no change | `withoutInvestigation` (AntigravityTextGeneration.ts 344), as for Cursor. Not supported in machines.                                                                                                                          |
+| Kiro        | Keeps the refusal, no change | Kiro has no text generation at all ("Kiro does not provide application text generation.", `provider-kiro` driver.ts 43–56). Cloud credentials are Later.                                                                      |
+
+The five refusals all fail before any host is resolved, and their message names the fix (another
+review guide model). `TextGeneration.ts`'s fallback already offers only `codex` and `claudeAgent`
+for guides (`INVESTIGATING_DRIVERS`, 68). Pi, Muse, fx and the ACP registry agents, Replay
+included, also refuse everywhere and stay as they are.
+
+**With 2.45.** 2.45 confines text generation on cloud-only. Its rule must key on the request's
+`cwd` host being the server (`hosts.local`), not on the mode alone. A request whose `cwd` is in a
+machine runs there with its tools, and after this row only an investigation does. It must not be
+moved to an empty temp directory or lose `--tools`. 2.45 also refuses an `investigate` request on a
+server `cwd` on cloud-only, rather than running it without tools. After this row nothing sends one,
+so that refusal is only a backstop, and it lives in 2.45's cloud-only branch with its
+`ServerConfig.cloudOnly` read. 2.45's text-generation test should also assert that a machine `cwd`
+keeps its `cwd` and tools. Together the two rows mean no provider CLI with tools, and no review-guide
+git, runs on a cloud-only server's host. The PR reads the guide needs (`detail`, `activity`,
+`stack`) are forge calls, as 07 allows.
+
+**Access and billing.**
+
+- Who may use the machine: the same permission as opening that thread's terminal or files. Those
+  RPCs need only the session's `terminal:operate` (and `filesystem:read`) scope; nothing checks
+  the member against the thread, and 1.17's attached threads open the shared machine the same way.
+  So the WebSocket RPC passes `mayUseMachines` from the session's scopes. Every team role grants
+  `terminal:operate`, so in practice the refusal reaches pairing links and clients made with
+  narrower scopes. When every linked thread is one the requester can't use, the refusal matches
+  the no-thread case and says what to do. The agent tool passes `true`: its caller already passed
+  `writesWithCapability` (no read-only clients, no linked environment), and such a caller can run
+  commands in any thread's machine by prompting it.
+- Whose account: the investigation spends the review-guide model's provider instance, as it does
+  on the server today. In the machine it is that instance's one headless credential
+  (`forProviderSession`, 1.26) and its own home `homes/<instanceId>`, never the linked thread's
+  session, the requester's own account, or the server's sign-in. Anyone who can prompt the thread
+  or open its terminal can read that credential (D15). That is accepted for a team instance, so a
+  member's own instance (`providerInstanceOwner`) is refused before any machine work: "Review
+  guides on Pair Cloud run on a team account, and this guide's model is a member's own. Pick a
+  team account for Review guide model in Settings → Source Control." A Local only instance fails
+  with `Local only. <reason>`. Machine time bills to the machine's owner member and owning thread
+  (04 §1). Text generation is not in usage totals (`docs/user/usage.md`).
+- No requesting member: nothing generates guides in the background today. Only the RPC and the
+  agent tool call `generate`, and a scheduled task reaches it through the agent tool. `requester`
+  is required, so a future background caller must say whether it may use machines.
+
+**Proposed gap answers.**
+
+- Which machine: a thread linked to the PR, because its clone has the repo and the head, and its
+  git credentials already serve that repo. A PR with no linked thread gets no guide on Pair Cloud
+  in M2. Running in any machine of the project, or a short-lived machine for the guide, is left
+  for a maintainer to ask for.
+- Asleep: refuse with the thread's name rather than wake and wait. A **Wake** is one click, and
+  2.2's proposal keeps opening a thread from waking a machine. Waking from here would pull
+  `SandboxWake` and the ready wait into a PR-layer service.
+- The guide's provider credential goes into that machine, where the thread's agent runs as the same
+  user. On Pair Cloud any member can already reach any thread's credential (D15), so nothing new is
+  exposed. The review-guide model picker stays as it is, and a Local only account fails with its
+  reason.
+- Non-cloud-only servers keep the server checkout even for a cloud thread's PR. That works today
+  and accepts any sign-in.
+
+**Tests.**
+
+- `apps/server/src/textGeneration/ClaudeTextGeneration.test.ts`: new case "investigates a cloud
+  thread's checkout in its machine". It registers a fake sandbox host at `/t3-sandbox/sbx_review`
+  whose spawner records commands and answers with the canned envelope, the way
+  `ClaudeAdapterV2.test.ts` does. It asserts one spawn on that host (none on the local one), with
+  command `claude`, the machine `cwd`, `--tools Read,Grep,Glob,Bash`, and `CLAUDE_CONFIG_DIR` set
+  to the machine home. It fails on `main` with "Review guides can't read a cloud thread's checkout
+  yet." Write it first.
+- `apps/server/src/textGeneration/CodexTextGeneration.test.ts`: the same case for Codex. It also
+  asserts `mktemp` on the sandbox spawner and the schema and output paths inside that directory.
+- `apps/server/src/pullRequest/PullRequestReviewGuideService.test.ts`: cases with
+  `cloudOnly: true`. They register a sandbox-kind host whose root is a local temp directory over
+  the file's real repos, so git really runs, through a recorded spawner. (a) Two linked threads,
+  the newer asleep: the guide is written from the other's clone, `mktemp` and `worktree add` run on
+  the machine's spawner, the thread is viewed, and the scratch directory is gone afterwards. A
+  table of refusals: (b) no linked thread, (c) a linked thread whose machine the requester can't
+  use (`mayUseMachines: false`), (d) a model on a member's own instance, (e) a linked thread whose
+  machine is asleep. Each fails `generate` with its detail, runs nothing on the machine, and
+  records no run. All five fail on
+  `main`. The existing cases stay as the off-cloud-only proof.
+
+**Verify.** `vp test run` on the three test files; `vp run typecheck` in `apps/server` and
+`packages/provider-core`; `vp run check:changed feat/pair`. Runtime transcript at the integrated
+pass: on Pair Cloud, write a guide for a cloud thread's PR. The machine's process list shows
+`claude -p` under `/tmp/t3-review-guide-*`, and the server's process list shows no provider CLI.
+
+**Reviewer checks.**
+
+- No `git` or provider process starts on the server host for a guide on cloud-only, and the
+  scratch worktree is outside every thread's `worktreePath`, so checkpoints, the mirror and 2.7's
+  snapshot never see it.
+- The investigation's env is `forProviderSession`'s, never the server's `process.env`, and the
+  server's `binaryPath` and `homePath` are never used in a machine.
+- Hit every surface. Entry points: the PR **Guide** tab on web and mobile, and the agent tool
+  (`mcp/toolkits/pullRequests`), all reach `PullRequestReviewGuideService.generate`. Clients need no
+  change, because both show `run.detail`. Providers: the table above. Contracts: none. Connection
+  modes: server-side only. Docs: 02, 07 and the user guide sentence.
 
 ### 2.47 (new) `fix(web,server): keep a managed Codex account's provider instance through sign-in`
 

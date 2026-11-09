@@ -9,10 +9,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import {
   ProjectId,
   GitCommandError,
+  MemberId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  SandboxId,
+  ThreadId,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
@@ -20,17 +27,21 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as SandboxActivity from "../sandbox/lifecycle/SandboxActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.ts";
 import * as PullRequestService from "./PullRequestService.ts";
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const projectId = ProjectId.make("project-1");
 const ACME_APP = {
@@ -52,6 +63,58 @@ const reference: PullRequestRef = {
   repository: "acme/app",
   number: 7,
 };
+
+const requester = { mayUseMachines: true };
+const decodeSandboxId = Schema.decodeSync(SandboxId);
+
+const cloudThread = (input: {
+  readonly id: string;
+  readonly title: string;
+  readonly sandbox: string;
+  readonly worktreePath: string;
+}): ProjectionStore.ProjectionThreadPullRequests => ({
+  id: ThreadId.make(input.id),
+  projectId,
+  title: input.title,
+  lineage: {
+    parentThreadId: null,
+    relationshipToParent: null,
+    rootThreadId: ThreadId.make(input.id),
+  },
+  settledOverride: null,
+  settledAt: null,
+  sandboxId: decodeSandboxId(input.sandbox),
+  worktreePath: input.worktreePath,
+  pullRequests: [
+    {
+      host: "github.com",
+      repository: "acme/app",
+      number: 7,
+      url: "https://github.com/acme/app/pull/7",
+      source: "created",
+      linkedAt: "2026-11-01T00:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    },
+  ],
+});
+
+/** A machine whose disk is this one: git really runs, through its own recorded spawner. */
+const registerMachine = (root: string, spawns: Array<string>) =>
+  Effect.gen(function* () {
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+    yield* hosts.register(root, {
+      ...hosts.local,
+      id: "sbx_review" as WorkspaceHostId,
+      kind: "sandbox",
+      spawner: ChildProcessSpawner.make((command) => {
+        if (command._tag === "StandardCommand") {
+          spawns.push([command.command, ...command.args.map(String)].join(" "));
+        }
+        return hosts.local.spawner.spawn(command);
+      }),
+    });
+  });
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -161,8 +224,22 @@ const makeLayer = (input: {
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
   readonly identity?: typeof ACME_APP;
+  readonly cloudOnly?: boolean;
+  readonly threads?: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>;
+  readonly viewed?: Array<ThreadId>;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) =>
   PullRequestReviewGuideService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThreadsWithPullRequests: () => Effect.succeed(input.threads ?? []),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(SandboxActivity.SandboxActivity)({
+        view: (threadId) => Effect.sync(() => input.viewed?.push(threadId) !== undefined),
+      }),
+    ),
     Layer.provide(
       Layer.effect(
         PullRequestReviewGuides.PullRequestReviewGuideRepository,
@@ -213,8 +290,20 @@ const makeLayer = (input: {
         generateReviewGuide: input.generate,
       } as unknown as TextGeneration.TextGeneration["Service"]),
     ),
-    Layer.provide(ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true })),
-    Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
+    Layer.provide(
+      ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true, ...input.settings }),
+    ),
+    Layer.provide(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          return { ...config, cloudOnly: input.cloudOnly ?? false };
+        }),
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
+      ),
+    ),
   );
 
 const layerBase = Layer.mergeAll(
@@ -250,7 +339,7 @@ const watchRuns = Effect.gen(function* () {
     generate: (
       service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
       input: PullRequestRef,
-    ) => service.generate(input).pipe(Effect.withTracer(tracer)),
+    ) => service.generate(input, requester).pipe(Effect.withTracer(tracer)),
     settled: (
       service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
       input: PullRequestRef,
@@ -461,7 +550,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           context,
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
-        yield* service.generate(reference);
+        yield* service.generate(reference, requester);
         assert.strictEqual(yield* Deferred.await(changed), "feature.txt");
         yield* Deferred.await(stored);
         const result = yield* service.get(reference);
@@ -554,7 +643,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
         const before = yield* service.get(reference);
-        yield* service.generate(reference);
+        yield* service.generate(reference, requester);
         // Join the background run so its failure is visible without polling service state.
         yield* Fiber.await(yield* Deferred.await(started));
         const result = yield* service.get(reference);
@@ -593,8 +682,164 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           context,
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
-        const result = yield* Effect.flip(service.generate(reference));
+        const result = yield* Effect.flip(service.generate(reference, requester));
         assert.include(result.message, "in another repository");
+      }),
+    ),
+  );
+
+  it.effect("writes a Pair Cloud guide in the machine of a linked thread that is awake", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const machineRoot = `${repositories.root}/machine`;
+        const worktreePath = `${machineRoot}/worktrees/t3-1`;
+        yield* git(repositories.root, ["clone", "--quiet", repositories.remote, worktreePath]);
+        const spawns: Array<string> = [];
+        yield* registerMachine(machineRoot, spawns);
+        const awake = cloudThread({
+          id: "thread-awake",
+          title: "Add the feature",
+          sandbox: "sbx_00000000000000000aaa",
+          worktreePath,
+        });
+        // Newer, and its machine is asleep: the guide falls through to the awake one.
+        const asleep = cloudThread({
+          id: "thread-asleep",
+          title: "Follow up",
+          sandbox: "sbx_00000000000000000bbb",
+          worktreePath: "/t3-sandbox/sbx_00000000000000000bbb/worktrees/t3-2",
+        });
+        const viewed: Array<ThreadId> = [];
+        const observed: Array<{ cwd: string; head: string; changed: string }> = [];
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+          driver
+            .execute({ operation: "test.readCheckout", cwd, args })
+            .pipe(Effect.map((result) => result.stdout.trim()));
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            cloudOnly: true,
+            threads: [awake, asleep],
+            viewed,
+            generate: (generation) =>
+              Effect.gen(function* () {
+                observed.push({
+                  cwd: generation.cwd,
+                  head: yield* readCheckout(generation.cwd, ["rev-parse", "HEAD"]),
+                  changed: yield* readCheckout(generation.cwd, [
+                    "diff",
+                    "--name-only",
+                    `${generation.baseCommit}...HEAD`,
+                  ]),
+                });
+                return { stops: [] };
+              }).pipe(Effect.orDie),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const runs = yield* watchRuns;
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+
+        assert.notStrictEqual(result.run?._tag, "Failed", JSON.stringify(result.run));
+        assert.strictEqual(result.guide?.headSha, repositories.headSha);
+        assert.deepStrictEqual(viewed, [awake.id]);
+        assert.deepStrictEqual(
+          observed.map(({ head, changed }) => ({ head, changed })),
+          [{ head: repositories.headSha, changed: "feature.txt" }],
+        );
+        const scratch = observed[0]!.cwd.slice(0, -"/checkout".length);
+        assert.include(spawns, `mktemp -d -t t3-review-guide-XXXXXX`);
+        assert.isTrue(
+          spawns.some((spawn) =>
+            spawn.includes(`worktree add --detach --quiet ${scratch}/checkout`),
+          ),
+          spawns.join("\n"),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        assert.isFalse(yield* fs.exists(scratch));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    { name: "no linked cloud thread", linked: "none", may: true, expected: "none is linked to it" },
+    {
+      name: "a linked thread whose machine the requester can't use",
+      linked: "awake",
+      may: false,
+      expected: "this session can't use machines",
+    },
+    {
+      name: "a model on a member's own account",
+      linked: "awake",
+      may: true,
+      memberOwned: true,
+      expected: "Pick a team account for Review guide model in Settings → Source Control.",
+    },
+    {
+      name: "a linked thread whose machine is asleep",
+      linked: "asleep",
+      may: true,
+      expected: "Wake the machine of ‘Add the feature’, then write the guide.",
+    },
+  ] as const)("refuses a Pair Cloud guide with $name", (row) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const machineRoot = `${repositories.root}/machine`;
+        const spawns: Array<string> = [];
+        yield* registerMachine(machineRoot, spawns);
+        const { linked, may, expected } = row;
+        const worktreePath =
+          linked === "asleep"
+            ? "/t3-sandbox/sbx_00000000000000000aaa/worktrees/t3-1"
+            : `${machineRoot}/worktrees/t3-1`;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            cloudOnly: true,
+            threads:
+              linked === "none"
+                ? []
+                : [
+                    cloudThread({
+                      id: "thread-1",
+                      title: "Add the feature",
+                      sandbox: "sbx_00000000000000000aaa",
+                      worktreePath,
+                    }),
+                  ],
+            ...("memberOwned" in row && {
+              settings: {
+                providerInstances: {
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    ownerMemberId: MemberId.make("member-bob"),
+                  },
+                },
+              },
+            }),
+            generate: () => Effect.die("a refused guide must not reach text generation"),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const result = yield* Effect.flip(service.generate(reference, { mayUseMachines: may }));
+        assert.include(result.message, expected);
+        assert.deepStrictEqual(spawns, []);
+        assert.isNull((yield* service.get(reference)).run);
       }),
     ),
   );

@@ -20,13 +20,17 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
 import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
-import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -179,6 +183,7 @@ function withFakeCodexEnv<A, E, R>(
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
     const textGeneration = yield* makeCodexTextGeneration(
+      DEFAULT_TEST_MODEL_SELECTION.instanceId,
       config,
       input.environment === undefined ? undefined : { ...process.env, ...input.environment },
       Effect.succeed(
@@ -190,11 +195,12 @@ function withFakeCodexEnv<A, E, R>(
         })),
       ),
       input.managedRuntime
-        ? Effect.succeed({
-            config,
-            environment: input.environment ?? process.env,
-            revision: "test",
-          })
+        ? () =>
+            Effect.succeed({
+              config,
+              environment: input.environment ?? process.env,
+              revision: "test",
+            })
         : undefined,
     );
     return yield* effectFn(textGeneration);
@@ -250,6 +256,103 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Bedrock title");
           }),
       ),
+  );
+
+  it.effect("investigates a cloud thread's checkout in its machine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      // The machine's disk is this one; only its processes are fake.
+      const machineTemp = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-machine-" });
+      const spawned: Array<{
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+        readonly cwd: string | undefined;
+        readonly env: unknown;
+      }> = [];
+      const exited = (stdout: string) =>
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(999_999_996),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(stdout)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      const machineSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("unexpected pipe");
+          const args = command.args.map(String);
+          spawned.push({
+            command: command.command,
+            args,
+            cwd: command.options.cwd,
+            env: command.options.env,
+          });
+          if (command.command === "mktemp") return exited(`${machineTemp}\n`);
+          if (command.command !== "codex") return exited("");
+          if (args.includes("mcp")) return exited("[]");
+          const outputPath = args[args.indexOf("--output-last-message") + 1]!;
+          yield* fs.writeFileString(outputPath, JSON.stringify({ stops: [] })).pipe(Effect.orDie);
+          return exited("");
+        }),
+      );
+      const localInfo = yield* hosts.local.info;
+      yield* hosts.register("/t3-sandbox/sbx_review", {
+        ...hosts.local,
+        id: "sbx_review" as WorkspaceHostId,
+        kind: "sandbox",
+        spawner: machineSpawner,
+        info: Effect.succeed({
+          ...localInfo,
+          environment: { PATH: "/usr/bin", HOME: "/home/t3" },
+        }),
+      });
+      // No codex at this path: a run on the server fails rather than reaching a real CLI.
+      const textGeneration = yield* makeCodexTextGeneration(
+        DEFAULT_TEST_MODEL_SELECTION.instanceId,
+        decodeCodexSettings({ binaryPath: "/nonexistent/codex" }),
+        { PATH: "/nonexistent" },
+      );
+      const cwd = "/t3-sandbox/sbx_review/worktrees/t3-1/review";
+
+      const generated = yield* textGeneration.generateReviewGuide({
+        cwd,
+        number: 7,
+        title: "Fix reconnects",
+        description: "",
+        baseBranch: "main",
+        baseCommit: "0123456789abcdef0123456789abcdef01234567",
+        settledReview: "",
+        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+      });
+
+      expect(generated.stops).toEqual([]);
+      expect(spawned.map((command) => command.command)).toContain("mktemp");
+      const exec = spawned.filter(
+        (command) => command.command === "codex" && command.args.includes("exec"),
+      );
+      expect(exec).toHaveLength(1);
+      expect(exec[0]!.cwd).toBe(cwd);
+      expect(exec[0]!.env).toEqual({
+        PATH: "/usr/bin",
+        HOME: "/home/t3",
+        CODEX_HOME: "/t3-sandbox/sbx_review/homes/codex",
+      });
+      const args = exec[0]!.args;
+      expect(args[args.indexOf("--output-schema") + 1]).toBe(`${machineTemp}/schema.json`);
+      expect(args[args.indexOf("--output-last-message") + 1]).toBe(`${machineTemp}/output.json`);
+      expect(args.join(" ")).not.toContain("features.shell_tool=false");
+      expect(yield* fs.exists(machineTemp)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly: true })),
+    ),
   );
 
   it.effect("omits a persisted service tier for managed ChatGPT text generation", () =>

@@ -243,7 +243,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
     Effect.forkScoped,
   );
-  const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
   // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
@@ -261,10 +260,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     ),
   );
   const nativeGeneration = yield* makeCodexTextGeneration(
+    instanceId,
     config,
     undefined,
     snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-    resolveRuntime,
+    (host) => runtime.auth.controller.withAccess!(runtime.resolveFor(host)),
   );
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>
     runtime.auth.controller.withAccess!(effect).pipe(
@@ -302,7 +302,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
       enabled
-        ? resolveRuntime.pipe(
+        ? runtime.auth.controller.withAccess!(runtime.resolve).pipe(
             Effect.matchEffect({
               // Signed-out snapshots have an empty inventory; a signed-in runtime failure must fail the scan.
               onFailure: (cause) =>

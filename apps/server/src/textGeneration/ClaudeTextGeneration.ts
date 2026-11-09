@@ -4,7 +4,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess } from "effect/process";
 
-import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ClaudeSettings,
+  type ProviderInstanceId,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -33,6 +37,7 @@ import {
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import { makeMachineInvestigationFor } from "./machineInvestigation.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -82,11 +87,13 @@ function claudeErrorResult(stdout: string): string | undefined {
 }
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
+  instanceId: ProviderInstanceId,
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
 ) {
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const machineInvestigationFor = yield* makeMachineInvestigationFor;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -184,22 +191,32 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
+    // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
+    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
+    const machine =
+      investigate === undefined
+        ? undefined
+        : yield* machineInvestigationFor({
+            operation,
+            cwd,
+            instanceId,
+            homeVariable: "CLAUDE_CONFIG_DIR",
+          });
+
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
-      // Text in, text out, so a cloud thread's request runs here too: in its machine it would
-      // carry the server's env. Only an investigation needs the checkout, which cloud can't give.
-      const host = hosts.local;
-      const cwdOnServer = yield* hosts.forPath(cwd).pipe(
-        Effect.map((cwdHost) => cwdHost.kind === "local"),
-        Effect.orElseSucceed(() => false),
-      );
-      if (!cwdOnServer && investigate !== undefined) {
-        return yield* TextGenerationOperations.cloudInvestigationUnsupported(operation);
-      }
+      const host = machine?.host ?? hosts.local;
+      const cwdOnServer =
+        machine === undefined &&
+        (yield* hosts.forPath(cwd).pipe(
+          Effect.map((cwdHost) => cwdHost.kind === "local"),
+          Effect.orElseSucceed(() => false),
+        ));
       const workingDirectory =
-        operation === "generateThreadTitle" || !cwdOnServer
-          ? yield* host.fileSystem
+        machine !== undefined || (cwdOnServer && operation !== "generateThreadTitle")
+          ? cwd
+          : yield* host.fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-" })
               .pipe(
                 Effect.mapError((cause) =>
@@ -210,43 +227,46 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                     "Failed to create a working directory",
                   ),
                 ),
-              )
-          : cwd;
-      const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
-      const spawnCommand = yield* resolveSpawnCommand(
-        claudeSettings.binaryPath || "claude",
-        [
-          "-p",
-          "--output-format",
-          "json",
-          "--json-schema",
-          jsonSchemaStr,
-          "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
-          ...(cliEffort ? ["--effort", cliEffort] : []),
-          "--settings",
-          settingsJson,
-          ...(investigate
-            ? [
-                "--tools",
-                CLAUDE_INVESTIGATION_TOOLS,
-                "--allowedTools",
-                CLAUDE_INVESTIGATION_ALLOWED,
-                "--disallowedTools",
-                CLAUDE_INVESTIGATION_DENIED,
-              ]
-            : ["--tools", ""]),
-          "--disable-slash-commands",
-          ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
-          // managed-mcp.json already isolates servers and makes Claude reject this flag.
-          ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
-          "--permission-mode",
-          "dontAsk",
-        ],
-        { env: claudeEnvironment },
-      );
+              );
+      // The image has no managed-mcp.json, so a machine run always isolates servers by flag.
+      const managedMcpConfig = machine === undefined && (yield* hasClaudeManagedMcpConfig());
+      const args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        jsonSchemaStr,
+        "--model",
+        resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+        ...(cliEffort ? ["--effort", cliEffort] : []),
+        "--settings",
+        settingsJson,
+        ...(investigate
+          ? [
+              "--tools",
+              CLAUDE_INVESTIGATION_TOOLS,
+              "--allowedTools",
+              CLAUDE_INVESTIGATION_ALLOWED,
+              "--disallowedTools",
+              CLAUDE_INVESTIGATION_DENIED,
+            ]
+          : ["--tools", ""]),
+        "--disable-slash-commands",
+        ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
+        // managed-mcp.json already isolates servers and makes Claude reject this flag.
+        ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
+        "--permission-mode",
+        "dontAsk",
+      ];
+      // A machine runs the image's pinned claude, never this server's binaryPath.
+      const spawnCommand =
+        machine === undefined
+          ? yield* resolveSpawnCommand(claudeSettings.binaryPath || "claude", args, {
+              env: claudeEnvironment,
+            })
+          : { command: "claude", args, shell: false };
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: machine?.environment ?? claudeEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

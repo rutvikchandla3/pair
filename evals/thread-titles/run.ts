@@ -62,6 +62,7 @@ await Effect.runPromise(
     const path = yield* Path.Path;
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-title-evaluation-" });
     const generation = yield* CodexTextGeneration.makeCodexTextGeneration(
+      ProviderInstanceId.make("codex"),
       yield* decodeSettings({}),
     );
     const baseline = values.baseline

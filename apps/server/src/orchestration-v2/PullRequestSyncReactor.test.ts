@@ -243,6 +243,8 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
               .map((thread) => ({
                 id: thread.id,
                 projectId: thread.projectId,
+                title: thread.title,
+                worktreePath: null,
                 lineage: {
                   parentThreadId: null,
                   relationshipToParent: null,

@@ -10,15 +10,18 @@ import { ChildProcess } from "effect/process";
 import {
   type CodexSettings,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  type ProviderInstanceId,
+  type ProviderSetupError,
   type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand, type SpawnCommandOptions } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import type { CodexEffectiveRuntime } from "../provider/CodexManagedRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -28,6 +31,8 @@ import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/s
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
+import { makeSandboxTempDirectory } from "../sandbox/providers/SandboxProviderHome.ts";
+import { makeMachineInvestigationFor } from "./machineInvestigation.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -59,19 +64,20 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
+  instanceId: ProviderInstanceId,
   codexConfig: CodexSettings,
   environment?: NodeJS.ProcessEnv,
   getModels: Effect.Effect<ReadonlyArray<ServerProviderModel>> = Effect.succeed([]),
-  resolveRuntime?: Effect.Effect<
-    import("../provider/CodexManagedRuntime.ts").CodexEffectiveRuntime,
-    import("@t3tools/contracts").ProviderSetupError,
-    Scope.Scope
-  >,
+  /** Managed Codex's runtime on a host: its token forward in a machine (`resolveFor`). */
+  resolveRuntimeFor?: (
+    host: WorkspaceHost,
+  ) => Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>,
 ) {
   // oxlint-disable-next-line t3code/workspace-host-boundary -- server-scoped: image attachments, which only titles send
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  const machineInvestigationFor = yield* makeMachineInvestigationFor;
   const serverConfig = yield* Effect.service(ServerConfig.ServerConfig);
 
   const readStreamAsString = <E>(
@@ -140,11 +146,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
       readonly launchArgs: ReadonlyArray<string>;
+      readonly facts: SpawnCommandOptions["facts"];
     }) {
       const spawnCommand = yield* resolveSpawnCommand(
         input.binary,
         [...input.launchArgs, ...CODEX_NO_PLUGIN_ARGS, "mcp", "list", "--json"],
-        { env: input.env },
+        { env: input.env, ...(input.facts === undefined ? {} : { facts: input.facts }) },
       );
       const child = yield* input.spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -211,28 +218,36 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       toJsonSchemaObject(outputSchemaJson),
     );
     // Text in, text out, so a cloud thread's request runs here too: in its machine it would carry
-    // the server's env. Only an investigation needs the checkout, which cloud can't give it yet.
-    const host = hosts.local;
-    const cwdOnServer = yield* hosts.forPath(cwd).pipe(
-      Effect.map((cwdHost) => cwdHost.kind === "local"),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!cwdOnServer && investigate !== undefined) {
-      return yield* TextGenerationOperations.cloudInvestigationUnsupported(operation);
-    }
+    // the server's env. An investigation reads the checkout, so it runs where the checkout is.
+    const machine =
+      investigate === undefined
+        ? undefined
+        : yield* machineInvestigationFor({
+            operation,
+            cwd,
+            instanceId,
+            homeVariable: "CODEX_HOME",
+          });
+    const host = machine?.host ?? hosts.local;
+    const cwdOnServer =
+      machine === undefined &&
+      (yield* hosts.forPath(cwd).pipe(
+        Effect.map((cwdHost) => cwdHost.kind === "local"),
+        Effect.orElseSucceed(() => false),
+      ));
+    const tempDirFailed = (cause: unknown) =>
+      new TextGenerationError({ operation, detail: "Failed to write temp file", cause });
     // Unscoped: background fibers may inherit closed scopes that would reap the files on creation.
-    const tempDir = yield* host.fileSystem
-      .makeTempDirectory({ prefix: `t3code-codex-${process.pid}-` })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new TextGenerationError({ operation, detail: "Failed to write temp file", cause }),
-        ),
-      );
+    // In a machine the agent writes the output file, so the agent makes the directory.
+    const tempDir = yield* (
+      machine === undefined
+        ? host.fileSystem.makeTempDirectory({ prefix: `t3code-codex-${process.pid}-` })
+        : makeSandboxTempDirectory(host, "t3code-codex-")
+    ).pipe(Effect.mapError(tempDirFailed));
     const cleanup = host.fileSystem.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
     const schemaPath = path.join(tempDir, "schema.json");
     const outputPath = path.join(tempDir, "output.json");
-    const workingDirectory = cwdOnServer ? cwd : tempDir;
+    const workingDirectory = machine !== undefined || cwdOnServer ? cwd : tempDir;
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       yield* host.fileSystem
@@ -244,15 +259,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ),
         );
       const hostInfo = yield* host.info;
-      const resolved = resolveRuntime
-        ? yield* resolveRuntime.pipe(
+      const resolved = resolveRuntimeFor
+        ? yield* resolveRuntimeFor(host).pipe(
             Effect.mapError(
               (cause) => new TextGenerationError({ operation, detail: cause.detail }),
             ),
           )
         : undefined;
       const effectiveConfig = resolved?.config ?? codexConfig;
-      const effectiveEnvironment = resolved?.environment ?? environment ?? hostInfo.environment;
+      const effectiveEnvironment =
+        machine?.environment ?? resolved?.environment ?? environment ?? hostInfo.environment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
       const model =
@@ -266,21 +282,27 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
       const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
-      const binary = effectiveConfig.binaryPath || "codex";
-      const env = {
-        ...effectiveEnvironment,
-        ...(effectiveConfig.homePath
-          ? {
-              CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
-            }
-          : {}),
-      };
+      // A machine runs the image's pinned codex on its own home, never this server's.
+      const binary = machine === undefined ? effectiveConfig.binaryPath || "codex" : "codex";
+      const env =
+        machine?.environment ??
+        ({
+          ...effectiveEnvironment,
+          ...(effectiveConfig.homePath
+            ? {
+                CODEX_HOME: expandHomePath(effectiveConfig.homePath, hostInfo.homeDirectory),
+              }
+            : {}),
+        } satisfies NodeJS.ProcessEnv);
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+      const facts =
+        machine === undefined ? undefined : { platform: hostInfo.platform, environment: env };
       const mcpServersOff = yield* listEnabledMcpServers({
         spawner: host.spawner,
         binary,
         cwd: workingDirectory,
         env,
+        facts,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
       }).pipe(Effect.map(codexMcpServersOff));
@@ -309,7 +331,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ],
-        { env: effectiveEnvironment },
+        { env: effectiveEnvironment, ...(facts === undefined ? {} : { facts }) },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,

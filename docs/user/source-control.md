@@ -258,8 +258,9 @@ Choose **Write guide** to have the review guide model from Settings → Source c
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
 the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
-its progress. Claude and Codex can write guides. The guide is
-kept for everyone using this server. To write it again, for example after a push or after changing
+its progress. Claude and Codex can write guides. On Pair Cloud, a guide is written in the machine
+of a cloud thread linked to the pull request, so link one first, and wake its machine if it is
+asleep. Its model must use a team account, not a member's own. The guide is kept for everyone using this server. To write it again, for example after a push or after changing
 the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
 
 On web, while reading a stop, select lines in an excerpt to add a comment to your review or ask an agent

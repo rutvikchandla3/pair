@@ -168,6 +168,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
     const textGeneration = yield* makeClaudeTextGeneration(
+      instanceId,
       effectiveConfig,
       processEnv,
       modelCatalog,

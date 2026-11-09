@@ -8,9 +8,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { expect } from "vite-plus/test";
 
+import type { WorkspaceHostId } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as ServerConfig from "../config.ts";
 import { processProbeSource } from "../testUtils/processProbe.ts";
 import {
@@ -24,6 +29,7 @@ import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGeneratio
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const CLAUDE_INSTANCE = ProviderInstanceId.make("claudeAgent");
 
 const layerClaudeTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
@@ -105,6 +111,7 @@ function withFakeClaudeEnv<A, E, R>(
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(
+      CLAUDE_INSTANCE,
       config,
       environment,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
@@ -223,6 +230,89 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           expect(generated.branch).toBe("feat/cloud-branch");
         }),
     ),
+  );
+
+  it.effect("investigates a cloud thread's checkout in its machine", () =>
+    Effect.gen(function* () {
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      const spawned: Array<{
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+        readonly cwd: string | undefined;
+        readonly env: unknown;
+      }> = [];
+      const envelope = JSON.stringify({ structured_output: { stops: [] } });
+      const machineSpawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (command._tag !== "StandardCommand") throw new Error("unexpected piped command");
+          spawned.push({
+            command: command.command,
+            args: command.args.map(String),
+            cwd: command.options.cwd,
+            env: command.options.env,
+          });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(999_999_997),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout:
+              command.command === "claude"
+                ? Stream.make(new TextEncoder().encode(envelope))
+                : Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const localInfo = yield* hosts.local.info;
+      yield* hosts.register("/t3-sandbox/sbx_review", {
+        ...hosts.local,
+        id: "sbx_review" as WorkspaceHostId,
+        kind: "sandbox",
+        spawner: machineSpawner,
+        info: Effect.succeed({
+          ...localInfo,
+          environment: { PATH: "/usr/bin", HOME: "/home/t3" },
+        }),
+      });
+      // No claude on this PATH: a run on the server fails rather than reaching a real CLI.
+      const textGeneration = yield* makeClaudeTextGeneration(
+        CLAUDE_INSTANCE,
+        decodeClaudeSettings({}),
+        { PATH: "/nonexistent" },
+        Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      );
+      const cwd = "/t3-sandbox/sbx_review/worktrees/t3-1/review";
+
+      const generated = yield* textGeneration.generateReviewGuide({
+        cwd,
+        number: 7,
+        title: "Fix reconnects",
+        description: "",
+        baseBranch: "main",
+        baseCommit: "0123456789abcdef0123456789abcdef01234567",
+        settledReview: "",
+        modelSelection: { instanceId: CLAUDE_INSTANCE, model: SYNTHETIC_CLAUDE_STANDARD_MODEL },
+      });
+
+      expect(generated.stops).toEqual([]);
+      const claude = spawned.filter((command) => command.command === "claude");
+      expect(claude).toHaveLength(1);
+      expect(claude[0]!.cwd).toBe(cwd);
+      expect(claude[0]!.env).toEqual({
+        PATH: "/usr/bin",
+        HOME: "/home/t3",
+        CLAUDE_CONFIG_DIR: "/t3-sandbox/sbx_review/homes/claudeAgent",
+      });
+      expect(claude[0]!.args).toEqual(
+        expect.arrayContaining(["--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config"]),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>

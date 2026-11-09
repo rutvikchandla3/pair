@@ -32,6 +32,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
   type MemberId,
   type ScheduledTaskListResult,
@@ -2970,7 +2971,12 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsReviewGuide]: (input) =>
           withPullRequestViewer(input, reviewGuides.get(input)),
         [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
-          withPullRequestViewer(input, reviewGuides.generate(input)),
+          withPullRequestViewer(
+            input,
+            reviewGuides.generate(input, {
+              mayUseMachines: currentSession.scopes.includes(AuthTerminalOperateScope),
+            }),
+          ),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           withPullRequestViewer(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>

@@ -197,7 +197,15 @@ export type ProjectionLimitRecoveryCandidate = Pick<
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
+  | "id"
+  | "projectId"
+  | "title"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pullRequests"
+  | "sandboxId"
+  | "worktreePath"
 >;
 
 export type ProjectionSettlementCandidate = Pick<
@@ -7013,10 +7021,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               Effect.map((thread): ProjectionThreadPullRequests => ({
                 id: thread.id,
                 projectId: thread.projectId,
+                title: thread.title,
                 lineage: thread.lineage,
                 settledOverride: thread.settledOverride,
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
+                ...(thread.sandboxId === undefined ? {} : { sandboxId: thread.sandboxId }),
+                worktreePath: thread.worktreePath,
               })),
             ),
           );

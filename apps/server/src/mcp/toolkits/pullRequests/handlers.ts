@@ -572,20 +572,23 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
-              return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
-                Effect.map((result) => ({
-                  ...identity,
-                  outcome: result.started ? ("started" as const) : ("running" as const),
-                  detail: null,
-                })),
-                Effect.catch((error) =>
-                  Effect.succeed({
+              // A writing caller can already run commands in any thread's machine by prompting it.
+              return yield* reviewGuides
+                .generate(guideReference(entry.project, entry.target), { mayUseMachines: true })
+                .pipe(
+                  Effect.map((result) => ({
                     ...identity,
-                    outcome: "failed" as const,
-                    detail: guideFailureDetail(error),
-                  }),
-                ),
-              );
+                    outcome: result.started ? ("started" as const) : ("running" as const),
+                    detail: null,
+                  })),
+                  Effect.catch((error) =>
+                    Effect.succeed({
+                      ...identity,
+                      outcome: "failed" as const,
+                      detail: guideFailureDetail(error),
+                    }),
+                  ),
+                );
             }),
           { concurrency: 4 },
         );
