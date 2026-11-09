@@ -6,6 +6,8 @@ import {
   type CloudTarget,
   type CloudTargetOption,
   cloudBranchCheck,
+  type ContinueInCloudOffer,
+  continueInCloudOffer,
   type ContinueLocallyOffer,
   resolveCloudTarget,
   resolveContinueLocally,
@@ -448,5 +450,93 @@ describe("resolveContinueLocally", () => {
     },
   ])("$name", ({ input, expected }) => {
     expect(resolveContinueLocally({ ...base, ...input })).toEqual(expected);
+  });
+});
+
+describe("continueInCloudOffer", () => {
+  const offline = environment(cloud, "Pair Cloud", config(true), false);
+  it.each<{
+    readonly name: string;
+    readonly project?: EnvironmentProject;
+    readonly environments?: ReadonlyArray<ReturnType<typeof environment>>;
+    readonly projects?: ReadonlyArray<EnvironmentProject>;
+    readonly sandboxId?: string;
+    readonly runActive?: boolean;
+    readonly imports?: boolean;
+    readonly expected: ContinueInCloudOffer;
+  }>([
+    {
+      name: "ready on a matching local project",
+      expected: {
+        kind: "ready",
+        targets: [
+          {
+            environmentId: cloud,
+            label: "Pair Cloud",
+            projectId: onCloud.id,
+            disabledReason: null,
+          },
+        ],
+      },
+    },
+    { name: "hidden for a cloud thread", sandboxId: "sandbox-1", expected: { kind: "hidden" } },
+    { name: "hidden for a thread on Pair Cloud", project: onCloud, expected: { kind: "hidden" } },
+    { name: "hidden with no Pair Cloud", environments: [macEnv], expected: { kind: "hidden" } },
+    {
+      name: "hidden for a Pair Cloud that doesn't import",
+      imports: false,
+      expected: { kind: "hidden" },
+    },
+    {
+      name: "disabled while a turn runs",
+      runActive: true,
+      expected: {
+        kind: "disabled",
+        label: "a turn is running",
+        reason: "A turn is running. Continue in cloud once it ends.",
+      },
+    },
+    {
+      name: "disabled while Pair Cloud is offline",
+      environments: [macEnv, offline],
+      expected: { kind: "disabled", label: "not available", reason: "Pair Cloud is offline." },
+    },
+    {
+      name: "disabled with no matching project",
+      projects: [local, project("other", cloud, "github.com/acme/other")],
+      expected: {
+        kind: "disabled",
+        label: "not available",
+        reason: "Add acme/app to Pair Cloud first.",
+      },
+    },
+    {
+      name: "disabled for a non-GitHub origin",
+      project: project("lab", mac, "gitlab.com/acme/app"),
+      expected: {
+        kind: "disabled",
+        label: "Pair Cloud unavailable",
+        reason: "Cloud needs this project's origin on github.com.",
+      },
+    },
+  ])("$name", (row) => {
+    const subject = row.project ?? local;
+    const cloudTarget = resolveCloudTarget({
+      project: subject,
+      environments: row.environments ?? [macEnv, cloudEnv],
+      projects: row.projects ?? [local, onCloud],
+    });
+    expect(
+      continueInCloudOffer({
+        thread: {
+          environmentId: subject.environmentId,
+          ...(row.sandboxId === undefined ? {} : { sandboxId: row.sandboxId }),
+          runActive: row.runActive ?? false,
+          originKey: subject.repositoryIdentity?.canonicalKey ?? null,
+        },
+        cloud: cloudTarget,
+        importsTo: () => row.imports ?? true,
+      }),
+    ).toEqual(row.expected);
   });
 });

@@ -64,6 +64,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.peerLinksList]: "peerLinks",
   [WS_METHODS.threadMoveToLocal]: "threadMove",
+  [WS_METHODS.threadMovePreview]: "threadMove",
+  [WS_METHODS.threadMoveToCloud]: "threadMove",
   [WS_METHODS.peerLinksLink]: "peerLinks",
   [WS_METHODS.peerLinksUnlink]: "peerLinks",
   [WS_METHODS.peerLinksAnswerRequest]: "peerLinks",

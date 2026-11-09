@@ -4,6 +4,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
+import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 
 export type ThreadActionMenuId =
   | "find"
@@ -28,6 +29,7 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "continue-in-cloud"
   | `machine:${SandboxAction}`
   | "continue-locally"
   | "share-guest"
@@ -119,6 +121,11 @@ export interface ThreadActionMenuState {
     readonly actions: ReadonlyArray<SandboxAction>;
     /** Shown disabled with the owner-or-admin suffix, not hidden. */
     readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
+  };
+  /** Set only when a Pair Cloud can take this thread; absent hides the item. */
+  readonly continueInCloud?: {
+    /** Why it can't now: the offer's short label, never its sentence. */
+    readonly label: string | null;
   };
   /** Set only when the member's own server can take this cloud thread. */
   readonly continueLocally?: {
@@ -240,6 +247,21 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.continueInCloud
+      ? [
+          {
+            id: "continue-in-cloud" as const,
+            // "…": it opens a dialog.
+            label:
+              state.continueInCloud.label === null
+                ? `${CONTINUE_IN_CLOUD_LABEL}…`
+                : `${CONTINUE_IN_CLOUD_LABEL} (${state.continueInCloud.label})`,
+            icon: "cloud-upload",
+            separatorBefore: true,
+            ...(state.continueInCloud.label === null ? {} : { disabled: true }),
+          },
+        ]
+      : []),
     ...(state.machine?.actions ?? []).map((action, index) => {
       const denied = state.machine?.ownerOnlyDenied.includes(action) === true;
       return {

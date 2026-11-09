@@ -1,11 +1,25 @@
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
-import { type CloudTarget, resolveCloudTarget } from "@t3tools/client-runtime/state/cloud-target";
+import {
+  type CloudTarget,
+  type ContinueInCloudOffer,
+  continueInCloudOffer,
+  isCloudImportEnvironment,
+  resolveCloudTarget,
+} from "@t3tools/client-runtime/state/cloud-target";
 import {
   createCloudAccountNoticeAtoms,
   createSandboxEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/sandbox";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import {
+  type EnvironmentId,
+  repositoryGroupingKeyOf,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 
@@ -78,6 +92,62 @@ export function useCloudTarget(projectRef: ScopedProjectRef | null): CloudTarget
 export function readCloudTarget(projectRef: ScopedProjectRef): CloudTarget {
   return cloudTargetOf(
     projectRef,
+    appAtomRegistry.get(environmentPresentations.presentationsAtom),
+    appAtomRegistry.get(environmentProjects.projectsAtom),
+  );
+}
+
+function continueInCloudOfferOf(
+  thread: EnvironmentThreadShell | null,
+  presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>,
+  projects: ReadonlyArray<EnvironmentProject>,
+): ContinueInCloudOffer {
+  if (thread === null) return { kind: "hidden" };
+  const projectRef = { environmentId: thread.environmentId, projectId: thread.projectId };
+  const project = projects.find(
+    (candidate) =>
+      candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+  );
+  return continueInCloudOffer({
+    thread: {
+      environmentId: thread.environmentId,
+      ...(thread.source.sandboxId === undefined ? {} : { sandboxId: thread.source.sandboxId }),
+      runActive: thread.runtime?.activeRunId != null,
+      originKey: project?.repositoryIdentity
+        ? repositoryGroupingKeyOf(project.repositoryIdentity)
+        : null,
+    },
+    cloud: cloudTargetOf(projectRef, presentations, projects),
+    importsTo: (environmentId) =>
+      isCloudImportEnvironment(presentations.get(environmentId)?.serverConfig ?? null),
+  });
+}
+
+const NO_THREAD_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
+  Atom.withLabel("web-cloud-target:no-thread"),
+);
+
+/** Continue in cloud for the palette's active thread. */
+export function useContinueInCloudOffer(threadRef: ScopedThreadRef | null): ContinueInCloudOffer {
+  // A null ref subscribes to nothing, as useCloudTarget.
+  const thread = useAtomValue(
+    threadRef === null ? NO_THREAD_ATOM : environmentThreadShells.threadShellAtom(threadRef),
+  );
+  const presentations = useAtomValue(
+    threadRef === null ? NO_PRESENTATIONS_ATOM : environmentPresentations.presentationsAtom,
+  );
+  const projects = useAtomValue(
+    threadRef === null ? NO_PROJECTS_ATOM : environmentProjects.projectsAtom,
+  );
+  return threadRef === null
+    ? { kind: "hidden" }
+    : continueInCloudOfferOf(thread, presentations, projects);
+}
+
+/** Read at event time, for menus. */
+export function readContinueInCloudOffer(threadRef: ScopedThreadRef): ContinueInCloudOffer {
+  return continueInCloudOfferOf(
+    appAtomRegistry.get(environmentThreadShells.threadShellAtom(threadRef)),
     appAtomRegistry.get(environmentPresentations.presentationsAtom),
     appAtomRegistry.get(environmentProjects.projectsAtom),
   );

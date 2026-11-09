@@ -44,6 +44,13 @@ export function isCloudLaunchEnvironment(
   return serverConfig?.environment.capabilities.cloudLaunch === true;
 }
 
+/** Pair Cloud takes moves from other machines (3.20's routes). */
+export function isCloudImportEnvironment(
+  serverConfig: Pick<ServerConfig, "environment"> | null,
+): boolean {
+  return serverConfig?.environment.capabilities.cloudImport === true;
+}
+
 function unavailableReason(
   serverConfig: CloudTargetEnvironment["serverConfig"],
   projectId: ProjectId | null,
@@ -223,6 +230,63 @@ export function resolveContinueLocally(input: {
     };
   }
   return { kind: "ready", localEnvironmentId: primary, projectId: local.id };
+}
+
+export type ContinueInCloudOffer =
+  | { readonly kind: "hidden" }
+  /** `label` is the menu's short reason; `reason` the palette's sentence. */
+  | { readonly kind: "disabled"; readonly label: string; readonly reason: string }
+  | {
+      readonly kind: "ready";
+      readonly targets: ReadonlyArray<CloudTargetOption & { readonly projectId: ProjectId }>;
+    };
+
+/**
+ * Whether a thread on this computer can continue on a Pair Cloud, from its project's
+ * `resolveCloudTarget`. The local server checks each of these again.
+ */
+export function continueInCloudOffer(input: {
+  readonly thread: {
+    readonly environmentId: EnvironmentId;
+    readonly sandboxId?: unknown;
+    readonly runActive: boolean;
+    /** The project's origin key, as `github.com/owner/name`. */
+    readonly originKey: string | null;
+  };
+  readonly cloud: CloudTarget;
+  readonly importsTo: (environmentId: EnvironmentId) => boolean;
+}): ContinueInCloudOffer {
+  const { thread, cloud } = input;
+  if (thread.sandboxId !== undefined || cloud.kind === "hidden") return { kind: "hidden" };
+  if (cloud.kind === "unavailable") {
+    return { kind: "disabled", label: "Pair Cloud unavailable", reason: cloud.message };
+  }
+  // A project on Pair Cloud is its own target: the thread already runs there.
+  if (cloud.targets.some((target) => target.environmentId === thread.environmentId)) {
+    return { kind: "hidden" };
+  }
+  const importing = cloud.targets.filter((target) => input.importsTo(target.environmentId));
+  if (importing.length === 0) return { kind: "hidden" };
+  if (thread.runActive) {
+    return {
+      kind: "disabled",
+      label: "a turn is running",
+      reason: "A turn is running. Continue in cloud once it ends.",
+    };
+  }
+  const ready = importing.flatMap((target) =>
+    target.projectId !== null && target.disabledReason === null
+      ? [{ ...target, projectId: target.projectId }]
+      : [],
+  );
+  if (ready.length > 0) return { kind: "ready", targets: ready };
+  const first = importing[0]!;
+  const repository = thread.originKey?.replace(/^[^/]*\//, "") ?? "this project";
+  return {
+    kind: "disabled",
+    label: "not available",
+    reason: first.disabledReason ?? `Add ${repository} to ${first.label} first.`,
+  };
 }
 
 const ORIGIN_PREFIX = "origin/";

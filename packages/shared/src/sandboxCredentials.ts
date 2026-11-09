@@ -1,10 +1,14 @@
 import {
+  type MemberId,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+
+import { providerInstanceOwner } from "./providerInstanceOwnership.ts";
 
 export type SandboxCredentialMechanism =
   | "claude-setup-token"
@@ -99,6 +103,67 @@ export function cloudModelDisabledReason(
   if (support._tag === "LocalOnly") return `Local only. ${support.reason}`;
   if (support._tag === "Unsupported") {
     return `${provider?.displayName ?? driver} is not supported in cloud yet. Pick Claude or Codex.`;
+  }
+  return null;
+}
+
+/**
+ * The accounts a member's cloud session can use: enabled and installed, the member's own or no
+ * one's, and able to sign in on a machine.
+ */
+export function usableCloudProviders<
+  P extends Pick<ServerProvider, "instanceId" | "driver" | "displayName" | "enabled" | "installed">,
+>(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances">;
+  readonly providers: ReadonlyArray<P>;
+  readonly memberId: MemberId | null;
+}): ReadonlyArray<P> {
+  return input.providers.filter((provider) => {
+    const owner = providerInstanceOwner(input.settings, provider.instanceId);
+    return (
+      provider.enabled &&
+      provider.installed &&
+      (owner === undefined || owner === input.memberId) &&
+      cloudModelDisabledReason(input, provider.instanceId) === null
+    );
+  });
+}
+
+type CloudMoveProvider = Pick<
+  ServerProvider,
+  "instanceId" | "driver" | "displayName" | "enabled" | "installed" | "models"
+>;
+
+const defaultModelOf = (provider: CloudMoveProvider) =>
+  (
+    provider.models.find((model) => model.isDefault === true) ??
+    provider.models.find((model) => model.isLegacy !== true)
+  )?.slug;
+
+/**
+ * The account a thread moved to Pair Cloud runs on, since the laptop's instance ids don't exist
+ * there: the same driver and model, then the driver's default, then any usable default. At each
+ * step the member's own account comes before a team one.
+ */
+export function pickCloudMoveModel(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances">;
+  readonly providers: ReadonlyArray<CloudMoveProvider>;
+  readonly memberId: MemberId;
+  readonly preferred: { readonly driver: ProviderDriverKind; readonly model: string };
+}): ModelSelection | null {
+  const usable = usableCloudProviders(input);
+  const ordered = [
+    ...usable.filter((provider) => providerInstanceOwner(input.settings, provider.instanceId)),
+    ...usable.filter((provider) => !providerInstanceOwner(input.settings, provider.instanceId)),
+  ];
+  const sameDriver = ordered.filter((provider) => provider.driver === input.preferred.driver);
+  const exact = sameDriver.find((provider) =>
+    provider.models.some((model) => model.slug === input.preferred.model),
+  );
+  if (exact !== undefined) return { instanceId: exact.instanceId, model: input.preferred.model };
+  for (const provider of [...sameDriver, ...ordered]) {
+    const model = defaultModelOf(provider);
+    if (model !== undefined) return { instanceId: provider.instanceId, model };
   }
   return null;
 }

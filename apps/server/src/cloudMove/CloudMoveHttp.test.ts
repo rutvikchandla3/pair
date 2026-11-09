@@ -25,6 +25,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as CloudMoveHttp from "./CloudMoveHttp.ts";
+import * as CloudMoveLaunch from "./CloudMoveLaunch.ts";
 import * as CloudMoveSource from "./CloudMoveSource.ts";
 import * as StagedCloudImports from "./StagedCloudImports.ts";
 
@@ -80,6 +81,7 @@ const serve = (options: {
   readonly cloudOnly: boolean;
   readonly stage?: Stage;
   readonly source?: Partial<Source>;
+  readonly launch?: Partial<CloudMoveLaunch.CloudMoveLaunch["Service"]>;
 }) =>
   Effect.gen(function* () {
     const services = yield* Layer.build(
@@ -92,6 +94,7 @@ const serve = (options: {
           ),
         ),
         Layer.provide(Layer.mock(CloudMoveSource.CloudMoveSource)(options.source ?? {})),
+        Layer.provide(Layer.mock(CloudMoveLaunch.CloudMoveLaunch)(options.launch ?? {})),
         Layer.provide(NodeServices.layer),
         Layer.provide(layerConfig(options.cloudOnly)),
       ),
@@ -101,11 +104,17 @@ const serve = (options: {
     return address.port;
   });
 
-/** One PUT; a body is optional, so a test can declare a length it never sends. */
-const put = (port: number, path: string, headers: Record<string, string>, body?: Uint8Array) =>
+/** One request; a body is optional, so a test can declare a length it never sends. */
+const send = (
+  method: "PUT" | "POST",
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+  body?: Uint8Array | string,
+) =>
   Effect.callback<{ readonly status: number; readonly body: string }, Error>((resume) => {
     const request = NodeHttp.request(
-      { host: "127.0.0.1", port, path, method: "PUT", headers },
+      { host: "127.0.0.1", port, path, method, headers },
       (response) => {
         let text = "";
         response.setEncoding("utf8");
@@ -119,6 +128,9 @@ const put = (port: number, path: string, headers: Record<string, string>, body?:
     request.end(body);
     return Effect.sync(() => request.destroy());
   });
+
+const put = (port: number, path: string, headers: Record<string, string>, body?: Uint8Array) =>
+  send("PUT", port, path, headers, body);
 
 const decodeFailure = Schema.decodeUnknownSync(Schema.fromJsonString(CloudMoveFailure));
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
@@ -465,5 +477,102 @@ it.live("refuses bad input and maps a move's refusals", () =>
       { status: 503, reason: "snapshot-failed", message: "Refused: snapshot-failed." },
       { status: 404, reason: "not-found", message: "Refused: not-found." },
     ]);
+  }).pipe(Effect.scoped),
+);
+
+const CHECK_PATH = "/api/cloud-moves/check";
+const LAUNCH_PATH = `/api/cloud-moves/staged/${KEY}/launch`;
+const checkBody = JSON.stringify({
+  originKey: "github.com/acme/app",
+  model: { driver: "codex", model: "gpt-5" },
+});
+const launchBody = JSON.stringify({
+  projectId: "project-1",
+  modelSelection: { instanceId: "codex", model: "gpt-5" },
+  title: "Fix the login form",
+  baseRef: "main",
+  branch: "feature",
+  seeded: true,
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  message: "Continue from where the conversation left off.",
+  createdBy: "user",
+  creationSource: "web",
+});
+
+const launchRouteCases = (path: string, body: string, ok: string) =>
+  [
+    { name: "404 off a cloud-only server", headers: bearer("link"), status: 404, cloudOnly: false },
+    { name: "401 with no bearer", headers: {}, status: 401 },
+    { name: "403 to an API token", headers: bearer("api-token"), status: 403 },
+    { name: "400 to a bad body", headers: bearer("link"), status: 400, body: "{}" },
+    { name: "409 to a refusal", headers: bearer("link"), status: 409, refuse: true },
+    { name: "200 with the result", headers: bearer("link"), status: 200, expected: ok },
+  ].map((testCase) => ({ path, body, ...testCase, name: `${path}: ${testCase.name}` }));
+
+it.live.each([
+  ...launchRouteCases(
+    CHECK_PATH,
+    checkBody,
+    JSON.stringify({
+      projectId: "project-1",
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+    }),
+  ),
+  ...launchRouteCases(LAUNCH_PATH, launchBody, JSON.stringify({ threadId: "thread-cloud" })),
+])("answers $name", ({ path, body, headers, status, cloudOnly = true, refuse, expected }) =>
+  Effect.gen(function* () {
+    const sessions: Array<CloudMoveLaunch.CloudMoveSession | MemberId> = [];
+    const refusal = new CloudMoveLaunch.CloudMoveLaunchError({
+      reason: "refused",
+      message: "Add an account on Pair Cloud, on your row in Settings → Team.",
+    });
+    const port = yield* serve({
+      cloudOnly,
+      launch: {
+        check: ({ memberId, input }) =>
+          Effect.suspend(() => {
+            sessions.push(memberId);
+            return refuse === true
+              ? Effect.fail(refusal)
+              : Effect.succeed({
+                  projectId: input.projectId ?? ProjectId.make("project-1"),
+                  modelSelection: { instanceId: "codex", model: "gpt-5" } as never,
+                });
+          }),
+        launch: ({ session }) =>
+          Effect.suspend(() => {
+            sessions.push(session);
+            return refuse === true
+              ? Effect.fail(refusal)
+              : Effect.succeed({ threadId: ThreadId.make("thread-cloud") });
+          }),
+      },
+    });
+
+    const response = yield* send("POST", port, path, headers, body);
+
+    assert.equal(response.status, status);
+    if (status === 404) assert.equal(response.body, "");
+    else if (status === 200) assert.deepEqual(JSON.parse(response.body), JSON.parse(expected!));
+    else assert.notEqual(decodeFailure(response.body).reason, null);
+    if (refuse === true) {
+      assert.deepEqual(decodeFailure(response.body), {
+        reason: "refused",
+        message: "Add an account on Pair Cloud, on your row in Settings → Team.",
+      });
+    }
+    // The launch runs as the link's session: its member, label and access.
+    if (status === 200 && path === LAUNCH_PATH) {
+      assert.deepEqual(sessions, [
+        {
+          memberId: linkMember,
+          sessionId: AuthSessionId.make("session-1"),
+          label: "Laptop",
+          access: "approval-required",
+        },
+      ]);
+    }
+    if (status !== 200 && refuse !== true) assert.deepEqual(sessions, []);
   }).pipe(Effect.scoped),
 );

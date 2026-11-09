@@ -1,4 +1,5 @@
 import {
+  MemberId,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   ProviderInstanceId,
@@ -7,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   cloudModelDisabledReason,
+  pickCloudMoveModel,
   sandboxCredentialSupport,
   type SandboxCredentialSupport,
 } from "./sandboxCredentials.ts";
@@ -158,5 +160,95 @@ describe("cloudModelDisabledReason", () => {
     );
     if (expected === null) expect(reason).toBeNull();
     else expect(reason).toMatch(expected);
+  });
+});
+
+describe("pickCloudMoveModel", () => {
+  const kim = MemberId.make("member-kim");
+  const ada = MemberId.make("member-ada");
+  const token = [variable("CLAUDE_CODE_OAUTH_TOKEN")];
+  const provider = (
+    instanceId: string,
+    driver: ProviderDriverKind,
+    slugs: ReadonlyArray<string>,
+  ) => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver,
+    displayName: instanceId,
+    enabled: true,
+    installed: true,
+    models: slugs.map((slug, index) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: null,
+      ...(index === 1 ? { isDefault: true } : {}),
+    })),
+  });
+  const rows: ReadonlyArray<{
+    readonly name: string;
+    readonly instances: Record<string, ProviderInstanceConfig>;
+    readonly providers: ReadonlyArray<ReturnType<typeof provider>>;
+    readonly expected: { readonly instanceId: string; readonly model: string } | null;
+  }> = [
+    {
+      name: "the same driver and model",
+      instances: { claude_team: { driver: claude, environment: token } },
+      providers: [provider("claude_team", claude, ["sonnet", "opus"])],
+      expected: { instanceId: "claude_team", model: "sonnet" },
+    },
+    {
+      name: "the driver's default when the model is gone",
+      instances: { claude_team: { driver: claude, environment: token } },
+      providers: [provider("claude_team", claude, ["haiku", "opus"])],
+      expected: { instanceId: "claude_team", model: "opus" },
+    },
+    {
+      name: "the member's own before a team one",
+      instances: {
+        claude_team: { driver: claude, environment: token },
+        claude_kim: { driver: claude, environment: token, ownerMemberId: kim },
+      },
+      providers: [
+        provider("claude_team", claude, ["sonnet"]),
+        provider("claude_kim", claude, ["sonnet"]),
+      ],
+      expected: { instanceId: "claude_kim", model: "sonnet" },
+    },
+    {
+      name: "another member's instance never",
+      instances: { claude_ada: { driver: claude, environment: token, ownerMemberId: ada } },
+      providers: [provider("claude_ada", claude, ["sonnet"])],
+      expected: null,
+    },
+    {
+      name: "a Local-only instance never, but another driver's default",
+      instances: {
+        claudeAgent: { driver: claude },
+        codex_api: { driver: codex, environment: [variable("OPENAI_API_KEY")] },
+      },
+      providers: [
+        provider("claudeAgent", claude, ["sonnet"]),
+        provider("codex_api", codex, ["gpt-5", "gpt-5-codex"]),
+      ],
+      expected: { instanceId: "codex_api", model: "gpt-5-codex" },
+    },
+    {
+      name: "nothing usable",
+      instances: { claudeAgent: { driver: claude } },
+      providers: [provider("claudeAgent", claude, ["sonnet"])],
+      expected: null,
+    },
+  ];
+
+  it.each(rows)("$name", ({ instances, providers, expected }) => {
+    expect(
+      pickCloudMoveModel({
+        settings: { providerInstances: instances as never },
+        providers,
+        memberId: kim,
+        preferred: { driver: claude, model: "sonnet" },
+      }),
+    ).toEqual(expected);
   });
 });

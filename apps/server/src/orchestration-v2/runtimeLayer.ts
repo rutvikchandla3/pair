@@ -421,6 +421,8 @@ export const layerProduction = Layer.mergeAll(
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
+  // Continue in cloud sends this export from the laptop.
+  layerContextExportsProvided,
   // Pair Cloud's side of Continue locally; the mirror and its worker come from the server.
   CloudMoveSource.layer.pipe(
     Layer.provide(

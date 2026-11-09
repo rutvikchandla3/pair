@@ -2873,6 +2873,14 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.threadMoveToLocal]: (input) =>
           cloudMoves.continueLocally({ ...input, actorId: currentSession.memberId }),
+        [WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input),
+        [WS_METHODS.threadMoveToCloud]: (input) =>
+          cloudMoves.continueInCloud({
+            ...input,
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+            actorId: currentSession.memberId,
+          }),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {

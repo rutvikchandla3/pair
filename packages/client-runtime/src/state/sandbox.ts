@@ -19,8 +19,7 @@ import {
   type TeamMember,
   type TerminalStoppedBy,
 } from "@t3tools/contracts";
-import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
-import { cloudModelDisabledReason } from "@t3tools/shared/sandboxCredentials";
+import { usableCloudProviders } from "@t3tools/shared/sandboxCredentials";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -161,16 +160,7 @@ export function cloudAccountNotice(input: {
   readonly memberId: MemberId | null;
   readonly member: TeamMember | undefined;
 }): CloudAccountNotice | null {
-  const usable = input.providers.some((provider) => {
-    const owner = providerInstanceOwner(input.settings, provider.instanceId);
-    return (
-      provider.enabled &&
-      provider.installed &&
-      (owner === undefined || owner === input.memberId) &&
-      cloudModelDisabledReason(input, provider.instanceId) === null
-    );
-  });
-  if (!usable) return PROVIDER_NOTICE;
+  if (usableCloudProviders(input).length === 0) return PROVIDER_NOTICE;
   const github = cloudPushCredential({
     appConfigured: githubAppConfigured(input.settings),
     owner: input.member,

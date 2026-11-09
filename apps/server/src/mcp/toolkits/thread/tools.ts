@@ -19,11 +19,14 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  EnvironmentId,
 } from "@t3tools/contracts";
+import * as McpSchema from "effect/ai/McpSchema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as CloudMoves from "../../../cloudMove/CloudMoves.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -237,7 +240,36 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadContinueInCloudTool = Tool.make("t3_thread_continue_in_cloud", {
+  ...commandTool,
+  description:
+    "Move a thread on this computer to Pair Cloud: a new cloud thread gets its branch, unpushed commits, uncommitted and untracked files (not ignored ones) and the conversation, and keeps running when this computer sleeps. Nothing is pushed to GitHub. Omit `threadId` for this thread, then end your turn without more edits. Not for another thread with a turn running. `message`: the cloud thread's first prompt.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    cloudEnvironmentId: Schema.optional(
+      EnvironmentId.annotate({
+        description: "The Pair Cloud, from t3_environment_links. Omit when one is linked.",
+      }),
+    ),
+    excludePaths: Schema.optional(
+      Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(100)),
+    ),
+    message: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120000))),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    environmentId: EnvironmentId,
+    link: Schema.optional(Schema.String),
+    seeded: Schema.Boolean,
+  }),
+  dependencies: [...commandTool.dependencies, CloudMoves.CloudMoves],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
+
 export const ThreadToolkit = Toolkit.make(
+  ThreadContinueInCloudTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,

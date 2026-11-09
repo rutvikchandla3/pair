@@ -205,6 +205,34 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("checkpoint capture leaves excluded paths at HEAD's version", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-exclude-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "kept.txt"), "kept\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "dir"));
+    yield* fileSystem.writeFileString(path.join(cwd, "dir", "inner.txt"), "inner\n");
+    yield* git(["init", "nested"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "nested", "private.txt"), "nested\n");
+    const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
+
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef,
+      excludePaths: ["file.txt", "dir/"],
+    });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "initial\n");
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:kept.txt`])).stdout, "kept\n");
+    assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "dir"])).stdout, "");
+    assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "nested"])).stdout, "");
+    assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.skipIf(!symlinksSupported)(
   "checkpoint capture writes its index into the real git dir when cwd is a symlinked subdirectory",
   () =>

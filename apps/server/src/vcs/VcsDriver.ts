@@ -14,6 +14,8 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Left at HEAD's version: an excluded change or untracked file is not captured. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface VcsRestoreCheckpointInput {

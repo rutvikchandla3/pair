@@ -20,6 +20,11 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "m9 12 2 2 4-4" } },
   ],
   cloud: [{ tag: "path", attrs: { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" } }],
+  "cloud-upload": [
+    { tag: "path", attrs: { d: "M12 13v8" } },
+    { tag: "path", attrs: { d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" } },
+    { tag: "path", attrs: { d: "m8 17 4-4 4 4" } },
+  ],
   laptop: [
     {
       tag: "path",

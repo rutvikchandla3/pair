@@ -34,7 +34,15 @@ import {
   PeerLinkRequestError,
   PeerLinkSummary,
 } from "./peerLink.ts";
-import { ThreadMoveError, ThreadMoveToLocalInput, ThreadMoveToLocalResult } from "./cloudMove.ts";
+import {
+  ThreadMoveError,
+  ThreadMovePreview,
+  ThreadMovePreviewInput,
+  ThreadMoveToCloudInput,
+  ThreadMoveToCloudResult,
+  ThreadMoveToLocalInput,
+  ThreadMoveToLocalResult,
+} from "./cloudMove.ts";
 import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
@@ -547,6 +555,8 @@ export const WS_METHODS = {
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
   threadMoveToLocal: "threadMove.toLocal",
+  threadMovePreview: "threadMove.preview",
+  threadMoveToCloud: "threadMove.toCloud",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -878,6 +888,18 @@ const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
 const WsThreadMoveToLocalRpc = Rpc.make(WS_METHODS.threadMoveToLocal, {
   payload: ThreadMoveToLocalInput,
   success: ThreadMoveToLocalResult,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadMovePreviewRpc = Rpc.make(WS_METHODS.threadMovePreview, {
+  payload: ThreadMovePreviewInput,
+  success: ThreadMovePreview,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadMoveToCloudRpc = Rpc.make(WS_METHODS.threadMoveToCloud, {
+  payload: ThreadMoveToCloudInput,
+  success: ThreadMoveToCloudResult,
   error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
 });
 
@@ -2275,6 +2297,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
   WsThreadMoveToLocalRpc,
+  WsThreadMovePreviewRpc,
+  WsThreadMoveToCloudRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

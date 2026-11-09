@@ -68,6 +68,10 @@ vi.mock("../components/sandbox/useSandboxThreadStatus", () => ({
   readSandboxThreadMachine: () => null,
   useSandboxActionRunner: () => async () => {},
 }));
+vi.mock("../components/sandbox/ContinueInCloudDialog", () => ({
+  openContinueInCloudDialog: vi.fn(),
+}));
+vi.mock("../state/sandbox", () => ({ readContinueInCloudOffer: () => ({ kind: "hidden" }) }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {

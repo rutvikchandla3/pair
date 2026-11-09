@@ -2,13 +2,19 @@ import {
   CLOUD_MOVE_ROUTE_PREFIX,
   CLOUD_MOVE_SEED_HEADERS,
   CLOUD_SEED_MAX_BYTES,
+  CloudMoveCheckInput,
+  CloudMoveCheckResult,
   CloudMoveContinuedInput,
   CloudMoveContinuedResult,
   CloudMoveFailure,
+  CloudMoveLaunchInput,
+  CloudMoveLaunchResult,
   CloudMoveSeedHeaders,
+  type CloudStagingKey,
   type EnvironmentId,
   OrchestrationV2ContextExport,
   type PeerLinkError,
+  type ProjectId,
   type ThreadId,
   ThreadMoveError,
 } from "@t3tools/contracts";
@@ -26,6 +32,8 @@ import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as PeerLinks from "../peer/PeerLinks.ts";
 
+export const SEED_FAILED_MESSAGE =
+  "Couldn't package this thread's changes for the move. Try again.";
 const TOO_LARGE_MESSAGE =
   "The download would be over 512 MB. Fetch origin on this computer, then try again.";
 
@@ -36,6 +44,11 @@ const decodeExport = Schema.decodeUnknownEffect(
 const decodeContinued = Schema.decodeUnknownEffect(Schema.fromJsonString(CloudMoveContinuedResult));
 const decodeSeedHeaders = Schema.decodeUnknownEffect(CloudMoveSeedHeaders);
 const encodeContinuedInput = Schema.encodeSync(Schema.fromJsonString(CloudMoveContinuedInput));
+const encodeCheckInput = Schema.encodeSync(Schema.fromJsonString(CloudMoveCheckInput));
+const decodeCheckResult = Schema.decodeUnknownEffect(Schema.fromJsonString(CloudMoveCheckResult));
+const encodeLaunchInput = Schema.encodeSync(Schema.fromJsonString(CloudMoveLaunchInput));
+const decodeLaunchResult = Schema.decodeUnknownEffect(Schema.fromJsonString(CloudMoveLaunchResult));
+const encodeExport = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2ContextExport));
 
 /** The headers of a seed, with branch, base and origin decoded. */
 export interface CloudMoveSeedFacts {
@@ -74,6 +87,36 @@ export class CloudMoveClient extends Context.Service<
       readonly threadId: ThreadId;
       readonly body: CloudMoveContinuedInput;
     }) => Effect.Effect<CloudMoveContinuedResult, ThreadMoveError>;
+    /** Asked before anything uploads; a refusal carries Pair Cloud's words. */
+    readonly check: (
+      link: PeerLinks.ResolvedPeerLink,
+      body: CloudMoveCheckInput,
+    ) => Effect.Effect<CloudMoveCheckResult, ThreadMoveError>;
+    /** `claimed`: a launch already took this key. */
+    readonly putSeed: (
+      link: PeerLinks.ResolvedPeerLink,
+      input: {
+        readonly key: CloudStagingKey;
+        readonly projectId: ProjectId;
+        readonly file: string;
+      },
+    ) => Effect.Effect<"stored" | "claimed" | "missing-prerequisite", ThreadMoveError>;
+    readonly putContextExport: (
+      link: PeerLinks.ResolvedPeerLink,
+      input: {
+        readonly key: CloudStagingKey;
+        readonly projectId: ProjectId;
+        readonly value: OrchestrationV2ContextExport;
+      },
+    ) => Effect.Effect<
+      { readonly outcome: "stored" | "claimed"; readonly bytes: number },
+      ThreadMoveError
+    >;
+    /** `branch-not-pushed`: a seedless launch's branch is gone from origin. */
+    readonly launch: (
+      link: PeerLinks.ResolvedPeerLink,
+      input: { readonly key: CloudStagingKey; readonly body: CloudMoveLaunchInput },
+    ) => Effect.Effect<CloudMoveLaunchResult | "branch-not-pushed", ThreadMoveError>;
   }
 >()("t3/cloudMove/CloudMoveClient") {}
 
@@ -100,21 +143,13 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(moveError("failed", error.message));
 
-  /** One request to the linked environment; non-2xx answers become a ThreadMoveError. */
-  const send = Effect.fn("CloudMoveClient.send")(function* (
-    environmentId: EnvironmentId,
+  /** One request over a resolved link. A refusal is returned, not failed, so callers can read it. */
+  const exchange = Effect.fn("CloudMoveClient.exchange")(function* (
+    resolved: PeerLinks.ResolvedPeerLink,
     build: (url: string) => HttpClientRequest.HttpClientRequest,
   ) {
-    const resolved = yield* links
-      .resolve(environmentId)
-      .pipe(Effect.catch((error) => Effect.flip(linkError(environmentId)(error))));
+    const environmentId = resolved.link.environmentId;
     const label = resolved.link.label;
-    if (resolved.capabilities.cloudImport !== true) {
-      return yield* moveError(
-        "unsupported",
-        `${label} needs an update to move threads. Ask an admin.`,
-      );
-    }
     const response = yield* httpClient
       .execute(
         build(`${resolved.url}${CLOUD_MOVE_ROUTE_PREFIX}`).pipe(
@@ -134,14 +169,36 @@ const make = Effect.gen(function* () {
     yield* links.recordOutcome(environmentId, { error: null });
     if (response.status < 200 || response.status >= 300) {
       const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      const failure = Option.getOrNull(decodeFailure(body));
+      return {
+        response,
+        label,
+        refusal: {
+          status: response.status,
+          reason: failure?.reason ?? null,
+          message: failure?.message ?? `${label} refused the move (HTTP ${response.status}).`,
+        },
+      };
+    }
+    return { response, label, refusal: null };
+  });
+
+  /** Resolves the link, then one request; non-2xx answers become a ThreadMoveError. */
+  const send = Effect.fn("CloudMoveClient.send")(function* (
+    environmentId: EnvironmentId,
+    build: (url: string) => HttpClientRequest.HttpClientRequest,
+  ) {
+    const resolved = yield* links
+      .resolve(environmentId)
+      .pipe(Effect.catch((error) => Effect.flip(linkError(environmentId)(error))));
+    if (resolved.capabilities.cloudImport !== true) {
       return yield* moveError(
-        "refused",
-        Option.match(decodeFailure(body), {
-          onNone: () => `${label} refused the move (HTTP ${response.status}).`,
-          onSome: (failure) => failure.message,
-        }),
+        "unsupported",
+        `${resolved.link.label} needs an update to move threads. Ask an admin.`,
       );
     }
+    const { response, label, refusal } = yield* exchange(resolved, build);
+    if (refusal !== null) return yield* moveError("refused", refusal.message);
     return { response, label };
   });
 
@@ -221,7 +278,92 @@ const make = Effect.gen(function* () {
     return yield* decodeContinued(text).pipe(Effect.mapError(unexpected(label)));
   });
 
-  return CloudMoveClient.of({ contextExport, downloadSeed, reportContinued });
+  const readJson = <A>(
+    response: HttpClientResponse.HttpClientResponse,
+    label: string,
+    decode: (text: string) => Effect.Effect<A, unknown>,
+  ) => response.text.pipe(Effect.flatMap(decode), Effect.mapError(unexpected(label)));
+
+  const json = (text: string) => HttpBody.text(text, "application/json");
+
+  const stagedPath = (key: CloudStagingKey, route: string) =>
+    `/staged/${encodeURIComponent(key)}/${route}`;
+
+  const check: CloudMoveClient["Service"]["check"] = Effect.fn("CloudMoveClient.check")(
+    function* (link, body) {
+      const { response, label, refusal } = yield* exchange(link, (base) =>
+        HttpClientRequest.post(`${base}/check`).pipe(
+          HttpClientRequest.setBody(json(encodeCheckInput(body))),
+        ),
+      );
+      if (refusal !== null) return yield* moveError("refused", refusal.message);
+      return yield* readJson(response, label, decodeCheckResult);
+    },
+  );
+
+  const putSeed: CloudMoveClient["Service"]["putSeed"] = Effect.fn("CloudMoveClient.putSeed")(
+    function* (link, { key, projectId, file }) {
+      // bodyFile sets content-length, which the route needs before it reads a byte.
+      const request = yield* HttpClientRequest.put(
+        `${link.url}${CLOUD_MOVE_ROUTE_PREFIX}${stagedPath(key, "seed")}`,
+      ).pipe(
+        HttpClientRequest.setUrlParam("projectId", projectId),
+        HttpClientRequest.bodyFile(file, { contentType: "application/x-git-bundle" }),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.mapError(() => moveError("seed-failed", SEED_FAILED_MESSAGE)),
+      );
+      const { refusal } = yield* exchange(link, () => request);
+      if (refusal === null) return "stored" as const;
+      if (refusal.reason === "claimed" || refusal.reason === "missing-prerequisite") {
+        return refusal.reason;
+      }
+      if (refusal.status === 413) return yield* moveError("seed-too-large", refusal.message);
+      return yield* moveError("upload-failed", refusal.message);
+    },
+  );
+
+  const putContextExport: CloudMoveClient["Service"]["putContextExport"] = Effect.fn(
+    "CloudMoveClient.putContextExport",
+  )(function* (link, { key, projectId, value }) {
+    const text = yield* encodeExport(value).pipe(
+      Effect.mapError(() =>
+        moveError("failed", "Couldn't package this thread's conversation for the move."),
+      ),
+    );
+    const { refusal } = yield* exchange(link, (base) =>
+      HttpClientRequest.put(`${base}${stagedPath(key, "context-export")}`).pipe(
+        HttpClientRequest.setUrlParam("projectId", projectId),
+        HttpClientRequest.setBody(json(text)),
+      ),
+    );
+    const bytes = new TextEncoder().encode(text).byteLength;
+    if (refusal === null) return { outcome: "stored" as const, bytes };
+    if (refusal.reason === "claimed") return { outcome: "claimed" as const, bytes };
+    return yield* moveError("upload-failed", refusal.message);
+  });
+
+  const launch: CloudMoveClient["Service"]["launch"] = Effect.fn("CloudMoveClient.launch")(
+    function* (link, { key, body }) {
+      const { response, label, refusal } = yield* exchange(link, (base) =>
+        HttpClientRequest.post(`${base}${stagedPath(key, "launch")}`).pipe(
+          HttpClientRequest.setBody(json(encodeLaunchInput(body))),
+        ),
+      );
+      if (refusal?.reason === "branch-not-pushed") return "branch-not-pushed" as const;
+      if (refusal !== null) return yield* moveError("refused", refusal.message);
+      return yield* readJson(response, label, decodeLaunchResult);
+    },
+  );
+
+  return CloudMoveClient.of({
+    contextExport,
+    downloadSeed,
+    reportContinued,
+    check,
+    putSeed,
+    putContextExport,
+    launch,
+  });
 });
 
 export const layer = Layer.effect(CloudMoveClient, make);

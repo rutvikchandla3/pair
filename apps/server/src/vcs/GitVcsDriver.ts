@@ -1230,7 +1230,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ],
             env: commitEnv,
           });
-        yield* stageFiles([]).pipe(
+        const excluded = (input.excludePaths ?? []).map(
+          (entry) => `:(top,literal,exclude)${entry.replace(/\/+$/, "")}`,
+        );
+        yield* stageFiles(excluded).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1264,7 +1267,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   GIT_OBJECT_DIRECTORY: undefined,
                   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
                 };
-                const exclusions: Array<string> = [];
+                const exclusions: Array<string> = [...excluded];
                 for (const entry of candidates) {
                   const nestedCwd = path.join(input.cwd, entry);
                   if (
@@ -1276,7 +1279,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
                 }
-                if (exclusions.length === 0) return yield* error;
+                if (exclusions.length === excluded.length) return yield* error;
                 return yield* stageFiles(exclusions);
               }).pipe(
                 Effect.timeoutOrElse({

@@ -1,6 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, PeerLinkError, ThreadId, ThreadMoveError } from "@t3tools/contracts";
+import {
+  CloudStagingKey,
+  EnvironmentId,
+  PeerLinkError,
+  ProjectId,
+  ThreadId,
+  ThreadMoveError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,12 +35,22 @@ interface Answer {
   readonly body?: string | Uint8Array;
 }
 
+interface Sent {
+  readonly url: string;
+  readonly authorization: string | undefined;
+  readonly method?: string;
+  readonly contentLength?: number | undefined;
+  readonly contentType?: string | undefined;
+}
+
 const layerFor = (options: {
   readonly answer?: Answer;
+  /** Answered in order, before `answer`. */
+  readonly answers?: Array<Answer>;
   readonly resolve?: PeerLinkError;
   readonly cloudImport?: boolean;
   readonly transportFails?: boolean;
-  readonly requests: Array<{ readonly url: string; readonly authorization: string | undefined }>;
+  readonly requests: Array<Sent>;
   readonly outcomes: Array<string | null>;
 }) =>
   CloudMoveClient.layer.pipe(
@@ -59,6 +76,10 @@ const layerFor = (options: {
             options.requests.push({
               url: `${request.url}?${UrlParams.toString(request.urlParams)}`,
               authorization: request.headers["authorization"],
+              method: request.method,
+              contentLength:
+                "contentLength" in request.body ? request.body.contentLength : undefined,
+              contentType: "contentType" in request.body ? request.body.contentType : undefined,
             });
             if (options.transportFails === true) {
               return Effect.fail(
@@ -67,7 +88,7 @@ const layerFor = (options: {
                 }),
               );
             }
-            const answer = options.answer ?? { status: 204 };
+            const answer = options.answers?.shift() ?? options.answer ?? { status: 204 };
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
@@ -162,7 +183,7 @@ it.effect.each<{
     outcome: null,
   },
 ])("maps $name", (testCase) => {
-  const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
+  const requests: Array<Sent> = [];
   const outcomes: Array<string | null> = [];
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -205,7 +226,7 @@ it.effect.each<{
 });
 
 it.effect("downloads a seed past the haves, and reads an empty one as nothing written", () => {
-  const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
+  const requests: Array<Sent> = [];
   const outcomes: Array<string | null> = [];
   const bytes = new Uint8Array([9, 8, 7, 6]);
   let answer: Answer = {
@@ -265,6 +286,133 @@ it.effect("downloads a seed past the haves, and reads an empty one as nothing wr
         requests,
         outcomes,
       }),
+    ),
+  );
+});
+
+const KEY = CloudStagingKey.make(`mv_${"c".repeat(32)}`);
+const resolved = {
+  link: { environmentId: CLOUD, label: LABEL },
+  url: "http://cloud.test",
+  token: "link-token",
+  capabilities: { cloudImport: true },
+} as unknown as PeerLinks.ResolvedPeerLink;
+const refusal = (reason: string) => JSON.stringify({ reason, message: `Refused: ${reason}.` });
+
+it.effect.each<{
+  readonly name: string;
+  readonly answer: Answer;
+  readonly expected: string | Pick<ThreadMoveError, "reason" | "message">;
+}>([
+  { name: "a stored seed", answer: { status: 204 }, expected: "stored" },
+  {
+    name: "a claimed key",
+    answer: { status: 409, body: refusal("claimed") },
+    expected: "claimed",
+  },
+  {
+    name: "a missing prerequisite",
+    answer: { status: 409, body: refusal("missing-prerequisite") },
+    expected: "missing-prerequisite",
+  },
+  {
+    name: "a seed over the cap",
+    answer: { status: 413, body: refusal("too-large") },
+    expected: { reason: "seed-too-large", message: "Refused: too-large." },
+  },
+  {
+    name: "any other refusal",
+    answer: { status: 422, body: refusal("invalid-seed") },
+    expected: { reason: "upload-failed", message: "Refused: invalid-seed." },
+  },
+])("puts a seed with its length and reads $name", ({ answer, expected }) => {
+  const requests: Array<Sent> = [];
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const file = yield* fs.makeTempFileScoped({ suffix: ".bundle" });
+    yield* fs.writeFileString(file, "bundle bytes");
+    const client = yield* CloudMoveClient.CloudMoveClient;
+
+    const result = yield* client
+      .putSeed(resolved, { key: KEY, projectId: ProjectId.make("project-cloud"), file })
+      .pipe(
+        Effect.map((outcome): typeof expected => outcome),
+        Effect.catch((error) => Effect.succeed({ reason: error.reason, message: error.message })),
+      );
+
+    assert.deepEqual(result, expected);
+    assert.deepEqual(requests, [
+      {
+        url: `http://cloud.test/api/cloud-moves/staged/${KEY}/seed?projectId=project-cloud`,
+        authorization: "Bearer link-token",
+        method: "PUT",
+        contentLength: 12,
+        contentType: "application/x-git-bundle",
+      },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(layerFor({ answer, requests, outcomes: [] })));
+});
+
+it.effect("checks, launches and reads a launch's refusals", () => {
+  const requests: Array<Sent> = [];
+  const answers: Array<Answer> = [];
+  return Effect.gen(function* () {
+    const client = yield* CloudMoveClient.CloudMoveClient;
+    const body = {
+      projectId: ProjectId.make("project-cloud"),
+      modelSelection: { instanceId: "codex", model: "gpt-5" },
+      title: "Fix the login form",
+      baseRef: "main",
+      seeded: false,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      message: "Go on.",
+      createdBy: "user",
+      creationSource: "web",
+    } as const;
+
+    const launched = yield* client.launch(resolved, { key: KEY, body: body as never });
+    const lost = yield* client.launch(resolved, { key: KEY, body: body as never });
+    const refused = yield* client
+      .launch(resolved, { key: KEY, body: body as never })
+      .pipe(Effect.flip);
+    const checkRefused = yield* client
+      .check(resolved, {
+        originKey: "github.com/acme/app",
+        model: { driver: "codex", model: "gpt-5" },
+      } as never)
+      .pipe(Effect.flip);
+
+    assert.deepEqual(launched, { threadId: ThreadId.make("thread-cloud") });
+    assert.equal(lost, "branch-not-pushed");
+    assert.deepEqual([refused.reason, refused.message], ["refused", "Refused: refused."]);
+    assert.deepEqual(
+      [checkRefused.reason, checkRefused.message],
+      ["refused", "Refused: unknown-project."],
+    );
+    assert.deepEqual(
+      requests.map((request) => [request.method, request.url]),
+      [
+        ...Array.from({ length: 3 }, () => [
+          "POST",
+          `http://cloud.test/api/cloud-moves/staged/${KEY}/launch?`,
+        ]),
+        ["POST", "http://cloud.test/api/cloud-moves/check?"],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.unwrap(
+        Effect.sync(() => {
+          answers.push(
+            { status: 200, body: JSON.stringify({ threadId: "thread-cloud" }) },
+            { status: 409, body: refusal("branch-not-pushed") },
+            { status: 409, body: refusal("refused") },
+            { status: 409, body: refusal("unknown-project") },
+          );
+          return layerFor({ answers, requests, outcomes: [] });
+        }),
+      ),
     ),
   );
 });

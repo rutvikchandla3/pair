@@ -3,9 +3,13 @@ import {
   CLOUD_MOVE_ROUTE_PREFIX,
   CLOUD_MOVE_SEED_HEADERS,
   CLOUD_SEED_MAX_BYTES,
+  CloudMoveCheckInput,
+  CloudMoveCheckResult,
   CloudMoveContinuedInput,
   CloudMoveContinuedResult,
   type CloudMoveFailure,
+  CloudMoveLaunchInput,
+  CloudMoveLaunchResult,
   CloudMoveGitOid,
   CONTEXT_EXPORT_MAX_BYTES,
   CloudMoveFailureReason,
@@ -29,6 +33,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { makeByteBudget } from "../sandbox/runnerHub/ByteBudget.ts";
+import * as CloudMoveLaunch from "./CloudMoveLaunch.ts";
 import * as CloudMoveSource from "./CloudMoveSource.ts";
 import * as StagedCloudImports from "./StagedCloudImports.ts";
 
@@ -59,6 +64,9 @@ const FAILURE_MESSAGES: Record<CloudMoveFailureReason, string> = {
   "snapshot-missing":
     "Pair Cloud has no saved copy of this thread's uncommitted changes. Wake the machine, then try again.",
   "snapshot-failed": "Couldn't save the machine's uncommitted changes. Try again in a moment.",
+  // A launch refusal answers with CloudMoveLaunch's own words.
+  refused: "Pair Cloud won't start this thread.",
+  "branch-not-pushed": "This branch is no longer on origin.",
 };
 
 class CloudMoveRefusal extends Schema.TaggedError<CloudMoveRefusal>()("CloudMoveRefusal", {
@@ -99,6 +107,26 @@ const SOURCE_REFUSALS: Record<
   "snapshot-failed": [503, "snapshot-failed"],
   "too-large": [413, "too-large"],
   failed: [500, "internal"],
+};
+
+const LAUNCH_REFUSALS: Record<
+  CloudMoveLaunch.CloudMoveLaunchError["reason"],
+  readonly [number, CloudMoveFailureReason]
+> = {
+  "unknown-project": [409, "unknown-project"],
+  refused: [409, "refused"],
+  "branch-not-pushed": [409, "branch-not-pushed"],
+  failed: [500, "internal"],
+};
+
+const refuseLaunch = (error: CloudMoveLaunch.CloudMoveLaunchError) => {
+  const [status, reason] = LAUNCH_REFUSALS[error.reason];
+  return new CloudMoveRefusal({
+    status,
+    reason,
+    ...(status === 500 ? {} : { text: error.message }),
+    cause: error,
+  });
 };
 
 const refuseSource = (error: CloudMoveSource.CloudMoveSourceError) => {
@@ -156,6 +184,10 @@ const isGitOid = Schema.is(CloudMoveGitOid);
 const decodeContinued = Schema.decodeUnknownOption(Schema.fromJsonString(CloudMoveContinuedInput));
 const encodeContextExport = Schema.encodeEffect(OrchestrationV2ContextExport);
 const encodeContinued = Schema.encodeEffect(CloudMoveContinuedResult);
+const decodeCheck = Schema.decodeUnknownOption(Schema.fromJsonString(CloudMoveCheckInput));
+const encodeCheck = Schema.encodeEffect(CloudMoveCheckResult);
+const decodeLaunch = Schema.decodeUnknownOption(Schema.fromJsonString(CloudMoveLaunchInput));
+const encodeLaunch = Schema.encodeEffect(CloudMoveLaunchResult);
 
 /** The checks every move-out route makes, in order: cloud-only (else an empty 404), member, thread. */
 const threadRoute = <R>(
@@ -188,6 +220,7 @@ const threadRoute = <R>(
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const { cloudOnly } = yield* ServerConfig.ServerConfig;
+    const moves = yield* CloudMoveLaunch.CloudMoveLaunch;
     const budget = makeByteBudget(TRANSFER_BYTES_PER_SECOND, TRANSFER_BURST_BYTES);
 
     const stagedUpload = (kind: StagedCloudImports.StagedCloudImportKind, maxBytes: number) =>
@@ -320,7 +353,55 @@ export const layer = Layer.unwrap(
         }),
     );
 
+    /** Continue in cloud: one route asks, the other launches; both on the member's link. */
+    const launchRoute = <R>(
+      route: string,
+      handle: (input: {
+        readonly request: HttpServerRequest.HttpServerRequest;
+        readonly session: Effect.Success<ReturnType<typeof authenticateLinkMember>>;
+      }) => Effect.Effect<HttpServerResponse.HttpServerResponse, CloudMoveRefusal, R>,
+    ) =>
+      HttpRouter.add(
+        "POST",
+        `${CLOUD_MOVE_ROUTE_PREFIX}${route}`,
+        Effect.gen(function* () {
+          if (!cloudOnly) return HttpServerResponse.empty({ status: 404 });
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const session = yield* authenticateLinkMember(request);
+          return yield* handle({ request, session });
+        }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
+      );
+
+    const check = launchRoute("/check", ({ request, session }) =>
+      Effect.gen(function* () {
+        const input = decodeCheck(yield* request.text.pipe(Effect.orElseSucceed(() => "")));
+        if (Option.isNone(input)) return yield* refuse(400, "bad-request")();
+        const result = yield* moves
+          .check({ memberId: session.memberId, input: input.value })
+          .pipe(Effect.mapError(refuseLaunch));
+        return HttpServerResponse.jsonUnsafe(
+          yield* encodeCheck(result).pipe(Effect.mapError(refuse(500, "internal"))),
+        );
+      }),
+    );
+
+    const launch = launchRoute("/staged/:key/launch", ({ request, session }) =>
+      Effect.gen(function* () {
+        const key = decodeKey((yield* HttpRouter.params).key);
+        const input = decodeLaunch(yield* request.text.pipe(Effect.orElseSucceed(() => "")));
+        if (Option.isNone(key) || Option.isNone(input)) return yield* refuse(400, "bad-request")();
+        const result = yield* moves
+          .launch({ key: key.value, session, input: input.value })
+          .pipe(Effect.mapError(refuseLaunch));
+        return HttpServerResponse.jsonUnsafe(
+          yield* encodeLaunch(result).pipe(Effect.mapError(refuse(500, "internal"))),
+        );
+      }),
+    );
+
     return Layer.mergeAll(
+      check,
+      launch,
       stagedUpload("seed", CLOUD_SEED_MAX_BYTES),
       stagedUpload("context-export", CONTEXT_EXPORT_MAX_BYTES),
       contextExport,

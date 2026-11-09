@@ -66,14 +66,19 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
-  it("disables archive and turning into a project while the thread is running", () => {
+  it("disables archive, turning into a project and continuing in cloud while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,
       canTurnIntoProject: true,
+      continueInCloud: { label: "a turn is running" },
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
+    expect(items.find((item) => item.id === "continue-in-cloud")).toMatchObject({
+      label: "Continue in cloud (a turn is running)",
+      disabled: true,
+    });
   });
 
   it("offers assign and gates delete only on a server with a team", () => {

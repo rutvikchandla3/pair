@@ -19,6 +19,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AssignThreadDialogHost } from "../components/team/AssignThreadDialog";
+import { ContinueInCloudDialogHost } from "../components/sandbox/ContinueInCloudDialog";
 import { PresenceWatch } from "../components/team/PresenceWatch";
 import { ViewerLeaseWatch } from "../components/sandbox/ViewerLeaseWatch";
 import { TeamMembersWatch } from "../components/team/TeamMembersWatch";
@@ -220,6 +221,7 @@ function RootRouteBranch() {
         <PresenceWatch />
         <ViewerLeaseWatch />
         <AssignThreadDialogHost />
+        <ContinueInCloudDialogHost />
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}

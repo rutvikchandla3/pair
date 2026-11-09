@@ -60,6 +60,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CloudIcon,
+  CloudUploadIcon,
   LaptopIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -145,9 +146,11 @@ import {
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useCloudTarget } from "../state/sandbox";
+import { useCloudTarget, useContinueInCloudOffer } from "../state/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
 import { useContinueLocally } from "../hooks/useContinueLocally";
+import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
+import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 import { SANDBOX_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
 import { SANDBOX_ACTION_PALETTE_LABELS } from "./sandbox/sandboxActionLabels";
 import {
@@ -501,6 +504,9 @@ function OpenCommandPaletteDialog(props: {
   );
   const runSandboxAction = useSandboxActionRunner();
   const continueLocally = useContinueLocally();
+  const continueInCloud = useContinueInCloudOffer(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1549,6 +1555,21 @@ function OpenCommandPaletteDialog(props: {
         icon: <LaptopIcon className={ITEM_ICON_CLASS} />,
         ...(moveOffer.kind === "disabled" ? { disabled: true, description: moveOffer.reason } : {}),
         run: () => continueLocally.run(activeThreadRef),
+      });
+    }
+    if (continueInCloud.kind !== "hidden") {
+      actionItems.push({
+        kind: "action",
+        value: "action:continue-in-cloud",
+        searchTerms: ["continue", "cloud", "move", "send", "pair cloud", "machine"],
+        title: `${CONTINUE_IN_CLOUD_LABEL}…`,
+        icon: <CloudUploadIcon className={ITEM_ICON_CLASS} />,
+        ...(continueInCloud.kind === "disabled"
+          ? { disabled: true, description: continueInCloud.reason }
+          : {}),
+        run: async () => {
+          openContinueInCloudDialog(activeThreadRef);
+        },
       });
     }
     actionItems.push({

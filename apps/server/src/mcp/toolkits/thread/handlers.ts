@@ -1,4 +1,5 @@
 import {
+  CLOUD_MOVE_DEFAULT_MESSAGE,
   type CommandId,
   type RuntimeRequestId,
   ThreadId,
@@ -10,6 +11,8 @@ import {
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
+import * as CloudMoves from "../../../cloudMove/CloudMoves.ts";
+import { assertNotLinked } from "../../linkOrigin.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -93,6 +96,47 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_thread_continue_in_cloud: writesThread((input) =>
+    Effect.gen(function* () {
+      const context = yield* readThread(input.threadId);
+      yield* assertNotLinked(context, "move a thread to another environment");
+      const { scope, threads, caller, projection } = context;
+      const threadId = projection.thread.id;
+      const actorId = yield* sendActorId(
+        threads,
+        scope,
+        yield* Effect.serviceOption(TeamState.TeamState),
+      );
+      const moves = yield* CloudMoves.CloudMoves;
+      const { cloudThread, seeded } = yield* moves
+        .continueInCloud({
+          threadId,
+          cloudEnvironmentId: input.cloudEnvironmentId,
+          excludePaths: input.excludePaths ?? [],
+          message: input.message ?? CLOUD_MOVE_DEFAULT_MESSAGE,
+          createdBy: "agent",
+          creationSource: "mcp",
+          // The calling run is the one asking, so its own thread may move mid-turn.
+          allowRunId: caller?.id === threadId ? (caller.activeRunId ?? undefined) : undefined,
+          actorId,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return {
+        threadId: cloudThread.threadId,
+        environmentId: cloudThread.environmentId,
+        link: McpInvocationContext.threadLinkFor(
+          { environmentId: cloudThread.environmentId, client: scope.client },
+          cloudThread.threadId,
+        ),
+        seeded,
+      };
+    }),
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;

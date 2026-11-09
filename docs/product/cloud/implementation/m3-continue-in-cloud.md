@@ -605,7 +605,7 @@ two thin routes, a check before any upload and the launch, and builds the launch
   local server over its WebSocket (08 §4); nothing in `apps/desktop` changes. 2.24 made the same
   call.
 - **3.23 needs 3.25 as well as 3.21 and 3.22.** It extends 3.25's `CloudMoves`, route client,
-  `CloudMoveError` and client-runtime move atoms, and relies on 3.25's presentation of the move
+  `ThreadMoveError` and client-runtime move atoms, and relies on 3.25's presentation of the move
   row. 3.25 is wave 3 and 3.23 wave 4.
 - **3.23 grows a Pair Cloud half.** Two routes in 3.20's `CloudMoveHttp.layer`, `POST
   /api/cloud-moves/check` (new) and `POST /api/cloud-moves/staged/<key>/launch`, and a small
@@ -2049,7 +2049,7 @@ dropped `desktop` for the same reason.
   `CloudMoveHttp.authenticateLinkMember` and `CloudMoveHttp.layer`), 3.21 (`seedRef` on the
   server's launch strategy, `seed-on-base`, `seed-unavailable`), 3.22 (`ContextExports.build`, the
   export `PUT`, `contextExportRef` on the server's launch input, the move turn item and its record
-  command), 3.25 (`CloudMoves`, `CloudMoveClient`, `CloudMoveError`, `createThreadMoveAtoms`,
+  command), 3.25 (`CloudMoves`, `CloudMoveClient`, `ThreadMoveError`, `createThreadMoveAtoms`,
   the move row's presentation). **Unblocks:** 3.24, 3.26; G3 steps 1 and 4 (the tool).
 - **Files:**
   - `packages/contracts/src/cloudMove.ts` (3.20's):
@@ -2060,15 +2060,16 @@ dropped `desktop` for the same reason.
     - `CloudMoveFailureReason` gains `"refused"` (Pair Cloud won't take this launch; `message`
       says why) and `"branch-not-pushed"` (a seedless launch's branch is gone from origin). The
       field is `ForwardCompatibleNullable`, so older laptops read them as null.
-    - 3.25's `CloudMoveError` gains reasons `run-active`, `cloud-thread`, `no-repository`,
-      `no-branch`, `no-base`, `not-on-github`, `no-link`, `link-failed`, `not-supported`,
-      `seed-too-large`, `seed-failed`, `upload-failed`, `launch-refused`. Clients show `message`
+    - 3.25's `ThreadMoveError` gains reasons `run-active`, `cloud-thread`, `no-repository`,
+      `no-branch`, `no-base`, `not-on-github`, `link-failed`, `seed-too-large`, `seed-failed`,
+      `upload-failed`, and reuses its `not-linked`, `unsupported` and `refused` where this page
+      says `no-link`, `not-supported` and `launch-refused`. Clients show `message`
       and never branch on `reason`. `seed-failed` reads "Couldn't package this thread's changes
       for the move. Try again."; the others' text is given where they are raised.
   - `packages/contracts/src/rpc.ts`: `WS_METHODS` (439) gains `threadMovePreview:
     "threadMove.preview"` and `threadMoveToCloud: "threadMove.toCloud"` beside 3.25's
     `threadMoveToLocal`; two `Rpc.make`s next to `WsSandboxCheckDriverRpc` (1037) with error
-    `Schema.Union([CloudMoveError, EnvironmentAuthorizationError])`, added to `WsRpcGroup` (~2290).
+    `Schema.Union([ThreadMoveError, EnvironmentAuthorizationError])`, added to `WsRpcGroup` (~2290).
   - `packages/contracts/src/clientRpcPermissions.ts`: `CLIENT_GUARDED_RPC_SCOPES` (19) gains
     `[WS_METHODS.threadMoveToCloud]: AuthOrchestrationOperateScope`, with "A move starts a thread
     on Pair Cloud through this server's link." Preview is a read and stays unguarded.
@@ -2095,7 +2096,9 @@ dropped `desktop` for the same reason.
     Bearer <token>` to `link.url`. `putSeed` sends the bundle with `HttpClientRequest.bodyFile`
     (`.repos/effect/packages/effect/src/http/HttpClientRequest.ts` 1064), which sets
     `content-length` (3.20 refuses a body without one). Every non-2xx body decodes as
-    `CloudMoveFailure`.
+    `CloudMoveFailure`. They take an object after the link (`putSeed(link, { key, projectId,
+    file })`); `putContextExport` answers `{ outcome, bytes }` so the span can record
+    `exportBytes`.
   - `apps/server/src/cloudMove/CloudMoveLaunch.ts` (new, Pair Cloud side): service
     `CloudMoveLaunch` with `check` and `launch`.
   - `apps/server/src/cloudMove/CloudMoveHttp.ts` (3.20's): two routes in `CloudMoveHttp.layer`'s
@@ -2103,7 +2106,8 @@ dropped `desktop` for the same reason.
     ${CLOUD_MOVE_ROUTE_PREFIX}/staged/:key/launch`. Each answers 404 off cloud-only, runs
     `authenticateLinkMember`, decodes the body (`400 bad-request`), calls one `CloudMoveLaunch`
     method, and maps a refusal to `409` with `CloudMoveFailure` (`refused`, `branch-not-pushed`,
-    `unknown-project`). `authenticateLinkMember` also returns the session's `label` and `access`,
+    `unknown-project`). The layer reads `CloudMoveLaunch` when it is built, as its handlers'
+    requirements would otherwise reach the top-level server context. `authenticateLinkMember` also returns the session's `label` and `access`,
     which `authenticateMcpClient` already reads; the launch needs both.
   - `packages/shared/src/sandboxCredentials.ts`: `usableCloudProviders(input)`, the "usable" rule
     `cloudAccountNotice` applies today (client-runtime `state/sandbox.ts` 167–175), moved here so
@@ -2113,12 +2117,12 @@ dropped `desktop` for the same reason.
   - `apps/server/src/ws.ts`, beside `sandboxCheckDriver` (2913):
     `[WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input)` and
     `[WS_METHODS.threadMoveToCloud]: (input) => cloudMoves.continueInCloud({ ...input, createdBy:
-    "user" })`.
+    "user", creationSource: input.creationSource ?? "web", actorId: currentSession.memberId })`.
   - `apps/server/src/mcp/toolkits/thread/tools.ts`: `ThreadContinueInCloudTool`, added to
     `ThreadToolkit` (240); `handlers.ts` (95): its handler.
   - `apps/server/src/provider/AgentContextBudget.test.ts`: `toolHandlerServices` (52) gains
-    `Layer.mock(CloudMoves)({})`. `agentContextBudget.json`: `mcpToolListJsonBytes` (47990) set to
-    the measured value; the PR needs the `agent-context-increase` label.
+    `Layer.mock(CloudMoves)({})`. `agentContextBudget.json`: `mcpToolListJsonBytes` (48110 once 3.19
+    landed) set to the measured value, 48788; the PR needs the `agent-context-increase` label.
   - `evals/mcp-tool-use/cases/threads-vs-tasks.ndjson`: two cases (Tests).
   - `packages/client-runtime/src/state/cloudTarget.ts`: `continueInCloudOffer`, and
     `isCloudImportEnvironment` beside `isCloudLaunchEnvironment` (38) (3.25's
@@ -2206,7 +2210,7 @@ dropped `desktop` for the same reason.
     again.").
   - `CloudMoves.continueInCloud(input: { threadId; cloudEnvironmentId?; cloudProjectId?;
     excludePaths; message; createdBy: "user" | "agent"; creationSource; allowRunId?: RunId }) =>
-    Effect<ThreadMoveToCloudResult, CloudMoveError>`, span `CloudMoves.continueInCloud`:
+    Effect<ThreadMoveToCloudResult, ThreadMoveError>`, span `CloudMoves.continueInCloud`:
     1. **One move per thread.** A call for a thread whose move is running joins it
        (`SynchronizedRef<Map<ThreadId, Deferred>>`). The move is forked into the service's scope,
        so a client that disconnects (a phone sent to the background) doesn't stop it.
@@ -2216,13 +2220,13 @@ dropped `desktop` for the same reason.
        it."); `no-repository`, `no-branch`, `no-base` as for `preview`; the project's
        `repositoryGroupingKeyOf(repositoryIdentity)` not under `github.com/` (`not-on-github`,
        with client-runtime's text: "Cloud needs this project's origin on github.com.").
-    3. **The link.** `PeerLinks.resolve(cloudEnvironmentId)`; a `PeerLinkError` becomes `no-link`
+    3. **The link.** `PeerLinks.resolve(cloudEnvironmentId)`; a `PeerLinkError` becomes `not-linked`
        (`unknown_link`, the preview's "Link … first." text) or `link-failed` with its message;
-       `capabilities.cloudImport !== true` is `not-supported` ("<label> needs an update to move
+       `capabilities.cloudImport !== true` is `unsupported` ("<label> needs an update to move
        threads. Ask an admin."; a member can't update Pair Cloud). Without
        `cloudEnvironmentId` (the tool): `PeerLinks.agentLinks`, each resolved, those reporting
-       `cloudImport`; one is used, none is `no-link` ("No Pair Cloud is linked here. Link one in
-       Settings → Environments."), several is `no-link` naming them ("More than one Pair Cloud is
+       `cloudImport`; one is used, none is `not-linked` ("No Pair Cloud is linked here. Link one in
+       Settings → Environments."), several is `not-linked` naming them ("More than one Pair Cloud is
        linked here: <labels>. Pass cloudEnvironmentId.").
     4. **The key.** `n` = the thread's `move` items with `direction: "to"`
        (`getThreadRecords(threadId, ["turnItems"])`). The `CloudStagingKey` is `mv_` plus the
@@ -2231,7 +2235,7 @@ dropped `desktop` for the same reason.
     5. **Check before any upload.** `client.check(link, { projectId: cloudProjectId, originKey,
        model })`; `model` is the shell's `modelSelection.model` and its instance's driver (the
        provider's `driver`, else the stored instance's, else the id, as `cloudModelDisabledReason`
-       does). A refusal is `launch-refused` with Pair Cloud's `message`. Nothing is written yet.
+       does). A refusal is `refused` with Pair Cloud's `message`. Nothing is written yet.
     6. **Seed or not.** Seedless when `pushed` and every changed file is in `excludePaths`.
        `defaultBranch = resolveDefaultBranchName(cwd, "origin")`. The launch's `branch`: none when
        seedless on the base (M2's fresh launch, as `routedCloudLaunch` does); the local branch
@@ -2249,23 +2253,23 @@ dropped `desktop` for the same reason.
          prerequisites are its parents (`<mergeBase>^@`; none for a root commit): `git bundle
          create` silently drops a ref whose tip a prerequisite reaches (checked with git 2.43),
          and 3.20 refuses a bundle without both refs.
-       - `git bundle create <stateDir>/cloud-move/<key>.bundle <branch ref> <snapshot ref>
+       - `git bundle create <stateDir>/cloud-move-seeds/<key>.bundle <branch ref> <snapshot ref>
          ^<prerequisite>…` to a file, not `-`: `execute` collects stdout as text. Over
          `CLOUD_SEED_MAX_BYTES` is `seed-too-large` before any upload ("The upload would be <n> MB,
          over Pair Cloud's 512 MB limit. Leave out large untracked files, or push <branch>
          first.").
-       - `client.putSeed(link, key, projectId, file)`. `409 missing-prerequisite`: rebuild with no
+       - `client.putSeed(link, { key, projectId, file })`. `409 missing-prerequisite`: rebuild with no
          prerequisite, put again under the same key, once (`fullHistory`). `409 claimed`: a
          launch already took this key, so skip the export and go to the launch, which replays.
          `413`: `seed-too-large`. Other failures: `upload-failed` with the message. Upload time
          is `Clock` around each `putSeed`.
        - Both temp refs and the file are removed in `Effect.ensuring`; the layer clears
-         `<stateDir>/cloud-move/` at start.
-    8. **The export.** `ContextExports.build(threadId)`, then `client.putContextExport(link, key,
-       export)`; `409 claimed` goes to the launch as above.
-    9. **Launch.** `client.launch(link, key, { projectId, modelSelection (from the check), title:
+         `<stateDir>/cloud-move-seeds/` at start (not on a cloud-only server).
+    8. **The export.** `ContextExports.build(threadId)`, then `client.putContextExport(link,
+       { key, projectId, value })`; `409 claimed` goes to the launch as above.
+    9. **Launch.** `client.launch(link, { key, body: { projectId, modelSelection (from the check), title:
        shell.title, baseRef: base, branch?, existingBranch?, seeded, runtimeMode,
-       interactionMode (the shell's), message, createdBy, creationSource })`. The export carries
+       interactionMode (the shell's), message, createdBy, creationSource } })`. The export carries
        the provenance, so the launch names no source thread. A seedless launch refused `branch-not-pushed` (origin lost the branch) runs step 7
        once and launches seeded.
     10. **Record.** `threads.dispatch` of 3.22's `thread.move.record` with `commandId:
@@ -2310,7 +2314,9 @@ dropped `desktop` for the same reason.
     the member's own before a team instance at each step: an instance of `driver` listing `model`
     (`models[].slug`); an instance of `driver` with its default model (`isDefault`, else the first
     non-legacy); any usable instance with its default; else null.
-  - `continueInCloudOffer({ thread: { sandboxId?, runActive }, cloud: CloudTarget, importsTo })`:
+  - `continueInCloudOffer({ thread: { environmentId, sandboxId?, runActive, originKey }, cloud:
+    CloudTarget, importsTo })` (a target in the thread's own environment means it runs on Pair
+    Cloud; `originKey` names the repository in "Add <owner/name> …"):
     hidden for a cloud thread, a thread whose environment reports `cloudLaunch`, `cloud.kind ===
     "hidden"`, or no target that imports; disabled with a short `label` for the menu suffix and a
     sentence `reason` for the palette description and tooltip, as `resolveContinueLocally` has:
@@ -2377,7 +2383,8 @@ dropped `desktop` for the same reason.
     to another environment")` (linkOrigin.ts). It calls `continueInCloud` with `createdBy:
     "agent"`, `creationSource: "mcp"`, `message ?? CLOUD_MOVE_DEFAULT_MESSAGE`, and `allowRunId` =
     the caller's active run when the target is its own thread; `link` is `threadLinkFor({
-    environmentId: cloudEnvironmentId, client: scope.client }, threadId)`. A `CloudMoveError` is
+    environmentId: cloudEnvironmentId, client: scope.client }, threadId)`; `actorId` is the
+    member the run acts for (`sendActorId`, as `t3_queue`). A `ThreadMoveError` is
     `OrchestratorMcpFailure` `orchestration_error` with its message.
 - **Commands and events:** none new. Each side records 3.22's move item; Pair Cloud launches
   through `ThreadLaunchService.launch` (`thread.create`, the claims, `sandbox.provision`,

@@ -28,6 +28,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
   // Creates a worktree and a thread here.
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
+  // A move starts a thread on Pair Cloud through this server's link.
+  [WS_METHODS.threadMoveToCloud]: AuthOrchestrationOperateScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,

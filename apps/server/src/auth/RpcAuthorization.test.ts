@@ -107,7 +107,7 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets members read Cloud's overview and hold a viewer lease, and keeps the driver check, which boots a machine, admin only", () => {
+  it("lets members read Cloud's overview, hold a viewer lease and move a thread to cloud, and keeps the driver check, which boots a machine, admin only", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver)).toBe(AuthSettingsWriteScope);
     expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
     expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
@@ -116,6 +116,17 @@ describe("RPC authorization scopes", () => {
     ]);
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxOverview));
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxViewing));
+    expect(requiredScopeForRpcMethod(WS_METHODS.threadMovePreview)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.threadMoveToCloud)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(MEMBER_SCOPES).toContain(AuthOrchestrationReadScope);
+    expect(MEMBER_SCOPES).toContain(AuthOrchestrationOperateScope);
+    expect(clientRpcRequiredScopes(WS_METHODS.threadMoveToCloud, {})).toEqual([
+      AuthOrchestrationOperateScope,
+    ]);
   });
 
   it("keeps draining, which holds every member's new cloud turns, admin only", () => {

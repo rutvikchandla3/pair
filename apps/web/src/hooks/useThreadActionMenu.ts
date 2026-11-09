@@ -24,10 +24,12 @@ import {
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import { openContinueInCloudDialog } from "../components/sandbox/ContinueInCloudDialog";
 import {
   readSandboxThreadMachine,
   useSandboxActionRunner,
 } from "../components/sandbox/useSandboxThreadStatus";
+import { readContinueInCloudOffer } from "../state/sandbox";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -148,6 +150,7 @@ export function useThreadActionMenu(input: {
       const team = readThreadTeamMenu(thread);
       const machine = readSandboxThreadMachine(threadRef);
       const moveOffer = continueLocally.offerFor(threadRef);
+      const cloudOffer = readContinueInCloudOffer(threadRef);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -166,6 +169,13 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         ...(team ? { team } : {}),
         ...(machine ? { machine } : {}),
+        ...(cloudOffer.kind === "hidden"
+          ? {}
+          : {
+              continueInCloud: {
+                label: cloudOffer.kind === "disabled" ? cloudOffer.label : null,
+              },
+            }),
         ...(moveOffer.kind === "hidden"
           ? {}
           : {
@@ -230,6 +240,9 @@ export function useThreadActionMenu(input: {
           return;
         case "continue-locally":
           await continueLocally.run(threadRef);
+          return;
+        case "continue-in-cloud":
+          openContinueInCloudDialog(threadRef);
           return;
         case "project-settings": {
           const project = projects.find(

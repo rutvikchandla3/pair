@@ -191,7 +191,9 @@ import {
   newThreadOnBranchOptions,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
 import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
+import { readContinueInCloudOffer } from "../state/sandbox";
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -2728,6 +2730,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) ?? null;
         const teamMenu = readThreadTeamMenu(thread);
         const machine = readSandboxThreadMachine(threadRef);
+        const cloudOffer = readContinueInCloudOffer(threadRef);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2757,6 +2760,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               ...(teamMenu ? { team: teamMenu } : {}),
               ...(machine ? { machine } : {}),
+              ...(cloudOffer.kind === "hidden"
+                ? {}
+                : {
+                    continueInCloud: {
+                      label: cloudOffer.kind === "disabled" ? cloudOffer.label : null,
+                    },
+                  }),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2921,6 +2931,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "mark-unread":
             markThreadUnread(threadRef);
+            return;
+          case "continue-in-cloud":
+            openContinueInCloudDialog(threadRef);
             return;
           case "copy-path":
             if (!threadWorkspacePath) {

@@ -145,6 +145,7 @@ import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
 import * as CloudMoveHttp from "./cloudMove/CloudMoveHttp.ts";
+import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -927,7 +928,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
-    CloudMoveHttp.layer,
+    CloudMoveHttp.layer.pipe(Layer.provide(CloudMoveLaunch.layer)),
     GuestHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
