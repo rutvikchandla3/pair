@@ -1,10 +1,10 @@
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import {
   type CloudTarget,
+  cloudTargetEnvironments,
   type ContinueInCloudOffer,
-  continueInCloudOffer,
-  isCloudImportEnvironment,
   resolveCloudTarget,
+  resolveContinueInCloud,
 } from "@t3tools/client-runtime/state/cloud-target";
 import {
   createCloudAccountNoticeAtoms,
@@ -16,7 +16,6 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import {
   type EnvironmentId,
-  repositoryGroupingKeyOf,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -59,12 +58,7 @@ function cloudTargetOf(
   if (project === undefined) return HIDDEN;
   return resolveCloudTarget({
     project,
-    environments: [...presentations].map(([environmentId, presentation]) => ({
-      environmentId,
-      label: presentation.entry.target.label,
-      connected: presentation.connection.phase === "connected",
-      serverConfig: presentation.serverConfig,
-    })),
+    environments: cloudTargetEnvironments(presentations),
     projects,
   });
 }
@@ -102,25 +96,9 @@ function continueInCloudOfferOf(
   presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>,
   projects: ReadonlyArray<EnvironmentProject>,
 ): ContinueInCloudOffer {
-  if (thread === null) return { kind: "hidden" };
-  const projectRef = { environmentId: thread.environmentId, projectId: thread.projectId };
-  const project = projects.find(
-    (candidate) =>
-      candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
-  );
-  return continueInCloudOffer({
-    thread: {
-      environmentId: thread.environmentId,
-      ...(thread.source.sandboxId === undefined ? {} : { sandboxId: thread.source.sandboxId }),
-      runActive: thread.runtime?.activeRunId != null,
-      originKey: project?.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null,
-    },
-    cloud: cloudTargetOf(projectRef, presentations, projects),
-    importsTo: (environmentId) =>
-      isCloudImportEnvironment(presentations.get(environmentId)?.serverConfig ?? null),
-  });
+  return thread === null
+    ? { kind: "hidden" }
+    : resolveContinueInCloud({ thread, projects, presentations });
 }
 
 const NO_THREAD_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(

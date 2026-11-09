@@ -9,6 +9,11 @@ import {
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
 import {
+  type ContinueInCloudOffer,
+  resolveContinueInCloud,
+  sameContinueInCloudOffer,
+} from "@t3tools/client-runtime/state/cloud-target";
+import {
   createCloudAccountNoticeAtoms,
   createSandboxEnvironmentAtoms,
   SANDBOX_ACTION_FAILURE_TITLES,
@@ -20,13 +25,15 @@ import {
   type SandboxThreadMachine,
   type StoppedFiles,
 } from "@t3tools/client-runtime/state/sandbox";
+import { createThreadMoveAtoms } from "@t3tools/client-runtime/state/threadMove";
 import type { EnvironmentId, MemberId, SandboxId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import * as Dialog from "../components/ui/Dialog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { connectedEnvironmentIdsAtom } from "./presentation";
+import { connectedEnvironmentIdsAtom, environmentPresentations } from "./presentation";
+import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { teamEnvironment } from "./team";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -36,6 +43,9 @@ export const sandboxEnvironment = createSandboxEnvironmentAtoms(connectionAtomRu
   team: teamEnvironment,
   threadShells: environmentThreadShells,
 });
+
+/** Moves between this phone's paired Mac and Pair Cloud, sent to the Mac. */
+export const threadMoveEnvironment = createThreadMoveAtoms(connectionAtomRuntime);
 
 const cloudAccountNoticeAtom = createCloudAccountNoticeAtoms({
   configValueAtom: (environmentId) => serverEnvironment.configValueAtom(environmentId),
@@ -65,6 +75,36 @@ const cloudEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =>
 
 export function useCloudEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   return useAtomValue(cloudEnvironmentIdsAtom);
+}
+
+const HIDDEN_OFFER: ContinueInCloudOffer = { kind: "hidden" };
+
+const continueInCloudOfferFamily = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get): ContinueInCloudOffer => {
+    const thread = get(environmentThreadShells.quietThreadShellAtom(ref));
+    // A cloud thread's row reads nothing past its own shell.
+    if (thread === null || thread.source.sandboxId !== undefined) return HIDDEN_OFFER;
+    return resolveContinueInCloud({
+      thread,
+      projects: get(environmentProjects.projectsAtom),
+      presentations: get(environmentPresentations.presentationsAtom),
+    });
+  }).pipe(
+    Atom.withEquality(sameContinueInCloudOffer),
+    Atom.withLabel(`mobile-continue-in-cloud-offer:${key}`),
+  );
+});
+
+const NO_OFFER_ATOM = Atom.make<ContinueInCloudOffer>(HIDDEN_OFFER).pipe(
+  Atom.withLabel("mobile-continue-in-cloud-offer:none"),
+);
+
+/** Whether the thread can continue on a Pair Cloud; a null ref subscribes to nothing. */
+export function useContinueInCloudOffer(threadRef: ScopedThreadRef | null): ContinueInCloudOffer {
+  return useAtomValue(
+    threadRef === null ? NO_OFFER_ATOM : continueInCloudOfferFamily(threadKey(threadRef)),
+  );
 }
 
 const NO_MACHINE_ATOM = Atom.make<SandboxThreadMachine | null>(null).pipe(

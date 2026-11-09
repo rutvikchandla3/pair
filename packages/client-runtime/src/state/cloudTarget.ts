@@ -11,6 +11,7 @@ import {
 import { cloudAvailability } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
+import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import type { EnvironmentProject, EnvironmentThreadShell } from "./models.ts";
 
 export type CloudTarget =
@@ -36,6 +37,18 @@ interface CloudTargetEnvironment {
   readonly serverConfig: Pick<ServerConfig, "environment" | "settings"> | null;
 }
 
+/** The environments `resolveCloudTarget` and `resolveContinueInCloud` read, from presentations. */
+export function cloudTargetEnvironments(
+  presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>,
+): ReadonlyArray<CloudTargetEnvironment> {
+  return [...presentations].map(([environmentId, presentation]) => ({
+    environmentId,
+    label: presentation.entry.target.label,
+    connected: presentation.connection.phase === "connected",
+    serverConfig: presentation.serverConfig,
+  }));
+}
+
 const NOT_ON_GITHUB_MESSAGE = "Cloud needs this project's origin on github.com.";
 
 export function isCloudLaunchEnvironment(
@@ -45,9 +58,7 @@ export function isCloudLaunchEnvironment(
 }
 
 /** Pair Cloud takes moves from other machines (3.20's routes). */
-export function isCloudImportEnvironment(
-  serverConfig: Pick<ServerConfig, "environment"> | null,
-): boolean {
+function isCloudImportEnvironment(serverConfig: Pick<ServerConfig, "environment"> | null): boolean {
   return serverConfig?.environment.capabilities.cloudImport === true;
 }
 
@@ -287,6 +298,67 @@ export function continueInCloudOffer(input: {
     label: "not available",
     reason: first.disabledReason ?? `Add ${repository} to ${first.label} first.`,
   };
+}
+
+const HIDDEN_OFFER: ContinueInCloudOffer = { kind: "hidden" };
+
+/** Continue in cloud for a thread shell, read from its project and the paired environments. */
+export function resolveContinueInCloud(input: {
+  readonly thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId" | "runtime"> & {
+    readonly source: { readonly sandboxId?: unknown };
+  };
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>;
+}): ContinueInCloudOffer {
+  const { thread } = input;
+  const project = input.projects.find(
+    (candidate) =>
+      candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+  );
+  if (project === undefined) return HIDDEN_OFFER;
+  return continueInCloudOffer({
+    thread: {
+      environmentId: thread.environmentId,
+      ...(thread.source.sandboxId === undefined ? {} : { sandboxId: thread.source.sandboxId }),
+      runActive: thread.runtime?.activeRunId != null,
+      originKey: project.repositoryIdentity
+        ? repositoryGroupingKeyOf(project.repositoryIdentity)
+        : null,
+    },
+    cloud: resolveCloudTarget({
+      project,
+      environments: cloudTargetEnvironments(input.presentations),
+      projects: input.projects,
+    }),
+    importsTo: (environmentId) =>
+      isCloudImportEnvironment(input.presentations.get(environmentId)?.serverConfig ?? null),
+  });
+}
+
+/** For `Atom.withEquality`, so a row re-renders only when its own offer changes. */
+export function sameContinueInCloudOffer(
+  left: ContinueInCloudOffer,
+  right: ContinueInCloudOffer,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "disabled" && right.kind === "disabled") {
+    return left.label === right.label && left.reason === right.reason;
+  }
+  if (left.kind === "ready" && right.kind === "ready") {
+    return (
+      left.targets.length === right.targets.length &&
+      left.targets.every((target, index) => {
+        const other = right.targets[index]!;
+        return (
+          target.environmentId === other.environmentId &&
+          target.label === other.label &&
+          target.projectId === other.projectId &&
+          target.disabledReason === other.disabledReason
+        );
+      })
+    );
+  }
+  return true;
 }
 
 const ORIGIN_PREFIX = "origin/";

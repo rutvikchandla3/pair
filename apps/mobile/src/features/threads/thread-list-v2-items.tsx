@@ -53,7 +53,13 @@ import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
 import { useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
-import { useSandboxActionRunner, useSandboxThreadMachine } from "../../state/sandbox";
+import {
+  useContinueInCloudOffer,
+  useSandboxActionRunner,
+  useSandboxThreadMachine,
+} from "../../state/sandbox";
+import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
+import { useNavigation } from "@react-navigation/native";
 import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -805,6 +811,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : { environmentId: thread.environmentId, threadId: thread.id },
   );
   const runMachineAction = useSandboxActionRunner();
+  const continueInCloud = useContinueInCloudOffer(
+    thread.source.sandboxId === undefined
+      ? { environmentId: thread.environmentId, threadId: thread.id }
+      : null,
+  );
+  const navigation = useNavigation();
   const teamMenu = useThreadTeamMenu(thread);
   const teamActions = useThreadTeamActions();
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
@@ -966,6 +978,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             },
           ]
         : []),
+      ...(continueInCloud.kind === "hidden"
+        ? []
+        : [
+            {
+              id: "continue-in-cloud",
+              title: `${CONTINUE_IN_CLOUD_LABEL}…`,
+              image: "icloud.and.arrow.up",
+              ...(continueInCloud.kind === "disabled"
+                ? { attributes: { disabled: true }, subtitle: continueInCloud.reason }
+                : {}),
+            } satisfies MenuAction,
+          ]),
       // Members may wake or retry any machine; sleep and discard live in the thread's header.
       ...(machine?.actions ?? [])
         .filter((action) => action === "wake" || action === "retry")
@@ -1037,6 +1061,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canUnsettle,
+    continueInCloud,
     deleteMenuItems,
     machine?.actions,
     pinMenuItems,
@@ -1052,6 +1077,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
+      if (nativeEvent.event === "continue-in-cloud") {
+        navigation.navigate("ThreadContinueInCloud", {
+          environmentId: String(thread.environmentId),
+          threadId: String(thread.id),
+        });
+      }
       if (
         machine !== null &&
         (nativeEvent.event === "machine:wake" || nativeEvent.event === "machine:retry")
@@ -1114,6 +1145,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      navigation,
       thread,
       machine,
       runMachineAction,

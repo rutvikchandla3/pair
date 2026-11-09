@@ -2556,12 +2556,13 @@ with the header and row entries dropped.
   - `apps/mobile/src/state/sandbox.ts`:
     - `threadMoveEnvironment = createThreadMoveAtoms(connectionAtomRuntime)` beside
       `sandboxEnvironment` (35); 3.25 binds it on web only.
-    - `continueInCloudOfferAtom`: an `Atom.family` by thread key over the thread's shell
-      (`environmentThreadShells.quietThreadShellAtom`), the projects, the environments' server
-      configs and connection phases (the atoms behind `useProjects`, `useServerConfigs` and
-      `useWorkspaceEnvironments`; re-read state/entities.ts and state/workspace.ts), mapped
-      through `resolveCloudTarget` and `continueInCloudOffer`, with `Atom.withEquality` on the
-      offer. Thread rows each read it, so a row re-renders only when its own offer changes.
+    - `continueInCloudOfferFamily`: an `Atom.family` by thread key over the thread's shell
+      (`environmentThreadShells.quietThreadShellAtom`), `environmentProjects.projectsAtom` and
+      `environmentPresentations.presentationsAtom` (the same atoms web reads), mapped through
+      client-runtime's `resolveContinueInCloud`, with `Atom.withEquality(sameContinueInCloudOffer)`.
+      A thread already on a machine returns before reading either, so a cloud row subscribes to
+      nothing else. Thread rows each read it, so a row re-renders only when its own offer
+      changes.
     - `useContinueInCloudOffer(threadRef)`, a null ref subscribing to nothing, as
       `useSandboxThreadMachine` (77) does.
   - `apps/mobile/src/features/threads/thread-machine-menu.ts`: `buildThreadCloudHeaderMenu(offer,
@@ -2582,12 +2583,19 @@ with the header and row entries dropped.
     hidden (the row reads
     `useContinueInCloudOffer`, beside `useSandboxThreadMachine` at 802, and joins the `useMemo`'s
     dependencies); `handleMenuAction` (1053) opens the sheet on `"continue-in-cloud"`.
+  - `packages/client-runtime/src/state/cloudTarget.ts`: `resolveContinueInCloud` (a shell, the
+    projects and the presentations to an offer, which web's `useContinueInCloudOffer` now calls
+    too), `cloudTargetEnvironments` (presentations to `resolveCloudTarget`'s environments) and
+    `sameContinueInCloudOffer`. They are here so the shell-to-offer mapping isn't written twice.
+  - `apps/mobile/src/components/ui/AppSymbol.tsx`: `icloud.and.arrow.up` maps to Tabler's
+    `IconCloudUpload` on Android.
   - `apps/mobile/src/features/threads/ContinueInCloudSheet.tsx` (new, under `features/threads`,
     never `features/cloud`, which is T3 Connect). Params `{ environmentId, threadId }`. It reads
     the thread from `useThreadSelection` (as `ThreadPullRequestsSheet` does), the offer, and the
     preview (`useEnvironmentQuery(threadMoveEnvironment.preview({ environmentId, input: { threadId,
     cloudEnvironmentId } }))`). Titled `CONTINUE_IN_CLOUD_LABEL`. Content, top to bottom:
-    - a Pair Cloud row with a menu when the offer has several targets;
+    - a Pair Cloud row with a menu when the offer has several targets (the targets the offer
+      last listed, as web's dialog keeps its snapshot, so a turn starting doesn't empty it);
     - "<branch> from <base>", the commits, then the files with a `Switch` each (on = goes);
     - `MOVE_EXCLUDE_NOTE`, `MOVE_STAYS_NOTE`, and `moveNothingToUpload(branch)` when `pushed`
       and every switch is off;
@@ -2600,7 +2608,9 @@ with the header and row entries dropped.
       NewTaskDraftScreen.tsx 1067 does, a running turn (web's text), and `moving`
       (`MOVE_IN_PROGRESS_NOTE`);
     - the confirm button, `CONTINUE_IN_CLOUD_LABEL`, `CONTINUE_IN_CLOUD_BUSY_LABEL` while the move
-      runs or `moving`, disabled under the same rules as web, which runs
+      runs or `moving`, disabled under web's rules except that a move already
+      running on the Mac (`preview.moving`, after a reconnect) leaves it enabled: pressing it
+      joins that move, so the phone can still reach the new thread. It runs
       `useAtomCommand(threadMoveEnvironment.toCloud)` with `creationSource: "mobile"` on the Mac's
       environment.
       Success: `useSelectWorkspaceDetail()` selects `{ name: "Thread", params: {
@@ -2610,13 +2620,14 @@ with the header and row entries dropped.
   - `apps/mobile/src/Stack.tsx`: a `ThreadContinueInCloud` route beside `ThreadPullRequests`
     (917), `screen: ContinueInCloudSheet`, `HORIZONTAL_FORM_SHEET_OPTIONS`, `sheetAllowedDetents:
     formSheetDetents(0.6, 0.95)`, `sheetGrabberVisible: true`; on iOS
-    `SHEET_GLASS_HEADER_OPTIONS`, as `ThreadPullRequests`. The header menu and the row menu open it
+    `SHEET_GLASS_HEADER_OPTIONS`, as `ThreadPullRequests`; no `linking` path (a sheet that
+    needs a loaded thread and a live preview isn't a link target). The header menu and the row menu open it
     with `navigation.navigate("ThreadContinueInCloud", { environmentId, threadId })`: a sheet
     drilled into from the page, which mobile-navigation.md allows (`navigate` is refused only for
     `Thread` and `PullRequest`).
-- **Types and services:** `threadMoveEnvironment`, `continueInCloudOfferAtom`,
-  `useContinueInCloudOffer`, `buildThreadCloudHeaderMenu`, the `ThreadContinueInCloud` route. No
-  server, contract or client-runtime change.
+- **Types and services:** `threadMoveEnvironment`, `useContinueInCloudOffer`,
+  `buildThreadCloudHeaderMenu`, the `ThreadContinueInCloud` route, and the three client-runtime
+  helpers above. No server or contract change.
 - **Commands and events:** none.
 - **Migrations:** none.
 - **Proposed gap answers.**
@@ -2627,9 +2638,11 @@ with the header and row entries dropped.
   - **No inline link.** Linking writes the Mac's settings and mints a code on Pair Cloud; 3.19
     keeps that on the Mac's client.
 
-**Tests.** None new: the offer, the copy and the RPCs are tested where they live (3.23:
-client-runtime `cloudTarget.test.ts`, server `CloudMoves.test.ts`). The header and row menu
-builders map an offer to items with no logic of their own (AGENTS: no tests for callback wiring).
+**Tests.** Two cases in client-runtime `cloudTarget.test.ts`: `resolveContinueInCloud` (the
+project lookup and the running turn) and `sameContinueInCloudOffer`, whose equality decides when a
+row re-renders. The offer, the copy and the RPCs are tested where they live (3.23: `cloudTarget.test.ts`,
+server `CloudMoves.test.ts`). The header and row menu builders map an offer to items with no logic
+of their own (AGENTS: no tests for callback wiring).
 
 **Verify.** `vp run typecheck` for mobile; `vp run check:changed`. The primary agent's
 `test-t3-mobile` pass (the integrated pass's step 5) on iOS and Android, with the phone paired to the Mac's dev server and the

@@ -65,8 +65,12 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useThreadOwner, useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
 import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
-import { buildThreadMachineHeaderMenu } from "./thread-machine-menu";
-import { useSandboxActionRunner, useSandboxThreadMachine } from "../../state/sandbox";
+import { buildThreadCloudHeaderMenu, buildThreadMachineHeaderMenu } from "./thread-machine-menu";
+import {
+  useContinueInCloudOffer,
+  useSandboxActionRunner,
+  useSandboxThreadMachine,
+} from "../../state/sandbox";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -538,6 +542,21 @@ function ThreadRouteContent(
           ),
         )
       : null;
+  // A thread on the member's own computer has no machine, so Cloud takes the machine menu's slot.
+  const continueInCloudOffer = useContinueInCloudOffer(
+    selectedThread === null || threadMachine !== null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+  );
+  const cloudHeaderMenu =
+    selectedThread === null
+      ? null
+      : buildThreadCloudHeaderMenu(continueInCloudOffer, () =>
+          navigation.navigate("ThreadContinueInCloud", {
+            environmentId: String(selectedThread.environmentId),
+            threadId: String(selectedThread.id),
+          }),
+        );
   const headerSubtitle = [
     threadMachine?.presentation.label ?? null,
     threadOwner === null ? null : `${threadOwner.name}'s thread`,
@@ -1021,7 +1040,7 @@ function ThreadRouteContent(
                 usesNativeHeaderGlass={usesNativeHeaderGlass}
                 gitControls={threadGitControlProps}
                 teamMenu={teamHeaderMenu}
-                machineMenu={machineHeaderMenu}
+                machineMenu={machineHeaderMenu ?? cloudHeaderMenu}
                 viewers={threadViewers}
                 hasThreadCwd={selectedThreadCwd !== null}
                 hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}

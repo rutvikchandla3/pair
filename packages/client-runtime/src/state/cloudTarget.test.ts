@@ -10,8 +10,10 @@ import {
   continueInCloudOffer,
   type ContinueLocallyOffer,
   resolveCloudTarget,
+  resolveContinueInCloud,
   resolveContinueLocally,
   routedCloudLaunch,
+  sameContinueInCloudOffer,
 } from "./cloudTarget.ts";
 import type { EnvironmentProject } from "./models.ts";
 import { v2Project } from "./orchestrationV2TestFixtures.ts";
@@ -538,5 +540,76 @@ describe("continueInCloudOffer", () => {
         importsTo: () => row.imports ?? true,
       }),
     ).toEqual(row.expected);
+  });
+});
+
+describe("resolveContinueInCloud", () => {
+  const presentations = new Map(
+    [
+      [mac, "Mac", config(false)],
+      [cloud, "Pair Cloud", config(true, [])],
+    ].map(([environmentId, label, serverConfig]) => {
+      const capabilities = (serverConfig as ServerConfig).environment.capabilities;
+      return [
+        environmentId as EnvironmentId,
+        {
+          entry: { target: { label } },
+          connection: { phase: "connected" },
+          serverConfig: {
+            ...(serverConfig as ServerConfig),
+            environment: { capabilities: { ...capabilities, cloudImport: true } },
+          },
+        },
+      ];
+    }),
+  ) as unknown as Parameters<typeof resolveContinueInCloud>[0]["presentations"];
+  const shell = (activeRunId: RunId | null) =>
+    ({
+      environmentId: mac,
+      projectId: local.id,
+      runtime: activeRunId === null ? null : { activeRunId },
+      source: {},
+    }) as unknown as Parameters<typeof resolveContinueInCloud>[0]["thread"];
+
+  it("reads the project, the paired environments and the running turn", () => {
+    const input = { projects: [local, onCloud], presentations };
+    expect(resolveContinueInCloud({ ...input, thread: shell(null) }).kind).toBe("ready");
+    expect(resolveContinueInCloud({ ...input, thread: shell(RunId.make("run-1")) })).toMatchObject({
+      kind: "disabled",
+      label: "a turn is running",
+    });
+    expect(resolveContinueInCloud({ ...input, thread: shell(null), projects: [] })).toEqual({
+      kind: "hidden",
+    });
+  });
+});
+
+describe("sameContinueInCloudOffer", () => {
+  const option = {
+    environmentId: cloud,
+    label: "Pair Cloud",
+    projectId: onCloud.id,
+    disabledReason: null,
+  };
+  const ready = (...targets: ReadonlyArray<typeof option>): ContinueInCloudOffer => ({
+    kind: "ready",
+    targets,
+  });
+  const disabled = (reason: string): ContinueInCloudOffer => ({
+    kind: "disabled",
+    label: "not available",
+    reason,
+  });
+
+  it.each<readonly [string, ContinueInCloudOffer, ContinueInCloudOffer, boolean]>([
+    ["hidden twice", { kind: "hidden" }, { kind: "hidden" }, true],
+    ["different kinds", { kind: "hidden" }, disabled("x"), false],
+    ["the same reason", disabled("x"), disabled("x"), true],
+    ["another reason", disabled("x"), disabled("y"), false],
+    ["equal targets", ready(option), ready({ ...option }), true],
+    ["another label", ready(option), ready({ ...option, label: "Other" }), false],
+    ["a target gone", ready(option, { ...option, environmentId: cloudB }), ready(option), false],
+  ])("%s", (_name, left, right, expected) => {
+    expect(sameContinueInCloudOffer(left, right)).toBe(expected);
   });
 });
