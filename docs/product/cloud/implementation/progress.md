@@ -26,10 +26,9 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (2 of 8), specs written 2026-11-09:** full specs in
+**M3 (3 of 8), specs written 2026-11-09:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
-(78669f835), 3.19 (2cd926a34), so wave 1 is done. Next: wave 2 (3.21 seed checkout, 3.22 context
-export), then waves 3–5, a release with M3 (maintainer approval), then G3 by the spec's
+(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff). In flight: 3.22 context export. Next: waves 3–5, a release with M3 (maintainer approval), then G3 by the spec's
 [integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
 
 ### M3 maintainer answers (2026-11-09)
@@ -1760,6 +1759,22 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - `mcpToolListJsonBytes` 47990 → 48110: the PR needs the `agent-context-increase` label.
 - Owes: live evals (no API key here; dry run passes), the runtime transcript and a `test-t3-app`
   pass, with G3.
+
+## 3.21 seed checkout (landed 0689f46ff)
+
+- `checkoutInSandbox` takes a required `seeded`; the mirror case also runs for a thread with no
+  recorded worktree (clears a leftover checkout at the new path, `restoredFrom: "seed"`,
+  `created: !rebuilt`). A seeded launch the mirror lacks fails `seed-unavailable`, never origin.
+- `launch` refuses a seed before any thread for no branch (`no-branch`) or a branch equal to
+  `baseRef` or the checkout's branch (`seed-on-base`); `check` runs only without a launch receipt,
+  the claim on every call just before `provisionCloud` (helper `seedStaged` in `make`). Staging
+  errors other than `failed` become `seed-unavailable`. `existingBranch` is false with a seed.
+- `restoreInBackground`: rebuilds a thread with no `worktree` preparation from its branch (`baseRef:
+  firstCheckout?.baseRef ?? branch`); the no-message rebuild test hangs without it.
+- 3.23 builds the strategy as `{ type: "cloud", baseRef, branch, seedRef, existingBranch: true }`
+  with `actorId` the link member. New `CloudLaunchError` reasons go after `seed-unavailable`.
+- Owes, with G3 step 1: the Docker run (`restoredFrom: "seed"`, then `docker rm -f`, Retry,
+  `"mirror"`).
 
 ## Open follow-ups and risks
 
