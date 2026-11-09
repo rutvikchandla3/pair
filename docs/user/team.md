@@ -10,6 +10,10 @@ Open **Settings → Team** and choose **Invite member**. Send the link to the pe
 inviting. It works once and signs them in as that member. Members can run commands as the
 server's user, so invite only people you would give SSH access to.
 
+On a cloud-only server, agents run in cloud machines rather than on the server itself. A member
+can still prompt any thread, and that thread's agent can reach its provider sign-in and git token.
+Only admins' agents can link the server to another machine.
+
 - **Admins** can do everything, including settings, providers, access and inviting people.
 - **Members** can do everything else: start and prompt threads, approve requests, use
   terminals and source control.
@@ -28,6 +32,7 @@ Open **Settings → Team** and choose **Add account** under **Your provider acco
 
 - **Claude:** paste an API key or a token from `claude setup-token`, or leave it empty and run the
   command Pair shows in a terminal. It signs Claude in to that account's own folder on the server.
+  A cloud-only server has no terminal to sign in from, so it asks for the token.
 - **ChatGPT:** sign in on OpenAI after adding the account. This needs Codex installed in Pair, so
   if Pair asks you to, ask an admin to set up ChatGPT accounts in **Settings → Providers**.
 

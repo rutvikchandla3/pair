@@ -30,6 +30,7 @@ import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { WorkspaceReadGuard } from "./WorkspaceReadGuard.ts";
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
 
 export const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
@@ -127,6 +128,7 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
+      | CloudOnly.CloudOnlyRefusedError
     >;
     /** Writes inside a known workspace only; a stopped machine refuses with SandboxAsleep. */
     readonly writeFile: (
@@ -150,6 +152,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const readGuard = yield* WorkspaceReadGuard;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   // Absent inside the runner, where every path is local.
   const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
@@ -167,6 +170,7 @@ export const make = Effect.gen(function* () {
     | WorkspaceFileSystemError
     | WorkspacePaths.WorkspacePathOutsideRootError
     | KnownWorkspaces.UnknownWorkspaceError
+    | CloudOnly.CloudOnlyRefusedError
   > => {
     if (Option.isNone(stopped) || error.sandboxId === undefined) {
       return Effect.fail(unknownWorkspace(input.cwd, error));
@@ -213,6 +217,13 @@ export const make = Effect.gen(function* () {
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const host = yield* hosts.forPath(expandedPath).pipe(Effect.option);
     if (host._tag === "None") return null;
+    if (host.value.kind !== "sandbox") {
+      const confined = yield* readGuard.confine("filesystem.getMetadata", expandedPath).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!confined) return null;
+    }
     const stat = yield* host.value.fileSystem.stat(expandedPath).pipe(Effect.option);
     if (stat._tag === "None") return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
@@ -276,10 +287,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Workspace-relative paths must stay inside the root, symlinks included. An
-   * absolute or `~/` path reads a host file in place, such as a report an agent
-   * wrote to a temp directory; it gets no root check. A network path does, since
-   * Windows signs in to its host with the user's NTLM credentials.
+   * Relative paths stay inside the root, symlinks included. An absolute or `~/` path reads a host
+   * file in place (an agent's temp report) with no root check, except a network path, since
+   * Windows signs in to its host with NTLM, and the server's own files on a cloud-only server.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -298,7 +308,10 @@ export const make = Effect.gen(function* () {
         relativePath: input.relativePath,
       });
     }
+    const confineLocal = (checkedPath: string) =>
+      host.kind === "sandbox" ? Effect.void : readGuard.confine("projects.readFile", checkedPath);
     if (path.isAbsolute(hostPath)) {
+      yield* confineLocal(hostPath);
       // Native realpath hands Windows a `\\?\` path as written, `..` included,
       // so a network path must be the resolved one the check above approved.
       // Others keep POSIX `link/..` semantics, which resolving first would change.
@@ -313,6 +326,7 @@ export const make = Effect.gen(function* () {
       return { relativePath: requestedPath, realTargetPath };
     }
 
+    yield* confineLocal(input.cwd);
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,

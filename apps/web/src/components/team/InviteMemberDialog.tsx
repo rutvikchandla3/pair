@@ -5,11 +5,13 @@ import {
   type TeamInviteInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { formatExpiresInLabel } from "../../timestampFormat";
+import { environmentCloudLaunchAtom } from "~/state/server";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PairingLinkShare, usePairingLinkShare } from "../settings/PairingLinkShare";
@@ -33,6 +35,15 @@ import { toastCommandFailure } from "./toastCommandFailure";
 
 const TRUST_WARNING =
   "Members can run commands as this server's user. Invite only people you'd give SSH access to.";
+const CLOUD_TRUST_WARNING =
+  "Members can prompt any thread, which reaches its provider sign-in and git token. Their agents run in cloud machines, not on this server.";
+
+/** What an invited member can reach on this environment (D15). */
+export function useTrustWarning(environmentId: EnvironmentId) {
+  return useAtomValue(environmentCloudLaunchAtom(environmentId))
+    ? CLOUD_TRUST_WARNING
+    : TRUST_WARNING;
+}
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
 const ROLE_HINTS: Record<MemberRole, string> = {
@@ -102,13 +113,11 @@ export function MemberLinkDialog({
   title,
   description,
   credential,
-  warning,
   onClose,
 }: {
   readonly title: string;
   readonly description: ReactNode;
   readonly credential: AuthPairingCredentialResult | null;
-  readonly warning?: boolean;
   readonly onClose: () => void;
 }) {
   return (
@@ -120,7 +129,6 @@ export function MemberLinkDialog({
         </DialogHeader>
         <DialogPanel>
           {credential === null ? null : <LinkResult credential={credential} />}
-          {warning ? <p className="mt-3 text-xs text-muted-foreground">{TRUST_WARNING}</p> : null}
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button onClick={onClose}>Done</Button>
@@ -142,6 +150,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
     readonly credential: AuthPairingCredentialResult;
   } | null>(null);
   const invite = useAtomCommand(teamEnvironment.inviteMember, { label: "invite member" });
+  const trustWarning = useTrustWarning(environmentId);
   const trimmedName = name.trim();
   const trimmedGitEmail = gitEmail.trim();
   const trimmedGitHubLogin = githubLogin.trim().replace(/^@/, "");
@@ -242,7 +251,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
                   hint="They can sign in with GitHub instead of using the link."
                 />
                 <Alert variant="warning">
-                  <AlertDescription>{TRUST_WARNING}</AlertDescription>
+                  <AlertDescription>{trustWarning}</AlertDescription>
                 </Alert>
               </div>
             </DialogPanel>
@@ -267,7 +276,7 @@ export function InviteMemberDialog({ environmentId }: { readonly environmentId: 
             <DialogPanel>
               <div className="space-y-3">
                 <LinkResult credential={created.credential} />
-                <p className="text-xs text-muted-foreground">{TRUST_WARNING}</p>
+                <p className="text-xs text-muted-foreground">{trustWarning}</p>
               </div>
             </DialogPanel>
             <DialogFooter variant="bare">

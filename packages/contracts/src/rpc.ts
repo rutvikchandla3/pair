@@ -1490,7 +1490,7 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
-  error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+  error: Schema.Union([AssetAccessError, CloudOnlyRefusedError, EnvironmentAuthorizationError]),
 });
 
 const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatAttachments, {

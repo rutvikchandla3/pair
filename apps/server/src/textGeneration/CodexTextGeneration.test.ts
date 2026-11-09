@@ -16,14 +16,16 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
@@ -314,24 +316,31 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps plugins and apps off over launch args that turn them on", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({ title: "Remove default shapes" }),
-        launchArgs: "--config features.plugins=true --config features.apps=true",
-        requireArg:
-          "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --ephemeral",
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const result = yield* textGeneration.generateThreadTitle({
-            cwd: process.cwd(),
-            message: "Remove default shapes from characters",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          });
-          expect(result.title).toBe("Remove default shapes");
-        }),
-    ),
+  it.effect.each([false, true])(
+    "keeps plugins and apps, and on cloud-only the shell, off over launch args: cloudOnly=%s",
+    (cloudOnly) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Remove default shapes" }),
+          launchArgs:
+            "--config features.plugins=true --config features.apps=true --config features.shell_tool=true",
+          requireArg: cloudOnly
+            ? "--config features.apps=false --config features.shell_tool=false --config features.unified_exec=false --config features.view_image=false --ephemeral"
+            : "--config features.plugins=true --config features.apps=true --config features.shell_tool=true --config features.plugins=false --config features.apps=false --ephemeral",
+          ...(cloudOnly ? {} : { forbidArg: "features.shell_tool=false" }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Remove default shapes from characters",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            });
+            expect(result.title).toBe("Remove default shapes");
+          }),
+      ).pipe(
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+      ),
   );
 
   it.effect("passes exec-safe launch args into codex exec", () =>
@@ -533,6 +542,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
             resolveLink: () => Effect.die("unused"),
           }),
+          layerCodexTextGenerationTest,
         ),
       ),
     );
@@ -554,4 +564,119 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         : selection,
     ]);
   }),
+);
+
+it.effect.each([
+  { cloudOnly: false, machine: false, driverKind: "codex" },
+  { cloudOnly: true, machine: false, driverKind: "codex" },
+  { cloudOnly: true, machine: true, driverKind: "codex" },
+  { cloudOnly: false, machine: false, driverKind: "grok" },
+  { cloudOnly: true, machine: true, driverKind: "grok" },
+])(
+  "text generation on the server's own folders: cloudOnly=$cloudOnly machine=$machine $driverKind",
+  ({ cloudOnly, machine, driverKind }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+      const project = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-text-project-" });
+      yield* fs.writeFileString(`${project}/AGENTS.md`, "project instructions");
+      const sandboxRoot = "/t3-sandbox/box";
+      if (machine) {
+        yield* hosts.register(sandboxRoot, { ...hosts.local, kind: "sandbox" });
+      }
+      const cwd = machine ? `${sandboxRoot}/repo` : project;
+      const instanceId = ProviderInstanceId.make(driverKind);
+      const driver = ProviderDriverKind.make(driverKind);
+      const seen: Array<{ cwd: string; entries: ReadonlyArray<string> | undefined }> = [];
+      const record = (input: { readonly cwd: string }) =>
+        fs.readDirectory(input.cwd).pipe(
+          Effect.option,
+          Effect.map((entries) =>
+            seen.push({ cwd: input.cwd, entries: entries.pipe(Option.getOrUndefined) }),
+          ),
+        );
+      const instance: ProviderInstance = {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {
+          getSnapshot: Effect.succeed({ instanceId, driver }),
+        } as unknown as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: (input) =>
+            record(input).pipe(Effect.as({ subject: "Subject", body: "" })),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateReviewGuide: (input) =>
+            record(input).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new TextGenerationError({ operation: "generateReviewGuide", detail: "reached" }),
+                ),
+              ),
+            ),
+          generateThreadTitle: () => Effect.die("unused"),
+        }),
+      };
+      const service = yield* TextGeneration.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              listInstances: Effect.succeed([instance]),
+              getInstance: () => Effect.succeed(instance),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveLink: () => Effect.die("unused"),
+            }),
+          ),
+        ),
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+      );
+      const modelSelection = DEFAULT_TEST_MODEL_SELECTION;
+      const commit = yield* service
+        .generateCommitMessage({
+          cwd,
+          branch: null,
+          stagedSummary: "",
+          stagedPatch: "",
+          modelSelection: { ...modelSelection, instanceId },
+        })
+        .pipe(Effect.exit);
+      if (cloudOnly && driverKind !== "codex") {
+        // Its tools can't be turned off, and the server is where it would run.
+        expect(seen).toEqual([]);
+        expect(Exit.isFailure(commit) && Cause.pretty(commit.cause)).toContain(
+          "only Claude and Codex",
+        );
+        return;
+      }
+      expect(commit._tag).toBe("Success");
+      const review = yield* service
+        .generateReviewGuide({
+          cwd,
+          number: 1,
+          title: "PR",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "abc",
+          settledReview: "",
+          modelSelection: { ...modelSelection, instanceId },
+        })
+        .pipe(Effect.flip);
+
+      const confined = cloudOnly && !machine;
+      if (confined) {
+        // An empty folder of its own, gone once the call ends.
+        expect(seen).toEqual([{ cwd: expect.not.stringContaining(project), entries: [] }]);
+        expect(yield* fs.exists(seen[0]!.cwd)).toBe(false);
+        expect(review.detail).toContain("only inside its machine");
+      } else {
+        expect(seen.map((call) => call.cwd)).toEqual([cwd, cwd]);
+        expect(review.detail).toBe("reached");
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerCodexTextGenerationTest)),
 );

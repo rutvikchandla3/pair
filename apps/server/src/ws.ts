@@ -3423,6 +3423,14 @@ export const layerWsRpc = (
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {
+              // The server's own ports are not the agents'; nothing scans them.
+              if (config.cloudOnly) {
+                yield* Queue.offer(queue, {
+                  servers: [],
+                  scannedAt: DateTime.formatIso(yield* DateTime.now),
+                });
+                return;
+              }
               const configuredUrls = input.configuredUrls ?? [];
               yield* portDiscovery.retain;
               const initial = yield* portDiscovery.scan(configuredUrls);

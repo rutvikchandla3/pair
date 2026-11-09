@@ -1,4 +1,5 @@
 import {
+  CloudOnlyRefusedError,
   type PreviewCloseInput,
   type PreviewEvent,
   type PreviewError,
@@ -28,6 +29,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { PreviewControlRequiredError } from "@t3tools/contracts";
+
+import * as ServerConfig from "../config.ts";
 
 export class PreviewManager extends Context.Service<
   PreviewManager,
@@ -119,6 +122,7 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 /** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const random = yield* SecureRandom.SecureRandom;
   const serverEpoch = yield* random.uuidV4();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
@@ -174,6 +178,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
     function* (input) {
+      // Previews of agent-served pages wait for machines to serve them (06 §10).
+      if (cloudOnly) return yield* new CloudOnlyRefusedError({ operation: "preview.open" });
       const runtime = input.runtime;
       // Persisted client surfaces must not bind to a different tab after a server restart.
       const tabId = `${newPreviewTabId()}${runtime === "server" ? `_${serverEpoch}` : ""}`;

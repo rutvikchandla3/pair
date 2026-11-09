@@ -24,7 +24,11 @@ import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "~/state/server";
+import {
+  EMPTY_SERVER_PROVIDERS,
+  environmentCloudLaunchAtom,
+  serverEnvironment,
+} from "~/state/server";
 import { teamEnvironment, useCurrentMemberId, useIsTeamMode, useTeamMembers } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -387,7 +391,11 @@ function AddProviderAccountDialog({
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<OwnedAccount | null>(null);
   const managedCodex = useManagedCodexInstalled(environmentId, driver === "codex");
-  const unavailable = driver === "codex" && managedCodex !== true;
+  // A cloud-only server has no terminal to sign in from, so Claude needs its token here.
+  const tokenRequired = useAtomValue(environmentCloudLaunchAtom(environmentId));
+  const unavailable =
+    (driver === "codex" && managedCodex !== true) ||
+    (driver === "claudeAgent" && tokenRequired && token.trim() === "");
   const defaultName = `${selfName}'s ${DRIVER_LABELS[driver]}`;
 
   const submit = async () => {
@@ -491,7 +499,11 @@ function AddProviderAccountDialog({
                 {driver === "claudeAgent" ? (
                   <SettingsRow
                     title="Token"
-                    description="Optional. An API key, or a token from claude setup-token. Leave it empty to sign in from a terminal next."
+                    description={
+                      tokenRequired
+                        ? "An API key, or a token from claude setup-token."
+                        : "Optional. An API key, or a token from claude setup-token. Leave it empty to sign in from a terminal next."
+                    }
                     control={
                       <Input
                         aria-label="Claude token"
@@ -603,6 +615,7 @@ function ClaudeAccountSignIn({
     label: "check provider account",
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "sign-in command" });
+  const tokenOnly = useAtomValue(environmentCloudLaunchAtom(environmentId));
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const command = homePath ? claudeLoginCommand(homePath) : null;
@@ -625,34 +638,38 @@ function ClaudeAccountSignIn({
       <WizardHeader title={`Sign in to ${account.displayName}`} />
       <WizardPanel>
         <div className="grid gap-4">
-          <SettingsRow
-            title="Run this in a terminal"
-            description="Then come back and check again."
-            control={
-              <div className="flex items-center gap-2">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={command === null}
-                  onClick={() => command && copyToClipboard(command)}
-                >
-                  {isCopied ? "Copied" : "Copy"}
-                </Button>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() =>
-                    void refresh({ environmentId, input: { instanceId: account.instanceId } })
-                  }
-                >
-                  Check again
-                </Button>
-              </div>
-            }
-          />
-          <pre className="whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
-            {command ?? "Preparing the account…"}
-          </pre>
+          {tokenOnly ? null : (
+            <>
+              <SettingsRow
+                title="Run this in a terminal"
+                description="Then come back and check again."
+                control={
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={command === null}
+                      onClick={() => command && copyToClipboard(command)}
+                    >
+                      {isCopied ? "Copied" : "Copy"}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        void refresh({ environmentId, input: { instanceId: account.instanceId } })
+                      }
+                    >
+                      Check again
+                    </Button>
+                  </div>
+                }
+              />
+              <pre className="whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {command ?? "Preparing the account…"}
+              </pre>
+            </>
+          )}
           <form
             id="claude-account-token"
             onSubmit={(event) => {
@@ -661,7 +678,7 @@ function ClaudeAccountSignIn({
             }}
           >
             <SettingsRow
-              title="Or paste a token"
+              title={tokenOnly ? "Paste a token" : "Or paste a token"}
               description="An API key, or a token from claude setup-token."
               control={
                 <Input

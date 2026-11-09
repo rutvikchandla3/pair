@@ -48,6 +48,7 @@ import {
   InviteMemberDialog,
   isGitEmailPlausible,
   MemberLinkDialog,
+  useTrustWarning,
 } from "./InviteMemberDialog";
 import { MemberAvatar } from "./MemberAvatar";
 import {
@@ -94,6 +95,7 @@ function TeamMembersSection({ environmentId }: { readonly environmentId: Environ
   const selfId = useCurrentMemberId(environmentId);
   const canInvite = useAtomValue(teamEnvironment.inviteMember.permissionAtom(environmentId));
   const pairingDenial = managedCapabilityDenial(usePrimaryManagedPolicy(), "remoteClients");
+  const trustWarning = useTrustWarning(environmentId);
   const [showRemoved, setShowRemoved] = useState(false);
   const sorted = sortMembers([...members.values()]);
   const active = sorted.filter((member) => member.removedAt === null);
@@ -112,10 +114,7 @@ function TeamMembersSection({ environmentId }: { readonly environmentId: Environ
     >
       {canInvite ? <TeamGitHubSetupNote environmentId={environmentId} /> : null}
       {canInvite ? (
-        <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">
-          Members can run commands as this server&apos;s user. Invite only people you&apos;d give
-          SSH access to.
-        </p>
+        <p className="px-3 pt-3 text-xs text-muted-foreground sm:px-4">{trustWarning}</p>
       ) : null}
       {selfId === null ? (
         <SettingsRow

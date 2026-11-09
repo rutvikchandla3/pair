@@ -276,7 +276,7 @@ export const make = Effect.gen(function* () {
         ? { serverSelfUpdateProgress: true }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
-      serverBrowser: true,
+      ...(serverConfig.cloudOnly ? {} : { serverBrowser: true }),
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,

@@ -31,6 +31,7 @@ const layerHtmlRender = (
   installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
     Option.fromUndefinedOr(executable),
   ),
+  cloudOnly = false,
 ) =>
   HtmlRender.layer.pipe(
     Layer.provide(
@@ -46,7 +47,14 @@ const layerHtmlRender = (
       ),
     ),
     Layer.provideMerge(McpProviderSessions.layer),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          return { ...(yield* ServerConfig.ServerConfig), cloudOnly };
+        }),
+      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" }))),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 const layerTest = layerHtmlRender();
@@ -183,6 +191,40 @@ describe("HtmlRender", () => {
         longer,
       ]);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("reads no server file and launches no browser on a cloud-only server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
+      const png = path.join(directory, "shot.png");
+      yield* fileSystem.writeFile(png, PNG_BYTES);
+      const htmlRender = yield* HtmlRender.HtmlRender;
+
+      const error = yield* htmlRender.prepare(`<img src="${png}">`).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "HtmlRenderImagesNotFoundError", paths: [png] });
+      expect(yield* htmlRender.preview({ html: "<p>hi</p>" }).pipe(Effect.flip)).toMatchObject({
+        _tag: "CloudOnlyRefusedError",
+        operation: "html.preview",
+      });
+      // Publishing still works, without the heights only a browser can measure.
+      const reference = yield* htmlRender.publish({
+        threadId: ThreadId.make("thread-html-cloud"),
+        html: "<p>hi</p>",
+        title: "Hi",
+        height: 200,
+      });
+      expect(reference.heights).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        layerHtmlRender(
+          "/unused/chrome",
+          Effect.die("A cloud-only server never looks for its browser."),
+          true,
+        ),
+      ),
+    ),
   );
 
   it.effect("publishes the prepared page as an html thread attachment", () =>

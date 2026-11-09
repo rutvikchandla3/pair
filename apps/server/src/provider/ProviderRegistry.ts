@@ -27,6 +27,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -949,6 +950,8 @@ export const layer = Layer.effect(
         );
       }
       const providers = yield* Ref.get(providersRef);
+      // A scan reads the folder's skills and config; a cloud-only server's own folders aren't the agents'.
+      if (config.cloudOnly && sandboxIdFromPath(input.cwd) === undefined) return providers;
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);

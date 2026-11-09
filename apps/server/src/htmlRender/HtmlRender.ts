@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { CloudOnlyRefusedError, type ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -139,6 +139,7 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowser.PreviewBrowserUnsupportedError
       | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
+      | CloudOnlyRefusedError
     >;
   }
 >()("t3/htmlRender/HtmlRender") {}
@@ -231,19 +232,25 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
-const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
+/** With `readsLocal` off every local image is missing: the server's files are not the agent's. */
+const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
+  html: string,
+  readsLocal: boolean,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
-      ),
+      readsLocal
+        ? fileSystem.stat(filePathFor(path)).pipe(
+            Effect.map((info) => ({
+              path,
+              size: info.type === "File" ? Number(info.size) : undefined,
+            })),
+            Effect.orElseSucceed(() => ({ path, size: undefined })),
+          )
+        : Effect.succeed({ path, size: undefined }),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -370,6 +377,8 @@ const make = Effect.gen(function* () {
 
   const measure = Effect.fn("HtmlRender.measure")(
     function* (html: string) {
+      // A cloud-only server's browser loads no agent page; the page publishes without heights.
+      if (config.cloudOnly) return undefined;
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
       const heights = yield* launching(executable.value, (noSandbox) =>
@@ -402,7 +411,9 @@ const make = Effect.gen(function* () {
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>
-    inlineLocalImages(injectHtmlRenderBootstrap(html)).pipe(Effect.provideContext(services));
+    inlineLocalImages(injectHtmlRenderBootstrap(html), !config.cloudOnly).pipe(
+      Effect.provideContext(services),
+    );
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     yield* rejectViewportHeight(html);
@@ -468,6 +479,7 @@ const make = Effect.gen(function* () {
     readonly width?: number | undefined;
     readonly appearance?: ThemeAppearance | undefined;
   }) {
+    if (config.cloudOnly) return yield* new CloudOnlyRefusedError({ operation: "html.preview" });
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),

@@ -124,6 +124,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }
     }),
   );
+  it.effect.each([false, true])("offers the server browser unless cloud-only: %s", (cloudOnly) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* makeServerConfig(yield* fs.makeTempDirectoryScoped());
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      const { capabilities } = yield* ServerEnvironment.ServerEnvironment.use(
+        (environment) => environment.getDescriptor,
+      ).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(layerEmptySecretStore),
+            Layer.provide(ServerConfig.layer({ ...config, cloudOnly })),
+          ),
+        ),
+      );
+      expect(capabilities.serverBrowser).toBe(cloudOnly ? undefined : true);
+      expect(capabilities.cloudLaunch).toBe(cloudOnly ? true : undefined);
+    }),
+  );
+
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },

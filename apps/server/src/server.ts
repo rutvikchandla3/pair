@@ -489,6 +489,8 @@ const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
   Layer.provide(GitVcsDriver.layer),
 );
 
+const layerReadGuard = KnownWorkspaces.layerReadGuard.pipe(Layer.provide(layerKnownWorkspaces));
+
 const layerStoppedSandboxReads = StoppedSandboxReads.layer.pipe(
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provide(VcsProcess.layer),
@@ -558,6 +560,7 @@ const layerDevice = DeviceService.layer.pipe(
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(layerStoppedSandboxReads),
+  Layer.provide(layerReadGuard),
 );
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
@@ -565,12 +568,14 @@ const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
   Layer.provide(layerStoppedSandboxReads),
   Layer.provide(layerWorkspaceEntries),
   Layer.provide(layerKnownWorkspaces),
+  Layer.provide(layerReadGuard),
 );
 
 const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
+  layerReadGuard,
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(

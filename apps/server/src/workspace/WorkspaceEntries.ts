@@ -36,6 +36,7 @@ import type {
 } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { WorkspaceReadGuard } from "./WorkspaceReadGuard.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedError<WorkspaceEntriesWindowsPathUnsupportedError>()(
@@ -273,6 +274,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const readGuard = yield* WorkspaceReadGuard;
   // Absent inside the runner, where every path is local.
   const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
 
@@ -297,12 +299,16 @@ export const make = Effect.gen(function* () {
           Effect.catchTags({ SandboxAsleep: () => Effect.succeed(empty) }),
         );
 
-  const unavailableEntriesError = (cwd: string, cause: unknown) => () =>
+  const unavailableEntriesError = (cwd: string) => (cause: unknown) =>
     new WorkspaceEntriesReadDirectoryError({ cwd, partialPath: cwd, parentPath: cwd, cause });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
+    // Before the root is statted, so a refused folder can't be told from a missing one.
+    yield* readGuard
+      .confine("projects.listEntries", cwd)
+      .pipe(Effect.mapError(unavailableEntriesError(cwd)));
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
@@ -379,6 +385,19 @@ export const make = Effect.gen(function* () {
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
+      if (host.kind !== "sandbox") {
+        yield* readGuard.confine("filesystem.browse", parentPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceEntriesReadDirectoryError({
+                cwd: input.cwd,
+                partialPath: input.partialPath,
+                parentPath,
+                cause,
+              }),
+          ),
+        );
+      }
 
       const dirents = yield* host.files.readDirectory(parentPath).pipe(
         Effect.catchIf(
@@ -475,7 +494,7 @@ export const make = Effect.gen(function* () {
               input.cwd,
               error,
               { entries: [], truncated: false },
-              unavailableEntriesError(input.cwd, error),
+              () => unavailableEntriesError(input.cwd)(error),
               (reads, view) => reads.search(view, input),
             ),
         }),
@@ -518,7 +537,7 @@ export const make = Effect.gen(function* () {
               input.cwd,
               error,
               { matches: [], truncated: false },
-              unavailableEntriesError(input.cwd, error),
+              () => unavailableEntriesError(input.cwd)(error),
               (reads, view) => reads.searchContents(view, input),
             ),
         }),
@@ -721,7 +740,7 @@ export const make = Effect.gen(function* () {
               input.cwd,
               error,
               { entries: [], truncated: false },
-              unavailableEntriesError(input.cwd, error),
+              () => unavailableEntriesError(input.cwd)(error),
               (reads, view) => reads.list(view, input),
             ),
         }),

@@ -30,8 +30,11 @@ const collectEvents = Effect.gen(function* () {
   return collector;
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
+const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-manager-" }).pipe(
+  Layer.provide(NodeServices.layer),
+);
 const layer = PreviewManager.layer.pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-manager-" })),
+  Layer.provide(layerConfig),
   Layer.provide(NodeCrypto.layer),
   Layer.provide(NodeServices.layer),
 );
@@ -56,6 +59,27 @@ it.layer(layer)("PreviewManager", (it) => {
       if (events[0]?.type === "opened") {
         expect(events[0].tabId).toBe(snapshot.tabId);
       }
+    }),
+  );
+
+  it.effect("refuses to open a preview on a cloud-only server", () =>
+    Effect.gen(function* () {
+      const manager = yield* PreviewManager.make.pipe(
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({
+          ...config,
+          cloudOnly: true,
+        })),
+        Effect.provide(Layer.merge(layerConfig, NodeCrypto.layer)),
+      );
+      const threadId = freshThreadId();
+
+      for (const runtime of ["server", "desktop", undefined] as const) {
+        const error = yield* manager
+          .open({ threadId, url: "localhost:5173", ...(runtime ? { runtime } : {}) })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "CloudOnlyRefusedError", operation: "preview.open" });
+      }
+      expect((yield* manager.list({ threadId })).sessions).toEqual([]);
     }),
   );
 

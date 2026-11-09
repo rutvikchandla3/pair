@@ -3,9 +3,13 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import { CloudOnlyRefusedError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -14,6 +18,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreePaths.ts";
 import { isWithinRoot } from "./WorkspacePaths.ts";
+import { WorkspaceReadGuard } from "./WorkspaceReadGuard.ts";
 
 export class UnknownWorkspaceError extends Schema.TaggedError<UnknownWorkspaceError>()(
   "UnknownWorkspaceError",
@@ -152,3 +157,38 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(KnownWorkspaces, make);
+
+export const layerReadGuard = Layer.effect(
+  WorkspaceReadGuard,
+  Effect.gen(function* () {
+    const { cloudOnly } = yield* ServerConfig.ServerConfig;
+    const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+    const path = yield* Path.Path;
+    const knownWorkspaces = yield* KnownWorkspaces;
+
+    const confine = Effect.fn("WorkspaceReadGuard.confine")(function* (
+      operation: string,
+      requestedPath: string,
+    ) {
+      if (!cloudOnly) return;
+      const resolvedPath = path.resolve(requestedPath);
+      // Only a sandbox path fails `forPath`; its machine is stopped and the read comes from the mirror.
+      const host = yield* hosts.forPath(resolvedPath).pipe(Effect.option);
+      if (Option.isNone(host) || host.value.kind === "sandbox") return;
+      // A missing path is judged by its nearest existing ancestor, so a link there can't escape.
+      const missing: Array<string> = [];
+      for (let candidate = resolvedPath; ; candidate = path.dirname(candidate)) {
+        const real = yield* Effect.result(host.value.fileSystem.realPath(candidate));
+        if (Result.isSuccess(real)) {
+          if (yield* knownWorkspaces.contains(path.join(real.success, ...missing))) return;
+          break;
+        }
+        if (real.failure.reason._tag !== "NotFound" || path.dirname(candidate) === candidate) break;
+        missing.unshift(path.basename(candidate));
+      }
+      return yield* new CloudOnlyRefusedError({ operation });
+    });
+
+    return WorkspaceReadGuard.of({ confine });
+  }),
+);

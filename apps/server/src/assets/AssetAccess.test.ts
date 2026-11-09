@@ -7,6 +7,7 @@ import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetPreviewTypeValidationError,
+  CloudOnlyRefusedError,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   TurnItemId,
@@ -31,7 +32,9 @@ import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -101,8 +104,19 @@ const oversizedScreenshotItem = {
   },
 };
 
+const UNKNOWN_WORKSPACE_PREFIX = "t3-unknown-workspace-";
+const layerReadGuardTest = KnownWorkspaces.layerReadGuard.pipe(
+  Layer.provide(
+    Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: (realPath) => Effect.succeed(!realPath.includes(UNKNOWN_WORKSPACE_PREFIX)),
+    }),
+  ),
+  Layer.provide(WorkspaceHostTesting.layerFromContext),
+);
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
+  layerReadGuardTest.pipe(Layer.provide(layerConfig)),
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
@@ -348,6 +362,74 @@ describe("AssetAccess", () => {
         });
       }
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])(
+    "confines client-named media to known workspaces: cloudOnly=%s",
+    (on) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-root-" });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: UNKNOWN_WORKSPACE_PREFIX });
+        yield* fs.writeFileString(path.join(root, "inside.png"), "media");
+        yield* fs.writeFileString(path.join(outside, "secret.png"), "media");
+        const threadId = ThreadId.make("thread-1");
+        const outsidePath = path.join(outside, "secret.png");
+        const resources = [
+          { _tag: "media-file", threadId, path: outsidePath },
+          { _tag: "media-file", threadId, path: "~/secret.png" },
+          { _tag: "media-file", threadId, path: `${root}/../${path.basename(outside)}/secret.png` },
+          { _tag: "draft-workspace-file", cwd: root, path: outsidePath },
+          { _tag: "draft-workspace-file", cwd: root, path: "~/secret.png" },
+          { _tag: "draft-workspace-file", cwd: outside, path: "secret.png" },
+        ] as const;
+        const machine = "/t3-sandbox/sbx_0123456789abcdef0123";
+        // This server's disk has no machine paths, so they fail either way; cloud-only says why.
+        const machineResources = [
+          { _tag: "media-file", threadId, path: `${machine}/secret.png` },
+          { _tag: "draft-workspace-file", cwd: root, path: `${machine}/secret.png` },
+          { _tag: "draft-workspace-file", cwd: machine, path: "secret.png" },
+        ] as const;
+
+        yield* Effect.gen(function* () {
+          for (const resource of resources) {
+            // As ws.ts does, a draft's root is the cwd the client sent.
+            const workspaceRoot = resource._tag === "draft-workspace-file" ? resource.cwd : root;
+            const result = yield* issueAssetUrl({ resource, workspaceRoot }).pipe(Effect.result);
+            if (on) {
+              expect(result, resource.path).toMatchObject({
+                failure: { _tag: "CloudOnlyRefusedError", operation: "assets.createUrl" },
+              });
+            } else {
+              expect(result._tag, resource.path).toBe("Success");
+            }
+          }
+          for (const resource of on ? machineResources : []) {
+            const workspaceRoot = resource._tag === "draft-workspace-file" ? resource.cwd : root;
+            expect(
+              yield* issueAssetUrl({ resource, workspaceRoot }).pipe(Effect.result),
+              resource.path,
+            ).toMatchObject({
+              failure: { _tag: "CloudOnlyRefusedError", operation: "assets.createUrl" },
+            });
+          }
+          for (const resource of [
+            { _tag: "media-file", threadId, path: path.join(root, "inside.png") },
+            { _tag: "draft-workspace-file", cwd: root, path: "inside.png" },
+          ] as const) {
+            yield* issueAssetUrl({ resource, workspaceRoot: root });
+          }
+        }).pipe(
+          Effect.provideService(HostProcess.HomeDirectory, outside),
+          // Fresh: the suite's layer already built a guard that read cloudOnly off.
+          Effect.provide(Layer.fresh(layerReadGuardTest)),
+          Effect.updateService(ServerConfig.ServerConfig, (config) => ({
+            ...config,
+            cloudOnly: on,
+          })),
+        );
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("previews draft audio and video from relative workspace paths", () =>
@@ -1524,7 +1606,9 @@ describe("AssetAccess", () => {
 
   it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
     Effect.gen(function* () {
-      const encodeAssetAccessError = Schema.encodeEffect(Schema.fromJsonString(AssetAccessError));
+      const encodeAssetAccessError = Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Union([AssetAccessError, CloudOnlyRefusedError])),
+      );
 
       for (const url of [
         "https://example.com/shot.png",

@@ -3889,18 +3889,36 @@ written once against the finished state.
       (204) refuse absolute and `~` paths outside a known workspace on cloud-only.
     - `WorkspaceEntries.ts` `browse` (373) refuses outside known workspaces.
     - `AssetAccess.ts` `issueAssetUrl` (530) refuses absolute (550) and `~/` (604–607) media on
-      cloud-only.
-  - Device tools: on cloud-only, `DeviceService.ts` drops `LocalDeviceHost.layer` (1638;
-    `LocalDeviceHost.make` 260), so only admin-configured SSH and EAS hosts remain.
-    `McpDeviceToolkit.test.ts` (511, `hostId: "local"`) gains the refusal row.
+      cloud-only. It also refuses any `/t3-sandbox/…` path there, since assets read the server's
+      own disk.
+    - Known gap: the guard resolves symlinks and then the read opens the path, so a link swapped
+      in between escapes. Members can't write the server's disk, so this is left.
+  - Device tools: on cloud-only, `DeviceService.ts` registers no local host, so only
+    admin-configured SSH and EAS hosts remain. The refusal row is in `DeviceService.test.ts`, since
+    `McpDeviceToolkit.test.ts` mocks the service.
   - Preview: `previewOpen` and the other preview RPCs refuse, `PortScanner.ts` is not started, and
     `serverBrowser` (ServerEnvironment.ts 278) is omitted on cloud-only.
   - `t3_environment_link` (`mcp/toolkits/orchestrator/tools.ts`) is admin-only on cloud-only
     (proposed: only there).
-  - Text generation (`textGeneration/*`, e.g. `ClaudeTextGeneration.ts` 250 `cwd`) runs in an empty
-    temp directory with no tools, project MCP or hooks on cloud-only, for Claude, Codex, Grok,
-    OpenCode and Antigravity.
-  - Provider probes with a project `cwd` (`ProviderAuthService.ts`) are skipped on cloud-only.
+  - Text generation always runs on the server. On cloud-only, `TextGeneration.make` swaps a `cwd`
+    on the server's own disk for an empty scoped temp directory and refuses an investigation
+    (review guide) there; 2.46 relies on that refusal. A machine `cwd` (`/t3-sandbox/…`) already
+    runs in a temp directory, and its investigation is refused by the adapter. Thread-title link
+    lookup still reads the original `cwd`. Each driver's tools on cloud-only:
+
+    | Driver                              | Tools                                                                                                                                                                                                                                                                                              |
+    | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Claude                              | Already off: `--tools ""`, hooks, MCP and slash commands disabled.                                                                                                                                                                                                                                 |
+    | Codex                               | Turned off: `features.shell_tool`, `features.unified_exec` and `features.view_image` set false. What's left can't read the server: `exec` (a JS isolate with no filesystem), `apply_patch` (blocked by the read-only sandbox), MCP resources (no servers), goals, image generation and web search. |
+    | Grok, OpenCode, Antigravity, others | Can't be turned off, so `TextGeneration` refuses them, and skips them when it picks a fallback.                                                                                                                                                                                                    |
+
+    `code_mode_host`, `browser_use`, `browser_use_external` and `computer_use` add no tool. This
+    was checked with `codex debug prompt-input` on 0.167, since the 0.166 pin wasn't available
+    locally, plus one `codex exec` that found no file tool. Unknown `features.*` keys are
+    tolerated.
+
+  - Provider workspace scans (`ProviderRegistry.refreshWorkspaceSnapshot`) of a server folder are
+    skipped on cloud-only; a machine path still scans.
   - Claude: the member terminal sign-in is hidden on `cloudLaunch` environments. Settings → Team
     asks for a setup token or API key.
   - D15: `TRUST_WARNING` (InviteMemberDialog.tsx 34–35) branches on `cloudLaunch`. It says members
@@ -3908,7 +3926,15 @@ written once against the finished state.
     on the server. `docs/user/team.md` (9–15) gets the same split.
 - **Types and services:** reuse `CloudOnly.refuseLocalHost` and `CLOUD_ONLY_MESSAGE`.
 - **Commands and events:** none. **Migrations:** none.
-- **Proposed gap answer.** `t3_environment_link` is admin-only only on cloud-only.
+- **Gap answer.** `t3_environment_link` is admin-only only on cloud-only: the member whose turn
+  the calling agent runs in must be an admin or the owner. In team mode, a run with no such member
+  is denied.
+- **Open: git and VCS reads.** These take a client `cwd`, and no single point resolves it, so none
+  is confined yet. The only shared point is `VcsProcess.runUnbounded`, which internal git calls use
+  too. The entry points (`ws.ts`) are `subscribeVcsStatus`, `vcsRefreshStatus`, `vcsPull`,
+  `gitRunStackedAction`, `gitResolvePullRequest`, `gitPreparePullRequestThread`, `vcsListRefs`,
+  `vcsCreateWorktree`, `vcsRemoveWorktree`, `vcsCreateRef`, `vcsSwitchRef`, `vcsInit`,
+  `reviewGetBranchCommits`, `reviewGetDiffPreview` and `reviewGetDiffFileContents`.
 
 **Tests.** Add a refusal row in each module's existing test, for example
 WorkspaceFileSystem.test.ts beside 207, McpDeviceToolkit.test.ts beside 511, and one text-generation

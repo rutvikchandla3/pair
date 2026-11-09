@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EventId,
+  MemberId,
   MessageId,
   NodeId,
   OrchestratorMcpFailure,
@@ -51,6 +52,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -127,74 +129,91 @@ const scope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop: a real orchestrator, its orchestrator toolkit, and its links. */
-const makeLaptop = Effect.gen(function* () {
-  const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-  // The orchestrator's own database, apart from the one links are kept in.
-  const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-  const layerDatabase = Layer.succeedContext(database);
-  const layerOrchestrator = Layer.mergeAll(
-    layerDatabase,
-    ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-    ProviderReplayHarness.layerWithRegistry(
-      { name: "peer-link-requests" },
-      ProviderAdapterRegistry.layerFromAdapters([adapter]),
-      { databaseLayer: layerDatabase, runEffectWorker: false },
-    ),
-  ).pipe(
-    Layer.provide(
-      Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
-        offer: () => Effect.void,
-        take: Effect.never,
-      }),
-    ),
-  );
-  const layerThreads = ThreadManagement.layer.pipe(
-    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-    Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
-  );
-  const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provide(layerSingleMemberViews),
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-    Layer.provideMerge(PeerLinkRequests.layer),
-    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-    Layer.provide(Layer.succeedContext(linking)),
-    Layer.provide(NodeCrypto.layer),
-    Layer.provideMerge(layerThreads),
-    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-    Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-requests-" }).pipe(
-        Layer.provide(NodeServices.layer),
+const makeLaptopWith = ({
+  cloudOnly = false,
+  team = Layer.empty,
+}: {
+  readonly cloudOnly?: boolean;
+  readonly team?: Layer.Layer<never> | Layer.Layer<TeamState.TeamState>;
+} = {}) =>
+  Effect.gen(function* () {
+    const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+    // The orchestrator's own database, apart from the one links are kept in.
+    const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+    const layerDatabase = Layer.succeedContext(database);
+    const layerOrchestrator = Layer.mergeAll(
+      layerDatabase,
+      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "peer-link-requests" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { databaseLayer: layerDatabase, runEffectWorker: false },
       ),
-    ),
-    Layer.provide(NodeServices.layer),
-    Layer.fresh,
-  );
-  const here = yield* Layer.build(layerHere);
-  const server = Context.get(here, McpServer.McpServer);
-  return {
-    links: Context.get(linking, PeerLinks.PeerLinks),
-    linksSql: Context.get(linking, SqlClient.SqlClient),
-    requests: Context.get(here, PeerLinkRequests.PeerLinkRequests),
-    orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
-    sink: Context.get(here, EventSink.EventSinkV2),
-    projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
-    sql: Context.get(database, SqlClient.SqlClient),
-    call: (args: Record<string, unknown>, callScope = scope) =>
-      server
-        .callTool({ name: "t3_environment_link", arguments: args })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, callScope),
-          Effect.provideService(McpSchema.McpServerClient, mcpClient),
+    ).pipe(
+      Layer.provide(
+        Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      ),
+    );
+    const layerThreads = ThreadManagement.layer.pipe(
+      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+      Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
+    );
+    const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(layerSingleMemberViews),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provideMerge(PeerLinkRequests.layer.pipe(Layer.provide(team))),
+      Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      Layer.provide(Layer.succeedContext(linking)),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provideMerge(layerThreads),
+      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+      Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+      Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(
+        Layer.effect(
+          ServerConfig.ServerConfig,
+          Effect.gen(function* () {
+            return { ...(yield* ServerConfig.ServerConfig), cloudOnly };
+          }),
+        ).pipe(
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-requests-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
         ),
-  };
-});
+      ),
+      Layer.provide(NodeServices.layer),
+      Layer.fresh,
+    );
+    const here = yield* Layer.build(layerHere);
+    const server = Context.get(here, McpServer.McpServer);
+    return {
+      links: Context.get(linking, PeerLinks.PeerLinks),
+      linksSql: Context.get(linking, SqlClient.SqlClient),
+      requests: Context.get(here, PeerLinkRequests.PeerLinkRequests),
+      orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
+      sink: Context.get(here, EventSink.EventSinkV2),
+      projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
+      sql: Context.get(database, SqlClient.SqlClient),
+      call: (args: Record<string, unknown>, callScope = scope) =>
+        server
+          .callTool({ name: "t3_environment_link", arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, callScope),
+            Effect.provideService(McpSchema.McpServerClient, mcpClient),
+          ),
+    };
+  });
+const makeLaptop = makeLaptopWith();
 type Laptop = Effect.Success<typeof makeLaptop>;
 
 /** The laptop's thread, mid-turn when its agent asks, in `runtimeMode`. */
@@ -202,6 +221,7 @@ const seedThread = (
   a: Laptop,
   runtimeMode: RuntimeMode = "full-access",
   linkOrigin?: { readonly sessionId: string; readonly label: string },
+  ownerId?: MemberId,
 ) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -220,6 +240,7 @@ const seedThread = (
       branch: null,
       worktreePath: null,
       ...(linkOrigin === undefined ? {} : { linkOrigin }),
+      ...(ownerId === undefined ? {} : { ownerId }),
     });
     yield* a.sink.write({
       commandId: CommandId.make("command:seed:laptop"),
@@ -448,11 +469,14 @@ const afterLinksExpire = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     );
   });
 
-const withBoth = <A, E, R>(body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, E, R>) =>
+const withBoth = <A, E, R>(
+  body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, E, R>,
+  laptop = makeLaptop,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const b = yield* serveBox;
-      const a = yield* makeLaptop;
+      const a = yield* laptop;
       return yield* body(a, b);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest));
@@ -892,6 +916,46 @@ it.live("work another environment's link started may not ask, and no card is sho
       expect(yield* cardOf(a)).toBeUndefined();
     }),
   ),
+);
+
+const teamMember = (id: string, isOwner: boolean) => ({
+  id: MemberId.make(id),
+  name: id,
+  role: isOwner ? ("admin" as const) : ("member" as const),
+  gitName: null,
+  gitEmail: null,
+  isOwner,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: null,
+  removedAt: null,
+});
+const owner = teamMember("member-owner", true);
+const member = teamMember("member-bob", false);
+
+it.live.each([
+  { cloudOnly: false, ownerId: member.id, linked: true },
+  { cloudOnly: true, ownerId: undefined, linked: true },
+  { cloudOnly: true, ownerId: member.id, linked: false },
+  // A run no team member stands behind is denied.
+  { cloudOnly: true, ownerId: MemberId.make("member-unknown"), linked: false },
+])(
+  "a member's agent may ask only off cloud-only: cloudOnly=$cloudOnly owner=$ownerId",
+  ({ cloudOnly, ownerId, linked }) =>
+    withBoth(
+      (a, b) =>
+        Effect.gen(function* () {
+          yield* seedThread(a, "full-access", undefined, ownerId);
+          const asked = yield* a.call({ url: b.url });
+          if (linked) {
+            expect(asked.isError).toBe(false);
+            yield* pendingCard(a);
+          } else {
+            expect(errorOf(asked)).toMatchObject({ code: "capability_denied" });
+            expect(yield* cardOf(a)).toBeUndefined();
+          }
+        }),
+      makeLaptopWith({ cloudOnly, team: TeamState.layerTest([owner, member]) }),
+    ),
 );
 
 it.live(

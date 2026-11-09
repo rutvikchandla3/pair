@@ -38,6 +38,15 @@ const CODEX_NO_PLUGIN_ARGS = [
   "--config",
   "features.apps=false",
 ] as const;
+// A cloud-only server is not the agent's to read: no shell, and no image reads by path.
+const CODEX_NO_TOOL_ARGS = [
+  "--config",
+  "features.shell_tool=false",
+  "--config",
+  "features.unified_exec=false",
+  "--config",
+  "features.view_image=false",
+] as const;
 const CodexMcpServers = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ name: Schema.String, enabled: Schema.Boolean })),
 );
@@ -282,6 +291,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
+          ...(serverConfig.cloudOnly && investigate === undefined ? CODEX_NO_TOOL_ARGS : []),
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
           "--ephemeral",
           "--skip-git-repo-check",

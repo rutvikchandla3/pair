@@ -11,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { SandboxAsleep, SandboxId } from "@t3tools/contracts";
+import { SandboxAsleep, SandboxId, ThreadId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
@@ -53,9 +53,24 @@ const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
     cwd.includes(UNKNOWN_WORKSPACE_PREFIX)
       ? Effect.fail(new KnownWorkspaces.UnknownWorkspaceError({ cwd }))
       : Effect.void,
+  contains: (realPath) => Effect.succeed(!realPath.includes(UNKNOWN_WORKSPACE_PREFIX)),
 });
+const layerReadGuardTest = KnownWorkspaces.layerReadGuard.pipe(
+  Layer.provide(layerKnownWorkspacesTest),
+);
+
+/** The service on a server with `cloudOnly` set, built after the change so its guard reads it. */
+const makeFiles = (cloudOnly: boolean) =>
+  WorkspaceFileSystem.make.pipe(
+    Effect.provide(
+      // Fresh: the suite's layer already built a guard that read cloudOnly off.
+      Layer.merge(Layer.fresh(layerReadGuardTest), layerKnownWorkspacesTest),
+    ),
+    Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+  );
 
 const layerProject = WorkspaceFileSystem.layer.pipe(
+  Layer.provide(layerReadGuardTest),
   Layer.provide(layerKnownWorkspacesTest),
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
@@ -64,6 +79,7 @@ const layerProject = WorkspaceFileSystem.layer.pipe(
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(layerProject),
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(layerReadGuardTest),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provideMerge(
@@ -155,6 +171,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     // A file chip for `file://attacker.test/s/a.ts` in an agent's message sent
     // the Windows user's NTLM credentials to attacker.test as it rendered.
+    it.effect.each([false, true])("stats only known workspaces: cloudOnly=%s", (on) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const files = yield* makeFiles(on);
+        const cwd = yield* makeTempDir;
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: UNKNOWN_WORKSPACE_PREFIX });
+        yield* writeTextFile(cwd, "inside.md", "inside\n");
+        yield* writeTextFile(outside, "secret.md", "secret\n");
+        const paths = [path.join(cwd, "inside.md"), path.join(outside, "secret.md"), "~/secret.md"];
+        if (symlinksSupported) {
+          yield* fs.symlink(outside, path.join(cwd, "link"));
+          paths.push(path.join(cwd, "link", "secret.md"));
+        }
+
+        const { entries } = yield* files
+          .getMetadata({ paths })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, outside));
+
+        const file = { kind: "file", byteLength: 7 };
+        expect(entries).toEqual(paths.map((_, index) => (index === 0 || !on ? file : null)));
+      }),
+    );
+
     it.effect("never stats a network path", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -217,6 +257,97 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(error).toBeInstanceOf(KnownWorkspaces.UnknownWorkspaceError);
         expect(realpath).not.toHaveBeenCalled();
         expect(open).not.toHaveBeenCalled();
+      }),
+    );
+
+    it.effect.each([false, true])("confines local reads to known workspaces: cloudOnly=%s", (on) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const files = yield* makeFiles(on);
+        const cwd = yield* makeTempDir;
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: UNKNOWN_WORKSPACE_PREFIX });
+        yield* writeTextFile(cwd, "inside.md", "inside\n");
+        yield* writeTextFile(outside, "secret.md", "secret\n");
+        const home = outside;
+        const reads = [
+          { cwd, relativePath: path.join(outside, "secret.md") },
+          // `..` collapses before the check, so a known prefix doesn't carry the path out.
+          { cwd, relativePath: `${cwd}/../${path.basename(outside)}/secret.md` },
+          { cwd, relativePath: "~/secret.md" },
+          { cwd: outside, relativePath: "secret.md" },
+          // A missing file outside reports nothing, not that it is absent.
+          Object.assign(
+            { cwd, relativePath: path.join(outside, "missing.md") },
+            { allowMissing: true },
+          ),
+        ];
+        if (symlinksSupported) {
+          yield* fs.symlink(outside, path.join(cwd, "link"));
+          reads.push({ cwd, relativePath: path.join(cwd, "link", "secret.md") });
+        }
+
+        for (const input of reads) {
+          const result = yield* files
+            .readFile(input)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.result);
+          if (on) {
+            expect(result, input.relativePath).toMatchObject({
+              failure: { _tag: "CloudOnlyRefusedError", operation: "projects.readFile" },
+            });
+          } else {
+            expect(result._tag, input.relativePath).toBe("Success");
+          }
+        }
+        expect(yield* files.readFile({ cwd, relativePath: "inside.md" })).toMatchObject({
+          contents: "inside\n",
+        });
+        expect(
+          yield* files.readFile({ cwd, relativePath: path.join(cwd, "inside.md") }),
+        ).toMatchObject({ contents: "inside\n" });
+      }),
+    );
+
+    it.effect("reads a stopped machine's file from its mirror on a cloud-only server", () =>
+      Effect.gen(function* () {
+        const sandboxId = SandboxId.make("sbx_00000000000000000045");
+        const cwd = `/t3-sandbox/${sandboxId}/worktrees/main`;
+        const files = yield* makeFiles(true).pipe(
+          Effect.provideService(
+            StoppedSandboxReads.StoppedSandboxReads,
+            StoppedSandboxReads.StoppedSandboxReads.of({
+              viewFor: (viewCwd, id) =>
+                Effect.succeed({
+                  sandboxId: id,
+                  source: "checkpoint",
+                  threadId: ThreadId.make("thread-1"),
+                  turn: 1,
+                  commit: "abc",
+                  gitDir: "/mirror",
+                  prefix: "",
+                  cwd: viewCwd,
+                }),
+              refuseWrite: () => Effect.die("unused"),
+              headContext: () => Effect.die("unused"),
+              list: () => Effect.die("unused"),
+              search: () => Effect.die("unused"),
+              searchContents: () => Effect.die("unused"),
+              browse: () => Effect.die("unused"),
+              readFile: (_view, input) =>
+                Effect.succeed({
+                  relativePath: input.relativePath,
+                  contents: "from the mirror\n",
+                  byteLength: 16,
+                  truncated: false,
+                }),
+              diffPreview: () => Effect.die("unused"),
+            }),
+          ),
+        );
+
+        expect(yield* files.readFile({ cwd, relativePath: "a.txt" })).toMatchObject({
+          contents: "from the mirror\n",
+        });
       }),
     );
 

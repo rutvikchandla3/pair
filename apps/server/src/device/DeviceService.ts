@@ -1228,9 +1228,10 @@ export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const scope = yield* Scope.Scope;
-  const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
-    [localHost.id, localHost],
-  ]);
+  // A cloud-only server runs no simulator of its own: only admin-configured hosts remain.
+  const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>(
+    config.cloudOnly ? [] : [[localHost.id, localHost]],
+  );
   const digest = yield* Digest.Digest;
   const configPath = (hostId: DeviceHostId, deviceId?: DeviceId) =>
     agentDeviceConfigPath(config.stateDir, hostId, path, deviceId).pipe(

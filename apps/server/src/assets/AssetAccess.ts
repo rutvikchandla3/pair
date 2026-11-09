@@ -13,6 +13,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  CloudOnlyRefusedError,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   ToolActivityNativeAppReference,
@@ -57,6 +58,8 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/WorkspacePaths.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { WorkspaceReadGuard } from "../workspace/WorkspaceReadGuard.ts";
+import { SANDBOX_ROOT } from "../workspaceHost/WorkspaceHost.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -537,6 +540,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  // A client names media and draft paths; the other resources come from server records.
+  // Assets read this server's own disk, where a machine's reserved path names nothing of its.
+  const confine = (requestedPath: string) =>
+    cloudOnly && isWithinRoot(path, path.resolve(requestedPath), SANDBOX_ROOT)
+      ? Effect.fail(new CloudOnlyRefusedError({ operation: "assets.createUrl" }))
+      : WorkspaceReadGuard.use((guard) => guard.confine("assets.createUrl", requestedPath));
   let expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
   let claims: AssetClaims;
   let fileName: string;
@@ -561,6 +571,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
       }
+      yield* confine(requestedPath);
       const finalized = yield* finalizeAbsoluteMediaFileAsset({
         requestedPath,
         workspaceRoot: input.workspaceRoot,
@@ -605,6 +616,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
         : input.resource.path;
       if (path.isAbsolute(hostPath)) {
+        yield* confine(hostPath);
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
           requestedPath: hostPath,
           workspaceRoot: draftWorkspaceRoot,
@@ -617,6 +629,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         fileRevision = finalized.fileRevision;
         break;
       }
+      yield* confine(draftWorkspaceRoot);
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(draftWorkspaceRoot).pipe(
         Effect.mapError(
           (cause) =>

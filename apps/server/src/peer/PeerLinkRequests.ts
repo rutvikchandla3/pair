@@ -28,10 +28,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
+import * as ServerConfig from "../config.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { sendActorId } from "../mcp/threadAccess.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
 type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>;
@@ -85,6 +89,19 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const peerLinks = yield* PeerLinks.PeerLinks;
   const random = yield* SecureRandom.SecureRandom;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const team = yield* Effect.serviceOption(TeamState.TeamState);
+
+  /** The member the calling agent acts for is an admin or the owner; solo servers have none. */
+  const actsAsAdmin = Effect.fn("PeerLinkRequests.actsAsAdmin")(function* (
+    scope: McpInvocationContext.McpInvocationScope,
+  ) {
+    if (Option.isNone(team) || !(yield* team.value.isTeamMode)) return true;
+    const actorId = yield* sendActorId(threadManagement, scope, team);
+    const actor =
+      actorId === undefined ? undefined : (yield* Ref.get(team.value.members)).get(actorId);
+    return actor?.removedAt === null && (actor.role === "admin" || actor.isOwner);
+  });
 
   const readCard = (threadId: ThreadId, turnItemId: TurnItemId) =>
     threadManagement
@@ -180,6 +197,13 @@ const make = Effect.gen(function* () {
         "t3_environment_link",
       );
       const threadId = threadScope.thread.threadId;
+      // Linking points the server at another machine, so a member's agent can't on cloud-only.
+      if (cloudOnly && !(yield* actsAsAdmin(scope))) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only an admin can link a machine on this server.",
+        });
+      }
       if (!(yield* peerLinks.enabled)) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",

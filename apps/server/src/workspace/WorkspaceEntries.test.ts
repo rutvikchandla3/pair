@@ -15,8 +15,10 @@ import { SandboxAsleep, SandboxId, ThreadId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReads.ts";
+import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -28,11 +30,21 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
 
+const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
+const layerReadGuardTest = KnownWorkspaces.layerReadGuard.pipe(
+  Layer.provide(
+    Layer.mock(KnownWorkspaces.KnownWorkspaces)({
+      contains: (realPath) => Effect.succeed(!realPath.includes(UNKNOWN_WORKSPACE_PREFIX)),
+    }),
+  ),
+);
+
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(layerReadGuardTest),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provide(
+  Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
     }),
@@ -824,6 +836,76 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect.each([false, true])(
+      "confines local folders to known workspaces: cloudOnly=%s",
+      (on) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const entries = yield* WorkspaceEntries.make.pipe(
+            Effect.provide(
+              Layer.merge(
+                WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer,
+                // Fresh: the suite's layer already built a guard that read cloudOnly off.
+                Layer.fresh(layerReadGuardTest),
+              ),
+            ),
+            Effect.updateService(ServerConfig.ServerConfig, (config) => ({
+              ...config,
+              cloudOnly: on,
+            })),
+          );
+          const cwd = yield* makeTempDir();
+          const outside = yield* makeTempDir({ prefix: UNKNOWN_WORKSPACE_PREFIX });
+          yield* writeTextFile(cwd, "inside/a.md");
+          yield* writeTextFile(outside, "secret/a.md");
+          const outcome = <A, E>(effect: Effect.Effect<A, E>) =>
+            effect.pipe(
+              Effect.provideService(HostProcess.HomeDirectory, outside),
+              Effect.match({ onFailure: (error): unknown => error, onSuccess: () => "read" }),
+            );
+          const search = { query: "a", limit: 10 };
+          const outsideCalls = [
+            outcome(entries.browse({ partialPath: `${outside}${path.sep}` })),
+            outcome(entries.browse({ partialPath: `${cwd}/../${path.basename(outside)}/` })),
+            outcome(entries.browse({ partialPath: "~/" })),
+            outcome(entries.list({ cwd: outside })),
+            outcome(entries.search({ cwd: outside, ...search })),
+            outcome(
+              entries.searchContents({
+                cwd: outside,
+                ...search,
+                caseSensitive: false,
+                wholeWord: false,
+                useRegex: false,
+              }),
+            ),
+            outcome(entries.listIgnoredFiles({ cwd: outside })),
+          ];
+          if (symlinksSupported) {
+            yield* fs.symlink(outside, path.join(cwd, "link"));
+            outsideCalls.push(
+              outcome(entries.browse({ cwd, partialPath: `./link${path.sep}` })),
+              outcome(entries.list({ cwd: path.join(cwd, "link") })),
+            );
+          }
+
+          for (const call of outsideCalls) {
+            const result = yield* call;
+            if (on) {
+              expect(result).toMatchObject({ cause: { _tag: "CloudOnlyRefusedError" } });
+            } else {
+              expect(result).toBe("read");
+            }
+          }
+          expect(
+            (yield* entries.browse({ partialPath: `${cwd}${path.sep}` })).entries.map(
+              (entry) => entry.name,
+            ),
+          ).toEqual(["inside"]);
+        }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -878,6 +960,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 // The same calls through a sandbox host run whole in its runner (02 §5).
 const layerLoopbackTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+  Layer.provideMerge(layerReadGuardTest),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(

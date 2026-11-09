@@ -14,6 +14,7 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import * as WorkspaceReadGuard from "../../workspace/WorkspaceReadGuard.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import * as GroupWatcher from "./GroupWatcher.ts";
 import { RunnerConfig } from "./RunnerConfig.ts";
@@ -60,7 +61,10 @@ const layerAgentSpawner = Layer.effect(
  */
 export const layer = Layer.mergeAll(
   CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer)),
-  WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer)),
+  WorkspaceEntries.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(WorkspaceReadGuard.layerUnconfined),
+  ),
   PortScanner.layerAllListeners.pipe(Layer.provide(FetchHttpClient.layer)),
 ).pipe(
   Layer.provideMerge(VcsProcess.layer),
