@@ -17,9 +17,12 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2:** full specs written on 2026-11-09 in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md),
-with four new rows (2.44–2.47) and seven waves. Nothing built yet. Its open maintainer questions
-are listed under that page's "What the code changed in 10 §2".
+**M2 (8 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.4, 2.25, 2.31, 2.32, 2.33, 2.36, 2.44. In flight on the Mac (worktrees under
+`../pair-wt/`): 2.22, 2.43, 2.38, 2.34, 2.7, 2.2. Lead decision awaiting maintainer sign-off: 2.44
+reads pull requests with the server's own sign-in first and the App only where that can't (07 open
+question 1 recommended App-first). Open maintainer questions are under the spec page's "What the
+code changed in 10 §2".
 
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the
@@ -251,6 +254,15 @@ The lead agent orchestrates; workers implement one PR each in a sibling worktree
 the lead rebases, typechecks, fast-forwards `feat/pair` and pushes. Keep about four workers at a
 time (four CPUs, 15 GB, and usage limits: eight Opus workers exhausted a 5-hour window). Models: Opus
 high for critical-path and security PRs, Opus medium or Sonnet high for the rest.
+
+### M2 on the maintainer's Mac (2026-11-09)
+
+M2 is built on macOS, not the container. `../pair-wt/` (`/Users/rutvik/rcode/pair-wt`) holds
+`env.sh` (Node 26 from nvm plus the worktree's own `vp`), `mkwt.sh`, `land.sh`, `push.sh`,
+`WORKER_BRIEF.md` and `HANDOFF.md`, adapted from the scripts below. Workers are the lead's own
+background subagents (Opus, high effort), one per PR in `../pair-wt/<id>`; Orca can't wake a
+desktop-app session. Workers check the lead checkout with `git --no-optional-locks status`, since a
+plain `status` takes the lead's index lock. Mac-only test failures are listed in the brief.
 
 ### Machine setup (a fresh container)
 
@@ -896,9 +908,104 @@ Where the code differs from the spec, and what later PRs must know. Workers read
 - pair-features.md's entry has no PR links until the M1 work has GitHub PR numbers.
 - Owed in the integrated pass: walk the guide on a dev server with Docker.
 
-## Open follow-ups and risks
+## 2.32 historyOrigin forward-compatible (landed 9fa7da9a2)
 
-- The settings stream sends `sandbox` driver config (`dockerHost`, `runnerUrl`) to every member, not only admins (1.40).
+- `historyOrigin` on `OrchestrationV2AppThread` and `OrchestrationV2ThreadShell` uses
+  `ForwardCompatibleOptional`: an unknown value decodes to `historyOrigin: undefined` with the key
+  still present (assert `undefined`, not absence). Every reader compares only to `"v1_import"`.
+
+## 2.25 member driver redaction (landed)
+
+- `redactServerSettingsForClient(settings, { secretReferences, settingsWriter })`. Without the
+  `settings:write` scope, each driver is rebuilt by `memberDriverView` from an allowlist (`kind`,
+  `id`, `label`, `size`). ws.ts builds `client` once per session and uses it at all three sites.
+- 2.43 adds `runningCap` to `memberDriverView`'s allowlist. A new driver kind keeps its extra keys
+  optional so the member view still decodes. The member-vs-admin frame transcript is owed in G2.
+- Closes the "settings stream sends driver config to every member" open follow-up.
+
+## 2.4 retryAfterMs (landed)
+
+- `OrchestrationEffectExecutionError` and `SandboxEffectError` carry `retryAfterMs`. The outbox delay
+  is `retryDelayMs(attemptCount, cause)` = max(backoff, min(`RETRY_AFTER_CAP_MS` 10 min, hint)).
+  `retryDelayMs` is module-private (knip): 2.39 adds `export` if it imports it.
+- `SandboxEffects` `call` skips its in-effect `DRIVER_RETRY` when the driver error has a hint, so
+  the effect leaves at once and the outbox waits. Also applies to `sandbox.hand-over`.
+- Unchanged: a `SandboxEffectError` with `retryable: false` still retries until attempts run out.
+
+## 2.33 /runner/* gate (landed)
+
+- `RunnerRoute.layerWhen(mounted)`: while `mounted` is false, connect and bundle answer 404 before
+  reading the request. `RunnerRoute.layer` (always mounted) serves the runner socket.
+- `RunnerEndpoint.dialsOverTcp` (per request, reads settings; read failure = false) is true when a
+  docker driver's `chooseRunnerRoute` gives `url`. server.ts's member listener uses
+  `layerWhen(endpoint.dialsOverTcp)`. Every `RunnerEndpoint` stub must supply `dialsOverTcp`.
+- A fresh `t3 serve` with no TCP-dialing driver returns 404 on `/runner/v1/connect` (2.36's smoke).
+  Curl transcript owed in G2.
+
+## 2.44 App PR reads (landed)
+
+- `GitHubAppInstallationTokens.readTokenFor({ repository })` mints a read-only token
+  (`READ_TOKEN_PERMISSIONS`) for that one repo; own cache keyed by lowercase repo, untouched by
+  `revoke`; not-installed repos are remembered 5 min; 422 → `failed`.
+- `withAppReads(api, target, tokens)` in `pullRequest/pullRequestAppReads.ts` wraps the 19 read
+  methods. **Order (lead-accepted deviation, needs maintainer sign-off):** the server's own sign-in
+  reads first; the App serves only `missing-tool`/`unauthenticated`/`not-found`/`forbidden`, and
+  never under a pinned or acting credential, nor for a call naming another repository.
+  `appReadCredential(tokens, repo)` gives the pin (`source: "installation"`).
+- 2.26 clones with `readTokenFor`; the token never reaches a machine.
+
+## 2.1 idle sleep (landed)
+
+- RPC `sandbox.viewing` (`WS_METHODS.sandboxViewing`, `SandboxViewingInput`, operate scope).
+  `SandboxActivity` (key `t3/sandbox/lifecycle/SandboxActivity`): `view(threadId)` renews an
+  in-memory lease and returns true when no live lease covered it (2.2 wakes on that, hooking the
+  ws.ts handler); `read(threadIds)` → `{ viewedAt, terminalAt, nextScheduledAt }`
+  (`scheduled_tasks.next_run_at` via `SqlClient`). `makeTest` (not `layerTest`) shares one lease.
+- `idleDecision(IdleInput)` → `Busy | Awake{untilMs} | Sleep{reason, interrupt}`; `APPROVAL_HOLD_MS`
+  2 h. `sandbox.auto-sleep` carries `reason` and `snapshotAt`; idle/cap-pressure sleeps refuse if
+  the machine woke or a thread had activity after the snapshot. Settle sleep refuses when the newest
+  settle predates the machine's last ready (`record.updatedAt`).
+- `ComputeCapabilities.sleepOnSettle` / `.defaultIdleSleepMs` (Docker: true, 60 min).
+  `TerminalManager.lastActivityAt`. `threadActivityAt` moved to
+  `orchestration-v2/threadActivity.ts` (pure; storageCleanup and SandboxDecisions import it).
+- Unexported for knip: `VIEWER_LEASE_MS` (2.2 exports it), `holdsMachine`, `decideAutoSleep`.
+- Clients: client-runtime `sandbox-viewing` (`stepViewerLease`), `sandboxEnvironment.viewing`; web
+  `components/sandbox/ViewerLeaseWatch.tsx` in `__root.tsx`; mobile `features/threads/ViewerLeaseWatch.tsx`.
+  Leases are in memory: after a restart, record and thread activity anchor the idle clock.
+
+## 2.36 release (landed)
+
+- Release workflow `.github/workflows/sandbox-image.yml` ("Pair Cloud release"): arm64/x64 `archive`
+  job and a `release` job that refuses an existing release; a manual dry run uploads an artifact.
+  Assets `t3-<v>-linux-{x64,arm64}.tar.gz`, `SHA256SUMS`, `install.sh` at tag `v<v>`.
+- `RunnerBundle` reads `runner/` beside the server; no tree → reason `not-bundled`.
+  `RunnerBundle.layerFromTree(dir)` serves any tree (2.40's `--runner-dir` uses it).
+- `cliReleaseRepositoryOf`; `update.ts` reads `T3CODE_RELEASE_BASE_URL` (shell or `service.env`).
+  `build-cli-archive.ts --runner-dir`, `smoke-cli-archive.ts --expect-runner` (serve probe doesn't
+  touch /runner), `apps/server/scripts/runner-release-smoke.ts`.
+- DockerComputeDriver now uses node:http (`NodeHttpClient.makeAgent`), not undici: the single
+  executable can't import the external undici. Verified on real Docker over the unix socket; the TLS
+  `dockerHost` path is untested.
+- First real tag run is the first CI `build-exe` on native runners; local smoke was arm64 only
+  (SEA blob injected on the Mac because Docker had ~2 GB).
+
+## 2.31 branch-not-pushed (landed)
+
+- `existingBranch: Schema.optional(Schema.Literal(true))` on the cloud launch strategy;
+  `prepareCloud.existingBranch` copied in client-runtime commands.
+- `GitVcsDriver.remoteHasBranch` (`ls-remote --exit-code -- <remote> refs/heads/<ref>`, 15 s; exit 0
+  true, 2 false, else `GitCommandError`), shared `gitExitError` helper with `executeGit`;
+  `GitWorkflowService.remoteHasBranch`.
+- `CloudLaunchError` reasons now include `"branch-not-pushed"` (`branch`, `remote` as host/path) and
+  `"no-branch"` (existingBranch without branch). 2.22 adds `"local-launch"` to the same list.
+- ThreadLaunchService refuses `no-branch` before any thread; `checkExistingBranch` runs only without
+  a launch receipt; a git failure there logs and continues (the in-sandbox check in
+  `checkoutInSandbox` still refuses). No origin URL → skip, in-sandbox `no-origin` decides.
+- Open gap: a run re-armed after restart/retry loses `existingBranch` and falls back to the base.
+- Owed: MCP tool description changed (`agentContextBudget.json` 47818 → 47927, needs the
+  `agent-context-increase` label on a PR); the `mcp-tool-use` eval was not run (no API key).
+
+## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
 
