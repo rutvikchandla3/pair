@@ -1222,6 +1222,8 @@ export const SandboxSettings = Schema.Struct({
   defaultDriverId: Schema.optionalKey(ComputeDriverId),
   baseImage: Schema.optionalKey(TrimmedNonEmptyString),
   env: Schema.optionalKey(ProviderInstanceEnvironment),
+  /** While set, the reconciler stops machines it would destroy (04 §5); an admin clears it. */
+  restoreModeSince: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type SandboxSettings = typeof SandboxSettings.Type;
 
@@ -1785,6 +1787,7 @@ export const ServerSettingsPatch = Schema.Struct({
         baseImage: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
         // The whole list, as provider environments are patched.
         env: Schema.optionalKey(ProviderInstanceEnvironment),
+        restoreModeSince: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
       }),
     ),
   ),

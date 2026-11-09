@@ -51,6 +51,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
+  restoreMode: Option.none<boolean>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -235,6 +236,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        restoreMode: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -281,6 +283,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        restoreMode: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -338,6 +341,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -416,6 +420,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -565,6 +570,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -615,6 +621,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -657,6 +664,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.none(),
         {
@@ -721,6 +729,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          restoreMode: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -762,6 +771,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
+    restoreMode: Option.none<boolean>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>

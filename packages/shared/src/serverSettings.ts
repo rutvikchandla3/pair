@@ -251,13 +251,17 @@ function mergeSandboxPatch(
   const defaultDriverId = patched(patch.defaultDriverId, current?.defaultDriverId);
   const baseImage = patched(patch.baseImage, current?.baseImage);
   const env = patched(patch.env, current?.env);
+  const restoreModeSince = patched(patch.restoreModeSince, current?.restoreModeSince);
   // No driver and nothing else set is no key, so solo servers send nothing new.
-  if (drivers.size === 0 && !defaultDriverId && !baseImage && !env) return undefined;
+  if (drivers.size === 0 && !defaultDriverId && !baseImage && !env && !restoreModeSince) {
+    return undefined;
+  }
   return {
     drivers: [...drivers.values()],
     ...(defaultDriverId === undefined ? {} : { defaultDriverId }),
     ...(baseImage === undefined ? {} : { baseImage }),
     ...(env === undefined ? {} : { env }),
+    ...(restoreModeSince === undefined ? {} : { restoreModeSince }),
   };
 }
 

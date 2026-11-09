@@ -16,10 +16,12 @@ import {
   SANDBOX_ISOLATION_LABELS,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
+import * as DateTime from "effect/DateTime";
 import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
 import { useEnvironmentQuery } from "~/state/query";
 import { sandboxEnvironment } from "~/state/sandbox";
@@ -36,6 +38,7 @@ import { dockerDriverFormError, isRemoteDockerHost, nextDriverId } from "./Cloud
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -123,6 +126,15 @@ function CloudEnvironmentSettings({
       setForm(null);
   };
 
+  const leaveRestoreMode = async () => {
+    const confirmed = await requestConfirmDialog(
+      "Leave restore mode? Machines without a record are destroyed at the next check, within 10 minutes. Copy any work off them first.",
+      { variant: "destructive" },
+    );
+    if (confirmed !== true) return;
+    await save({ sandbox: { restoreModeSince: null } }, "Restore mode not left");
+  };
+
   const removeDriver = async (driver: SandboxDriverInstance) => {
     const confirmed = await requestConfirmDialog(
       `Remove ${driver.label}? Cloud threads on its machines stop and show "driver removed".`,
@@ -150,6 +162,9 @@ function CloudEnvironmentSettings({
   const desktopServer =
     serverConfig.environment.capabilities.serverSelfUpdate === "desktop-managed";
   const editing = form?.mode === "edit" ? drivers.find((driver) => driver.id === form.id) : null;
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const formatTime = (time: DateTime.Utc) =>
+    formatDayAwareTimestamp(DateTime.formatIso(time), timestampFormat);
 
   return (
     <SettingsPageContainer>
@@ -170,6 +185,38 @@ function CloudEnvironmentSettings({
             always-on team server.
           </AlertDescription>
         </Alert>
+      ) : null}
+
+      {sandbox?.restoreModeSince !== undefined ? (
+        <SettingsSection
+          title="Restore mode"
+          headerAction={
+            canEdit ? (
+              <Button size="xs" variant="outline" onClick={() => void leaveRestoreMode()}>
+                Leave restore mode
+              </Button>
+            ) : undefined
+          }
+        >
+          <SettingsRow
+            title={`Restore mode since ${formatTime(sandbox.restoreModeSince)}`}
+            description="Nothing is destroyed while it is on."
+          />
+          {canEdit
+            ? overview.data?.restoreMode?.machines.map((machine) => (
+                <SettingsRow
+                  key={machine.sandboxId}
+                  title={machine.sandboxId}
+                  description={[
+                    drivers.find((driver) => driver.id === machine.driverId)?.label ??
+                      machine.driverId,
+                    `created ${formatTime(machine.createdAt)}`,
+                    machine.hasRecord ? "discarded" : "no record",
+                  ].join(" · ")}
+                />
+              ))
+            : null}
+        </SettingsSection>
       ) : null}
 
       <SettingsSection

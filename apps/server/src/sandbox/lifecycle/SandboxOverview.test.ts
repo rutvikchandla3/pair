@@ -13,6 +13,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { CheckpointMirror } from "../mirror/CheckpointMirror.ts";
 import * as SandboxOverview from "./SandboxOverview.ts";
+import * as SandboxRestoreMode from "./SandboxRestoreMode.ts";
 
 const driverId = ComputeDriverId.make("local");
 const local: DockerSandboxDriver = { kind: "docker", id: driverId, label: "This machine" };
@@ -71,6 +72,7 @@ it.effect("counts machines by state and reads health, caps and the image from th
               ),
               ProjectionStore.layer,
               Layer.mock(CheckpointMirror)({ gitDir: () => "", diskBytes: Effect.succeed(4096) }),
+              SandboxRestoreMode.layer,
             ),
           ),
         ),

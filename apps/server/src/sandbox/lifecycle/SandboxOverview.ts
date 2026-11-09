@@ -22,6 +22,7 @@ import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
 import { DEFAULT_BASE_IMAGE_REPOSITORY } from "../image/SandboxBaseImage.ts";
 import { CheckpointMirror } from "../mirror/CheckpointMirror.ts";
 import { STARTS_PER_MINUTE } from "./SandboxAdmission.ts";
+import { SandboxRestoreMode } from "./SandboxRestoreMode.ts";
 
 /** A Docker host that does not answer must not hold the page. */
 const HEALTH_TIMEOUT = "10 seconds";
@@ -99,11 +100,12 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const mirror = yield* CheckpointMirror;
+  const restoreMode = yield* SandboxRestoreMode;
   const version = packageJson.version;
 
   const read = Effect.gen(function* () {
     const drivers = yield* registry.list;
-    const override = (yield* settings.getSettings).sandbox?.baseImage;
+    const { baseImage: override, restoreModeSince } = (yield* settings.getSettings).sandbox ?? {};
     const healths = yield* Effect.forEach(
       drivers,
       (driver) =>
@@ -117,6 +119,11 @@ const make = Effect.gen(function* () {
     const resolved = healths.flatMap((entry) =>
       entry.baseImage === null ? [] : [entry.baseImage],
     )[0];
+    const configured = new Set(drivers.map((driver) => driver.driverId));
+    const stopped =
+      restoreModeSince === undefined
+        ? []
+        : (yield* restoreMode.machines).filter((machine) => configured.has(machine.driverId));
     const baseImage =
       resolved !== undefined
         ? { ref: resolved.ref, label: sandboxImageLabel({ baseImage: resolved }) }
@@ -129,6 +136,9 @@ const make = Effect.gen(function* () {
       startsPerMinute: STARTS_PER_MINUTE,
       baseImage,
       mirrorBytes,
+      ...(restoreModeSince === undefined
+        ? {}
+        : { restoreMode: { since: restoreModeSince, machines: stopped } }),
     } satisfies SandboxOverviewResult;
   }).pipe(
     Effect.mapError((cause) => new SandboxOverviewError({ cause })),

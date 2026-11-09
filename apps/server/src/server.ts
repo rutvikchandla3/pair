@@ -127,6 +127,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as CheckpointMirror from "./sandbox/mirror/CheckpointMirror.ts";
 import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
 import * as SandboxActivity from "./sandbox/lifecycle/SandboxActivity.ts";
+import * as SandboxRestoreMode from "./sandbox/lifecycle/SandboxRestoreMode.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
@@ -745,11 +746,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   // ProjectService reads the mirror optionally, so it must sit above the orchestration layers.
-  // The lifecycle worker and the viewer-lease RPC share one SandboxActivity.
+  // The lifecycle worker and the viewer-lease RPC share one SandboxActivity; the reconciler and
+  // Settings → Cloud share one SandboxRestoreMode.
   Layer.provideMerge(
-    Layer.merge(
+    Layer.mergeAll(
       CheckpointMirror.layer,
       SandboxActivity.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+      SandboxRestoreMode.layer,
     ),
   ),
   Layer.provideMerge(ComputeDriverRegistry.layer({ docker: DockerComputeDriver.make })),

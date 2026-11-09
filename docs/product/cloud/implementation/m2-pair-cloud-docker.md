@@ -3179,7 +3179,9 @@ D11). Its own PR because it is the one guard between a restored database and los
       it is off and a listed backend older than `ORPHAN_GRACE_MS` (45) has a `sandboxId` with no
       record in `records` (the map already includes destroyed records via `getSandboxes`), write
       `restoreModeSince: now`. A younger one may be a create whose record hasn't committed yet,
-      so it never turns restore mode on. Then log a
+      so it never turns restore mode on. Nor does a sandbox id the last restore-mode pass listed:
+      leaving restore mode confirmed it, so the next pass destroys it instead of turning restore
+      mode back on (a restart forgets the list, so it is listed again). Then log a
       warning naming the sandbox ids, and plan this pass in restore mode. After the pass, record
       the listed machines: pairs whose record is null, destroyed or failed for good, with a
       backend that is not `missing`.

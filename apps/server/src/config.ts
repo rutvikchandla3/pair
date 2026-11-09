@@ -107,6 +107,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** `--restore-mode`: the reconciler's first pass turns restore mode on (04 §5). */
+    readonly restoreMode?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

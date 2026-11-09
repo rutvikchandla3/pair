@@ -13,11 +13,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadCommandExecutor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as Scheduler from "../../scheduling/Scheduler.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   type BackendSandbox,
   type ComputeDriver,
@@ -27,6 +29,7 @@ import {
 import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import { SANDBOX_BACKEND_MISSING } from "./SandboxDecisions.ts";
 import { getSandboxes, listLiveSandboxes } from "./SandboxProjection.ts";
+import { SandboxRestoreMode } from "./SandboxRestoreMode.ts";
 
 export type ReconcileAction =
   | { readonly _tag: "Keep" }
@@ -34,7 +37,8 @@ export type ReconcileAction =
   | { readonly _tag: "ReportLost"; readonly retryable: boolean }
   | { readonly _tag: "ReportCreated"; readonly driverRef: string }
   | { readonly _tag: "StopBackend" }
-  | { readonly _tag: "DestroyBackend" };
+  | { readonly _tag: "DestroyBackend" }
+  | { readonly _tag: "StopOrphan" };
 
 interface ReconcilePair {
   readonly record: OrchestrationV2Sandbox | null;
@@ -81,12 +85,24 @@ const isRunning = (backend: BackendSandbox | null) =>
   backend?.status === "running" || backend?.status === "starting";
 const isGone = (backend: BackendSandbox | null) =>
   backend === null || backend.status === "missing" || backend.status === "failed";
+const isPastGrace = (backend: BackendSandbox, now: DateTime.Utc) =>
+  DateTime.toEpochMillis(now) - DateTime.toEpochMillis(backend.createdAt) > ORPHAN_GRACE_MS;
+const isListedInRestoreMode = ({ record, backend }: ReconcilePair) =>
+  (record === null ||
+    record.state === "destroyed" ||
+    (record.state === "failed" && record.failure?.retryable !== true)) &&
+  backend !== null &&
+  backend.status !== "missing";
 
-/** 04 §5's table. Only a backend nothing will use again is destroyed, and never a young one. */
+/**
+ * 04 §5's table. Only a backend nothing will use again is destroyed, and never a young one. In
+ * restore mode such a backend is stopped instead, since a restored database may not know it.
+ */
 export const planReconciliation = (
   record: OrchestrationV2Sandbox | null,
   backend: BackendSandbox | null,
   now: DateTime.Utc,
+  restoreMode: boolean,
 ): ReconcileAction => {
   if (
     record === null ||
@@ -94,8 +110,8 @@ export const planReconciliation = (
     (record.state === "failed" && record.failure?.retryable !== true)
   ) {
     if (backend === null || backend.status === "missing") return keep;
-    const ageMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(backend.createdAt);
-    return ageMs > ORPHAN_GRACE_MS ? { _tag: "DestroyBackend" } : keep;
+    if (restoreMode) return isRunning(backend) ? { _tag: "StopOrphan" } : keep;
+    return isPastGrace(backend, now) ? { _tag: "DestroyBackend" } : keep;
   }
   // The create's answer was lost (or the runner's hello beat it): adopt the backend found by name.
   if (record.driverRef === null && backend !== null && backend.status !== "missing") {
@@ -127,6 +143,11 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const threadLocks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const settings = yield* ServerSettingsService;
+  const restoreModeMachines = yield* SandboxRestoreMode;
+  const startupRestoreMode = yield* Ref.make(
+    (yield* ServerConfig.ServerConfig).restoreMode === true,
+  );
 
   const report = (record: OrchestrationV2Sandbox, command: OrchestrationV2ServerCommand) =>
     threads.dispatch(command).pipe(
@@ -172,6 +193,13 @@ const make = Effect.gen(function* () {
         });
         return yield* callDriver(driver.destroy(backend.driverRef), {
           operation: "destroy",
+          driverRef: backend.driverRef,
+        });
+      case "StopOrphan":
+        // No lock: no live record uses this backend.
+        if (backend === null) return;
+        return yield* callDriver(driver.stop(backend.driverRef), {
+          operation: "stop",
           driverRef: backend.driverRef,
         });
     }
@@ -250,9 +278,58 @@ const make = Effect.gen(function* () {
     );
     for (const [id, record] of yield* getSandboxes(listedIds)) records.set(id, record);
     const now = yield* DateTime.now;
-    for (const pair of pairBackends(Array.from(records.values()), backends, installId)) {
-      yield* execute(driver, pair, planReconciliation(pair.record, pair.backend, now));
+    let restoreMode = (yield* settings.getSettings).sandbox?.restoreModeSince !== undefined;
+    // The server never deletes a record, so an old tagged backend without one means a restore.
+    // A younger one may be a create whose record has not committed yet. One listed when an admin
+    // left restore mode was confirmed; a restart forgets that, so it is listed again.
+    const confirmed = new Set(
+      (yield* restoreModeMachines.machines).map((machine) => machine.sandboxId),
+    );
+    const unrecorded = restoreMode
+      ? []
+      : backends.flatMap((backend) =>
+          backend.sandboxId !== null &&
+          !records.has(backend.sandboxId) &&
+          !confirmed.has(backend.sandboxId) &&
+          isPastGrace(backend, now)
+            ? [backend.sandboxId]
+            : [],
+        );
+    if (unrecorded.length > 0) {
+      restoreMode = true;
+      yield* Effect.logWarning(
+        "Entering Cloud restore mode: machines tagged with this install have no record",
+        { driverId: driver.driverId, sandboxIds: unrecorded },
+      );
+      yield* settings
+        .updateSettings({ sandbox: { restoreModeSince: now } })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not save Cloud restore mode", { cause }),
+          ),
+        );
     }
+    const pairs = pairBackends(Array.from(records.values()), backends, installId);
+    for (const pair of pairs) {
+      yield* execute(driver, pair, planReconciliation(pair.record, pair.backend, now, restoreMode));
+    }
+    const listed = pairs.filter(isListedInRestoreMode).flatMap(({ backend }) =>
+      backend === null || backend.sandboxId === null
+        ? []
+        : [
+            {
+              sandboxId: backend.sandboxId,
+              driverId: driver.driverId,
+              createdAt: backend.createdAt,
+              hasRecord: records.has(backend.sandboxId),
+            },
+          ],
+    );
+    // Confirmed machines stay listed until gone, so a failed destroy cannot turn it back on.
+    yield* restoreModeMachines.record(
+      driver.driverId,
+      restoreMode ? listed : listed.filter((machine) => confirmed.has(machine.sandboxId)),
+    );
     // Docker re-ensures its private-network block here (1.14).
     yield* driver.health.pipe(
       Effect.timeout(DRIVER_CALL_TIMEOUT),
@@ -266,6 +343,14 @@ const make = Effect.gen(function* () {
   });
 
   return Effect.fn("SandboxReconciler.reconcileOnce")(function* () {
+    // A failed write fails the pass, so nothing is destroyed before restore mode is saved.
+    if (yield* Ref.get(startupRestoreMode)) {
+      if ((yield* settings.getSettings).sandbox?.restoreModeSince === undefined) {
+        yield* Effect.logInfo("Entering Cloud restore mode from --restore-mode");
+        yield* settings.updateSettings({ sandbox: { restoreModeSince: yield* DateTime.now } });
+      }
+      yield* Ref.set(startupRestoreMode, false);
+    }
     const installId = yield* environment.getEnvironmentId;
     const drivers = yield* registry.list;
     const liveRecords = yield* listLiveSandboxes();

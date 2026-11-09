@@ -3,6 +3,7 @@ import {
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -38,6 +39,7 @@ function MachinesSection(props: {
   const drivers = config?.settings.sandbox?.drivers ?? [];
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
   const pending = overview.isPending ? "Checking…" : (overview.error ?? "Status unknown.");
+  const restoreModeSince = config?.settings.sandbox?.restoreModeSince;
   return (
     <SettingsSection
       title={props.title}
@@ -52,6 +54,17 @@ function MachinesSection(props: {
         />
       }
     >
+      {restoreModeSince === undefined ? null : (
+        <InfoRow
+          label="Restore mode"
+          description={`Restore mode since ${DateTime.toDate(restoreModeSince).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}. Nothing is destroyed while it is on.`}
+        />
+      )}
       {drivers.map((driver) => {
         const health = healths.get(driver.id);
         return (

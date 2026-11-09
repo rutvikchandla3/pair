@@ -11,6 +11,7 @@ import {
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -644,6 +645,16 @@ describe("serverSettings helpers", () => {
       sandbox: { drivers: { [local.id]: null } },
     });
     expect(removed.sandbox?.drivers).toEqual([remote]);
+
+    const since = DateTime.makeUnsafe("2026-11-07T14:02:00.000Z");
+    const restoring = applyServerSettingsPatch(removed, { sandbox: { restoreModeSince: since } });
+    expect(restoring.sandbox).toEqual({ drivers: [remote], restoreModeSince: since });
+    expect(
+      applyServerSettingsPatch(restoring, { sandbox: { drivers: { [remote.id]: null } } }).sandbox,
+    ).toEqual({ drivers: [], restoreModeSince: since });
+    expect(
+      applyServerSettingsPatch(restoring, { sandbox: { restoreModeSince: null } }).sandbox,
+    ).toEqual(removed.sandbox);
 
     const emptied = applyServerSettingsPatch(removed, {
       sandbox: { drivers: { [remote.id]: null } },

@@ -135,6 +135,15 @@ export const SandboxDriverHealth = Schema.Struct({
 });
 export type SandboxDriverHealth = typeof SandboxDriverHealth.Type;
 
+/** A machine restore mode stopped instead of destroying: no record, or a discarded one (04 §5). */
+export const SandboxRestoreModeMachine = Schema.Struct({
+  sandboxId: SandboxId,
+  driverId: ComputeDriverId,
+  createdAt: Schema.DateTimeUtc,
+  hasRecord: Schema.Boolean,
+});
+export type SandboxRestoreModeMachine = typeof SandboxRestoreModeMachine.Type;
+
 /** Settings → Cloud's Overview; members may read it, so it carries no host or env value. */
 export const SandboxOverview = Schema.Struct({
   drivers: Schema.Array(SandboxDriverHealth),
@@ -148,6 +157,9 @@ export const SandboxOverview = Schema.Struct({
   startsPerMinute: NonNegativeInt,
   baseImage: Schema.Struct({ ref: Schema.String, label: Schema.String }),
   mirrorBytes: NonNegativeInt,
+  restoreMode: Schema.optionalKey(
+    Schema.Struct({ since: Schema.DateTimeUtc, machines: Schema.Array(SandboxRestoreModeMachine) }),
+  ),
 });
 export type SandboxOverview = typeof SandboxOverview.Type;
 

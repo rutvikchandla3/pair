@@ -63,6 +63,12 @@ const noBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
 );
+const restoreModeFlag = Flag.Boolean("restore-mode").pipe(
+  Flag.withDescription(
+    "Stop Cloud machines instead of destroying them until an admin leaves restore mode in Settings → Cloud. Use after restoring an older database (equivalent to T3CODE_RESTORE_MODE).",
+  ),
+  Flag.optional,
+);
 const bootstrapFdFlag = Flag.Int("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
@@ -180,6 +186,10 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   lan: Config.Boolean("T3CODE_LAN").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  restoreMode: Config.Boolean("T3CODE_RESTORE_MODE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -217,6 +227,7 @@ export interface CliServerFlags {
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
   readonly lan: Option.Option<boolean>;
+  readonly restoreMode: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -253,6 +264,7 @@ export const sharedServerCommandFlags = {
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
+  restoreMode: restoreModeFlag,
 } as const;
 
 const PUBLIC_URL_NOT_ORIGIN = "--public-url must be an origin, like https://pair.example.com.";
@@ -312,6 +324,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     lan: flags.lan ?? Option.none(),
+    restoreMode: flags.restoreMode ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -437,6 +450,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => false,
   );
+  const restoreMode = Option.getOrElse(
+    resolveOptionPrecedence(normalizedFlags.restoreMode, Option.fromUndefinedOr(env.restoreMode)),
+    () => false,
+  );
   const tailscaleServePort = Option.getOrElse(
     resolveOptionPrecedence(
       normalizedFlags.tailscaleServePort,
@@ -551,6 +568,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(restoreMode ? { restoreMode } : {}),
   };
 
   return config;
@@ -577,6 +595,7 @@ export const resolveCliAuthConfig = (
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
       lan: Option.none(),
+      restoreMode: Option.none(),
     },
     cliLogLevel,
   );

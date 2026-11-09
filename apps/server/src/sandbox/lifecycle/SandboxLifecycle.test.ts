@@ -76,6 +76,8 @@ import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import * as SandboxEffects from "./SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "./SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "./SandboxReconciler.ts";
+import * as SandboxRestoreMode from "./SandboxRestoreMode.ts";
+import * as ServerConfig from "../../config.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -716,7 +718,13 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
         Effect.provide(
           SandboxReconciler.layer.pipe(
             Layer.provide(
-              Layer.mergeAll(Scheduler.layer, runtime.layerDriver, ThreadCommandExecutor.layer),
+              Layer.mergeAll(
+                Scheduler.layer,
+                runtime.layerDriver,
+                ThreadCommandExecutor.layer,
+                SandboxRestoreMode.layer,
+                Layer.mock(ServerConfig.ServerConfig)({} as ServerConfig.ServerConfig["Service"]),
+              ),
             ),
           ),
         ),
