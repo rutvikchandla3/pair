@@ -19,9 +19,11 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -248,21 +250,60 @@ const restoreFailure = (detail: string) =>
 it.effect.each([
   {
     name: "a held Git index lock",
-    failure: restoreFailure(lockedIndexMessage),
+    rollback: () => Effect.fail(restoreFailure(lockedIndexMessage)),
     message: lockedIndexMessage,
   },
   {
     name: "raw Git output",
-    failure: restoreFailure("error: could not clean /private/repo/secret.txt"),
+    rollback: () => Effect.fail(restoreFailure("error: could not clean /private/repo/secret.txt")),
     message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
   },
-])("reports a rollback blocked by $name only after the last attempt", ({ failure, message }) =>
+  {
+    name: "a restore that never returns",
+    rollback: () => Effect.never,
+    message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+  },
+])("reports a rollback blocked by $name only after the last attempt", ({ rollback, message }) =>
   Effect.gen(function* () {
-    const now = yield* DateTime.now;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const workerId = "worker-rollback-failure";
+    const attemptCount = yield* Ref.make(1);
     const failures = yield* Ref.make<ReadonlyArray<string>>([]);
-    const layer = layerExecutorFor({
+    const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () =>
+        Ref.get(attemptCount).pipe(
+          Effect.map((count) =>
+            Option.some<EffectOutbox.OrchestrationEffectV2>({
+              id: "effect:worker-rollback-failure",
+              commandId: CommandId.make("command:worker-rollback-failure"),
+              threadId,
+              request: {
+                type: "provider-thread.rollback",
+                providerThreadId,
+                checkpointId: rollbackCheckpointId,
+                scopeId: rollbackScopeId,
+                restoreFiles: true,
+              },
+              status: "running",
+              attemptCount: count,
+              availableAt: now,
+              leaseOwner: workerId,
+              createdAt: now,
+              updatedAt: now,
+              completedAt: null,
+              lastError: null,
+            }),
+          ),
+        ),
+      get: () => Effect.succeedNone,
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: () => Effect.succeed(true),
+      fail: () => Effect.succeed(true),
+    });
+    const layerExecutor = layerExecutorFor({
       events: yield* Ref.make<ReadonlyArray<string>>([]),
-      rollback: () => Effect.fail(failure),
+      rollback,
       threads: {
         dispatch: (command) =>
           Ref.update(failures, (current) =>
@@ -270,23 +311,19 @@ it.effect.each([
           ).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
       },
     });
+    const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+    );
     yield* Effect.gen(function* () {
-      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
-      const rollback: EffectOutbox.OrchestrationEffectV2 = {
-        ...restartEffect(now, { type: "detach" }),
-        request: {
-          type: "provider-thread.rollback",
-          providerThreadId,
-          checkpointId: rollbackCheckpointId,
-          scopeId: rollbackScopeId,
-          restoreFiles: true,
-        },
-      };
-      yield* Effect.flip(executor.execute(rollback, { willRetry: true }));
-      assert.deepEqual(yield* Ref.get(failures), []);
-      yield* Effect.flip(executor.execute(rollback, { willRetry: false }));
-    }).pipe(Effect.provide(layer));
-    assert.deepEqual(yield* Ref.get(failures), [message]);
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (const count of [1, 5]) {
+        yield* Ref.set(attemptCount, count);
+        const attempt = yield* Effect.forkChild(worker.runOnce);
+        yield* TestClock.adjust("10 minutes");
+        assert.isTrue(yield* Fiber.join(attempt));
+        assert.deepEqual(yield* Ref.get(failures), count === 5 ? [message] : []);
+      }
+    }).pipe(Effect.provide(layerWorker));
   }),
 );
 

@@ -42,6 +42,9 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
 ) {}
 
 const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
+const isCheckpointRollbackExecutionError = Schema.is(
+  CheckpointRollbackService.CheckpointRollbackExecutionError,
+);
 
 /** Bounds a driver's hint, so a buggy or hostile backend cannot park a thread's queue for hours. */
 export const RETRY_AFTER_CAP_MS = 10 * 60_000;
@@ -133,6 +136,34 @@ export const layerExecutor: Layer.Layer<
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
+          if (effect.request.type === "provider-thread.rollback") {
+            // Here rather than in execute: a timed-out last attempt reaches only this hook.
+            const rollbackError = Option.flatMap(Cause.findErrorOption(cause), (error) =>
+              isCheckpointRollbackExecutionError(error.cause)
+                ? Option.some(error.cause)
+                : Option.none(),
+            );
+            return yield* threads
+              .dispatch({
+                type: "checkpoint.rollback.fail",
+                commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
+                threadId: effect.threadId,
+                requestId: effect.commandId,
+                message: Option.match(rollbackError, {
+                  onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                  onSome: CheckpointRollbackService.rollbackFailureClientMessage,
+                }),
+              })
+              .pipe(
+                Effect.asVoid,
+                Effect.catchCause((recordCause) =>
+                  Effect.logWarning("Failed to record rollback failure", {
+                    effectId: effect.id,
+                    cause: recordCause,
+                  }),
+                ),
+              );
+          }
           if (!SandboxEffects.isSandboxEffectRequest(effect.request)) return;
           yield* sandboxEffects.reportExhausted(effect.request, cause);
         },
@@ -487,29 +518,6 @@ export const layerExecutor: Layer.Layer<
                   : { restoreFiles: effect.request.restoreFiles }),
               })
               .pipe(
-                Effect.tapCause((cause) =>
-                  willRetry || Cause.hasInterruptsOnly(cause)
-                    ? Effect.void
-                    : threads
-                        .dispatch({
-                          type: "checkpoint.rollback.fail",
-                          commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
-                          threadId: effect.threadId,
-                          requestId: effect.commandId,
-                          message: Option.match(Cause.findErrorOption(cause), {
-                            onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
-                            onSome: CheckpointRollbackService.rollbackFailureClientMessage,
-                          }),
-                        })
-                        .pipe(
-                          Effect.catchCause((recordCause) =>
-                            Effect.logWarning("Failed to record rollback failure", {
-                              effectId: effect.id,
-                              cause: recordCause,
-                            }),
-                          ),
-                        ),
-                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -652,10 +660,15 @@ export const layerExecutor: Layer.Layer<
 
 // A running effect blocks later work on its thread and its lease is never reclaimed in-process,
 // so an effect that can hang must give up and fall through to the normal retry/fail path.
+// Replay-safe types only: cutting a process-bound one midway and retrying it can run it twice.
 const EFFECT_TIMEOUTS: Partial<
   Record<EffectOutbox.OrchestrationEffectRequestV2["type"], Duration.Duration>
 > = {
   "delegated-tasks.stop": Duration.seconds(30),
+  // Far above a healthy run, so hitting one means the call hung, not that it ran slow.
+  "checkpoint.capture": Duration.minutes(10),
+  "provider-thread.rollback": Duration.minutes(10),
+  "terminal.cleanup": Duration.seconds(60),
   "sandbox.create": Duration.seconds(60),
   "sandbox.start": Duration.seconds(60),
   "sandbox.stop": Duration.seconds(60),
@@ -664,7 +677,12 @@ const EFFECT_TIMEOUTS: Partial<
   "sandbox.release-waiters": Duration.seconds(60),
   "sandbox.request-wake": Duration.seconds(60),
   "sandbox.hand-over": Duration.seconds(60),
-};
+} satisfies Partial<
+  Record<
+    (typeof EffectOutbox.REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)[number],
+    Duration.Duration
+  >
+>;
 
 const boundExecution =
   (effect: EffectOutbox.OrchestrationEffectV2) =>
@@ -969,7 +987,7 @@ export interface OrchestrationEffectDaemonOptions {
   readonly livenessPollIntervalMs?: number;
 }
 
-const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+const DEFAULT_EFFECT_WORKER_CONCURRENCY = 2 * EffectOutbox.EFFECT_LANE_SLOTS;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>

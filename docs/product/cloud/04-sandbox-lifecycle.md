@@ -395,8 +395,9 @@ one host runs 30 machines only with 120 vCPUs (open question 3).
 **Effect-worker lanes and bounds (M2).** The worker runs 4 effects at once for the whole server, and
 runner-bound effects have no bound, so 4 slow machines (a large checkpoint capture, a turn start on a
 struggling runner) stall every thread's effects, sandbox lifecycle included. M2 gives runner-bound
-effects their own lane, as title generation has, and a bound per type in `EFFECT_TIMEOUTS`, with
-values set from the load test. On timeout they take the normal retry path, as sandbox effects do.
+effects their own lane, as title generation has, and a bound per replay-safe type in
+`EFFECT_TIMEOUTS`, set far above a healthy run so a hit means the call hung. On timeout they take the
+normal retry path, as sandbox effects do.
 
 **Metering.** Token usage comes from `memberUsageSince` in
 [ProjectionStore.ts](../../../apps/server/src/orchestration-v2/ProjectionStore.ts) through

@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   SandboxId,
@@ -2397,115 +2398,210 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
-  it.effect("runs distinct threads concurrently while serializing effects within a thread", () =>
+  it.effect("gives runner-bound effects four slots of their own beside the shared four", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const commandId = CommandId.make("command:foundation-concurrent-effects");
-      const threadA = ThreadId.make("thread:foundation-concurrent-effects:a");
-      const threadB = ThreadId.make("thread:foundation-concurrent-effects:b");
-      const effectA1 = "effect:foundation-concurrent-effects:a1";
-      const effectA2 = "effect:foundation-concurrent-effects:a2";
-      const effectB1 = "effect:foundation-concurrent-effects:b1";
-      const startedA1 = yield* Deferred.make<void>();
-      const startedA2 = yield* Deferred.make<void>();
-      const startedB1 = yield* Deferred.make<void>();
-      const releaseA1 = yield* Deferred.make<void>();
-      const releaseA2 = yield* Deferred.make<void>();
-      const releaseB1 = yield* Deferred.make<void>();
-      const settled = yield* Deferred.make<void>();
-      const completed = yield* Ref.make(0);
-      const gates = new Map([
-        [effectA1, { started: startedA1, release: releaseA1 }],
-        [effectA2, { started: startedA2, release: releaseA2 }],
-        [effectB1, { started: startedB1, release: releaseB1 }],
-      ]);
-      const layerExecutor = Layer.succeed(
-        EffectWorker.OrchestrationEffectExecutorV2,
-        EffectWorker.OrchestrationEffectExecutorV2.of({
-          execute: (effect) => {
-            const gate = gates.get(effect.id);
-            if (gate === undefined) return Effect.die(`Missing gate for ${effect.id}`);
-            return Deferred.succeed(gate.started, undefined).pipe(
-              Effect.andThen(Deferred.await(gate.release)),
-            );
-          },
-        }),
+      const sql = yield* SqlClient.SqlClient;
+      const workerId = "lane-worker";
+      const commandId = CommandId.make("command:foundation-lanes");
+      const cloudThreads = Arr.makeBy(5, (index) =>
+        ThreadId.make(`thread:foundation-lanes:cloud-${index + 1}`),
       );
-      const layerWorker = EffectWorker.layerWithOptions({
-        workerId: "concurrency-worker",
-      }).pipe(
-        Layer.provide(
-          Layer.merge(
-            Layer.succeed(EffectOutbox.EffectOutboxV2, {
-              ...outbox,
-              succeed: (input) =>
-                outbox
-                  .succeed(input)
-                  .pipe(
-                    Effect.tap(() =>
-                      Ref.updateAndGet(completed, (count) => count + 1).pipe(
-                        Effect.flatMap((count) =>
-                          count === 3 ? Deferred.succeed(settled, undefined) : Effect.void,
+      for (const [index, cloudThreadId] of cloudThreads.entries()) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_sandbox_threads (
+            sandbox_id, thread_id, attached_at, archived
+          )
+          VALUES (${`sbx_foundation_lanes_${index}`}, ${cloudThreadId}, '2026-01-01T00:00:00.000Z', 0)
+        `;
+      }
+      const startIds = cloudThreads.map(
+        (_, index) => `effect:foundation-lanes:a-start-${index + 1}`,
+      );
+      const captureId = "effect:foundation-lanes:b-local-capture";
+      const interruptId = "effect:foundation-lanes:c-local-interrupt";
+      // Rows claim in effect-id order, so the fifth start is tried before either local effect.
+      yield* outbox.enqueue([
+        ...cloudThreads.map((cloudThreadId, index) => ({
+          id: startIds[index]!,
+          commandId,
+          threadId: cloudThreadId,
+          request: {
+            type: "provider-turn.start" as const,
+            runId: RunId.make(`run:foundation-lanes:${index + 1}`),
+          },
+        })),
+        {
+          id: captureId,
+          commandId,
+          threadId: ThreadId.make("thread:foundation-lanes:local-capture"),
+          request: {
+            type: "checkpoint.capture",
+            runId: RunId.make("run:foundation-lanes:local"),
+            scopeId: CheckpointScopeId.make("scope:foundation-lanes:local"),
+          },
+        },
+        {
+          id: interruptId,
+          commandId,
+          threadId: ThreadId.make("thread:foundation-lanes:local-interrupt"),
+          request: {
+            type: "provider-turn.interrupt",
+            providerSessionId: ProviderSessionId.make("session:foundation-lanes"),
+            providerThreadId: ProviderThreadId.make("provider-thread:foundation-lanes"),
+            providerTurnId: ProviderTurnId.make("provider-turn:foundation-lanes"),
+          },
+        },
+      ]);
+      const claimAll = Effect.gen(function* () {
+        const claimed: Array<string> = [];
+        while (true) {
+          const next = yield* outbox.claimNext({ workerId });
+          if (Option.isNone(next)) return claimed;
+          claimed.push(next.value.id);
+        }
+      });
+
+      assert.deepEqual(yield* claimAll, [...startIds.slice(0, 4), captureId, interruptId]);
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt));
+
+      yield* outbox.succeed({ effectId: startIds[0]!, workerId });
+      assert.deepEqual(yield* claimAll, [startIds[4]]);
+
+      for (const effectId of [...startIds.slice(1), captureId, interruptId]) {
+        yield* outbox.succeed({ effectId, workerId });
+      }
+      yield* sql`
+        DELETE FROM orchestration_v2_projection_sandbox_threads
+        WHERE thread_id IN ${sql.in(cloudThreads)}
+      `;
+    }),
+  );
+
+  // On a cloud thread the second effect is in the shared lane and the first in the runner lane.
+  it.effect.each([{ cloud: false }, { cloud: true }])(
+    "runs distinct threads concurrently while serializing effects within a thread (cloud: $cloud)",
+    ({ cloud }) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sql = yield* SqlClient.SqlClient;
+        const key = `foundation-concurrent-effects:${cloud ? "cloud" : "local"}`;
+        const commandId = CommandId.make(`command:${key}`);
+        const threadA = ThreadId.make(`thread:${key}:a`);
+        const threadB = ThreadId.make(`thread:${key}:b`);
+        const effectA1 = `effect:${key}:a1`;
+        const effectA2 = `effect:${key}:a2`;
+        const effectB1 = `effect:${key}:b1`;
+        if (cloud) {
+          yield* sql`
+          INSERT INTO orchestration_v2_projection_sandbox_threads (
+            sandbox_id, thread_id, attached_at, archived
+          )
+          VALUES ('sbx_foundation_concurrent', ${threadA}, '2026-01-01T00:00:00.000Z', 0)
+        `;
+        }
+        const startedA1 = yield* Deferred.make<void>();
+        const startedA2 = yield* Deferred.make<void>();
+        const startedB1 = yield* Deferred.make<void>();
+        const releaseA1 = yield* Deferred.make<void>();
+        const releaseA2 = yield* Deferred.make<void>();
+        const releaseB1 = yield* Deferred.make<void>();
+        const settled = yield* Deferred.make<void>();
+        const completed = yield* Ref.make(0);
+        const gates = new Map([
+          [effectA1, { started: startedA1, release: releaseA1 }],
+          [effectA2, { started: startedA2, release: releaseA2 }],
+          [effectB1, { started: startedB1, release: releaseB1 }],
+        ]);
+        const layerExecutor = Layer.succeed(
+          EffectWorker.OrchestrationEffectExecutorV2,
+          EffectWorker.OrchestrationEffectExecutorV2.of({
+            execute: (effect) => {
+              const gate = gates.get(effect.id);
+              if (gate === undefined) return Effect.die(`Missing gate for ${effect.id}`);
+              return Deferred.succeed(gate.started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate.release)),
+              );
+            },
+          }),
+        );
+        const layerWorker = EffectWorker.layerWithOptions({
+          workerId: "concurrency-worker",
+        }).pipe(
+          Layer.provide(
+            Layer.merge(
+              Layer.succeed(EffectOutbox.EffectOutboxV2, {
+                ...outbox,
+                succeed: (input) =>
+                  outbox
+                    .succeed(input)
+                    .pipe(
+                      Effect.tap(() =>
+                        Ref.updateAndGet(completed, (count) => count + 1).pipe(
+                          Effect.flatMap((count) =>
+                            count === 3 ? Deferred.succeed(settled, undefined) : Effect.void,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-            }),
-            layerExecutor,
-          ),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
-        yield* outbox.enqueue([
-          {
-            id: effectA1,
-            commandId,
-            threadId: threadA,
-            request: {
-              type: "provider-turn.start",
-              runId: RunId.make("run:foundation-concurrent-effects:a1"),
-            },
-          },
-          {
-            id: effectA2,
-            commandId,
-            threadId: threadA,
-            request: {
-              type: "provider-turn.start",
-              runId: RunId.make("run:foundation-concurrent-effects:a2"),
-            },
-          },
-          {
-            id: effectB1,
-            commandId,
-            threadId: threadB,
-            request: {
-              type: "provider-turn.start",
-              runId: RunId.make("run:foundation-concurrent-effects:b1"),
-            },
-          },
-        ]);
-        yield* outbox.notifyAvailable(3);
-
-        yield* Effect.all([Deferred.await(startedA1), Deferred.await(startedB1)]);
-        assert.isFalse(yield* Deferred.isDone(startedA2));
-
-        yield* Deferred.succeed(releaseA1, undefined);
-        yield* Deferred.succeed(releaseB1, undefined);
-        yield* Deferred.await(startedA2);
-        yield* Deferred.succeed(releaseA2, undefined);
-        yield* Deferred.await(settled);
-        assert.isTrue(
-          (yield* outbox.listByCommandId(commandId)).every(
-            (effect) => effect.status === "succeeded",
+              }),
+              layerExecutor,
+            ),
           ),
         );
-      }).pipe(Effect.provide(layerWorker), Effect.scoped);
-    }),
+
+        yield* Effect.gen(function* () {
+          yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          yield* outbox.enqueue([
+            {
+              id: effectA1,
+              commandId,
+              threadId: threadA,
+              request: { type: "provider-turn.start", runId: RunId.make(`run:${key}:a1`) },
+            },
+            {
+              id: effectA2,
+              commandId,
+              threadId: threadA,
+              request: cloud
+                ? { type: "scheduled-tasks.cleanup" }
+                : { type: "provider-turn.start", runId: RunId.make(`run:${key}:a2`) },
+            },
+            {
+              id: effectB1,
+              commandId,
+              threadId: threadB,
+              request: { type: "provider-turn.start", runId: RunId.make(`run:${key}:b1`) },
+            },
+          ]);
+          yield* outbox.notifyAvailable(3);
+
+          yield* Effect.all([Deferred.await(startedA1), Deferred.await(startedB1)]);
+          assert.isTrue(Option.isNone(yield* outbox.claimNext({ workerId: "concurrency-probe" })));
+          assert.isFalse(yield* Deferred.isDone(startedA2));
+
+          yield* Deferred.succeed(releaseA1, undefined);
+          yield* Deferred.succeed(releaseB1, undefined);
+          yield* Deferred.await(startedA2);
+          yield* Deferred.succeed(releaseA2, undefined);
+          yield* Deferred.await(settled);
+          assert.isTrue(
+            (yield* outbox.listByCommandId(commandId)).every(
+              (effect) => effect.status === "succeeded",
+            ),
+          );
+        }).pipe(
+          Effect.provide(layerWorker),
+          Effect.scoped,
+          Effect.ensuring(
+            sql`
+            DELETE FROM orchestration_v2_projection_sandbox_threads WHERE thread_id = ${threadA}
+          `.pipe(Effect.orDie),
+          ),
+        );
+      }),
   );
 
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>

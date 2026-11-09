@@ -190,6 +190,19 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+/** On a sandbox thread these wait on its machine. Interrupt, steer and answers stay shared so they never queue behind one. */
+const RUNNER_BOUND_EFFECT_TYPES = [
+  "provider-turn.start",
+  "provider-turn.restart",
+  "provider-runtime.continue",
+  "provider-thread.rollback",
+  "checkpoint.capture",
+  "terminal.cleanup",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+/** Running slots per lane: runner-bound effects on sandbox threads, and everything else. */
+export const EFFECT_LANE_SLOTS = 4;
+
 export const OrchestrationEffectStatusV2 = Schema.Literals([
   "pending",
   "running",
@@ -362,6 +375,21 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    const runnerBound = (alias: "candidate" | "busy") => sql`(
+      ${sql.literal(alias)}.effect_type IN ${sql.in(RUNNER_BOUND_EFFECT_TYPES)}
+      AND EXISTS (
+        SELECT 1
+        FROM orchestration_v2_projection_sandbox_threads AS st
+        WHERE st.thread_id = ${sql.literal(alias)}.thread_id
+      )
+    )`;
+    // Uncorrelated with the candidate, so SQLite counts each lane once per statement.
+    const runningInLane = (runner: boolean) => sql`(
+      SELECT COUNT(*)
+      FROM orchestration_v2_effect_outbox AS busy
+      WHERE busy.status = 'running'
+        AND ${runner ? runnerBound("busy") : sql`NOT ${runnerBound("busy")}`}
+    )`;
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     // A rollback parked for its machine still lets the thread's `sandbox.*` effects wake it.
     const claimableCandidatePredicate = (
@@ -375,6 +403,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             : sql`candidate.available_at <= ${availableBefore}`
         }
         AND candidate.status = 'pending'
+        AND CASE
+          WHEN ${runnerBound("candidate")} THEN ${runningInLane(true)}
+          ELSE ${runningInLane(false)}
+        END < ${EFFECT_LANE_SLOTS}
         AND NOT EXISTS (
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active

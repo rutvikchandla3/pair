@@ -3303,24 +3303,35 @@ claim query, the hottest SQL in the server.
       ```sql
       -- runnerBound(x): x.effect_type IN (...) AND EXISTS (SELECT 1 FROM
       --   orchestration_v2_projection_sandbox_threads AS st WHERE st.thread_id = x.thread_id)
-      AND (SELECT COUNT(*) FROM orchestration_v2_effect_outbox AS busy
-           WHERE busy.status = 'running'
-             AND (runnerBound(busy)) = (runnerBound(candidate))) < ${EFFECT_LANE_SLOTS}
+      -- running(lane): SELECT COUNT(*) FROM orchestration_v2_effect_outbox AS busy
+      --   WHERE busy.status = 'running' AND [NOT] runnerBound(busy)
+      AND CASE WHEN runnerBound(candidate) THEN running(runner) ELSE running(shared) END
+          < ${EFFECT_LANE_SLOTS}
       ```
-      Build `runnerBound` as a small `sql` fragment function. The count reads running rows through
+      `runnerBound` and `running` are small `sql` fragment functions. The two counts do not
+      reference the candidate, so SQLite runs each once per statement (`SCALAR SUBQUERY`, not
+      `CORRELATED`), instead of once per candidate row. They read running rows through
       `orchestration_v2_effect_outbox_claim_idx` (Foundation.ts 119, `status` first). The join uses
       `idx_sandbox_threads_thread` (088). Because `nextClaimableAt` (599) uses the same predicate, a
       full lane reports nothing claimable for that lane. The worker sleeps to the liveness poll and
       wakes on the `notifyAvailable` that `succeed` sends (641), instead of spinning.
   - `apps/server/src/orchestration-v2/EffectWorker.ts`:
     - `DEFAULT_EFFECT_WORKER_CONCURRENCY` (963): 8, that is `2 * EFFECT_LANE_SLOTS`.
-    - `EFFECT_TIMEOUTS` (646): add **proposed** bounds `checkpoint.capture: 10 min`,
-      `provider-thread.rollback: 10 min`, `terminal.cleanup: 60 s`. 2.39 owns these values: each is
-      far above a healthy run, so a hit means the runner call hung, not that it was slow. `provider-turn.start`, `provider-turn.restart` and
+    - `EFFECT_TIMEOUTS` (646): add `checkpoint.capture: 10 min`, `provider-thread.rollback: 10 min`,
+      `terminal.cleanup: 60 s`. These are the final values, and 2.39 owns them (2.40's load test
+      does not time these effects): each is far above a healthy run, so a hit means the call hung,
+      not that it was slow. `provider-turn.start`, `provider-turn.restart` and
       `provider-runtime.continue` stay unbounded, because a timeout midway would retry a
-      half-started turn. The bounds apply to local threads too; 10 minutes is far past any local
-      capture, and a retry beats a stalled thread queue.
-- **Types and services:** `RUNNER_BOUND_EFFECT_TYPES`, `EFFECT_LANE_SLOTS`.
+      half-started turn. The table `satisfies` a record keyed by
+      `REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`, so a bound on a process-bound type fails to
+      compile. The bounds apply to local threads too; 10 minutes is far past any local capture,
+      and a retry beats a stalled thread queue.
+    - A timeout interrupts the execution, so the rollback arm's "last attempt failed" report
+      (`checkpoint.rollback.fail`, which sets `rollbackFailure`) never saw a timed-out last attempt.
+      That report moves to the executor's `reportExhausted`, which the worker calls after every
+      last attempt, timeout included.
+- **Types and services:** `RUNNER_BOUND_EFFECT_TYPES` (module-private until another file needs it),
+  `EFFECT_LANE_SLOTS`.
 - **Commands and events:** none.
 - **Migrations:** none. The lane comes from the 088 membership table at claim time, so no
   outbox column and no enqueue-site change.
@@ -3336,9 +3347,12 @@ claim query, the hottest SQL in the server.
   local threads. Claim: four starts claim, the fifth does not, the local capture and the interrupt
   still claim, and `nextClaimableAt` reports no time for the fifth. `succeed` one start, and the
   fifth claims.
-- Extend "runs distinct threads concurrently while serializing effects within a thread" (2325)
-  with one row: a runner-bound effect and a shared effect on the same cloud thread still run one
-  at a time in rowid order (lanes do not split a thread).
+- Make "runs distinct threads concurrently while serializing effects within a thread" (2325) a
+  table with a cloud row: a runner-bound effect and a shared effect on the same cloud thread
+  still run one at a time in rowid order (lanes do not split a thread).
+- `apps/server/src/orchestration-v2/EffectWorker.test.ts`: "reports a rollback blocked by $name
+  only after the last attempt" runs through the worker, with a row for a restore that never
+  returns: its timed-out last attempt still reports the failure.
 
 **Verify.** `vp test run apps/server/src/orchestration-v2/FoundationPersistence.test.ts
 apps/server/src/orchestration-v2/EffectWorker.test.ts`; `vp run typecheck` for `apps/server`;
