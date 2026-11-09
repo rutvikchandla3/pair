@@ -26,14 +26,18 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (5 of 8), specs written 2026-11-09:** full specs in
+**M3 (6 of 8), specs written 2026-11-09:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
-(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7), so waves 1–3 are done. 3.23 was stopped early when the lead moved to the Mac: branch `wip/3.23` holds its unfinished,
-untested start (contracts, RPC scopes, `pickCloudMoveModel`); restart the row from it or from
-scratch. Nothing is in flight. Maintainer, 2026-11-09: no more questions, take the spec's proposals
-and tag the release without asking. Next: 3.23, then wave 5
-(3.24 is built, but its testing and G3 step 5 on the phone wait: maintainer, 2026-11-09), a release with M3 (maintainer approval), then G3 by the spec's
-[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass).
+(78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7) and 3.23
+(cea3b8942), so waves 1–4 are done. In flight on the Mac (2026-11-10): 3.24 and 3.26. Next: a
+release with M3 (`0.1.7-pair.4`), then G3 by the spec's
+[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass) without its phone step.
+
+**M4 (0 of 12), specs written 2026-11-10:** full specs in
+[m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
+before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
+under that page's "What the code changed in 10 §2". M4's rows are built while G3 runs and land
+after it passes.
 
 ### M3 maintainer answers (2026-11-09)
 
@@ -1842,6 +1846,31 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   a launch that fails after creating the thread removes the worktree and branch, not the thread.
 - Browser tests (3 files) could not launch here (no Playwright Chromium). Owes, with G3: runtime
   transcripts and `test-t3-app` captures.
+
+## 3.23 continue in cloud (landed cea3b8942)
+
+- `apps/server/src/cloudMove/`: `CloudMoves` gained `preview` and `continueInCloud`; new
+  `CloudMoveLaunch` launches the thread as the link's member, capped at the link's access, and
+  `CloudMoveHttp` reads it when the layer is built. The seed is a git bundle from
+  `GitVcsDriver`/`VcsDriver`, staged under `cloud-move-seeds/`. `putContextExport` returns
+  `{ outcome, bytes }`.
+- RPCs `threadMove.preview` and `threadMove.toCloud`; `ThreadMoveError` keeps its reasons.
+  `createThreadMoveAtoms` returns `preview` and `toCloud` beside `toLocal`, with the copy
+  constants. `continueInCloudOffer` (`cloudTarget.ts`) takes `environmentId` and `originKey`.
+- MCP tool `t3_thread_continue_in_cloud`, hidden while the server has no link.
+  `mcpToolListJsonBytes` 48110 → 48788: the PR needs the `agent-context-increase` label. Two eval
+  cases in `threads-vs-tasks.ndjson`; the dry run builds both.
+- Web: `ContinueInCloudDialog.tsx`, the thread menus and the palette. The palette item isn't gated
+  on operate scope; the server checks it.
+- Follow-up (lead): the sidebar's row menu never offered Continue locally (3.25 wired only the
+  header menu and the palette). Fixed in `fix(web): offer Continue locally from the sidebar's
+  thread menu`.
+- Fails on `feat/pair` without this row too, and not in the brief's list:
+  `apps/server/src/mcp/toolkits/core.test.ts` doesn't load on this Mac (`SchemaError: Expected
+  string at ["lastRunThreadId"]`); CheckpointStore's two known cases now count 29 `exists` checks
+  against an expected 33.
+- Owes, with G3: a web pass with a local server linked to Pair Cloud, a real seed upload, and the
+  live evals.
 
 ## Open follow-ups and risks
 
