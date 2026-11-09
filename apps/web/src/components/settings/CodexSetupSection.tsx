@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
 import {
@@ -33,7 +34,7 @@ import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
+import { environmentCloudLaunchAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { waitForQuerySettled } from "../../state/waitForQuerySettled";
@@ -115,6 +116,8 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   const existingAuthenticated = props.provider?.auth.status === "authenticated";
   const existingChecking = existingState === "checking";
   const existingSummary = getProviderSummary(props.provider);
+  // A cloud-only server refuses its own terminal, so it has no CLI to sign in to.
+  const cloudLaunch = useAtomValue(environmentCloudLaunchAtom(props.environmentId));
   const content =
     props.mode === "existing" && props.presentation === "onboarding" ? (
       <CodexWelcomeCard
@@ -170,7 +173,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           )
         }
         secondaryControl={
-          !existingAuthenticated && !existingReady && !existingChecking ? (
+          !cloudLaunch && !existingAuthenticated && !existingReady && !existingChecking ? (
             <Button size="sm" variant="ghost-muted" onClick={() => props.onModeChange("existing")}>
               Use existing CLI
             </Button>
@@ -205,6 +208,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           setRequested(false);
           props.onAutoStartConsumed?.();
         }}
+        allowExistingCli={!cloudLaunch}
       />
     );
   return content;

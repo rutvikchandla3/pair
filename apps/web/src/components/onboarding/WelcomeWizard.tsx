@@ -72,7 +72,7 @@ import {
 } from "../../onboarding/targetEnvironment.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
-import { serverEnvironment } from "../../state/server";
+import { environmentCloudLaunchAtom, serverEnvironment } from "../../state/server";
 import {
   readEnvironmentScope,
   useEnvironmentScope,
@@ -714,6 +714,7 @@ function ConnectedAgentsStep({
     reportFailure: false,
   });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const cloudLaunch = useAtomValue(environmentCloudLaunchAtom(environmentId));
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [addingAccount, setAddingAccount] = useState(false);
   const [createdAccount, setCreatedAccount] = useState<{
@@ -779,6 +780,7 @@ function ConnectedAgentsStep({
                 setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
               }
               terminalOpen={terminalSession?.driver === driver}
+              cloudLaunch={cloudLaunch}
               onOpenTerminal={() => {
                 if (
                   provider === undefined ||
@@ -811,6 +813,7 @@ function ConnectedAgentsStep({
               provider={provider}
               terminalOpen={terminalSession?.driver === driver}
               terminalAvailable={serverConfig !== null && canOperateTerminal}
+              cloudLaunch={cloudLaunch}
               onOpenTerminal={() => {
                 if (
                   provider === undefined ||
@@ -881,12 +884,14 @@ function OnboardingCodexSetup({
   provider,
   serverConfig,
   terminalOpen,
+  cloudLaunch,
   onOpenTerminal,
 }: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider | undefined;
   readonly serverConfig: ServerConfig;
   readonly terminalOpen: boolean;
+  readonly cloudLaunch: boolean;
   readonly onOpenTerminal: () => void;
   readonly createdAccount: {
     instanceId: ProviderInstanceId;
@@ -942,6 +947,7 @@ function OnboardingCodexSetup({
       provider={provider}
       terminalOpen={terminalOpen}
       terminalAvailable={canOperateTerminal}
+      cloudLaunch={cloudLaunch}
       onOpenTerminal={onOpenTerminal}
     />
   ) : (
@@ -965,12 +971,14 @@ function AgentCard({
   provider,
   terminalOpen,
   terminalAvailable,
+  cloudLaunch,
   onOpenTerminal,
 }: {
   readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
   readonly terminalOpen: boolean;
   readonly terminalAvailable: boolean;
+  readonly cloudLaunch: boolean;
   readonly onOpenTerminal: () => void;
 }) {
   const meta = providerClients.get(ProviderDriverKind.make(driver));
@@ -1005,7 +1013,7 @@ function AgentCard({
           <span className="text-xs text-muted-foreground">Disabled</span>
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
-        ) : (
+        ) : cloudLaunch ? null : (
           <Button
             size="xs"
             variant="ghost"
