@@ -263,6 +263,8 @@ const rebuildNotice = (checkout: SandboxCheckout) => {
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
 function failureDetail(error: unknown): string {
+  const refusal = isThreadLaunchError(error) ? error.cause : error;
+  if (CloudPreparation.isCloudLaunchRefusal(refusal)) return refusal.message;
   if (isThreadLaunchError(error)) {
     const cause = error.cause;
     const detail = cause instanceof Error ? cause.message : String(cause);

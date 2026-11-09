@@ -4,6 +4,9 @@ Several people can share one Pair server, for example one running on a team VM. 
 signs in as a member, works in the same projects and threads, and sees who did what. A server
 with one member looks and behaves exactly as it did before.
 
+When the desktop or web app is connected to more than one team server, such as your Mac and Pair
+Cloud, pick the server at the top of **Settings → Team**.
+
 ## Invite people
 
 Open **Settings → Team** and choose **Invite member**. Send the link to the person you are

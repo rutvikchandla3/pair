@@ -2929,6 +2929,42 @@ it.effect.each([
     machineFails: false,
     reason: "feature/login is not on github.com/acme/app. Push feature/login first.",
   },
+  {
+    name: "the repo is private and nobody can read it",
+    git: {
+      cloneRepository: ({ cwd }) =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.cloneRepository",
+            command: "git clone",
+            cwd,
+            reason: "authentication_failed",
+            detail: "git clone failed",
+          }),
+        ),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
+    machineFails: false,
+    reason:
+      "Pair Cloud can't read github.com/acme/app. Connect GitHub to clone private repos, in Settings → Team.",
+  },
+  {
+    name: "the clone fails for another reason",
+    git: {
+      cloneRepository: () =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.cloneRepository",
+            command: "git clone",
+            cwd: "/sandbox",
+            reason: "path_already_exists",
+            detail: "git clone failed",
+          }),
+        ),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
+    machineFails: false,
+    reason:
+      "Workspace preparation failed during provision worktree: Git command failed in GitVcsDriver.cloneRepository (/sandbox): git clone failed (path_already_exists)",
+  },
 ])("fails a cloud launch's run when $name", ({ git, workspace, machineFails, reason }) => {
   const harness = cloudHarness(git);
   return Effect.gen(function* () {
@@ -2965,7 +3001,7 @@ it.effect.each([
     const projection = yield* threads.getThreadProjection(launched.threadId);
     const failure = projection.turnItems.find((item) => item.type === "error")?.failure;
     assert.equal(failure?.code, ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE);
-    assert.include(failure?.message ?? "", reason);
+    assert.equal(failure?.message, reason);
     assert.equal(projection.thread.worktreePath, null);
     assert.equal(harness.createWorktree.mock.calls.length, 0);
   }).pipe(Effect.provide(harness.layer));

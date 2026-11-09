@@ -52,6 +52,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { Button } from "../../components/ui/Button";
 import { AppText as Text } from "../../components/ui/AppText";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
@@ -99,7 +100,10 @@ import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImpo
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 
+import { useCloudAccountNotice } from "../../state/sandbox";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { openSettings } from "../settings/settings-navigation";
+import { MachineNotice } from "./ThreadMachineNotices";
 
 const WORKSPACE_MODE_MENU_ID = "workspace-mode:";
 
@@ -250,6 +254,10 @@ export function NewTaskDraftScreen(props: {
   );
   const environmentConnected = connectionState === "connected";
   const { launch } = flow;
+  // The Cloud draft's resolved Pair Cloud target, never the Mac.
+  const cloudAccountNotice = useCloudAccountNotice(
+    flow.workspaceMode === "cloud" ? (flow.cloud.target?.environmentId ?? null) : null,
+  );
   // A routed Cloud target is offered only while its Pair Cloud is connected.
   const launchConnected =
     launch !== null && launch.environmentId !== selectedProject?.environmentId
@@ -1041,6 +1049,24 @@ export function NewTaskDraftScreen(props: {
                       )
                     }
                     onRemove={() => void removeClonedProject()}
+                  />
+                </View>
+              ) : null}
+              {cloudAccountNotice ? (
+                <View className="px-3 pb-2">
+                  <MachineNotice
+                    icon={{ ios: "key", android: "lock" }}
+                    tone="default"
+                    title={cloudAccountNotice.title}
+                    detail={cloudAccountNotice.description}
+                    actions={
+                      <Button
+                        label="Open Team settings"
+                        tone="secondary"
+                        size="compact"
+                        onPress={() => openSettings(navigation, "SettingsTeam")}
+                      />
+                    }
                   />
                 </View>
               ) : null}

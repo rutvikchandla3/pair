@@ -34,7 +34,7 @@ const dismissedSharedMachineAtom = Atom.make<ReadonlySet<string>>(new Set<string
   Atom.withLabel("mobile-shared-machine:dismissed"),
 );
 
-function MachineNotice(props: {
+export function MachineNotice(props: {
   readonly icon: AppSymbolName;
   readonly tone: "default" | "danger";
   readonly title: string;

@@ -2556,12 +2556,16 @@ clone failed" (progress, G1). It is its own PR because it is the onboarding laye
     appConfigured: githubAppConfigured(settings), owner: member })` is `"missing"`: "Connect GitHub
     on Pair Cloud". "Pair Cloud needs your GitHub to clone private repos and push." Provider comes
     first.
-  - New `apps/web/src/components/sandbox/cloudAccountBanner.tsx`, `useCloudAccountBanner(target:
-    CloudTargetOption | null)`, shaped like `useCloudPushBanner` (cloudPushBanner.tsx 15). It shows
-    on a draft in Cloud mode, and its action links `/settings/team?environmentId=<target>`.
+  - New `apps/web/src/components/sandbox/cloudAccountBanner.tsx`, `useCloudAccountBanner(
+    environmentId: EnvironmentId | null)` (the draft's resolved launch target), shaped like
+    `useCloudPushBanner` (cloudPushBanner.tsx 15). It shows on a draft in Cloud mode, and its
+    action links `/settings/team?machine=<target>`. Web and mobile read the notice through
+    client-runtime's `createCloudAccountNoticeAtoms`, null until the target's config and the
+    member's own row load.
     `ChatView.tsx` adds it beside `cloudPushBannerItem` (2642).
   - `apps/web/src/components/team/TeamSettings.tsx` (76): an environment picker like
-    `AccessSettings` (ConnectionsSettings.tsx 169), over environments with a current member. The
+    `AccessSettings` (ConnectionsSettings.tsx 169; both now use `SettingsEnvironmentPicker`), over
+    the environments that pass the visibility rule below. The
     initial pick is the `machine` search key, which `validateSettingsRouteSearch` (5) makes from
     `environmentId`, falling back to the primary. `state/team.ts` `useTeamSettingsVisible` (85)
     keeps today's rule per environment (the member is known, and can write access or the server is

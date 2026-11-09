@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  EnvironmentId,
   managedCapabilityDenial,
   type AuthPairingCredentialResult,
-  type EnvironmentId,
   type MemberRole,
   type TeamMember,
   type TeamUpdateSelfInput,
@@ -20,14 +20,24 @@ import { useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
 import { authEnvironment } from "~/state/auth";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { usePresence } from "~/state/presence";
-import { teamEnvironment, useCurrentMemberId, useTeamMembers } from "~/state/team";
+import {
+  teamEnvironment,
+  useCurrentMemberId,
+  useTeamMembers,
+  useTeamSettingsEnvironmentIds,
+} from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { formatAccessTimestamp } from "../settings/ConnectionsSettings.logic";
+import {
+  formatAccessTimestamp,
+  resolveAccessEnvironmentId,
+} from "../settings/ConnectionsSettings.logic";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { SettingsEnvironmentPicker } from "../settings/SettingsEnvironmentPicker";
+import { useOptionalSettingsScope } from "../settings/SettingsScopeContext";
 import { searchableSetting } from "../settings/settingsSearch";
 import { ManagedControl } from "../ManagedPolicy";
 import { Badge } from "../ui/badge";
@@ -75,17 +85,43 @@ function sortMembers(members: ReadonlyArray<TeamMember>): ReadonlyArray<TeamMemb
 }
 
 export function TeamSettings() {
-  const environmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const teamEnvironmentIds = useTeamSettingsEnvironmentIds();
+  const scope = useOptionalSettingsScope();
+  const candidates = environments.filter((environment) =>
+    teamEnvironmentIds.includes(environment.environmentId),
+  );
+  const machine = scope?.search.machine;
+  const environmentId =
+    resolveAccessEnvironmentId({
+      primaryEnvironmentId,
+      environments: candidates.map((environment) => ({
+        environmentId: environment.environmentId,
+        connected: environment.connection.phase === "connected",
+      })),
+      selected: machine === undefined ? null : EnvironmentId.make(machine),
+    }) ?? primaryEnvironmentId;
   return (
     <SettingsPageContainer>
+      {candidates.length > 1 && environmentId !== null && scope !== null ? (
+        <SettingsEnvironmentPicker
+          label="Showing the team on"
+          environments={candidates}
+          value={environmentId}
+          onChange={(next) => scope.selectScope({ machine: next })}
+        />
+      ) : null}
       {environmentId === null ? (
         <SettingsSection {...searchableSetting("team")}>
           <SettingsRow title="Connect to an environment to see its team." />
         </SettingsSection>
       ) : (
-        <TeamMembersSection environmentId={environmentId} />
+        <TeamMembersSection key={environmentId} environmentId={environmentId} />
       )}
-      {environmentId === null ? null : <ProviderAccountsSection environmentId={environmentId} />}
+      {environmentId === null ? null : (
+        <ProviderAccountsSection key={environmentId} environmentId={environmentId} />
+      )}
     </SettingsPageContainer>
   );
 }

@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   type CommandId,
+  type GitCommandError,
   type ComputeDriverId,
   type OrchestrationV2Sandbox,
   ProjectId,
@@ -43,6 +44,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "no-origin",
     "base-ref-missing",
     "branch-not-pushed",
+    "repo-unreadable",
     "no-branch",
     "sandbox-failed",
     "local-launch",
@@ -66,6 +68,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return `${this.baseRef ?? "The base branch"} is not on origin. Push ${this.baseRef ?? "it"} first.`;
       case "branch-not-pushed":
         return `${this.branch} is not on ${this.remote}. Push ${this.branch} first.`;
+      case "repo-unreadable":
+        return `Pair Cloud can't read ${this.remote}. Connect GitHub to clone private repos, in Settings → Team.`;
       case "no-branch":
         return "Name the existing branch to launch from.";
       case "sandbox-failed":
@@ -257,11 +261,20 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       snapshotAt: null,
     };
   }
-  if (yield* isCheckout(clonePath)) {
-    yield* git.fetchRemote({ cwd: clonePath, remoteName: "origin" });
-  } else {
-    yield* git.cloneRepository({ cwd: root, url, path: clonePath });
-  }
+  // Git can't tell a missing credential from one without access; both are fixed in Settings → Team.
+  const unreadable = (error: GitCommandError) =>
+    error.reason === "authentication_failed" || error.reason === "remote_unreachable"
+      ? new CloudLaunchError({
+          projectId: input.projectId,
+          reason: "repo-unreadable",
+          remote: normalizeGitRemoteUrl(url),
+        })
+      : error;
+  yield* (
+    (yield* isCheckout(clonePath))
+      ? git.fetchRemote({ cwd: clonePath, remoteName: "origin" })
+      : git.cloneRepository({ cwd: root, url, path: clonePath })
+  ).pipe(Effect.mapError(unreadable));
   const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
   if (input.existingWorktreePath !== null && Option.isSome(mirror)) {
     const restored = yield* mirror.value.restore({

@@ -9,6 +9,7 @@ import {
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
 import {
+  createCloudAccountNoticeAtoms,
   createSandboxEnvironmentAtoms,
   SANDBOX_ACTION_FAILURE_TITLES,
   SANDBOX_DISCARD_CONFIRMATION,
@@ -26,7 +27,7 @@ import { Atom } from "effect/reactivity";
 import * as Dialog from "../components/ui/Dialog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { connectedEnvironmentIdsAtom } from "./presentation";
-import { environmentServerConfigsAtom } from "./server";
+import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { teamEnvironment } from "./team";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -35,6 +36,22 @@ export const sandboxEnvironment = createSandboxEnvironmentAtoms(connectionAtomRu
   team: teamEnvironment,
   threadShells: environmentThreadShells,
 });
+
+const cloudAccountNoticeAtom = createCloudAccountNoticeAtoms({
+  configValueAtom: (environmentId) => serverEnvironment.configValueAtom(environmentId),
+  currentMemberAtom: (environmentId) => teamEnvironment.currentMemberAtom(environmentId),
+});
+
+const NO_CLOUD_ACCOUNT_NOTICE_ATOM = Atom.make(null).pipe(
+  Atom.withLabel("mobile-cloud-account-notice:none"),
+);
+
+/** What the member must connect on the Cloud draft's Pair Cloud target; null while it loads. */
+export function useCloudAccountNotice(environmentId: EnvironmentId | null) {
+  return useAtomValue(
+    environmentId === null ? NO_CLOUD_ACCOUNT_NOTICE_ATOM : cloudAccountNoticeAtom(environmentId),
+  );
+}
 
 /** Connected environments with a sandbox driver: the Machines page lists them. */
 const cloudEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {

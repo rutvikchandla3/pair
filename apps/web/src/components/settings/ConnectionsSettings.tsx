@@ -34,7 +34,7 @@ import {
   resolveLocalVersionStatusLabel,
   resolveTailscaleServeBaseUrl,
 } from "./ConnectionsSettings.logic";
-import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
@@ -185,49 +185,12 @@ function AccessSettings() {
   });
   const picker =
     candidates.length > 1 && accessEnvironmentId !== null ? (
-      <div className="flex min-w-0 items-center gap-1.5 px-3 text-sm text-muted-foreground sm:px-4">
-        <span className="shrink-0">Showing access for</span>
-        <Select
-          value={accessEnvironmentId}
-          onValueChange={(next) => {
-            if (next !== null) setSelectedEnvironmentId(next);
-          }}
-        >
-          <SelectTrigger size="sm" className="w-auto max-w-72" aria-label="Environment">
-            <SelectValue>
-              {(value: EnvironmentId) => {
-                const environment = candidates.find(
-                  (candidate) => candidate.environmentId === value,
-                );
-                return environment ? settingsScopeEnvironmentLabel(environment, candidates) : null;
-              }}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup alignItemWithTrigger={false}>
-            {candidates.map((environment) => (
-              <SelectItem
-                hideIndicator
-                key={environment.environmentId}
-                value={environment.environmentId}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-                    className="size-3.5 shrink-0"
-                  />
-                  <span className="min-w-0 truncate">
-                    {settingsScopeEnvironmentLabel(environment, candidates)}
-                  </span>
-                  {environment.connection.phase !== "connected" ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
-                  ) : null}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      </div>
+      <SettingsEnvironmentPicker
+        label="Showing access for"
+        environments={candidates}
+        value={accessEnvironmentId}
+        onChange={setSelectedEnvironmentId}
+      />
     ) : null;
   // Keyed so pairing credentials and pending work never carry over to another environment.
   return (

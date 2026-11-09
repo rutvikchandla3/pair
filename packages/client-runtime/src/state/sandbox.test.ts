@@ -2,9 +2,12 @@ import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
   MemberId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   SandboxId,
   ThreadId,
   type AuthSessionState,
+  type ProviderInstanceConfig,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
   type TeamMember,
@@ -18,6 +21,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  cloudAccountNotice,
   cloudPushCredential,
   createSandboxEnvironmentAtoms,
   sandboxStatePresentation,
@@ -223,6 +227,91 @@ describe("cloudPushCredential", () => {
     ["an unknown owner pushes nothing", false, undefined, "missing"],
   ] as const)("%s", (_name, appConfigured, member, expected) => {
     expect(cloudPushCredential({ appConfigured, owner: member })).toBe(expected);
+  });
+});
+
+describe("cloudAccountNotice", () => {
+  const ada = MemberId.make("member-ada");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const codex = ProviderDriverKind.make("codex");
+  const token = {
+    name: "CLAUDE_CODE_OAUTH_TOKEN",
+    value: "",
+    sensitive: true,
+    valueRedacted: true,
+  };
+  const app = { github: { appId: "1", appPrivateKey: "key" } };
+  const member = (github?: TeamMember["github"]): TeamMember => ({
+    id: ada,
+    name: "Ada",
+    role: "member",
+    color: "hsl(0, 60%, 50%)",
+    isOwner: false,
+    createdAt: since,
+    removedAt: null,
+    ...(github === undefined ? {} : { github }),
+  });
+  const instance = (id: string, config: ProviderInstanceConfig) => ({
+    settings: { [id]: config },
+    providers: [
+      {
+        instanceId: ProviderInstanceId.make(id),
+        driver: config.driver,
+        enabled: true,
+        installed: true,
+      },
+    ],
+  });
+
+  it.each([
+    { name: "no instances", accounts: { settings: {}, providers: [] }, expected: "provider" },
+    {
+      name: "only another member's instance",
+      accounts: instance("claude_grace", {
+        driver: claude,
+        ownerMemberId: MemberId.make("member-grace"),
+        environment: [token],
+      }),
+      expected: "provider",
+    },
+    {
+      name: "a Local-only Claude instance",
+      accounts: instance("claudeAgent", { driver: claude }),
+      expected: "provider",
+    },
+    {
+      name: "a company Codex instance",
+      accounts: instance("codex", { driver: codex, config: { setupMode: "managed" } }),
+      hosts: app,
+      expected: null,
+    },
+    {
+      name: "the App is configured and the member has no GitHub",
+      accounts: instance("claude_ada", {
+        driver: claude,
+        ownerMemberId: ada,
+        environment: [token],
+      }),
+      hosts: app,
+      expected: null,
+    },
+    {
+      name: "there is no App and the member has no GitHub",
+      accounts: instance("claude_ada", {
+        driver: claude,
+        ownerMemberId: ada,
+        environment: [token],
+      }),
+      expected: "github",
+    },
+  ] as const)("says what to connect when $name", ({ accounts, hosts, expected }) => {
+    const notice = cloudAccountNotice({
+      settings: { providerInstances: accounts.settings, sourceControlHosts: hosts ?? {} },
+      providers: accounts.providers,
+      memberId: ada,
+      member: member(),
+    });
+    expect(notice?.kind ?? null).toBe(expected);
   });
 });
 

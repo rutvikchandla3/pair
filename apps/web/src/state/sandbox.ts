@@ -1,6 +1,9 @@
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import { type CloudTarget, resolveCloudTarget } from "@t3tools/client-runtime/state/cloud-target";
-import { createSandboxEnvironmentAtoms } from "@t3tools/client-runtime/state/sandbox";
+import {
+  createCloudAccountNoticeAtoms,
+  createSandboxEnvironmentAtoms,
+} from "@t3tools/client-runtime/state/sandbox";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -10,12 +13,18 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
+import { serverEnvironment } from "./server";
 import { teamEnvironment } from "./team";
 import { environmentThreadShells } from "./threads";
 
 export const sandboxEnvironment = createSandboxEnvironmentAtoms(connectionAtomRuntime, {
   team: teamEnvironment,
   threadShells: environmentThreadShells,
+});
+
+export const cloudAccountNoticeAtom = createCloudAccountNoticeAtoms({
+  configValueAtom: (environmentId) => serverEnvironment.configValueAtom(environmentId),
+  currentMemberAtom: (environmentId) => teamEnvironment.currentMemberAtom(environmentId),
 });
 
 const HIDDEN: CloudTarget = { kind: "hidden" };

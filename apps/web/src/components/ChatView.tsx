@@ -14,6 +14,7 @@ import {
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
+import { useCloudAccountBanner } from "./sandbox/cloudAccountBanner";
 import { useCloudPushBanner } from "./sandbox/cloudPushBanner";
 import { useSharedMachineBanner } from "./sandbox/sharedMachineBanner";
 import { useSandboxThreadStatus } from "./sandbox/useSandboxThreadStatus";
@@ -1152,6 +1153,9 @@ export default function ChatView(props: ChatViewProps) {
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
   const cloudPushBannerItem = useCloudPushBanner(environmentId, serverThread?.source ?? null);
+  const cloudAccountBannerItem = useCloudAccountBanner(
+    draftCloudLaunchTarget?.environmentId ?? null,
+  );
   const sharedMachineBannerItem = useSharedMachineBanner(
     environmentId,
     serverThread === null ? null : threadId,
@@ -2741,7 +2745,9 @@ export default function ChatView(props: ChatViewProps) {
         : [];
     const cloudPushItems = [
       ...sandboxStatus.bannerItems,
-      ...[cloudPushBannerItem, sharedMachineBannerItem].filter((item) => item !== null),
+      ...[cloudPushBannerItem, cloudAccountBannerItem, sharedMachineBannerItem].filter(
+        (item) => item !== null,
+      ),
       ...routedCloudWarning,
     ];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {

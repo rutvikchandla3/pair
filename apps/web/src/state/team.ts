@@ -23,11 +23,13 @@ import { Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { configuredHostedAppUrl } from "../hostedPairing";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "./environments";
+import { useEnvironmentHttpBaseUrl } from "./environments";
+import { environmentSummaries } from "./presentation";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
 import { useOrchestrationCommand } from "./use-orchestration-command";
-import { readPreparedConnection, useEnvironmentScope } from "./session";
+import { environmentSession, readPreparedConnection, sessionHasScope } from "./session";
 
 export const teamEnvironment = createTeamEnvironmentAtoms(connectionAtomRuntime);
 
@@ -83,12 +85,35 @@ export function readThreadShareOrigin(environmentId: EnvironmentId): string {
 }
 
 /** Settings → Team is for admins, and for anyone once the server has a second member. */
+const teamSettingsVisibleFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(teamEnvironment.currentMemberIdAtom(environmentId)) !== null &&
+      (sessionHasScope(
+        get(environmentSession.sessionStateAtom(environmentId)),
+        AuthAccessWriteScope,
+      ) ||
+        get(teamEnvironment.isTeamModeAtom(environmentId))),
+  ).pipe(Atom.withLabel(`team-settings-visible:${environmentId}`)),
+);
+
+// Joined ids, so subscribers re-render only when the list changes.
+const teamSettingsEnvironmentIdsAtom = Atom.make((get) => {
+  const primary = get(primaryEnvironmentIdAtom);
+  const connected = get(environmentSummaries.connectedEnvironmentIdsAtom);
+  const candidates =
+    primary === null || connected.includes(primary) ? connected : [primary, ...connected];
+  return candidates.filter((id) => get(teamSettingsVisibleFamily(id))).join("\n");
+}).pipe(Atom.withLabel("team-settings-environments"));
+
+/** The environments whose Settings → Team this member may open; the Mac app reaches Pair Cloud's. */
+export function useTeamSettingsEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+  const key = useAtomValue(teamSettingsEnvironmentIdsAtom);
+  return key === "" ? [] : (key.split("\n") as EnvironmentId[]);
+}
+
 export function useTeamSettingsVisible(): boolean {
-  const environmentId = usePrimaryEnvironmentId();
-  const knowsTeams = useCurrentMemberId(environmentId) !== null;
-  const canWriteAccess = useEnvironmentScope(environmentId, AuthAccessWriteScope);
-  const isTeamMode = useIsTeamMode(environmentId);
-  return knowsTeams && (canWriteAccess || isTeamMode);
+  return useAtomValue(teamSettingsEnvironmentIdsAtom) !== "";
 }
 
 /** What attribution labels need: nothing renders unless `isTeamMode`. */

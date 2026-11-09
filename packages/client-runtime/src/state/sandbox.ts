@@ -13,10 +13,14 @@ import {
   type SandboxOverview,
   type SandboxState,
   type ScopedThreadRef,
+  type ServerConfig,
+  type ServerProvider,
   type ServerSettings,
   type TeamMember,
   type TerminalStoppedBy,
 } from "@t3tools/contracts";
+import { providerInstanceOwner } from "@t3tools/shared/providerInstanceOwnership";
+import { cloudModelDisabledReason } from "@t3tools/shared/sandboxCredentials";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -126,6 +130,74 @@ export function cloudPushCredential(input: {
 }): "app" | "owner" | "missing" {
   if (input.appConfigured) return "app";
   return input.owner?.github?.connected === true ? "owner" : "missing";
+}
+
+export type CloudAccountNotice =
+  | { readonly kind: "provider"; readonly title: string; readonly description: string }
+  | { readonly kind: "github"; readonly title: string; readonly description: string };
+
+// Constants, so a derived atom of the notice changes only when the notice does.
+const PROVIDER_NOTICE: CloudAccountNotice = {
+  kind: "provider",
+  title: "Add an account on Pair Cloud",
+  description:
+    "Cloud threads use a Claude setup token or API key, or a Codex account, that you add on Pair Cloud. Your Mac's own sign-in stays on your Mac.",
+};
+const GITHUB_NOTICE: CloudAccountNotice = {
+  kind: "github",
+  title: "Connect GitHub on Pair Cloud",
+  description: "Pair Cloud needs your GitHub to clone private repos and push.",
+};
+
+/**
+ * What a member must connect on Pair Cloud before a cloud session: an account a machine can sign
+ * in with (theirs or shared), then GitHub to clone and push. Reads Pair Cloud's state, not the Mac's.
+ */
+export function cloudAccountNotice(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances" | "sourceControlHosts">;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "driver" | "displayName" | "enabled" | "installed">
+  >;
+  readonly memberId: MemberId | null;
+  readonly member: TeamMember | undefined;
+}): CloudAccountNotice | null {
+  const usable = input.providers.some((provider) => {
+    const owner = providerInstanceOwner(input.settings, provider.instanceId);
+    return (
+      provider.enabled &&
+      provider.installed &&
+      (owner === undefined || owner === input.memberId) &&
+      cloudModelDisabledReason(input, provider.instanceId) === null
+    );
+  });
+  if (!usable) return PROVIDER_NOTICE;
+  const github = cloudPushCredential({
+    appConfigured: githubAppConfigured(input.settings),
+    owner: input.member,
+  });
+  return github === "missing" ? GITHUB_NOTICE : null;
+}
+
+/** Null until the environment's config and the member's own row load, so nothing flashes. */
+export function createCloudAccountNoticeAtoms(deps: {
+  readonly configValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<Pick<ServerConfig, "settings" | "providers"> | null>;
+  readonly currentMemberAtom: (environmentId: EnvironmentId) => Atom.Atom<TeamMember | null>;
+}) {
+  return Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const config = get(deps.configValueAtom(environmentId));
+      const member = get(deps.currentMemberAtom(environmentId));
+      if (config === null || member === null) return null;
+      return cloudAccountNotice({
+        settings: config.settings,
+        providers: config.providers,
+        memberId: member.id,
+        member,
+      });
+    }).pipe(Atom.withLabel(`cloud-account-notice:${environmentId}`)),
+  );
 }
 
 /**
