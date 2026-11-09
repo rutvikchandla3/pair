@@ -806,8 +806,10 @@ ThreadRouteScreen.tsx 549).
       in that project's checkout.` ``
     - `cloud && isolation !== "cloud"`: `invalid_request`, `` `${there.link.label} runs every task on
       a cloud machine of its own. Pass isolation "cloud".` ``
-    - `cloud`: `parent.thread.branch === null` refuses as the local path does (OrchestratorMcpService
-      .ts 2491–2497): "A cloud task starts from a pushed branch; this thread has none." Otherwise
+    - `cloud`: the base is `parent.thread.branch`, or for a thread in the project's own checkout
+      (no recorded branch) `git.currentBranch(cwd)`. With neither (detached HEAD) it refuses
+      "A cloud task starts from a pushed branch; this thread's checkout isn't on a branch. Check out
+      a branch and push it." Otherwise
       `git.remoteHasBranch({ cwd: parent.thread.worktreePath ?? project.workspaceRoot, remoteName:
       "origin", refName: branch })`. False refuses `` `${branch} is not on origin. Push it first: a
       cloud task starts from the pushed branch.` `` A `GitCommandError` is logged and the launch goes

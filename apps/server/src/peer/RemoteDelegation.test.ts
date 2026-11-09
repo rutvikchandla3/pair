@@ -566,6 +566,8 @@ const makeLaptop = (
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
     /** Whether origin has the parent's branch, as `git ls-remote` would answer. */
     const pushed = yield* Ref.make(true);
+    /** The project checkout's current branch; null is a detached HEAD. */
+    const checkout = yield* Ref.make<string | null>("main");
     const layerDatabase = Layer.succeedContext(database);
     const layerOrchestrator = Layer.mergeAll(
       layerDatabase,
@@ -635,6 +637,7 @@ const makeLaptop = (
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           remoteHasBranch: () => Ref.get(pushed),
+          currentBranch: () => Ref.get(checkout),
         }),
       ),
       Layer.provide(
@@ -655,6 +658,7 @@ const makeLaptop = (
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
       pushed,
+      checkout,
       call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
         server
           .callTool({ name, arguments: args })
@@ -1175,11 +1179,21 @@ it.effect.each([
     refused: "runs every task on a cloud machine of its own",
   },
   {
-    name: "cloud on a cloud box from a parent with no branch",
+    name: "cloud on a cloud box from a parent with no branch on a detached checkout",
     isolation: "cloud",
     cloud: true,
     branch: null,
-    refused: "this thread has none",
+    checkout: null,
+    refused: "isn't on a branch",
+  },
+  {
+    name: "cloud on a cloud box from a parent with no branch whose checkout branch is not pushed",
+    isolation: "cloud",
+    cloud: true,
+    branch: null,
+    checkout: "fix/local",
+    pushed: false,
+    refused: "fix/local is not on origin. Push it first",
   },
   {
     name: "cloud on a cloud box when origin lacks the branch",
@@ -1202,6 +1216,7 @@ it.effect.each([
       yield* linkTo(a.links, b, "auto");
       yield* seedParent(a, "branch" in row ? row.branch : null);
       yield* Ref.set(a.pushed, "pushed" in row ? row.pushed : true);
+      yield* Ref.set(a.checkout, "checkout" in row ? row.checkout : "main");
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
@@ -1253,6 +1268,36 @@ it.effect("a cloud task goes to Pair Cloud as a cloud launch from the parent's p
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a cloud task from a thread with no recorded branch starts from its checkout's branch",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread, { cloud: true });
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "auto");
+        yield* seedParent(a, null);
+        yield* Ref.set(a.checkout, "main");
+
+        const result = yield* a.call("delegate_task", {
+          task: "Fix the flaky invoice test.",
+          target: { environmentId: box.environmentId },
+          isolation: "cloud",
+        });
+        expect(result.isError, JSON.stringify(result.content)).toBe(false);
+        expect((yield* Ref.get(thread.launchedWith))?.workspaceStrategy).toEqual({
+          type: "cloud",
+          baseRef: "main",
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("follows an open task again after the laptop restarts", () =>

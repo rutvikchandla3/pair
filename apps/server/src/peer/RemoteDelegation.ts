@@ -146,19 +146,25 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     readonly worktreePath: string | null;
   }) {
-    const branch = thread.branch;
-    if (branch === null) {
-      return yield* new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: "A cloud task starts from a pushed branch; this thread has none.",
-      });
-    }
     const cwd =
       thread.worktreePath ??
       (yield* projects.getById(thread.projectId).pipe(
         Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot),
         Effect.orElseSucceed(() => undefined),
       ));
+    // A thread in the project's own checkout records no branch; the checkout knows it.
+    const branch =
+      thread.branch ??
+      (cwd === undefined
+        ? null
+        : yield* git.currentBranch(cwd).pipe(Effect.orElseSucceed(() => null)));
+    if (branch === null) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message:
+          "A cloud task starts from a pushed branch; this thread's checkout isn't on a branch. Check out a branch and push it.",
+      });
+    }
     if (cwd === undefined) return branch;
     const pushed = yield* git.remoteHasBranch({ cwd, remoteName: "origin", refName: branch }).pipe(
       Effect.catchTags({
