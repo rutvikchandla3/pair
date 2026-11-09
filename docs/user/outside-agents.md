@@ -166,7 +166,37 @@ a token you created, and the thread's owner, for an agent running in a Pair
 thread.
 
 Agents start cloud threads and cloud tasks the same way, when your server has
-Cloud set up. A cloud task starts from its thread's pushed branch.
+Cloud set up, or, from your Mac, through
+[its link to Pair Cloud](#pair-cloud-from-your-macs-agents). A cloud task starts from its thread's
+pushed branch.
+
+## Pair Cloud from your Mac's agents
+
+Link your Mac to your team's Pair Cloud once, and agents in threads on your Mac can start cloud
+threads there that belong to you: on your accounts, under the team's machine limit.
+
+To link, open **Settings → Environments → Linked environments** and choose **Link**. Pair Cloud is
+preselected when it is the only machine listed, and your app, when it is connected to Pair Cloud,
+makes the sign-in code itself. Pick the access: the most an agent from your Mac, or a thread you
+move, may do there. A member's link goes up to **Auto**, not **Full access**. A link to Pair Cloud
+needs no Labs beta. It lasts 30 days, like any link; link again to renew it. **Forget** removes
+it on your Mac, and revoking it in Pair Cloud's **Settings → Sharing & access** ends it there.
+Removing you from the team ends it too. See [Link another
+environment](./remote-access.md#link-another-environment) for the rest.
+
+Below full access, agents on your Mac can change only the threads their link started there, not
+your teammates' threads, Pair Cloud's projects or its settings.
+
+With the link:
+
+- `t3_thread_launch` with Pair Cloud's environment, or `delegate_task` with `isolation: "cloud"`,
+  starts a cloud thread from a branch that is on `origin`.
+- `t3 thread start … --environment <Pair Cloud> --cloud <base>` does the same from a terminal.
+- `t3_thread_continue_in_cloud` moves a thread that has unpushed work, as **Continue in cloud**
+  does: see [Move a thread](./cloud.md#move-a-thread-between-your-mac-and-pair-cloud). An agent
+  moving its own thread should end its turn after the call.
+
+Pair Cloud never reaches back to your Mac: every move and launch starts from your Mac.
 
 ## Webhooks
 

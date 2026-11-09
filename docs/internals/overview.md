@@ -50,6 +50,11 @@ instead. Clients never launch Cloud on a local server: `resolveCloudTarget` in
 [client-runtime](../../packages/client-runtime/src/state/cloudTarget.ts) routes a Cloud pick on a
 local project to the connected Pair Cloud project with the same github.com origin.
 
+The two never sync. A move between them is a new thread on the other server, always started by the
+local server over its member-scoped link (Pair Cloud never calls a laptop): the code travels as a
+git bundle staged in Pair Cloud's mirror, and the conversation as a context export
+([context handoffs](./context-handoffs.md)).
+
 Thread-scoped code reaches a thread's files, processes and terminals through its
 [WorkspaceHost](../../apps/server/src/workspaceHost/WorkspaceHost.ts), local or a sandbox, and the
 `t3code/workspace-host-boundary` lint rule keeps it there. Paths under the reserved `/t3-sandbox/`

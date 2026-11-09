@@ -67,7 +67,9 @@ workspace menu. The thread starts on Pair Cloud, in the project with the same `o
 github.com, from the branch you picked; with several Pair Clouds connected, the menu shows
 **Cloud on** each one. When Pair Cloud doesn't have the project yet, the menu offers
 **Add to Pair Cloud** instead. Push the branch first: Pair says "Push <branch> first." until
-`origin` has it, and warns that commits you haven't pushed won't be included.
+`origin` has it, and warns that commits you haven't pushed won't be included. To take unpushed
+work along, start the thread on your Mac and
+[continue it in cloud](#move-a-thread-between-your-mac-and-pair-cloud).
 
 You can also run **New cloud thread** from the command palette. It has no default shortcut; bind
 `chat.newCloud` in [Keybindings](./keybindings.md). **New thread on branch** from a cloud thread
@@ -87,6 +89,68 @@ On a Cloud server, scheduled and webhook tasks that start a new thread run in Cl
 task's base branch on `origin`. Turn on **Discard the machine when the run settles** in the task to
 give each run a machine that is deleted once the run settles; the transcript and diffs stay. A run
 that cannot get a machine fails with the reason in the task list, and never runs on the server.
+
+## Move a thread between your Mac and Pair Cloud
+
+A thread lives on one server. To change which, you continue it on the other: Pair starts a new
+thread there with the work and the conversation, and leaves the original where it is. Your Mac
+always starts the move, in both directions; Pair Cloud never reaches into it.
+
+### Continue in cloud
+
+On a thread on your Mac, choose **Continue in cloud…** in the thread's menu or the command palette.
+Pair shows what goes: the branch's commits since its base branch, and the files you changed or
+added that Git doesn't ignore. Uncheck a file to leave it out; it goes as last committed, or not at
+all if it's new. Write the first message for the cloud thread, and confirm.
+
+The thread continues on Pair Cloud in the project with the same `origin`, as a new thread you own,
+with the conversation so far as read-only history ([handoffs](./portable-handoffs.md)). It starts
+with at most the access you gave your Mac's link. It uses the same model when one of your accounts
+on Pair Cloud, or the team's, can run it (yours first), and that account's default model otherwise.
+Your Mac's thread says **Continued in cloud** and links to the new one;
+its worktree and branch stay as they were. Nothing is pushed to GitHub, so this works for a branch
+you never pushed. If you're on the base branch itself, the cloud thread gets a new branch.
+
+What stays on your Mac:
+
+- Ignored files such as `.env`, `node_modules` and build output. The project's
+  [setup script](#setup-scripts-in-cloud) can recreate them.
+- Earlier checkpoints: their diffs stay on the Mac's thread.
+- Terminals, running processes and previews.
+- Approvals and pull request links.
+- The provider's own session. The cloud agent starts a new one from the handoff.
+
+An untracked file that isn't ignored, such as a local secrets file, goes along unless you uncheck
+it.
+
+It needs:
+
+- The project on Pair Cloud, with its `origin` on github.com. **Add to Pair Cloud** adds it
+  otherwise.
+- An account on Pair Cloud, with the same notice as for Cloud.
+- Your Mac linked to Pair Cloud: see [Pair Cloud from your Mac's
+  agents](./outside-agents.md#pair-cloud-from-your-macs-agents). The dialog offers **Link** when it
+  isn't.
+- No turn running. The menu says so while one is.
+
+The upload is at most 512 MB. When it's over, leave out large untracked files, or push the branch
+first.
+
+### Continue locally
+
+In the desktop app, choose **Continue locally** in a cloud thread's menu or the command palette.
+Pair brings the thread's branch, its uncommitted work and its conversation into a new worktree and
+thread in your project with the same `origin`, on your computer's own provider sign-ins.
+
+- When the thread is yours, it moves. The cloud thread says it continued on your computer and
+  settles, so its machine can sleep. The new thread keeps the branch's name.
+- When it's a teammate's, you get a copy on a new branch ending in `-copy`, and their cloud thread
+  keeps going.
+
+An asleep machine isn't woken: Pair uses what it saved when it went to sleep, and asks you to wake
+the machine first when it saved nothing. It refuses while a turn is running or waiting for an
+answer. The option shows only when your computer has the project and a link to Pair Cloud. The
+download is at most 512 MB; fetch `origin` on your computer first when it's over.
 
 ## What the status means
 
@@ -189,6 +253,11 @@ notifications to the app itself, without T3 Connect. The app starts cloud thread
 thread's machine status, and offers the same machine actions. **Settings → Machines** shows each
 environment's drivers, running and waiting machines, base image and limits. It appears once a connected environment has a driver; change
 Cloud's settings on the web or desktop app.
+
+On a thread on your Mac, the **Cloud** menu in the thread header, or the thread's long-press menu,
+offers **Continue in cloud…** too, and its preview opens as a sheet. Your Mac does the upload, so
+the phone must be connected to both your Mac and Pair Cloud, and the Mac must already be linked.
+Continue locally is desktop only.
 
 ## Coming from Conductor Cloud
 

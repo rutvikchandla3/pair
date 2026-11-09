@@ -148,6 +148,9 @@ in **Settings → Team** with Pair Cloud picked under **Showing the team on**, t
   (see [Provider accounts](./cloud.md#provider-accounts)). Their Mac's own sign-ins stay on their
   Mac.
 
+On their Mac, they also [link it to Pair Cloud](./outside-agents.md#pair-cloud-from-your-macs-agents),
+to move threads there and let their Mac's agents start cloud threads.
+
 Commit messages and pull request text never fall back to a member's own account, and
 [review guides](./source-control.md#review-guides) can't use one, so add a team Claude or Codex
 account in **Settings → Providers** too. When the model under **Settings → Threads → Text
@@ -228,8 +231,8 @@ Instead of `t3 update`, an admin can choose **Update server** in Pair's app (see
 ## Offboard a member
 
 1. Run `t3 member remove "<name>"`, or remove them in **Settings → Team**. That signs out all their
-   devices, deletes their GitHub connection and pasted token from the server, and signs out their
-   provider accounts.
+   devices, deletes their GitHub connection and pasted token from the server, signs out their
+   provider accounts, and ends the link from their Mac.
 2. **Discard machine** on their running cloud threads, whose agents may still hold their
    credentials, and **Assign to…** or delete the threads you keep.
 3. On GitHub, remove them from the organization, which also ends what the App can do as them.

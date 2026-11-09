@@ -13,7 +13,17 @@ Provider handoffs use either the full eligible app history or the delta since th
 participated. Fork merge-back handoffs summarize eligible delta items from the child. Neither path
 reconstructs provider-native session state, tool state, approvals, or omitted text.
 
-Legacy v1 continuation uses a separate algorithm. It considers only user and assistant messages,
+`OrchestrationV2ContextTransfer.sourceThreadId` names a thread in the same event store, so a move
+between servers does not use a context transfer. The sending server builds an
+`OrchestrationV2ContextExport` that carries its own provenance (environment, thread, title) and the
+thread's messages, size-capped; the receiving server imports them as read-only history
+(`historyOrigin: "context_export"`) and builds a `manual_context` handoff in
+`prepareLegacyImport`'s shape, so the handoff's omitted-history references resolve on the new
+thread. Keep exports self-describing: a reference back to the other server's store can't be
+followed.
+
+Imported history, from a legacy v1 continuation or a context export, uses a separate algorithm. It
+considers only user and assistant messages,
 walks backward from the newest message, and builds a transcript suffix within a 32,000-character
 budget. Do not describe that migration budget as the limit for portable handoffs, and do not describe
 the 240-character prefix as a migration rule.

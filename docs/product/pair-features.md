@@ -155,6 +155,16 @@ T3 Code throughout.
   one mobile app, and pull request reads through the team's GitHub App.
 - Install guide: [Install Pair Cloud](../user/pair-cloud.md).
 
+### Moving sessions
+
+- **Continue in cloud** from a thread on the Mac (menu, command palette, phone): unpushed commits
+  and uncommitted files go too, with a preview to leave files out. Nothing is pushed to GitHub.
+- **Continue locally** on desktop: the owner moves a cloud thread home; anyone else gets a copy and
+  the cloud thread stays live.
+- **The agent link**: one member-scoped link from the Mac to Pair Cloud. Local agents launch,
+  delegate and move threads there as the member.
+- User guide: [Move a thread](../user/cloud.md#move-a-thread-between-your-mac-and-pair-cloud).
+
 ## Not planned
 
 - **Pooling or rotating teammates' personal subscriptions.** They are licensed per person, and

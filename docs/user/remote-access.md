@@ -357,6 +357,9 @@ and the access, then approve.
   removes it here.
 - Links last 30 days. Link again with a new sign-in code to renew one.
 
+A link to your team's Pair Cloud works as you there; see [Pair Cloud from your Mac's
+agents](./outside-agents.md#pair-cloud-from-your-macs-agents).
+
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
 one `target.projectId` names), and this thread wakes with its result when it
