@@ -5421,7 +5421,8 @@ Commits, in order:
         null }) : sourceControlRepositories.lookupRepository(input)`, as `projectCloneStart` does
         (3056–3058).
       - Move the inline mapper (3059–3067) into a local `pairCloudRepositoryError(operation, error)`.
-        Both handlers use it through `Effect.catchTag("PairCloudProjectError", …)`, with operations
+        Both handlers use it through `Effect.catchTags({ PairCloudProjectError })` (lint's
+        `prefer-catch-tags`), with operations
         `"lookupRepository"` and `"add-pair-cloud-project"`. The RPC's error type stays
         `SourceControlRepositoryError`, so old clients decode it as before.
     - `packages/client-runtime/src/operations/projects.ts` `buildAddProjectRemoteSourceReadiness`

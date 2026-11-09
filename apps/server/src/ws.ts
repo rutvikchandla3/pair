@@ -541,6 +541,18 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
   );
 });
 
+const pairCloudRepositoryError = (
+  operation: string,
+  error: PairCloudProjects.PairCloudProjectError,
+) =>
+  Effect.fail(
+    new SourceControlRepositoryError({
+      provider: SourceControlProviderKind.make("github"),
+      operation,
+      detail: error.message,
+    }),
+  );
+
 function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntriesBrowseError): {
   readonly failure: FilesystemBrowseFailure;
   readonly parentPath?: string;
@@ -3036,7 +3048,14 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
-          sourceControlRepositories.lookupRepository(input),
+          config.cloudOnly
+            ? pairCloudProjects.lookup(input, { memberId: currentSession.memberId ?? null }).pipe(
+                Effect.catchTags({
+                  PairCloudProjectError: (error) =>
+                    pairCloudRepositoryError("lookupRepository", error),
+                }),
+              )
+            : sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           config.cloudOnly
             ? Effect.fail(
@@ -3056,15 +3075,10 @@ export const layerWsRpc = (
         [WS_METHODS.projectCloneStart]: (input) =>
           config.cloudOnly
             ? pairCloudProjects.add(input, { memberId: currentSession.memberId ?? null }).pipe(
-                Effect.mapError((error) =>
-                  error._tag === "PairCloudProjectError"
-                    ? new SourceControlRepositoryError({
-                        provider: SourceControlProviderKind.make("github"),
-                        operation: "add-pair-cloud-project",
-                        detail: error.message,
-                      })
-                    : error,
-                ),
+                Effect.catchTags({
+                  PairCloudProjectError: (error) =>
+                    pairCloudRepositoryError("add-pair-cloud-project", error),
+                }),
               )
             : projectCloneTracker.start(input, projectCloneHooks),
         [WS_METHODS.projectsEnsureScratch]: () =>

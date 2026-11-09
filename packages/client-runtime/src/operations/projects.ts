@@ -165,12 +165,15 @@ const UNAVAILABLE: AddProjectRemoteSourceReadinessEntry = {
 
 export function buildAddProjectRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
+  options?: { readonly cloudLaunch?: boolean },
 ): AddProjectRemoteSourceReadiness {
   const providerByKind = new Map(
     (discovery?.sourceControlProviders ?? []).map((provider) => [provider.kind, provider]),
   );
   return (source) => {
     if (source === "url") return READY;
+    // On Pair Cloud the lookup uses the member's GitHub, not the server's.
+    if (options?.cloudLaunch === true && source === "github") return READY;
     const provider = providerByKind.get(source);
     if (!provider) return UNAVAILABLE;
     if (provider.status !== "available") return { ready: false, hint: provider.installHint };

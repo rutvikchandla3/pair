@@ -7,6 +7,8 @@ import {
   repositoryGroupingKeyOf,
   SourceControlProviderKind,
   SourceControlRepositoryError,
+  type SourceControlRepositoryInfo,
+  type SourceControlRepositoryLookupInput,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -117,16 +119,31 @@ export function parsePairCloudRemote(remoteUrl: string): string | null {
   return valid(owner) && valid(name) ? `${owner}/${name}` : null;
 }
 
+/** `owner/name` from the GitHub field: `owner/name[.git]`, `github.com/owner/name` or a URL. */
+function pairCloudRepositoryOf(selector: string): string | null {
+  const trimmed = selector.trim();
+  return trimmed.includes("://")
+    ? parsePairCloudRemote(trimmed)
+    : parsePairCloudRemote(`https://${HOST}/${trimmed.replace(/^github\.com\//i, "")}`);
+}
+
 /** The `owner/name` a clone request names, when it is one Pair Cloud accepts. */
 export function requestedRepository(
   input: Pick<ProjectCloneStartInput, "provider" | "repository" | "remoteUrl">,
 ): string | null {
   if (input.remoteUrl !== undefined) return parsePairCloudRemote(input.remoteUrl);
   if (input.provider === GITHUB && input.repository !== undefined) {
-    return parsePairCloudRemote(`https://${HOST}/${input.repository}`);
+    return pairCloudRepositoryOf(input.repository);
   }
   return null;
 }
+
+const repositoryInfo = (repository: string): SourceControlRepositoryInfo => ({
+  provider: GITHUB,
+  nameWithOwner: repository,
+  url: `https://${HOST}/${repository}`,
+  sshUrl: `git@${HOST}:${repository}.git`,
+});
 
 const failure = (detail: string, cause?: unknown) =>
   new SourceControlRepositoryError({ provider: GITHUB, operation: OPERATION, detail, cause });
@@ -141,6 +158,14 @@ export class PairCloudProjects extends Context.Service<
     ) => Effect.Effect<
       ProjectCloneStartResult,
       PairCloudProjectError | SourceControlRepositoryError | OrchestrationDispatchCommandError
+    >;
+    /** The Add project lookup on a cloud-only server: the same parse and access check as `add`. */
+    readonly lookup: (
+      input: SourceControlRepositoryLookupInput,
+      options: { readonly memberId: MemberId | null },
+    ) => Effect.Effect<
+      SourceControlRepositoryInfo,
+      PairCloudProjectError | SourceControlRepositoryError
     >;
     /** Credential env for git on a checkout: App token, else the member's GitHub, else none. */
     readonly gitEnvFor: (input: {
@@ -283,8 +308,6 @@ const make = Effect.gen(function* () {
       input.projectId,
     );
     if (destinationPath === null) return yield* failure("Invalid project id.");
-    const [owner = "", name = ""] = repository.split("/");
-    const url = `https://${HOST}/${repository}`;
     return yield* addLock.withPermits(1)(
       Effect.gen(function* () {
         yield* ensureNotAdded(repository);
@@ -296,7 +319,7 @@ const make = Effect.gen(function* () {
             createdAt: input.createdAt,
             // No `repository`: the access check stands in for the provider CLI lookup.
             provider: GITHUB,
-            remoteUrl: `${url}.git`,
+            remoteUrl: `https://${HOST}/${repository}.git`,
             destinationPath,
             protocol: "https",
           },
@@ -305,17 +328,28 @@ const make = Effect.gen(function* () {
             cloneOptions: gitEnvFor({ repository, memberId }).pipe(
               Effect.map((env) => ({ config: HARDENED_CHECKOUT_CONFIG, env })),
             ),
-            repository: {
-              provider: GITHUB,
-              nameWithOwner: repository,
-              url,
-              sshUrl: `git@${HOST}:${owner}/${name}.git`,
-            },
+            repository: repositoryInfo(repository),
           },
         );
       }),
     );
   });
+
+  const lookup: PairCloudProjects["Service"]["lookup"] = Effect.fn("PairCloudProjects.lookup")(
+    function* (input, { memberId }) {
+      const repository = requestedRepository({
+        provider: input.provider,
+        repository: input.repository,
+      });
+      if (repository === null) {
+        return yield* input.provider === GITHUB && SEGMENT.test(input.repository.trim())
+          ? failure("Enter the full owner/repository name.")
+          : new PairCloudProjectError({ reason: "unsupported-remote" });
+      }
+      yield* checkAccess(repository, memberId);
+      return repositoryInfo(repository);
+    },
+  );
 
   const fetchCheckout: PairCloudProjects["Service"]["fetchCheckout"] = Effect.fn(
     "PairCloudProjects.fetchCheckout",
@@ -342,7 +376,7 @@ const make = Effect.gen(function* () {
     Effect.ignoreCause({ log: true }),
   );
 
-  return PairCloudProjects.of({ add, gitEnvFor, fetchCheckout });
+  return PairCloudProjects.of({ add, lookup, gitEnvFor, fetchCheckout });
 });
 
 export const layer = Layer.effect(PairCloudProjects, make);

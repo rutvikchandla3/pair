@@ -35,6 +35,7 @@ import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const CHECKOUTS = "/state/checkouts";
 const MEMBER = MemberId.make("member-alice");
+const GITHUB = SourceControlProviderKind.make("github");
 const projectId = ProjectId.make("project-app");
 const input: ProjectCloneStartInput = {
   projectId,
@@ -215,6 +216,63 @@ describe("PairCloudProjects", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect.each(["acme/app", "github.com/acme/app", "https://github.com/acme/app.git"])(
+    "looks up %s with the member's GitHub, not the server's",
+    (repository) => {
+      const harness = makeHarness({ member: "ghp_member" });
+      return Effect.gen(function* () {
+        const projects = yield* PairCloudProjects.PairCloudProjects;
+        const info = yield* projects.lookup({ provider: GITHUB, repository }, { memberId: MEMBER });
+        assert.deepStrictEqual(info, {
+          provider: GITHUB,
+          nameWithOwner: "acme/app",
+          url: "https://github.com/acme/app",
+          sshUrl: "git@github.com:acme/app.git",
+        });
+        assert.deepStrictEqual(harness.requests, [
+          { url: "https://api.github.com/repos/acme/app", authorization: "Bearer ghp_member" },
+        ]);
+        assert.deepStrictEqual(harness.started, []);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect.each([
+    {
+      name: "a GitLab repository",
+      provider: SourceControlProviderKind.make("gitlab"),
+      repository: "acme/app",
+      error: "unsupported-remote",
+      requests: 0,
+    },
+    {
+      name: "a bare repository name",
+      provider: GITHUB,
+      repository: "app",
+      error: "Enter the full owner/repository name.",
+      requests: 0,
+    },
+    {
+      name: "a private repository without GitHub",
+      provider: GITHUB,
+      repository: "acme/app",
+      status: 404,
+      error: "github-not-connected",
+      requests: 1,
+    },
+  ] as const)("refuses looking up $name", (row) => {
+    const harness = makeHarness("status" in row ? { status: row.status } : {});
+    return Effect.gen(function* () {
+      const projects = yield* PairCloudProjects.PairCloudProjects;
+      const error = yield* projects
+        .lookup({ provider: row.provider, repository: row.repository }, { memberId: MEMBER })
+        .pipe(Effect.flip);
+      assert.equal(error._tag === "PairCloudProjectError" ? error.reason : error.detail, row.error);
+      assert.lengthOf(harness.requests, row.requests);
+      assert.deepStrictEqual(harness.started, []);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("fails closed when GitHub can't be asked", () => {
     const harness = makeHarness({ status: 502 });
     return Effect.gen(function* () {
@@ -239,7 +297,7 @@ describe("PairCloudProjects", () => {
         projectId,
         title: "app",
         createdAt: input.createdAt,
-        provider: SourceControlProviderKind.make("github"),
+        provider: GITHUB,
         remoteUrl: "https://github.com/acme/app.git",
         destinationPath: `${CHECKOUTS}/${projectId}`,
         protocol: "https",

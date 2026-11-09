@@ -551,7 +551,9 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           input: {},
         }),
   );
-  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data);
+  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data, {
+    cloudLaunch: selectedEnvironment?.cloudLaunch === true,
+  });
 
   return (
     <AddProjectShell title="Add project">

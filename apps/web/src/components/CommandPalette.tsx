@@ -1147,6 +1147,7 @@ function OpenCommandPaletteDialog(props: {
         environmentId,
         buildPaletteRemoteSourceReadiness(
           browseEnvironmentId === environmentId ? sourceControlDiscovery.data : null,
+          { cloudLaunch: clonesWithoutDestination(environmentId) },
         ),
       ),
     });
@@ -1252,6 +1253,7 @@ function OpenCommandPaletteDialog(props: {
             browseEnvironmentId === addProjectEntry.environmentId
               ? sourceControlDiscovery.data
               : null,
+            { cloudLaunch: clonesWithoutDestination(addProjectEntry.environmentId) },
           ),
         );
     }
@@ -1825,7 +1827,9 @@ function OpenCommandPaletteDialog(props: {
     currentView.groups[0]?.value === sourceSelectionViewValue
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
-          buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data),
+          buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data, {
+            cloudLaunch: clonesWithoutDestination(addProjectEnvironmentId),
+          }),
         )
       : currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP
         ? addProjectEntryGroups()

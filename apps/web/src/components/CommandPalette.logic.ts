@@ -839,8 +839,9 @@ export function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null):
 
 export function buildPaletteRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
+  options?: { readonly cloudLaunch?: boolean },
 ): AddProjectRemoteSourceReadiness {
-  const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+  const readiness = buildAddProjectRemoteSourceReadiness(discovery, options);
   return (source) => {
     const entry = readiness(source);
     return entry.hint === null

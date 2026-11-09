@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
+  buildAddProjectRemoteSourceReadiness,
   findExistingAddProject,
   getCloneDestinationPath,
   getCloneDirectoryLeafName,
@@ -43,6 +44,14 @@ describe("add project shared logic", () => {
     expect(
       githubIncompleteOwnerRepositoryMessage(SourceControlProviderKind.make("forgejo"), "owner/"),
     ).toBeNull();
+  });
+
+  it("offers the GitHub source on Pair Cloud without the server's own GitHub", () => {
+    const github = SourceControlProviderKind.make("github");
+    const cloud = buildAddProjectRemoteSourceReadiness(null, { cloudLaunch: true });
+    expect(cloud(github)).toEqual({ ready: true, hint: null });
+    expect(cloud(SourceControlProviderKind.make("gitlab")).ready).toBe(false);
+    expect(buildAddProjectRemoteSourceReadiness(null)(github).ready).toBe(false);
   });
 
   it("routes owner/repository shorthand to GitHub over HTTPS", () => {
