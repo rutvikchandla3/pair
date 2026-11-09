@@ -5378,6 +5378,209 @@ and writes to every attached thread on a rebuild. The adapter already knows abou
   - Providers: Codex and Replay (dev) unchanged. The other providers are refused on machines
     (`ProviderCloudUnsupportedError`, `provider/Errors.ts` 18).
 
+### 2.56 (new) `fix(server,client-runtime,web,mobile): add a GitHub repository to Pair Cloud with the member's GitHub`
+
+On Pair Cloud, Add project → **GitHub repository** looks the repository up with the member's GitHub,
+using the same check and errors as **Git URL**. The source is no longer greyed out as "Setup
+Required" just because the server has no `gh` login. When a connected member can't see a repo, the
+error names both fixes: an owner adds the repo to the team's GitHub App, or the member gets read
+access. Closes G2 findings 25 and 26. Both fixes go through `PairCloudProjects.checkAccess`, and
+neither touches another row's files.
+
+Commits, in order:
+
+1. `fix(server,client-runtime,web,mobile): look up GitHub repositories on Pair Cloud with the member's GitHub` (25)
+2. `fix(server): say whether the GitHub App or the token can't see a Pair Cloud repo` (26)
+
+- **Needs:** none (2.26 and 2.50 have landed). **Unblocks:** a G2 step 5 re-run of Add project →
+  GitHub repository on Pair Cloud, on web and mobile.
+- **Files:**
+  - Commit 1 (25):
+    - `apps/server/src/project/PairCloudProjects.ts`:
+      - Add `pairCloudRepositoryOf(selector): string | null`, next to `parsePairCloudRemote` (91). It
+        accepts what the GitHub field accepts: `owner/name`, `owner/name.git`,
+        `github.com/owner/name` and the https URL. It returns `parsePairCloudRemote(trimmed)` when the
+        selector has `://`. Otherwise it returns
+        `parsePairCloudRemote(\`https://${HOST}/${trimmed.replace(/^github\.com\//i, "")}\`)`.
+        `requestedRepository`(121) uses it in its`repository`branch (125–127), so`add`and`lookup` share one parser.
+      - Add `repositoryInfo(repository): SourceControlRepositoryInfo`, which builds `{ provider:
+        GITHUB, nameWithOwner, url: https://github.com/<repo>, sshUrl: git@github.com:<repo>.git }`.
+        `add`'s clone hooks use it in place of the inline object (308–313).
+      - The service (134) gains `lookup` (see Types and services). In `make` (159), it calls
+        `requestedRepository({ provider: input.provider, repository: input.repository })`.
+        - When that is null and the provider is GitHub, a selector that is one plain segment
+          (`SEGMENT`, 39) fails with `failure("Enter the full owner/repository name.")` (131).
+        - Anything else that is null is `PairCloudProjectError` `unsupported-remote`.
+        - Otherwise it runs `checkAccess(repository, memberId)` (235) and returns
+          `repositoryInfo(repository)`.
+        - No duplicate check and no git. `add` (272) runs both again when the client submits.
+        - Return it from `PairCloudProjects.of` (345).
+    - `apps/server/src/ws.ts`:
+      - `[WS_METHODS.sourceControlLookupRepository]` (3038–3039) becomes
+        `config.cloudOnly ? pairCloudProjects.lookup(input, { memberId: currentSession.memberId ??
+        null }) : sourceControlRepositories.lookupRepository(input)`, as `projectCloneStart` does
+        (3056–3058).
+      - Move the inline mapper (3059–3067) into a local `pairCloudRepositoryError(operation, error)`.
+        Both handlers use it through `Effect.catchTag("PairCloudProjectError", …)`, with operations
+        `"lookupRepository"` and `"add-pair-cloud-project"`. The RPC's error type stays
+        `SourceControlRepositoryError`, so old clients decode it as before.
+    - `packages/client-runtime/src/operations/projects.ts` `buildAddProjectRemoteSourceReadiness`
+      (166) takes `options?: { readonly cloudLaunch?: boolean }`. After the `url` line (173), add
+      `if (options?.cloudLaunch === true && source === "github") return READY;` with a one-line
+      comment: on Pair Cloud the lookup uses the member's GitHub, not the server's.
+      `getNewProjectPublishTargets` (255) passes nothing and stays as it is.
+    - `apps/web/src/components/CommandPalette.logic.ts` `buildPaletteRemoteSourceReadiness` (840)
+      takes the same `options` and passes them on. In `CommandPalette.tsx`, its three callers (1148,
+      1251, 1828) pass `{ cloudLaunch: clonesWithoutDestination(<that environment id>) }` (2089).
+      Those ids are `environmentId`, `addProjectEntry.environmentId` and `addProjectEnvironmentId`.
+      The lookup and clone flow (2225–2258) does not change.
+    - `apps/mobile/src/features/projects/AddProjectScreen.tsx` (554) passes `{ cloudLaunch:
+      selectedEnvironment?.cloudLaunch === true }` (`EnvironmentOption.cloudLaunch`, 122).
+      `AddProjectRepositoryScreen`'s lookup (864–883) does not change: it already sends
+      `repository.url` on a `cloudLaunch` environment (880).
+    - `docs/user/pair-cloud.md` "Add projects" (158–161): "then **Git URL**, and enter
+      `https://github.com/<owner>/<name>` or just `<owner>/<name>`" → "then **GitHub repository** or
+      **Git URL**, and enter `<owner>/<name>` or `https://github.com/<owner>/<name>`".
+  - Commit 2 (26):
+    - `apps/server/src/project/PairCloudProjects.ts`:
+      - `PairCloudProjectError.reason` (62–68) gains `"app-no-access"`. The getter (73–87) gets a
+        case for it (copy below). The `no-access` text (80–81) becomes the token text.
+      - `memberToken` (174–185) becomes `memberCredential` and returns the whole
+        `MemberGitHubCredential` (MemberGitHub.ts 31) or null. Its `source` (34) is `"app"` for
+        Connect GitHub and `"token"` for a pasted token. `gitEnvFor` (195) takes `?.token ?? null`
+        from it, with the same order as today: App token first, then the member's.
+      - In `checkAccess` (235), the 404/403 branch (259–260) picks
+        `credential.source === "app" ? "app-no-access" : "no-access"`.
+    - `docs/user/team.md` "Set up the GitHub App" step 5 (112–113): add the repository-access choice
+      (copy below).
+    - `docs/user/pair-cloud.md` "Add projects": after "so connect yours first for a private one."
+      add "If you connected with **Connect GitHub**, the App must be installed on the repository
+      too."
+- **Types and services:**
+
+  ```ts
+  /** The Add project lookup on a cloud-only server: the same parse and access check as `add`. */
+  readonly lookup: (
+    input: SourceControlRepositoryLookupInput,
+    options: { readonly memberId: MemberId | null },
+  ) => Effect.Effect<SourceControlRepositoryInfo, PairCloudProjectError | SourceControlRepositoryError>;
+  ```
+
+  `PairCloudProjectError.reason` + `"app-no-access"`, which is server only and not on the wire.
+  `buildAddProjectRemoteSourceReadiness` and `buildPaletteRemoteSourceReadiness` take an optional
+  `{ cloudLaunch }`. No contract changes.
+
+- **Copy:**
+  - Web palette and desktop: the **GitHub repository** row on a Pair Cloud server with no GitHub
+    credential of its own. Before: disabled, with **Setup Required** and the server's `gh` hint.
+    After: enabled. Mobile Add project: the same row stops being disabled and drops the hint.
+  - Web toast "Repository lookup failed" and mobile `ErrorBanner` (891), for a Pair Cloud lookup:
+    `The source control operation could not be completed.` → the member's own reason, the same text
+    the Git URL add gives:
+    - a private repo with no member GitHub: `Connect GitHub to clone private repos, in Settings →
+      Team.` (`Add a GitHub token…` without a Client ID, from 2.50);
+    - a bare name: `Enter the full owner/repository name.`;
+    - a GitLab, Bitbucket or Azure DevOps source: `Pair Cloud clones only https://github.com
+      repositories.`
+  - Every surface that shows the add or lookup error (web toasts, desktop, mobile, and MCP
+    `t3_project_clone` through `add`):
+    - Connect GitHub (`app-no-access`): `Your GitHub account can't read acme/app.` → `Your GitHub
+      connection can't see acme/app. Ask an owner of acme to add it to the team's GitHub App, or check
+      that your account can read it.` `acme` is the part of `repository` before `/`. When
+      `repository` is missing, use `This repository` and `Ask its owner`.
+    - Pasted token (`no-access`): `Your GitHub account can't read acme/app.` → `Your GitHub token
+      can't read acme/app. Check that the token and your account both have access to it.`
+  - `docs/user/team.md` step 5: `Choose **Install App** and install it on your organization.` →
+    `Choose **Install App** and install it on your organization. Under **Repository access**, pick
+    **All repositories** or the ones your team works in. Connected members see only those, and an
+    owner can add more later from the App's **Configure** page on GitHub.` The sentence about
+    approval by an organization owner stays.
+- **Proposed gap answers.**
+  - **Proposed:** the lookup only checks access. It skips the duplicate check, because `add` runs it
+    under its lock a moment later. Adding a repo costs two `GET /repos` calls, and both use the
+    member's token.
+  - **Proposed:** a bare repository name gets the error above. Pair Cloud doesn't resolve the
+    viewer's login with the member's token, as upstream does with the server's credential
+    (`getRepositoryCloneUrls`, GitHubSourceControlProvider.ts 1005–1013). The field's hint is
+    already `owner/repo`.
+  - **Proposed:** tell the two causes apart only by credential source, which costs nothing. A
+    `readTokenFor` probe on the 404 path was rejected for three reasons. It needs the App ID and key,
+    which a server with only a Client ID lacks. Its 5-minute not-installed cache
+    (GitHubAppInstallationTokens.ts 46) could say "not installed" right after an owner adds the repo.
+    It also costs one more request.
+  - **Proposed:** the other provider sources stay listed on Pair Cloud and fail at the lookup with
+    the `unsupported-remote` text. Hiding them is a separate UI decision.
+
+**Tests.**
+
+- Commit 1, failing tests first:
+  - `apps/server/src/project/PairCloudProjects.test.ts`, in `describe("PairCloudProjects")` (165):
+    - New `it.effect.each(["acme/app", "github.com/acme/app", "https://github.com/acme/app.git"])(
+      "looks up %s with the member's GitHub, not the server's")`. It uses `makeHarness({ member:
+      "ghp_member" })` (50) and calls `lookup({ provider: github, repository }, { memberId: MEMBER })`.
+      It asserts the result is `{ provider: github, nameWithOwner: "acme/app", url:
+      "https://github.com/acme/app", sshUrl: "git@github.com:acme/app.git" }`. It asserts
+      `harness.requests` is one GET to `https://api.github.com/repos/acme/app` with `Bearer
+      ghp_member`, and `harness.started` is `[]`.
+    - New `it.effect.each(...)("refuses looking up $name")` with three rows:
+      - a GitLab source (`provider: "gitlab"`, `acme/app`) → `unsupported-remote`;
+      - a bare name `app` → `SourceControlRepositoryError` with the detail above;
+      - `status: 404` with no member → `github-not-connected`.
+        Each row asserts that no request ran for the first two, and that `start` was never called.
+  - `packages/client-runtime/src/operations/projects.test.ts`, `describe("add project shared
+    logic")` (17), new `it("offers the GitHub source on Pair Cloud without the server's own
+    GitHub")`. `buildAddProjectRemoteSourceReadiness(null, { cloudLaunch: true })("github")` is
+    `{ ready: true, hint: null }`. `"gitlab"` with `cloudLaunch: true`, and `"github"` without it,
+    stay not ready.
+- Commit 2, failing test first: `PairCloudProjects.test.ts`, the table "refuses adding $name before
+  any git runs" (166–196). `makeHarness` gets `memberSource?: "app" | "token"`, used for the
+  `credentialFor` mock's `source` (98, default `"token"`). Add the row `{ name: "a repository the
+  team's GitHub App can't see for the member", member: "ghu_member", memberSource: "app", status:
+  404, reason: "app-no-access" }`, spread like the other optional keys (197–202). It fails on
+  `feat/pair`, which answers `no-access`. The existing row (184) keeps `no-access` for a token.
+- Captures, before and after:
+  - the web palette's GitHub repository row on a Pair Cloud server with no server GitHub;
+  - the lookup toast for a private repo with the member connected but the App not on the repo;
+  - the same toast on mobile Add project → GitHub;
+  - the Git URL add's `app-no-access` toast.
+
+**Verify.**
+
+- `vp test run apps/server/src/project/PairCloudProjects.test.ts
+  packages/client-runtime/src/operations/projects.test.ts`.
+- `vp run typecheck` for `apps/server`, `packages/client-runtime`, `apps/web` and `apps/mobile`.
+- `vp run check:changed`. No eval applies, since no model-facing text changes.
+- The lead runs one `test-t3-app` and one `test-t3-mobile` pass on a cloud-only dev server. It needs
+  `T3CODE_GITHUB_APP_CLIENT_ID`, and no `gh` login, `GH_TOKEN`, saved token or Settings → Source
+  control sign-in.
+  - Add a public repo by **GitHub repository**.
+  - Add a private repo with the member disconnected: "Connect GitHub…".
+  - Connect through the App, with the repo outside the App's installation: the `app-no-access` text.
+  - Add the repo to the installation: it clones, and a session pushes.
+  - No browser test covers this flow.
+
+**Reviewer checks.**
+
+- On cloud-only, the lookup reads no server GitHub credential (`gh`, `GH_TOKEN`, saved token, Sign
+  in with GitHub). It makes one GitHub request with the member's token, or with none. Off
+  cloud-only, the handler is upstream's, unchanged.
+- `lookup` and `add` share `requestedRepository`, `checkAccess` and `repositoryInfo`. There is no
+  second copy of the URL rules or the messages. A 5xx or network error still fails closed.
+- `gitEnvFor` still prefers the App token over the member's. No token is in a result, an error
+  detail or a log.
+- Only `github` on a `cloudLaunch` environment changes readiness. Other sources and non-cloud
+  environments keep upstream's readiness, and so does New project's publish targets.
+- Surfaces:
+  - server: `ws.ts`, `PairCloudProjects`;
+  - client-runtime: readiness;
+  - web and desktop: palette;
+  - mobile: Add project;
+  - MCP: no lookup tool; `t3_project_clone` gets commit 2's copy through `add`;
+  - contracts, providers and CLI: none;
+  - docs: `pair-cloud.md`, `team.md`.
+    The lookup runs on the Pair Cloud server whatever the transport, and the member comes from the
+    session.
+
 ## M2 integrated pass
 
 One run on `pair-cloud-pass` (GCE project `vm-provider`, zone `asia-south1-a`, e2-standard-8,
