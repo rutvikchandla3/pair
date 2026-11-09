@@ -17,10 +17,10 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (27 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.2, 2.4, 2.7, 2.8, 2.9, 2.13, 2.18, 2.22–2.27, 2.31–2.39, 2.42–2.44, 2.47. In flight
-on the Mac (worktrees under `../pair-wt/`): 2.12, 2.28, 2.29, 2.40, 2.45, 2.46. Then 2.30 (after
-2.28 and 2.29), 2.21 and 2.41. Lead decision
+**M2 (32 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.22–2.29, 2.31–2.40, 2.42–2.45, 2.47. In flight
+on the Mac (worktrees under `../pair-wt/`): 2.21, 2.30, 2.46. Then 2.41 (lead-run, after the
+workers). Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
@@ -1318,6 +1318,103 @@ Where the code differs from the spec, and what later PRs must know. Workers read
   background git status fetch runs without credentials; deleting a project leaves its checkout.
   Owed: mcp-tool-use eval, runtime transcript, browser tests (CommandPalette ×3, NewThreadLinkView,
   AddProjectToMachineDialog), mobile AddProjectScreen.test (jsdom missing here).
+
+## 2.29 mobile Cloud routing (landed 8e7314728)
+
+- client-runtime `cloudTarget.ts`: `routedCloudLaunch`, `cloudBranchCheck`, `CloudBranchCheck`
+  (landed here ahead of 2.28; 2.28 reuses them).
+- Mobile `features/threads/new-task-cloud.ts`: `resolveNewTaskCloud` → `NewTaskCloud { offered,
+  options, available, message, target, routed }`. "Cloud" for one target, "Cloud on <label>" for
+  several; no project → "Add <owner/name> to <label> first."
+- Draft `workspaceSelection.cloudEnvironmentId`; queued `creation.routedFrom { environmentId,
+  projectId, defaultBranch }`. A rejected routed launch restores the draft to the Mac project with
+  its Cloud pick.
+- Flow provider's `launch` (environment, project, server config) drives models, team viewer, linked
+  threads and uploads in routed mode (`useEnvironmentServerConfig`, not `serverConfigs.get`, for the
+  React Compiler).
+- Known gap: draft attachments pre-upload to the Mac, then re-upload to Pair Cloud on delivery.
+- Owes test-t3-mobile: routed launch on a Pair Cloud model; unpushed blocks; ahead warns; Worktree
+  picker hides Pair Cloud; Mac-only pairing shows no Cloud; several Pair Clouds; disabled Add entry;
+  queued routed task survives restart; branch-not-pushed refusal restores the draft.
+
+## 2.12 disk retention (landed f19477fe8)
+
+- Contracts: `SandboxSettings.diskRetention { archivedAfterDays, asleepAfterDays }` (null = never;
+  patch accepts null to reset); internal command `sandbox.expire { reason: "archived" | "inactive"
+  }`. Shared `DEFAULT_DISK_RETENTION` = 7 / 30 days.
+- `SandboxDecisions`: `diskRetentionOf` (restore mode → never), `diskExpiryFloorMs`,
+  `decideDiskExpiry` → `{ reason, atMs } | null`; `sandbox.expire` arm → `destroyed` +
+  `sandbox.destroy` (flushes the mirror). Refused off cloud-only and while any attached run is
+  active. Both clocks start no earlier than the record's `updatedAt`.
+- `SandboxLifecycleWorker` sweep expires sleeping/failed machines on cloud-only only, and only when
+  the mirror holds `sandboxBranchRef(thread)` for every attached thread with a worktree; else the
+  disk is kept.
+- `CheckpointMirror.sandboxBranchRef`. Web: two Compute rows in CloudSettings using
+  `RetentionControl` (moved out of StorageSettings, new `enabledDays` prop). Mobile: none.
+  Driver-level cap waits for M3.
+- Owes: `StorageSettings.browser.test.tsx` (moved control) in CI; G2 can show an expired machine as
+  "Machine discarded" and a wake rebuilding it.
+
+## 2.40 runner load test and ingress budget (landed 48fecf420)
+
+- `RunnerConnection.ts`: per-sandbox token-bucket ingress budget shared by all output streams; past
+  it the hub sleeps on `Clock` before its next pull, so window acks wait and the runner pauses
+  sources (`t3_runner_source_paused_ms_total`). `RunnerHub.DEFAULT_INGRESS_BYTES_PER_SECOND` = 16
+  MiB/s, burst 1 MiB; `layerWith({ ingressBytesPerSecond })`, `Infinity` = off.
+- `runner-benchmark.ts`: `--load` (30 loopback runners, one PTY hog, one bundle downloader, 28
+  stamped-line probes; fails when probes' p95 rises > max(1 ms, 10%) or memory/sandbox > 8 MiB),
+  `--ingress <MiB/s>` (0 = off), `--runner-dir`. CPU row is now overhead over local.
+- 03 §9: M2 column = "G2 step 12" (to fill on the VM). Mac run (shared, loaded) failed its own p95
+  limit (3.00 → 7.24 ms, ELU 0.86); bundle download (546 MB/s, not under the budget) is the first
+  suspect if the VM fails too. Profile: ~37% GC from `ws` frame assembly and SchemaBinary copies; no
+  per-frame copy of ours.
+- Known: a throttled stream's full 16-chunk queue blocks that sandbox's socket read loop, so its
+  other calls wait up to one chunk's delay.
+- The loopback runner doesn't run on macOS (Linux natives, /etc/passwd, setpriv) — run `bench:runner
+  --load` on the VM.
+
+## 2.28 web Cloud routing (landed 90582bc76)
+
+- `BranchToolbar.logic.ts`: `resolveCloudEnvModeItem({ cloud: CloudTarget, project,
+  cloudEnvironmentId, … })` → `CloudEnvModeItem { disabledReason, only, rows: CloudEnvModeRow[],
+  value }`; rows are "Cloud" / "Cloud on <label>" (launch) or "Add to Pair Cloud" / "Add to <label>"
+  (add). `resolveCloudLaunchTarget`, `pairCloudAddInput` (https clone of origin, no files).
+- `composerDraftStore`: optional `cloudEnvironmentId` on the draft session (dropped when the project
+  changes).
+- `ChatView.tsx`: in routed Cloud mode, provider-shaped reads (providers, provider settings,
+  team-aware default model, attachments, usage limits, catalog) come from Pair Cloud; `serverConfig`
+  stays local (PRs, version, side chats). Multi-model off. Warn banner from `cloudBranchCheck`.
+- `useComposerSend.ts`: `routedCloud` input; `block` stops send; uploads + `thread.launch` go to
+  Pair Cloud with `routedCloudLaunch`; the draft promotes to the Pair Cloud thread. Default branch
+  not loaded → fresh branch from the selected one.
+- `state/sandbox.ts`: `useCloudTarget(projectRef)` (hook; null ref subscribes to nothing) and
+  `readCloudTarget` (event-time, `chat.newCloud`).
+- Owes test-t3-app with two dev servers (local + cloud-only) and captures; browser tests ChatView,
+  CommandPalette ×3.
+
+## 2.45 cloud-only confinement (landed 14e33e44b)
+
+- `workspace/WorkspaceReadGuard.ts` (tag + `layerUnconfined` for the runner) and
+  `KnownWorkspaces.layerReadGuard` (server): on cloud-only, a server-disk path must resolve
+  (symlinks, nearest existing ancestor) inside a known workspace, else `CloudOnlyRefusedError`.
+  Wired into WorkspaceFileSystem (readFile, getMetadata), WorkspaceEntries (list/search root,
+  browse) and AssetAccess. `/t3-sandbox/` paths pass the guard (machine or mirror reads), except
+  AssetAccess refuses them on cloud-only (it reads local disk).
+- DeviceService registers no local host; preview `open` refused (`preview.ts` error), HtmlRender
+  refuses preview/measure/image inlining, `serverBrowser` omitted, no port scan.
+- `t3_environment_link`: in team mode on cloud-only, only a run whose member is an admin/owner may
+  link.
+- Text generation on cloud-only: a server cwd becomes an empty scoped temp dir; a server-cwd review
+  guide is refused ("investigates a checkout only inside its machine"); a `/t3-sandbox` cwd keeps
+  cwd and tools (2.46). Only Claude (`--tools ""`) and Codex
+  (`features.shell_tool/unified_exec/view_image=false`, outside investigations) may run it; other
+  drivers are refused and skipped as fallback. Verified with `codex debug prompt-input` on 0.167 and
+  one luna `codex exec`; not yet on the 0.166 pin.
+- `ProviderRegistry` skips workspace scans of server folders. Web: trust text branches on
+  cloudLaunch (`useTrustWarning`), Claude member terminal sign-in hidden on cloudLaunch.
+- Open: VCS/git reads on an arbitrary cwd (15 ws.ts entry points, listed in the spec row), symlink
+  check-then-read race. Owes test-t3-app pass + trust-text capture;
+  `ProviderAccountsSection.browser.test.tsx`.
 
 ## Open follow-ups and risks
 
