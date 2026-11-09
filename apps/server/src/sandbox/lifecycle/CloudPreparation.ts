@@ -10,6 +10,7 @@ import {
   SandboxFailure,
   SandboxId,
   type SandboxSize,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
 import { cloudAvailability, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
@@ -30,6 +31,7 @@ import {
   ProviderCloudUnsupportedError,
 } from "../../provider/Errors.ts";
 import { sandboxInstanceConfig } from "../credentials/SandboxProcessEnvironment.ts";
+import * as MirrorSync from "../mirror/MirrorSync.ts";
 import * as RunnerHub from "../runnerHub/RunnerHub.ts";
 import { SANDBOX_ROOT } from "../../workspaceHost/WorkspaceHost.ts";
 
@@ -222,13 +224,13 @@ const clonePathFor = (root: string, url: string, projectId: ProjectId) => {
 };
 
 /**
- * Clones the project's origin into the sandbox (or fetches the clone already there), then adds a
- * worktree from `origin/<branch>` when that was pushed, else `origin/<baseRef>` (README P4); an
- * `existingBranch` must have been pushed. Git runs through the sandbox host as its agent user, so
- * the agent owns the checkout.
+ * Keeps a kept disk's checkout, else clones or fetches origin and rebuilds a lost checkout at its
+ * path from the mirror, else adds a worktree from `origin/<branch>` or `origin/<baseRef>` (README
+ * P4; an `existingBranch` must be pushed). Git runs as the sandbox's agent user.
  */
 export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")(function* (input: {
   readonly sandboxId: SandboxId;
+  readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly projectRoot: string;
   readonly baseRef: string;
@@ -244,11 +246,6 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     return yield* new CloudLaunchError({ projectId: input.projectId, reason: "no-origin" });
   }
   const clonePath = clonePathFor(root, url, input.projectId);
-  if (yield* isCheckout(clonePath)) {
-    yield* git.fetchRemote({ cwd: clonePath, remoteName: "origin" });
-  } else {
-    yield* git.cloneRepository({ cwd: root, url, path: clonePath });
-  }
   // A kept disk still has the thread's checkout; a new machine starts without one.
   if (input.existingWorktreePath !== null && (yield* isCheckout(input.existingWorktreePath))) {
     return {
@@ -256,7 +253,35 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       worktreePath: input.existingWorktreePath,
       branch: input.branch,
       created: false,
+      restoredFrom: "disk" as const,
+      snapshotAt: null,
     };
+  }
+  if (yield* isCheckout(clonePath)) {
+    yield* git.fetchRemote({ cwd: clonePath, remoteName: "origin" });
+  } else {
+    yield* git.cloneRepository({ cwd: root, url, path: clonePath });
+  }
+  const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
+  if (input.existingWorktreePath !== null && Option.isSome(mirror)) {
+    const restored = yield* mirror.value.restore({
+      threadId: input.threadId,
+      projectId: input.projectId,
+      clonePath,
+      worktreePath: input.existingWorktreePath,
+      branch: input.branch,
+    });
+    // `created: false`: a cancelled preparation must not delete the work it just brought back.
+    if (restored !== null) {
+      return {
+        clonePath,
+        worktreePath: input.existingWorktreePath,
+        branch: input.branch,
+        created: false,
+        restoredFrom: "mirror" as const,
+        snapshotAt: restored.snapshotAt,
+      };
+    }
   }
   const hasRemoteBranch = (refName: string) =>
     git.hasCommit({ cwd: clonePath, refName: `refs/remotes/origin/${refName}` });
@@ -288,5 +313,7 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     worktreePath: created.worktree.path,
     branch: created.worktree.refName,
     created: true,
+    restoredFrom: "origin" as const,
+    snapshotAt: null,
   };
 });

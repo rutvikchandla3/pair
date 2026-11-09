@@ -238,6 +238,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
   snapshots?: Layer.Layer<
     CheckpointService.CheckpointServiceV2 | MirrorSyncWorker.MirrorSyncWorker
   >,
+  threadLaunch?: Layer.Layer<ThreadLaunch.ThreadLaunchService>,
 ) {
   const fake = driver ?? (yield* FakeComputeDriver.make(ComputeDriverId.make("docker")));
   const bootstraps = yield* Ref.make<ReadonlyArray<number>>([]);
@@ -272,6 +273,7 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
         layerBootstrap,
         Layer.succeedContext(credentials.context),
         snapshots ?? Layer.empty,
+        threadLaunch ?? Layer.empty,
       ),
     ),
   );
@@ -776,7 +778,15 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
   );
   it.effect("a wake whose backend is gone fails as missing, and a retry provisions anew", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeSandboxRuntime();
+      const restores = yield* Ref.make<ReadonlyArray<CommandId>>([]);
+      const runtime = yield* makeSandboxRuntime(
+        undefined,
+        undefined,
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          prepareRun: () => Effect.void,
+          restoreCheckout: ({ commandId }) => Ref.update(restores, (all) => [...all, commandId]),
+        }),
+      );
       const { threadId, sandboxId } = yield* provisioned("gone");
       yield* runAnswering(runtime, answerCreate);
       yield* attachAndRelease(runtime, threadId, sandboxId, 1);
@@ -826,6 +836,11 @@ it.layer(layerTest)("sandbox lifecycle", (it) => {
       // The failure's release-waiters calls no driver; the new create does.
       assert.equal(yield* runtime.worker.drain(1), 1);
       yield* runAnswering(runtime, answerCreate);
+
+      // The new disk is empty: its hello brings the owner's checkout back.
+      assert.equal((yield* getSandbox(sandboxId))?.generation, 3);
+      yield* attachAndRelease(runtime, threadId, sandboxId, 3);
+      assert.include(yield* Ref.get(restores), CommandId.make(`sandbox-restore:${threadId}:3`));
     }),
   );
   it.effect("adopts a backend found by name once, after its create's answer was lost", () =>

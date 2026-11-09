@@ -1,7 +1,9 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import {
   CommandId,
   type ChatAttachment,
@@ -26,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -53,13 +56,15 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as Orchestrator from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CloudPreparation from "../sandbox/lifecycle/CloudPreparation.ts";
+import { hasNoDisk } from "../sandbox/lifecycle/SandboxDecisions.ts";
+import * as MirrorSync from "../sandbox/mirror/MirrorSync.ts";
 import * as RunnerHub from "../sandbox/runnerHub/RunnerHub.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -226,8 +231,30 @@ export class ThreadLaunchService extends Context.Service<
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
+    /**
+     * Brings back a cloud thread's checkout when its machine came up without it, at the same
+     * path, then reruns setup and records what was rebuilt. Runs in the background; never fails.
+     */
+    readonly restoreCheckout: (input: {
+      readonly commandId: CommandId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
+
+type SandboxCheckout = Effect.Success<ReturnType<typeof CloudPreparation.checkoutInSandbox>>;
+
+/** The timeline row that tells a rebuilt checkout from a kept disk (07 §9). */
+const rebuildNotice = (checkout: SandboxCheckout) => {
+  if (checkout.restoredFrom === "mirror" && checkout.snapshotAt !== null) {
+    const at = DateTime.formatIso(checkout.snapshotAt).slice(0, 16).replace("T", " ");
+    return `Rebuilt from the snapshot of ${at} UTC: the machine's disk was lost. Ignored files and caches were not kept.`;
+  }
+  if (checkout.restoredFrom === "mirror") {
+    return `Rebuilt from the last saved commit on ${checkout.branch}: the machine's disk was lost. Uncommitted changes, ignored files and caches were not kept.`;
+  }
+  return `Checked out again from the remote: the machine's disk was lost and no copy of ${checkout.branch} was saved. Unpushed commits and uncommitted changes were not kept.`;
+};
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
@@ -263,6 +290,9 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
   // The server provides the hub; a cloud checkout then waits for the machine's runner to dial in.
   const runnerHub = yield* Effect.serviceOption(RunnerHub.RunnerHub);
+  const mirrorSync = yield* Effect.serviceOption(MirrorSync.MirrorSync);
+  // One checkout at a time per machine: threads on it share a clone.
+  const sandboxCheckouts = yield* KeyedLock.make<SandboxId>();
   const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
     Context.add(ProjectionStore.ProjectionStoreV2, projections),
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
@@ -272,7 +302,29 @@ const make = Effect.gen(function* () {
       Option.isSome(runnerHub)
         ? Context.add(context, RunnerHub.RunnerHub, runnerHub.value)
         : context,
+    (context) =>
+      Option.isSome(mirrorSync)
+        ? Context.add(context, MirrorSync.MirrorSync, mirrorSync.value)
+        : context,
   );
+  const checkoutInSandbox = (input: Parameters<typeof CloudPreparation.checkoutInSandbox>[0]) =>
+    sandboxCheckouts.withLock(
+      input.sandboxId,
+      CloudPreparation.checkoutInSandbox(input).pipe(Effect.provide(cloudServices)),
+    );
+  const recordRebuild = (commandId: CommandId, threadId: ThreadId, checkout: SandboxCheckout) =>
+    threads
+      .dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`${commandId}:rebuilt`),
+        threadId,
+        message: rebuildNotice(checkout),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record a rebuilt checkout", { threadId, cause }),
+        ),
+      );
 
   const mapError =
     (
@@ -547,18 +599,24 @@ const make = Effect.gen(function* () {
         );
         yield* progress("clone");
         yield* setupTracker.stageStatus(threadId, "fetch", "running");
-        const checkout = yield* CloudPreparation.checkoutInSandbox({
+        const existingWorktreePath = input.existingWorktreePath ?? null;
+        const checkout = yield* checkoutInSandbox({
           sandboxId,
+          threadId,
           projectId: input.projectId,
           projectRoot: project.workspaceRoot,
           baseRef: input.workspaceStrategy.baseRef,
           branch: branch!,
           existingBranch: input.existingBranch === true,
-          existingWorktreePath: input.existingWorktreePath ?? null,
-        }).pipe(
-          Effect.provide(cloudServices),
-          Effect.mapError(mapError(input, "provision-worktree", threadId)),
-        );
+          existingWorktreePath,
+        }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        yield* Effect.logInfo("Prepared a cloud checkout", {
+          threadId,
+          restoredFrom: checkout.restoredFrom,
+        });
+        if (existingWorktreePath !== null && checkout.restoredFrom !== "disk") {
+          yield* recordRebuild(input.commandId, threadId, checkout);
+        }
         yield* setupTracker.stageStatus(threadId, "fetch", "done");
         worktreeRepository = checkout.clonePath;
         worktreePath = checkout.worktreePath;
@@ -1390,9 +1448,113 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const restoreInBackground = Effect.fn("ThreadLaunchService.restoreInBackground")(
+    function* (input: { readonly commandId: CommandId; readonly threadId: ThreadId }) {
+      const shell = yield* threads.getThreadShell(input.threadId);
+      if (
+        shell === null ||
+        shell.deletedAt !== null ||
+        shell.sandboxId === undefined ||
+        shell.worktreePath === null ||
+        shell.branch === null
+      ) {
+        return;
+      }
+      const { sandboxId, worktreePath, branch } = shell;
+      const { runs } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
+      const firstCheckout = runs
+        .toSorted((left, right) => left.ordinal - right.ordinal)
+        .find((run) => run.workspacePreparation?.type === "worktree")?.workspacePreparation;
+      if (firstCheckout?.type !== "worktree") return;
+      const project = yield* projects.getById(shell.projectId);
+      if (Option.isNone(project)) return;
+      const { workspaceRoot } = project.value;
+      yield* CloudPreparation.awaitSandboxReady({ sandboxId, onWaiting: () => Effect.void }).pipe(
+        Effect.provide(cloudServices),
+      );
+      const checkout = yield* checkoutInSandbox({
+        sandboxId,
+        threadId: input.threadId,
+        projectId: shell.projectId,
+        projectRoot: workspaceRoot,
+        baseRef: firstCheckout.baseRef,
+        branch,
+        existingBranch: false,
+        existingWorktreePath: worktreePath,
+      });
+      yield* Effect.logInfo("Restored a cloud checkout", {
+        threadId: input.threadId,
+        restoredFrom: checkout.restoredFrom,
+      });
+      if (checkout.restoredFrom === "disk") return;
+      if (checkout.worktreePath !== worktreePath || checkout.branch !== branch) {
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`${input.commandId}:workspace`),
+          threadId: input.threadId,
+          branch: checkout.branch,
+          worktreePath: checkout.worktreePath,
+        });
+      }
+      yield* setupScripts
+        .runForThread({
+          threadId: input.threadId,
+          projectId: shell.projectId,
+          projectCwd: workspaceRoot,
+          worktreePath: checkout.worktreePath,
+          project: { id: project.value.id, workspaceRoot, scripts: project.value.scripts },
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("A rebuilt checkout's setup script failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+        );
+      yield* recordRebuild(input.commandId, input.threadId, checkout);
+    },
+  );
+
+  const restoreCheckout: ThreadLaunchService["Service"]["restoreCheckout"] = Effect.fn(
+    "ThreadLaunchService.restoreCheckout",
+  )(function* (input) {
+    const key = input.commandId;
+    if (!(yield* reservePreparation(key))) return;
+    yield* restoreInBackground(input).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not restore a cloud thread's checkout", {
+          threadId: input.threadId,
+          cause,
+        }),
+      ),
+      Effect.ensuring(releasePreparation(key)),
+      Effect.forkIn(preparationScope),
+    );
+  });
+
   const retryPreparation: ThreadLaunchService["Service"]["retryPreparation"] = Effect.fn(
     "ThreadLaunchService.retryPreparation",
   )(function* (input) {
+    const before = yield* threads.getThreadShell(input.threadId);
+    // Retrying a machine with no disk makes a new one: 2.23's launch gate, before the run moves.
+    if (!cloudOnly && before?.sandboxId !== undefined && before.sandbox?.state === "failed") {
+      const record = yield* projections
+        .getSandbox(before.sandboxId)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new Orchestrator.OrchestratorProjectionError({ threadId: input.threadId, cause }),
+          ),
+        );
+      if (record !== null && hasNoDisk(record)) {
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: input.commandId,
+          commandType: "prepared-run.retry",
+          cause: NOT_CLOUD_ONLY_MESSAGE,
+        });
+      }
+    }
     const dispatched = yield* threads.dispatch({
       type: "prepared-run.retry",
       commandId: input.commandId,
@@ -1477,6 +1639,7 @@ const make = Effect.gen(function* () {
     checkCloudLaunch,
     retryPreparation,
     prepareRun,
+    restoreCheckout,
   });
 });
 

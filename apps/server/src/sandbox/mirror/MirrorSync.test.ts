@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CheckpointRef, ProjectId, SandboxId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -224,4 +225,78 @@ it.effect("fails an oversized bundle as bundle-failed and leaves no temp file", 
     assert.deepEqual(yield* fs.readDirectory(path.join(stateDir, "sandbox", "tmp")), []);
     assert.deepEqual([...(yield* mirror.tips(projectId, [turn]))], []);
   }).pipe(Effect.scoped, Effect.provide(layerWith({ maxBundleBytes: 64 }))),
+);
+
+it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on its tip", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const threadId = ThreadId.make("thread:restore");
+    const { projectId, sandbox } = yield* setup(threadId);
+    const sync = yield* MirrorSync.MirrorSync;
+    const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
+    const vcs = yield* VcsDriver.VcsDriver;
+    yield* fs.writeFileString(path.join(sandbox, "committed.txt"), "unpushed\n");
+    yield* git(sandbox, ["add", "."]);
+    yield* git(sandbox, ["commit", "--quiet", "-m", "unpushed"]);
+    yield* fs.writeFileString(path.join(sandbox, "one.txt"), "changed\n");
+    yield* fs.writeFileString(path.join(sandbox, "new.txt"), "uncommitted\n");
+    yield* vcs.checkpoints.captureCheckpoint({
+      cwd: sandbox,
+      checkpointRef: CheckpointRef.make(snapshotRef),
+    });
+    yield* sync.sync({
+      threadId,
+      cwd: sandbox,
+      checkpointRefs: [CheckpointRef.make(snapshotRef)],
+    });
+    const branchTip = yield* git(sandbox, ["rev-parse", "HEAD"]);
+    const project = (yield* git(sandbox, ["remote", "get-url", "origin"])).trim();
+
+    // The disk is gone: a fresh clone of origin, and the thread's worktree path is empty.
+    const root = yield* SandboxRoot;
+    const rebuild = Effect.fn("MirrorSyncTest.rebuild")(function* (name: string) {
+      const clonePath = path.join(root, `${name}-clone`);
+      const worktreePath = path.join(root, `${name}-worktree`);
+      yield* git(root, ["clone", "--quiet", "--no-local", project, clonePath]);
+      const restored = yield* sync.restore({
+        threadId,
+        projectId,
+        clonePath,
+        worktreePath,
+        branch: "work",
+      });
+      return { restored, worktreePath };
+    });
+    const { restored, worktreePath } = yield* rebuild("fresh");
+
+    assert.isTrue(restored?.snapshotAt != null && DateTime.isDateTime(restored.snapshotAt));
+    assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), branchTip);
+    assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "work");
+    assert.equal(yield* fs.readFileString(path.join(worktreePath, "new.txt")), "uncommitted\n");
+    assert.equal(yield* fs.readFileString(path.join(worktreePath, "one.txt")), "changed\n");
+    assert.equal(yield* git(worktreePath, ["diff", "--cached", "--name-only"]), "");
+
+    // A later commit moved the branch past the snapshot, which would now undo it.
+    yield* git(sandbox, ["add", "."]);
+    yield* git(sandbox, ["commit", "--quiet", "-m", "later"]);
+    yield* sync.sync({ threadId, cwd: sandbox, checkpointRefs: [] });
+    const later = yield* rebuild("later");
+    assert.deepEqual(later.restored, { snapshotAt: null });
+    assert.equal(
+      yield* git(later.worktreePath, ["rev-parse", "HEAD"]),
+      yield* git(sandbox, ["rev-parse", "HEAD"]),
+    );
+    assert.equal(yield* git(later.worktreePath, ["status", "--porcelain"]), "");
+
+    assert.isNull(
+      yield* sync.restore({
+        threadId: ThreadId.make("thread:never-synced"),
+        projectId,
+        clonePath: path.join(root, "fresh-clone"),
+        worktreePath: path.join(root, "never-worktree"),
+        branch: "work",
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerWith())),
 );

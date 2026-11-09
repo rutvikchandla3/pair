@@ -652,7 +652,7 @@ failed with no driver ref) gets a fresh checkout from the remote on its next pro
 commits and uncommitted files are lost. M2 rebuilds from the mirror instead: a new machine from the
 current image (the active build once team images land in M4), a clone from GitHub, then the branch
 and snapshot from the mirror, written into the machine as a bundle through the runner, the snapshot
-restored and the setup script rerun. The header says "Rebuilt from the snapshot of 14:02". Ignored
+restored and the setup script rerun. The thread's timeline says "Rebuilt from the snapshot of 14:02". Ignored
 files and caches are lost. This is what makes discarding disks safe and cheap, and it covers drivers
 with no persistent disk. M3's seeds take the same path.
 

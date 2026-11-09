@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,7 +54,13 @@ export const MirrorHooks = Context.Reference<MirrorHooksShape>("t3/sandbox/mirro
 
 export class MirrorSyncError extends Schema.TaggedError<MirrorSyncError>()("MirrorSyncError", {
   threadId: ThreadId,
-  reason: Schema.Literals(["timeout", "sandbox-unavailable", "bundle-failed", "import-failed"]),
+  reason: Schema.Literals([
+    "timeout",
+    "sandbox-unavailable",
+    "bundle-failed",
+    "import-failed",
+    "restore-failed",
+  ]),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -71,6 +78,19 @@ export class MirrorSync extends Context.Service<
       readonly cwd: string;
       readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
     }) => Effect.Effect<ProjectId, MirrorSyncError>;
+    /**
+     * Rebuilds the thread's worktree at `worktreePath` from the mirror's copy of its branch and,
+     * when it sits on that branch's tip, its sleep snapshot (in the working tree, not the index).
+     * Null when the mirror has no branch for the thread. Bytes flow mirror to machine only.
+     */
+    readonly restore: (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      /** The project's clone on the sandbox host. */
+      readonly clonePath: string;
+      readonly worktreePath: string;
+      readonly branch: string;
+    }) => Effect.Effect<{ readonly snapshotAt: DateTime.Utc | null } | null, MirrorSyncError>;
   }
 >()("t3/sandbox/mirror/MirrorSync") {}
 
@@ -274,7 +294,109 @@ export const make = Effect.fn("MirrorSync.make")(function* (
     return projectId;
   }, Effect.scoped);
 
-  return MirrorSync.of({ sync });
+  const restore: MirrorSync["Service"]["restore"] = Effect.fn("MirrorSync.restore")(function* ({
+    threadId,
+    projectId,
+    clonePath,
+    worktreePath,
+    branch,
+  }) {
+    const failed = failWith(threadId, "restore-failed");
+    const prefix = CheckpointMirror.sandboxThreadRefPrefix(threadId);
+    const branchRef = `${prefix}branch`;
+    const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
+    const mirrorTips = yield* mirror
+      .tips(projectId, [branchRef, snapshotRef, SEED_HEAD_REF])
+      .pipe(Effect.mapError(failed));
+    const branchTip = mirrorTips.get(branchRef);
+    if (branchTip === undefined) return null;
+    const host = yield* hosts
+      .forPath(clonePath)
+      .pipe(Effect.mapError(failWith(threadId, "sandbox-unavailable")));
+    const gitDir = mirror.gitDir(projectId);
+    const git = (target: WorkspaceHost, cwd: string, args: ReadonlyArray<string>) =>
+      runGit(threadId, target, cwd, args, (stdout) =>
+        stdout.pipe(Stream.decodeText(), Stream.mkString),
+      ).pipe(
+        Effect.flatMap((result) =>
+          result.exitCode === 0
+            ? Effect.succeed(result.stdout)
+            : Effect.fail(failed(result.stderr)),
+        ),
+      );
+
+    // A snapshot taken before later commits reached the mirror would undo them.
+    let snapshot: { readonly oid: string; readonly takenAt: DateTime.Utc } | null = null;
+    const snapshotTip = mirrorTips.get(snapshotRef);
+    if (snapshotTip !== undefined) {
+      const [parents = "", seconds = ""] = (yield* git(hosts.local, gitDir, [
+        "show",
+        "-s",
+        "--format=%P%x00%ct",
+        snapshotRef,
+      ]))
+        .trim()
+        .split("\0");
+      if (parents === branchTip) {
+        snapshot = { oid: snapshotTip, takenAt: DateTime.makeUnsafe(Number(seconds) * 1000) };
+      }
+    }
+    const refs = snapshot === null ? [branchRef] : [branchRef, snapshotRef];
+
+    yield* fs.makeDirectory(tmpDir, { recursive: true, mode: 0o700 }).pipe(Effect.mapError(failed));
+    const local = path.join(
+      tmpDir,
+      `${yield* Effect.sync(() => SecureRandom.uuidV4Unsafe())}.bundle`,
+    );
+    yield* Effect.addFinalizer(() => fs.remove(local, { force: true }).pipe(Effect.ignore));
+    const seed = mirrorTips.get(SEED_HEAD_REF);
+    const cloneHasSeed =
+      seed !== undefined &&
+      (yield* runGit(
+        threadId,
+        host,
+        clonePath,
+        ["cat-file", "-e", `${seed}^{commit}`],
+        () => Effect.void,
+      )).exitCode === 0;
+    let outcome: BundleOutcome = "missing-prerequisite";
+    for (const prerequisites of cloneHasSeed ? [[seed], []] : [[]]) {
+      outcome = yield* writeBundle(threadId, hosts.local, gitDir, refs, prerequisites, local);
+      if (outcome !== "missing-prerequisite") break;
+    }
+    if (outcome === "missing-prerequisite") return yield* failed("No prerequisite tier worked.");
+
+    const remote = path.join(clonePath, ".git", `t3-restore-${path.basename(local)}`);
+    yield* Effect.addFinalizer(() =>
+      host.fileSystem.remove(remote, { force: true }).pipe(Effect.ignore),
+    );
+    // A worktree whose directory went with the disk still holds its branch until pruned.
+    yield* git(host, clonePath, ["worktree", "prune"]);
+    if (outcome === "written") {
+      const bytes = yield* fs.readFile(local).pipe(Effect.mapError(failed));
+      yield* host.fileSystem.writeFile(remote, bytes).pipe(Effect.mapError(fromPlatform(threadId)));
+      yield* git(host, clonePath, [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        remote,
+        `+${branchRef}:refs/heads/${branch}`,
+        ...(snapshot === null ? [] : [`+${snapshotRef}:${snapshotRef}`]),
+      ]);
+    } else {
+      // Every object is in the clone already, from origin.
+      yield* git(host, clonePath, ["branch", "--force", "--", branch, branchTip]);
+    }
+    yield* git(host, clonePath, ["worktree", "add", "--quiet", "--", worktreePath, branch]);
+    if (snapshot !== null) {
+      yield* git(host, worktreePath, ["read-tree", "--reset", "-u", snapshot.oid]);
+      yield* git(host, worktreePath, ["reset", "--quiet"]);
+    }
+    return { snapshotAt: snapshot?.takenAt ?? null };
+  }, Effect.scoped);
+
+  return MirrorSync.of({ sync, restore });
 });
 
 export const layer = Layer.effect(MirrorSync, make());

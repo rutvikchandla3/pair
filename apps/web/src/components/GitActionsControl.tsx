@@ -1049,6 +1049,8 @@ export default function GitActionsControl({
   const changeRequestTerminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
+  // A cloud checkout is always a clone; an empty one is waiting to be rebuilt, never initialized.
+  const offersGitInit = !isRepo && activeServerThreadShell?.source.sandboxId === undefined;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const resolvedChangesTotals = resolveChangesTotals(gitStatusForActions);
@@ -1492,7 +1494,7 @@ export default function GitActionsControl({
 
   return (
     <>
-      {!showActions ? null : !isRepo ? (
+      {!showActions || (!isRepo && !offersGitInit) ? null : offersGitInit ? (
         <ThreadDetailsControl
           size="xs"
           variant="ghost"

@@ -620,9 +620,10 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
-// The capture and rollback services read MirrorHooks at construction; SandboxEffects flushes the worker.
+// The capture and rollback services read MirrorHooks at construction; SandboxEffects flushes the
+// worker, and a cloud checkout rebuilds a lost disk from MirrorSync.
 const layerMirrorSync = MirrorSyncWorker.layer.pipe(
-  Layer.provide(MirrorSync.layer),
+  Layer.provideMerge(MirrorSync.layer),
   Layer.provide(ProjectionStoreV2.layer),
 );
 

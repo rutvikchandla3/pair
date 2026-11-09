@@ -323,6 +323,7 @@ const make = Effect.gen(function* () {
    * Runs parked on this machine: on `ready` those with no checkout to make are released and those
    * with one are re-armed (a no-op while a fiber prepares them); on `failed` the former fail.
    * Parked restores then run: on `failed` they fail on the unavailable host with its message.
+   * On `ready`, every other thread's checkout is brought back if the machine came up without it.
    */
   const releaseWaiters = Effect.fn("SandboxEffects.releaseWaiters")(function* (
     record: OrchestrationV2Sandbox,
@@ -337,11 +338,13 @@ const make = Effect.gen(function* () {
       const { runs } = yield* projections
         .getThreadRecords(threadId, ["runs"])
         .pipe(Effect.mapError(fail));
+      let rearmed = false;
       for (const run of runs) {
         if (run.status !== "preparing") continue;
         const commandId = CommandId.make(`sandbox-release:${run.id}:${record.generation}`);
         if (run.workspacePreparation !== undefined) {
           if (record.state === "ready" && Option.isSome(threadLaunch)) {
+            rearmed = true;
             yield* threadLaunch.value.prepareRun({
               commandId: CommandId.make(`sandbox-rearm:${run.id}:${record.generation}`),
               threadId,
@@ -368,6 +371,13 @@ const make = Effect.gen(function* () {
                 }),
               },
         );
+      }
+      // A re-armed run makes its own checkout; a kept disk costs this one check.
+      if (record.state === "ready" && !rearmed && Option.isSome(threadLaunch)) {
+        yield* threadLaunch.value.restoreCheckout({
+          commandId: CommandId.make(`sandbox-restore:${threadId}:${record.generation}`),
+          threadId,
+        });
       }
     }
     yield* outbox

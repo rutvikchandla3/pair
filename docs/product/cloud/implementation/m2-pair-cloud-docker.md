@@ -1242,43 +1242,48 @@ failing test, so its own PR.
     - Order: move today's kept-disk check (234–241, using `isCheckout`, 222) ahead of the
       clone/fetch (228–232); a kept checkout returns `restoredFrom: "disk"` with no fetch. Then
       clone or fetch origin as today.
-    - New middle case, when `existingWorktreePath !== null` and the mirror holds
-      `${sandboxThreadRefPrefix(threadId)}branch`: on the server, bundle that ref and, when
-      present, `sandboxSnapshotRef(threadId)` from the mirror with `git --git-dir <mirror> bundle
-      create`, trying prerequisite tiers `[SEED_HEAD_REF tip]` then `[]` (`MirrorSync.ts` 26, the
-      same tiers 1.31 uses). `SEED_HEAD_REF` is module-private today; export it from MirrorSync.ts. Write it into the machine with the sandbox host's `fileSystem`
-      (`WorkspaceHost.ts` 109) under `<root>/tmp/`, `git fetch <bundle>
-      <prefix>branch:refs/heads/<branch> <snapshot>:<snapshot>` in the clone, delete the file, and
-      `git worktree add <existingWorktreePath> <branch>`. With a snapshot, restore it with
-      `CheckpointStore.restoreCheckpoint({ cwd: existingWorktreePath, checkpointRef: snapshot,
-      fallbackToHead: false })` (`CheckpointStore.ts` 59). Returns `restoredFrom: "mirror"`.
+    - New middle case, when `existingWorktreePath !== null`: `MirrorSync.restore` (beside `sync`,
+      so `SEED_HEAD_REF` and the bundle writer stay private). When the mirror holds
+      `${sandboxThreadRefPrefix(threadId)}branch`, it bundles that ref and, when the snapshot's
+      parent is that branch tip, `sandboxSnapshotRef(threadId)` (an older snapshot would undo later
+      commits), with prerequisite `[SEED_HEAD_REF tip]` when the clone has it, else `[]`. It writes
+      the bundle into the clone's `.git/` with the sandbox host's `fileSystem`, prunes stale
+      worktrees, fetches `+<prefix>branch:refs/heads/<branch>` (and the snapshot ref), deletes the
+      file, and runs `git worktree add <existingWorktreePath> <branch>`. A snapshot goes back with
+      `read-tree --reset -u <snapshot>` then `reset`, so it lands in the working tree and not the
+      index (`restoreCheckpoint` would stage it). Returns `restoredFrom: "mirror"` and the
+      snapshot's commit time, `created: false` so a cancelled preparation never deletes it. A
+      restore failure fails the checkout rather than falling back to GitHub.
     - Otherwise today's GitHub path (242–264), `restoredFrom: "origin"`.
   - `apps/server/src/orchestration-v2/ThreadLaunchService.ts`:
-    - Pass `threadId` to `checkoutInSandbox` from `prepareInBackground` (360).
+    - Pass `threadId` to `checkoutInSandbox` from `prepareInBackground` (360). Every
+      `checkoutInSandbox` call holds a per-sandbox lock, since threads on a machine share its clone.
     - New service method `restoreCheckout({ commandId, threadId })` beside `prepareRun`: reads the
       shell; if it has a `sandboxId`, a `worktreePath` and a `branch`, and the checkout is missing on
       the machine, runs `checkoutInSandbox` with the first run's `worktree` `baseRef` (the same
       lookup `gateCloudMessage` uses, `Orchestrator.ts` 11055–11061) and reruns the project's setup
-      script the way a fresh cloud worktree does. Never fails the caller; a failure is logged and
-      the thread keeps its "machine" status.
+      script the way a fresh cloud worktree does. It runs in the background (the effect worker
+      must not wait on a clone) and never fails the caller; a failure is logged and the thread
+      keeps its "machine" status.
   - `apps/server/src/sandbox/lifecycle/SandboxEffects.ts` `releaseWaiters` (246): on `ready`, for
     each attached thread with no `preparing` run that carries `workspacePreparation` (those are
     re-armed already, 259–267), call `threadLaunch.value.restoreCheckout({ commandId:
     sandbox-restore:<threadId>:<generation>, threadId })`. It is idempotent: a kept disk is a
     checkout and costs one `isRepository`.
-  - `apps/server/src/orchestration-v2/ThreadMessageIntake.ts` `dispatchSandboxCommand` (112) and
-    `ThreadLaunchService.retryPreparation` (1275): before dispatching `sandbox.wake` or
-    `sandbox.retry` for a record where `hasNoDisk` (`SandboxDecisions.ts` 193) holds, call 2.23's
-    gate (the same check as `resolveCloudLaunch`, `CloudPreparation.ts` 87). Track A owns the
-    refusal; this PR only wires the call where a disk is about to be created.
-  - Client: the details panel's "Initialize Git" must not show for a cloud thread whose machine is
-    not ready. `restoreCheckout` logs `restoredFrom`; no client copy names it (**proposed**: a
-    one-time "Rebuilt from…" label would need a new field on the record and the shell summary,
-    which `sandboxStatePresentation`, client-runtime/src/state/sandbox.ts 135, can't derive today).
-- **Types and services:** `checkoutInSandbox` input `threadId`, result `restoredFrom`;
-  `ThreadLaunchService.restoreCheckout`.
-- **Commands and events:** none new. The restore runs on the server; the thread's
-  `worktreePath` and `branch` do not change, because the worktree goes back at the same path.
+  - 2.23's gate: `decideSandboxCommand` already refuses `sandbox.wake` and `sandbox.retry` off
+    cloud-only when `hasNoDisk` holds, so `ThreadMessageIntake` needs nothing.
+    `ThreadLaunchService.retryPreparation` checks the same before `prepared-run.retry`, so a
+    refused machine retry no longer leaves the run stuck in `preparing`.
+  - Client: the details panel never offers "Initialize Git" for a cloud thread (an empty checkout
+    there is waiting to be rebuilt). Every rebuild records a runless `system_notice` on the
+    thread, shown by web and mobile as is: "Rebuilt from the snapshot of 2026-11-09 14:02 UTC:
+    the machine's disk was lost. Ignored files and caches were not kept.", or the branch-only or
+    GitHub wording when there was no usable snapshot or no mirror copy. Logs carry `restoredFrom`.
+- **Types and services:** `checkoutInSandbox` input `threadId`, result `restoredFrom` and
+  `snapshotAt`; `MirrorSync.restore`; `ThreadLaunchService.restoreCheckout`.
+- **Commands and events:** one internal command, `thread.notice.record`, for the notice. The
+  restore runs on the server; the thread's `worktreePath` and `branch` do not change, because the
+  worktree goes back at the same path.
 - **Migrations:** none.
 - **Proposed gap answers.** Ignored files are lost on rebuild (07 §9). The snapshot restores into
   the working tree, not the index. A thread whose branch never reached the mirror uses GitHub, as
@@ -1290,12 +1295,14 @@ failing test, so its own PR.
   fails as missing, and a retry provisions anew" (596): after the retry and the runner hello, drain
   and assert `restoreCheckout` ran for the owner thread (a fake `ThreadLaunchService`). This is the
   G1 bug: on `main`, nothing runs.
-- `apps/server/src/orchestration-v2/ThreadLaunchService.test.ts`: beside "launches a cloud thread
-  and releases it on runner hello" (2555), new case "rebuilds a lost checkout from the mirror's
-  branch and snapshot": a real temp mirror with a branch and a snapshot holding an uncommitted file,
-  a fake sandbox host on a temp dir, `existingWorktreePath` set and missing. Asserts the worktree
-  exists at the same path, `HEAD` is the mirror's branch tip, the uncommitted file is back, and
-  `restoredFrom` is `mirror`.
+- `apps/server/src/sandbox/mirror/MirrorSync.test.ts`: "rebuilds a lost checkout from the mirror's
+  branch and a snapshot on its tip": a real mirror and a loopback sandbox. The worktree is back at
+  the same path on the branch tip with the uncommitted files and a clean index; after a later
+  commit the old snapshot is skipped.
+- `apps/server/src/orchestration-v2/ThreadLaunchService.test.ts`: `checkoutInSandbox` from a kept
+  disk (no fetch, no restore), a mirrored branch and origin; `restoreCheckout` reruns setup and
+  records the notice; `retryPreparation` refuses a disk-less machine off cloud-only and the run
+  stays failed.
 
 **Verify.** `vp test run apps/server/src/sandbox/lifecycle/SandboxLifecycle.test.ts
 apps/server/src/orchestration-v2/ThreadLaunchService.test.ts`; `vp run typecheck` for server,
