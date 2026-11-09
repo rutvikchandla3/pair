@@ -36,12 +36,12 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (3 of 12), specs written 2026-11-10:** full specs in
+**M4 (4 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a) and 4.13 (109a0876b). Next: 4.14 (Docker builds, critical; its real-daemon tests
-need colima running), then waves 4–6 and the M4 integrated pass (G4 step 1) on a release with M4.
+(52233856a), 4.13 (109a0876b) and 4.14 (549574f63). Next: wave 4 (4.16, critical, then 4.15,
+small; they share files), then waves 5–6 and the M4 integrated pass (G4 step 1) on a release with M4.
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2043,6 +2043,31 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - `startBuild` sets `activateOnSuccess: false` until 4.16. 4.14 must delete the
   `Effect.serviceOption(TeamImageEffects)` gate in `TeamImageService` (its live layer depends on
   the service). The snapshot has no `currentBase` yet.
+
+## 4.14 team image builds on Docker (landed 549574f63)
+
+- `ComputeDriver.snapshot` (Docker: `DockerEngineApi.commit`, replayed by label; the fake driver
+  has it). `sandbox/image/`: `teamImageBuildProgram.ts`, `TeamImageBuildLog.ts`,
+  `TeamImageEffectsLive.ts`. `TeamImageService` lost the optional-effects gate and gained restart
+  recovery and `subscribeBuildLog` (RPC `teamImage.subscribeBuildLog`, read scope). `cloudOnly`
+  turns on `teamImages`.
+- Images are `t3-team-image:<number>` with labels `pair.team-image.build=<tag>` and
+  `pair.team-image.machine=<driverRef>` (`docker commit` also merges in the container's labels,
+  so "only the build label" in the M4 pass's step 1 is wrong). The stored `imageRef` is the image id.
+- The log is `<stateDir>/team-image/builds/<number>.log`: `TeamImageBuildLog.open` (scoped),
+  `read` (file, then live lines, then `done`), `whenOpen`. The program prints `::t3-phase::<phase>`
+  lines, which the log strips. 4.15's leak check goes in the program's `clean` phase; 4.16 adds
+  `delete(number)`.
+- Cancel: leaving the live slot interrupts the program fiber, then `destroy-machine` revokes the
+  runner grant. Restart: a `launching` or `running` build fails as `interrupted`; `queued` and
+  `capturing` builds continue. The reconciler skips a live build's machine and destroys a finished
+  one's, except in restore mode.
+- Not run against a daemon (colima was stopped). Owes, with the M4 pass: the contract suite with
+  `T3_TEST_DOCKER=1` (the snapshot case's expected labels are a guess), a real `docker commit` of a
+  build machine, the spec's Verify build, jq 1.6 `--rawfile` on NUL-separated env, restart recovery
+  destroying by backend name, and the reconciler on real tagged machines.
+- New failure on this Mac, also on `feat/pair`: `ServerEnvironment.test.ts` "publishes proven
+  install ownership…" (`/var` against `/private/var`).
 
 ## Open follow-ups and risks
 
