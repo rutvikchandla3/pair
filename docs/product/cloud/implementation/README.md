@@ -1,7 +1,7 @@
 # Pair Cloud: implementation plan
 
-Status: M0 and M1 landed and G1 closed; M2 has full specs; the rest is a proposal, rewritten
-2026-11-08 for local-first Pair Cloud.
+Status: M0, M1 and M2 landed and G1 and G2 closed; M3 has full specs; the rest is a proposal,
+rewritten 2026-11-08 for local-first Pair Cloud.
 The design is the [plan](../README.md) and its ten docs; this folder turns their PR list
 ([10 §2](../10-delivery-plan.md#2-pull-request-plan)) into specs an engineer or agent can implement
 without re-deriving the design. Before writing it, every code claim in the design docs was checked
@@ -14,6 +14,7 @@ against the repo; the [findings](#verification-findings) are at the end.
 | [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                                                 |
 | [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                                              |
 | [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md)       | M2's 36 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M2 integrated pass.                        |
+| [m3-continue-in-cloud.md](./m3-continue-in-cloud.md)       | M3's 8 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M3 integrated pass.                         |
 | [m2-m5.md](./m2-m5.md)                                     | M3–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first; M2's rows as first sharpened. |
 | [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                                                        |
 
@@ -32,7 +33,8 @@ the spec names what else would change.
 Write each milestone's full specs the same way while the previous milestone's gate runs: M2's
 during G1, M3's during G2, and so on. Each milestone settles names and seams the next one depends
 on, so specs written earlier would be guesses. Until then, [m2-m5.md](./m2-m5.md) holds each row at
-PR level. M2's were written during G1, in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+PR level. M2's were written during G1, in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md),
+and M3's after G2 closed, in [m3-continue-in-cloud.md](./m3-continue-in-cloud.md).
 
 ## Build order
 
@@ -64,9 +66,10 @@ Inside each milestone:
   cloud-only servers (2.24), the resolver (2.27), web and desktop routing (2.28), account onboarding
   (2.30) and the docs (2.21). The release and the 30-machine load test (2.40) must be in before G2.
   See [M2's build order](./m2-pair-cloud-docker.md#build-order).
-- **M3:** five waves: the agent link (3.19) and the context export (3.22) first, then staged seeds
-  and continue locally, the seed checkout, continue in cloud (3.23), and mobile and docs. See
-  [M3's waves](../10-delivery-plan.md#m3-continue-in-cloud).
+- **M3:** five waves: the agent link (3.19) and staged seeds (3.20) first, then the seed checkout
+  and the context export, continue locally (3.25), continue in cloud (3.23), and mobile and docs.
+  The critical path runs 3.20 → 3.22 → 3.25 → 3.23 → 3.24 → 3.26. See
+  [M3's build order](./m3-continue-in-cloud.md#build-order).
 - **M4 and M5:** merged side by side after G3. M4 starts with the outbox's aggregate key (4.11),
   which merges before any row that adds effect types; M5 starts with the EC2 driver (5.4), the
   internal listeners and the policy keys, builds AMIs (5.7) once Docker builds (4.14) are in, and

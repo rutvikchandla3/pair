@@ -6,8 +6,9 @@ milestone gate's runs.
 
 Scope of this run: M0 (11 PRs) and M1 (46 PRs) from [m0-seam.md](./m0-seam.md) and
 [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md), both integrated passes and G1, then M2
-(36 PRs) from [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md) and G2. M3–M5 have no full
-specs yet ([README](./README.md): each milestone's are written while the previous gate runs).
+(36 PRs) from [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md) and G2, then M3 (8 PRs) from
+[m3-continue-in-cloud.md](./m3-continue-in-cloud.md) and G3. M4 and M5 have no full specs yet
+([README](./README.md): each milestone's are written while the previous gate runs).
 
 ## Status
 
@@ -20,11 +21,16 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 **M2 (36 of 36 done), G2 closed:** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
 Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.21–2.40, 2.42–2.47; 2.41 measured with no
 change needed on the Mac. G2 ran on releases `0.1.7-pair.1`–`.3` and landed fix rows 2.48–2.59
-([G2 on real hardware](#g2-on-real-hardware-2026-11-09-pair-cloud-pass-releases-v1v3)). Next: M3's
-full specs, then M3 and G3. Lead decision
+([G2 on real hardware](#g2-on-real-hardware-2026-11-09-pair-cloud-pass-releases-v1v3)). Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
+
+**M3 (0 of 8), specs written 2026-11-09:** full specs in
+[m3-continue-in-cloud.md](./m3-continue-in-cloud.md), with the build order (wave 1: 3.19 agent
+link, 3.20 staged seeds), the open maintainer questions and the [integrated
+pass](./m3-continue-in-cloud.md#m3-integrated-pass) that turns G3 into steps. Next: build M3 from
+wave 1, then a release with M3 (maintainer approval), then G3.
 
 **Left from M1:** the [M0 integrated pass](./m0-seam.md#m0-integrated-pass) and the
 [M1 integrated pass](./m1-cloud-threads-docker.md#m1-integrated-pass). They also collect the

@@ -159,24 +159,28 @@ Moving sessions across servers replaces old 4.4, which moved a thread on one ser
 back is old 4.6, reshaped. The agent link comes first, because the local server authenticates every
 seed and export upload and download through it. M3 PRs merge after G2 passes.
 
-| #              | Title                                                                                                                                                                                           | Owner                             | Needs      | Parallel        |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------- | --------------- |
-| 3.19           | `feat(server): link a member's local server to Pair Cloud` (member-scoped, laptop to Pair Cloud only; `t3_thread_launch`, `delegate_task` and `t3 thread` through RemoteDelegation; evals; D14) | 08 §6, §9; 06 §11; 01 J7          | M2         | Critical, first |
-| 3.20           | `feat(server): accept staged seeds and import them into the mirror` (`capabilities.cloudImport`; keyed by command id; size and refs checked; strict import)                                     | 07 §8, §10 #20; 06 §11; 08 §2, §9 | 3.19       | Critical        |
-| 3.21           | `feat(server): check out a seed in machines` (`seedRef` on the cloud strategy; the seed reaches the machine as a bundle over the runner's file channel)                                         | 07 §8, §10 #21; 08 §2             | 2.13, 3.20 | Critical        |
-| 3.22           | `feat(contracts,server): import a context export as read-only history` (`contextExportRef`, provenance, a new `historyOrigin` value)                                                            | 07 §8, §10 #22; 08 §2, §9         | 2.32       | Yes, with 3.20  |
-| 3.23           | `feat(server,web,desktop): continue a local thread in cloud` (preview with exclusions, thread menu, palette, "Continued in cloud" row, the laptop agents' tool with evals)                      | 07 §8, §10 #23; 08 §4, §9; 01 J9  | 3.21, 3.22 | Critical        |
-| 3.24           | `feat(mobile): continue a Mac thread in cloud`                                                                                                                                                  | 08 §5, §9                         | 3.23       | Yes             |
-| 3.25 (was 4.6) | `feat(server,desktop): continue a cloud session on a member's Mac` (the owner moves it; anyone else gets a copy on a new branch; D19)                                                           | 07 §8, §10 #24; 08 §4, §9         | 3.19, 3.22 | Yes             |
-| 3.26           | `docs: cover moving sessions and the agent link`                                                                                                                                                | §5 here                           | 3.23, 3.25 | Last            |
+| #              | Title                                                                                                                                                                                                                               | Owner                             | Needs            | Parallel        |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------------- | --------------- |
+| 3.19           | `feat(contracts,server,client-runtime,web,mobile): link a member's local server to Pair Cloud` (member-scoped, laptop to Pair Cloud only; `t3_thread_launch`, `delegate_task` and `t3 thread` through RemoteDelegation; evals; D14) | 08 §6, §9; 06 §11; 01 J7          | M2               | Critical, first |
+| 3.20           | `feat(server): accept staged seeds and import them into the mirror` (`capabilities.cloudImport`; keyed by the move's staging key; size and refs checked; strict import)                                                             | 07 §8, §10 #20; 06 §11; 08 §2, §9 | M2 (2.26)        | Critical        |
+| 3.21           | `feat(server): check out a seed in machines` (`seedRef` on the server's cloud launch strategy; the seed reaches the machine as a bundle over the runner's file channel)                                                                             | 07 §8, §10 #21; 08 §2             | 3.20             | Critical        |
+| 3.22           | `feat(contracts,server,client-runtime,web,mobile): import a context export as read-only history` (`contextExportRef`, provenance, a new `historyOrigin` value)                                                                      | 07 §8, §10 #22; 08 §2, §9         | 2.32, 3.20       | Yes, with 3.20  |
+| 3.23           | `feat(contracts,shared,server,client-runtime,web): continue a local thread in cloud` (preview with exclusions, thread menu, palette, "Continued in cloud" row, the laptop agents' tool with evals)                                  | 07 §8, §10 #23; 08 §4, §9; 01 J9  | 3.21, 3.22, 3.25 | Critical        |
+| 3.24           | `feat(mobile): continue a Mac thread in cloud`                                                                                                                                                                                      | 08 §5, §9                         | 3.23             | Yes             |
+| 3.25 (was 4.6) | `feat(contracts,server,client-runtime,web): continue a cloud session on a member's Mac` (the owner moves it; anyone else gets a copy on a new branch; D19)                                                                          | 07 §8, §10 #24; 08 §4, §9         | 3.19, 3.20, 3.22 | Yes             |
+| 3.26           | `docs: cover moving sessions and the agent link`                                                                                                                                                                                    | §5 here                           | 3.23, 3.24, 3.25 | Last            |
 
 | Wave | PRs                                              |
 | ---- | ------------------------------------------------ |
-| 1    | 3.19 agent link, 3.22 context export             |
-| 2    | 3.20 staged seeds, 3.25 continue locally         |
-| 3    | 3.21 seed checkout                               |
+| 1    | 3.19 agent link, 3.20 staged seeds               |
+| 2    | 3.21 seed checkout, 3.22 context export          |
+| 3    | 3.25 continue locally                            |
 | 4    | 3.23 continue in cloud                           |
 | 5    | 3.24 mobile, 3.26 docs, then [G3](#g3-end-of-m3) |
+
+The critical path is 3.20 → 3.22 → 3.25 → 3.23 → 3.24 → 3.26 → G3, with 3.19 joining at 3.25 and
+3.21 at 3.23. The full specs and their reasoning are in
+[m3-continue-in-cloud.md](./implementation/m3-continue-in-cloud.md).
 
 ### M4 Team images
 
