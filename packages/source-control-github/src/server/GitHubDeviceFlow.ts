@@ -18,6 +18,7 @@ export const CLIENT_ID_VARIABLE = "T3CODE_GITHUB_APP_CLIENT_ID";
 
 const KIND = SourceControlProviderKind.make("github");
 const REQUEST_TIMEOUT = Duration.seconds(15);
+const isOk = (status: number) => status >= 200 && status < 300;
 
 export const GitHubAppSession = Schema.Struct({
   accessToken: Schema.String,
@@ -99,6 +100,7 @@ export const make = (options: {
     path: string,
     body: Record<string, string>,
     schema: S,
+    accepts: (status: number) => boolean = isOk,
   ) =>
     httpClient
       .execute(
@@ -108,7 +110,7 @@ export const make = (options: {
         ),
       )
       .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.filterStatus(accepts)),
         Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
         Effect.timeout(REQUEST_TIMEOUT),
       );
@@ -133,6 +135,8 @@ export const make = (options: {
       "/login/device/code",
       { client_id: clientId },
       DeviceCodeResponse,
+      // Unlike the token grants, GitHub refuses a code with a 4xx whose JSON body says why.
+      (status) => status < 500,
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -145,6 +149,13 @@ export const make = (options: {
           }),
       ),
     );
+    if (code.error === "device_flow_disabled") {
+      return yield* signInError(
+        host,
+        "failed",
+        "This server's GitHub App has Device Flow off. An admin can tick Enable Device Flow in the App's settings on GitHub, then try again.",
+      );
+    }
     if (
       code.device_code === undefined ||
       code.user_code === undefined ||

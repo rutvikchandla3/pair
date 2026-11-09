@@ -43,3 +43,30 @@ describe("GitHubDeviceFlow.viewer", () => {
     }),
   );
 });
+
+describe("GitHubDeviceFlow.requestCode", () => {
+  it.effect.each([
+    {
+      name: "Device Flow is off when GitHub refuses the code with device_flow_disabled",
+      status: 400,
+      body: {
+        error: "device_flow_disabled",
+        error_description: "Device Flow must be explicitly enabled for this App",
+      },
+      detail:
+        "This server's GitHub App has Device Flow off. An admin can tick Enable Device Flow in the App's settings on GitHub, then try again.",
+    },
+    {
+      name: "GitHub can't be reached when it answers with a server error",
+      status: 502,
+      body: {},
+      detail: "The server could not reach GitHub to start the sign-in.",
+    },
+  ])("says $name", ({ status, body, detail }) =>
+    Effect.gen(function* () {
+      const { flow } = flowAnswering(status, body);
+      const error = yield* Effect.flip(flow.requestCode("github.com"));
+      expect({ reason: error.reason, detail: error.detail }).toEqual({ reason: "failed", detail });
+    }),
+  );
+});
