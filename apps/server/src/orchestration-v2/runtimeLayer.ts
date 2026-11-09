@@ -336,7 +336,13 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
 );
 // The compute driver registry, runner bootstraps and the install id come from the server.
 const layerSandboxEffectsProvided = SandboxEffects.layer.pipe(
-  Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerThreadManagementProvided,
+      layerCheckpointServiceProvided,
+    ),
+  ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(

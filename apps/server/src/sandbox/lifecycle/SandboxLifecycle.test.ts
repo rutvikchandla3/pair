@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  type CheckpointRef,
   CommandId,
   ComputeDriverId,
   EnvironmentId,
@@ -40,6 +41,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CheckpointRollback from "../../orchestration-v2/CheckpointRollbackService.ts";
+import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectOutbox from "../../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
@@ -66,6 +68,8 @@ import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { GitHubAppInstallationTokens } from "../credentials/GitHubAppInstallationTokens.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
+import { sandboxSnapshotRef } from "../mirror/CheckpointMirror.ts";
+import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as RunnerGrants from "../runnerHub/RunnerGrants.ts";
 import * as RunnerHubLive from "../runnerHub/RunnerHub.ts";
 import { RunnerHub, type RunnerHubFact, RunnerUnavailableError } from "../runnerHub/RunnerHub.ts";
@@ -218,6 +222,9 @@ const makeCredentials = Effect.fn("SandboxLifecycleTest.makeCredentials")(functi
 /** The real worker and executor over the real `SandboxEffects`, the fake driver and a recording bootstrap. */
 const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(function* (
   driver?: Effect.Success<ReturnType<typeof FakeComputeDriver.make>>,
+  snapshots?: Layer.Layer<
+    CheckpointService.CheckpointServiceV2 | MirrorSyncWorker.MirrorSyncWorker
+  >,
 ) {
   const fake = driver ?? (yield* FakeComputeDriver.make(ComputeDriverId.make("docker")));
   const bootstraps = yield* Ref.make<ReadonlyArray<number>>([]);
@@ -246,7 +253,12 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
   const credentials = yield* makeCredentials();
   const layerSandboxEffects = SandboxEffects.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerDriver, layerBootstrap, Layer.succeedContext(credentials.context)),
+      Layer.mergeAll(
+        layerDriver,
+        layerBootstrap,
+        Layer.succeedContext(credentials.context),
+        snapshots ?? Layer.empty,
+      ),
     ),
   );
   const layerWorker = EffectWorker.layerWithOptions({ workerId: "sandbox-lifecycle" }).pipe(
@@ -273,6 +285,40 @@ const makeSandboxRuntime = Effect.fn("SandboxLifecycleTest.makeRuntime")(functio
 });
 
 type Runtime = Effect.Success<ReturnType<typeof makeSandboxRuntime>>;
+
+type SnapshotStatus = Effect.Success<
+  ReturnType<CheckpointService.CheckpointServiceV2["Service"]["captureSnapshot"]>
+>;
+
+/** The stop's snapshot services: `capture` answers each checkout, and every sync lands. */
+const makeSnapshotFakes = Effect.fn("SandboxLifecycleTest.makeSnapshotFakes")(function* (
+  capture: (cwd: string) => Effect.Effect<SnapshotStatus> = () => Effect.succeed("ready"),
+) {
+  const captures = yield* Ref.make<ReadonlyArray<readonly [string, CheckpointRef]>>([]);
+  const synced = yield* Ref.make<ReadonlyArray<CheckpointRef>>([]);
+  const layer = Layer.mergeAll(
+    Layer.mock(CheckpointService.CheckpointServiceV2)({
+      captureSnapshot: ({ cwd, ref }) =>
+        Ref.update(captures, (all) => [...all, [cwd, ref] as const]).pipe(
+          Effect.andThen(capture(cwd)),
+        ),
+    }),
+    Layer.mock(MirrorSyncWorker.MirrorSyncWorker)({
+      flush: () => Effect.void,
+      syncRefs: ({ checkpointRefs }) =>
+        Ref.update(synced, (all) => [...all, ...checkpointRefs]).pipe(Effect.as(true)),
+    }),
+  );
+  return { captures, synced, layer };
+});
+
+const setWorktree = (threadId: ThreadId, worktreePath: string) =>
+  dispatch({
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`worktree:${threadId}`),
+    threadId,
+    worktreePath,
+  });
 
 const dispatch = (command: OrchestrationV2ServerCommand) =>
   ThreadManagement.ThreadManagementService.use((threads) => threads.dispatch(command));
@@ -1206,8 +1252,11 @@ it.layer(layerTest)("side chat prompts", (it) => {
 it.layer(layerTest)("sandbox lifecycle worker", (it) => {
   it.effect("stops a ready Docker sandbox once its owner settles, and not before", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeSandboxRuntime();
+      const snapshots = yield* makeSnapshotFakes();
+      const runtime = yield* makeSandboxRuntime(undefined, snapshots.layer);
       const { threadId, sandboxId } = yield* provisioned("settle");
+      const worktreePath = `/t3-sandbox/${sandboxId}/settle`;
+      yield* setWorktree(threadId, worktreePath);
       yield* runAnswering(runtime, answerCreate);
       yield* attachAndRelease(runtime, threadId, sandboxId, 1);
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
@@ -1235,7 +1284,13 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       );
       assert.equal(sleeps.length, 1);
       yield* runAnswering(runtime, answerStop);
-      assert.equal((yield* getSandbox(sandboxId))?.state, "sleeping");
+      assert.deepInclude(yield* getSandbox(sandboxId), {
+        state: "sleeping",
+        sleepSnapshotAt: yield* DateTime.now,
+      });
+      const ref = sandboxSnapshotRef(threadId);
+      assert.deepEqual(yield* Ref.get(snapshots.captures), [[worktreePath, ref]]);
+      assert.deepEqual(yield* Ref.get(snapshots.synced), [ref]);
 
       // A wake on the still-settled thread stays up until it has been idle for the window.
       yield* TestClock.adjust("1 minute");
@@ -1254,6 +1309,70 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
       assert.deepInclude(yield* getSandbox(sandboxId), { state: "sleeping", sleepReason: "idle" });
       yield* runAnswering(runtime, answerStop);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "a snapshot that fails or times out still stops the machine, with no sleepSnapshotAt",
+    () =>
+      Effect.gen(function* () {
+        const hang = yield* Ref.make(false);
+        const started = yield* Deferred.make<void>();
+        const snapshots = yield* makeSnapshotFakes((cwd) =>
+          Effect.flatMap(Ref.get(hang), (hanging) =>
+            hanging
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.succeed(cwd.endsWith("/other") ? "error" : "ready"),
+          ),
+        );
+        const runtime = yield* makeSandboxRuntime(undefined, snapshots.layer);
+        const { threadId: owner, sandboxId } = yield* provisioned("snapshot-fails");
+        yield* runAnswering(runtime, answerCreate);
+        yield* attachAndRelease(runtime, owner, sandboxId, 1);
+        const shared = `/t3-sandbox/${sandboxId}/main`;
+        const sideChat = yield* forked(owner, "snapshot-fails-side", true);
+        const elsewhere = yield* forked(owner, "snapshot-fails-other", true);
+        yield* setWorktree(owner, shared);
+        yield* setWorktree(sideChat, shared);
+        yield* setWorktree(elsewhere, `/t3-sandbox/${sandboxId}/other`);
+        const sleep = (generation: number) =>
+          dispatch({
+            type: "sandbox.sleep",
+            commandId: CommandId.make(`sleep:snapshot-fails:${generation}`),
+            threadId: owner,
+            sandboxId,
+          });
+
+        // One checkout of two fails, so the sleep reads as having no snapshot at all.
+        yield* sleep(1);
+        yield* runAnswering(runtime, answerStop);
+        assert.deepEqual(yield* Ref.get(snapshots.captures), [
+          [shared, sandboxSnapshotRef(owner)],
+          [`/t3-sandbox/${sandboxId}/other`, sandboxSnapshotRef(elsewhere)],
+        ]);
+        assert.deepEqual(yield* Ref.get(snapshots.synced), [sandboxSnapshotRef(owner)]);
+        const failed = yield* getSandbox(sandboxId);
+        assert.equal(failed?.state, "sleeping");
+        assert.isNull(failed?.sleepSnapshotAt);
+
+        yield* dispatch({
+          type: "sandbox.wake",
+          commandId: CommandId.make("wake:snapshot-fails"),
+          threadId: owner,
+          sandboxId,
+        });
+        yield* runAnswering(runtime, answerStart);
+        yield* attachAndRelease(runtime, owner, sandboxId, 2);
+        yield* Ref.set(hang, true);
+        yield* sleep(2);
+        const run = yield* runtime.worker.drain(1).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("15 seconds");
+        yield* answerStop(yield* Queue.take(runtime.calls));
+        assert.equal(yield* Fiber.join(run), 1);
+        const timedOut = yield* getSandbox(sandboxId);
+        assert.equal(timedOut?.state, "sleeping");
+        assert.isNull(timedOut?.sleepSnapshotAt);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("sleeps an idle machine at its deadline", () =>
@@ -1301,8 +1420,10 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
 
   it.effect("fails a sandbox whose runner never connects at the boot deadline", () =>
     Effect.gen(function* () {
-      const runtime = yield* makeSandboxRuntime();
-      const { sandboxId } = yield* provisioned("deadline");
+      const snapshots = yield* makeSnapshotFakes();
+      const runtime = yield* makeSandboxRuntime(undefined, snapshots.layer);
+      const { threadId, sandboxId } = yield* provisioned("deadline");
+      yield* setWorktree(threadId, `/t3-sandbox/${sandboxId}/deadline`);
       const sweep = yield* SandboxLifecycleWorker.makeSweep.pipe(
         Effect.provide(runtime.layerDriver),
       );
@@ -1329,6 +1450,8 @@ it.layer(layerTest)("sandbox lifecycle worker", (it) => {
         state: "failed",
         driverRef: `pair-0f1e2d3c-${sandboxId}-g1`,
       });
+      // A machine that never booted has no working tree to keep.
+      assert.deepEqual(yield* Ref.get(snapshots.captures), []);
     }).pipe(Effect.scoped),
   );
 });

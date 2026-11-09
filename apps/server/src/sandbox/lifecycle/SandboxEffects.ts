@@ -9,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as CheckpointService from "../../orchestration-v2/CheckpointService.ts";
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -31,6 +34,7 @@ import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
 import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
+import { sandboxSnapshotRef } from "../mirror/CheckpointMirror.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import { SANDBOX_BACKEND_MISSING, type SandboxEffectRequest } from "./SandboxDecisions.ts";
@@ -100,6 +104,7 @@ export class SandboxEffects extends Context.Service<
 >()("t3/sandbox/lifecycle/SandboxEffects") {}
 
 const DRIVER_RETRY = { schedule: Schedule.spaced("2 seconds"), times: 3 } as const;
+const SNAPSHOT_TIMEOUT = Duration.seconds(15);
 
 const operationOf = (type: DriverEffectRequest["type"]) =>
   type.slice("sandbox.".length) as Exclude<SandboxEffectOperation, "report">;
@@ -152,6 +157,7 @@ const make = Effect.gen(function* () {
   const credentials = yield* SandboxCredentialRevocation.SandboxCredentialRevocation;
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
+  const checkpoints = yield* Effect.serviceOption(CheckpointService.CheckpointServiceV2);
 
   // The server provides it; without it a re-armed checkout waits for the next restart's recovery.
   const threadLaunch = yield* Effect.serviceOption(ThreadLaunch.ThreadLaunchService);
@@ -213,6 +219,58 @@ const make = Effect.gen(function* () {
             new SandboxEffectError({ sandboxId: record.id, operation, retryable: true, cause }),
         ),
       ),
+  );
+
+  /** The capture instant once every attached checkout's working tree is in the mirror, else null. */
+  const snapshotBeforeSleep = Effect.fn("SandboxEffects.snapshotBeforeSleep")(
+    function* (record: OrchestrationV2Sandbox) {
+      if (Option.isNone(checkpoints) || Option.isNone(mirrorSync)) return null;
+      const rows = yield* projections.listSandboxThreads(record.id);
+      // Side chats share the parent's checkout: the owner, else the oldest attached, names its ref.
+      const namers = new Map<string, ThreadId>();
+      for (const threadId of new Set([record.ownerThreadId, ...rows.map((row) => row.threadId)])) {
+        const worktreePath = (yield* projections.getThreadShell(threadId))?.worktreePath;
+        if (worktreePath == null || namers.has(worktreePath)) continue;
+        namers.set(worktreePath, threadId);
+      }
+      if (namers.size === 0) return null;
+      const capturedAt = yield* DateTime.now;
+      const synced = yield* Effect.forEach(
+        namers,
+        ([cwd, threadId]) => {
+          const ref = sandboxSnapshotRef(threadId);
+          return checkpoints.value
+            .captureSnapshot({ cwd, ref })
+            .pipe(
+              Effect.flatMap((status) =>
+                status === "ready"
+                  ? mirrorSync.value.syncRefs({ threadId, cwd, checkpointRefs: [ref] })
+                  : Effect.succeed(false),
+              ),
+            );
+        },
+        { concurrency: "unbounded" },
+      );
+      return synced.every(Boolean) ? capturedAt : null;
+    },
+    Effect.timeoutOption(SNAPSHOT_TIMEOUT),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.logWarning(
+            "The working-tree snapshot timed out; the machine sleeps without it",
+          ).pipe(Effect.as(null)),
+        onSome: Effect.succeed,
+      }),
+    ),
+    // Never fails the stop: the sleep goes ahead and reads fall back to checkpoints.
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.succeed(null)
+        : Effect.logWarning("Could not snapshot the machine's working tree", cause).pipe(
+            Effect.as(null),
+          ),
+    ),
   );
 
   const generationFields = (record: OrchestrationV2Sandbox) => ({
@@ -397,7 +455,10 @@ const make = Effect.gen(function* () {
           if (started) return;
           return yield* reportMissing(record);
         }
-        case "sandbox.stop":
+        case "sandbox.stop": {
+          // A boot-timeout stop (`failed`) has no work to keep.
+          const sleepSnapshotAt =
+            record.state === "sleeping" ? yield* snapshotBeforeSleep(record) : null;
           // A settled thread's last diff must be in the mirror before its disk goes away.
           if (Option.isSome(mirrorSync)) yield* mirrorSync.value.flush(record.id);
           if (record.driverRef !== null) yield* callIgnoringMissing(driver.stop(record.driverRef));
@@ -406,7 +467,9 @@ const make = Effect.gen(function* () {
             type: "sandbox.stopped",
             commandId: CommandId.make(`sandbox-stopped:${record.id}:${record.generation}`),
             ...generationFields(record),
+            ...(sleepSnapshotAt === null ? {} : { sleepSnapshotAt }),
           });
+        }
         case "sandbox.destroy":
           return yield* destroy(record, driver, callIgnoringMissing);
         case "sandbox.status":

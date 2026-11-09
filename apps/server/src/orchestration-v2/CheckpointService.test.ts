@@ -5,6 +5,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   ProviderThreadId,
@@ -169,5 +170,55 @@ it.effect("captures a sandbox's baseline and turn in its runner, not with the se
         ),
       ),
     );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a second snapshot of a sandbox checkout moves its ref to the newer tree", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-snapshot-" });
+    const git = (...args: ReadonlyArray<string>) =>
+      spawner.string(
+        ChildProcess.make("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...args], { cwd }),
+      );
+    yield* git("init");
+    yield* fs.writeFileString(`${cwd}/a.txt`, "one\n");
+    yield* git("add", ".");
+    yield* git("commit", "-m", "initial");
+    const ref = CheckpointRef.make("refs/t3/sandbox/dGhyZWFk/snapshot");
+
+    const snapshots = yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      yield* fs.writeFileString(`${cwd}/a.txt`, "one\ntwo\n");
+      const first = yield* checkpoints.captureSnapshot({ cwd, ref });
+      yield* fs.writeFileString(`${cwd}/b.txt`, "new\n");
+      const second = yield* checkpoints.captureSnapshot({ cwd, ref });
+      return [first, second];
+    }).pipe(
+      Effect.provide(
+        CheckpointService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              NodeCrypto.layer,
+              Layer.mock(CheckpointStore.CheckpointStore)({}),
+            ),
+          ),
+          Layer.provide(WorkspaceHostLoopback.layerLoopback(NodeOS.tmpdir())),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+
+    assert.deepEqual(snapshots, ["ready", "ready"]);
+    assert.equal(yield* git("show", `${ref}:a.txt`), "one\ntwo\n");
+    assert.equal(yield* git("show", `${ref}:b.txt`), "new\n");
+    assert.equal(
+      (yield* git("rev-parse", `${ref}^`)).trim(),
+      (yield* git("rev-parse", "HEAD")).trim(),
+    );
+    // The working tree and index are untouched: both edits are still uncommitted.
+    assert.equal(yield* git("status", "--porcelain"), " M a.txt\n?? b.txt\n");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

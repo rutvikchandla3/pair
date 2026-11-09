@@ -1,4 +1,4 @@
-import { ProjectId, type ThreadId } from "@t3tools/contracts";
+import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -95,6 +95,10 @@ export const mirrorGitDir = (path: Path.Path, stateDir: string, projectId: Proje
 /** A thread's own mirror namespace; the id is encoded because a ThreadId may not be a valid ref segment. */
 export const sandboxThreadRefPrefix = (threadId: ThreadId) =>
   `refs/t3/sandbox/${Base64Url.encode(threadId)}/`;
+
+/** A checkout's working tree when its machine last went to sleep; same name in clone and mirror. */
+export const sandboxSnapshotRef = (threadId: ThreadId) =>
+  CheckpointRef.make(`${sandboxThreadRefPrefix(threadId)}snapshot`);
 
 interface BundleHeader {
   readonly prerequisites: ReadonlyArray<string>;

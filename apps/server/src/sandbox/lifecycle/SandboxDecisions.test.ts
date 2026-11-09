@@ -324,8 +324,11 @@ const rows: ReadonlyArray<Row> = [
   [
     "sleep a ready sandbox",
     { type: "sandbox.sleep", ...base },
-    record(),
-    { next: { state: "sleeping", sleepReason: "manual" }, effects: ["sandbox.stop"] },
+    record({ sleepSnapshotAt: earlier }),
+    {
+      next: { state: "sleeping", sleepReason: "manual", sleepSnapshotAt: null },
+      effects: ["sandbox.stop"],
+    },
   ],
   [
     "sleep with a run on a side chat",
@@ -344,8 +347,11 @@ const rows: ReadonlyArray<Row> = [
   [
     "auto-sleep once the owner is settled and its fork archived",
     autoSleep(),
-    record(),
-    { next: { state: "sleeping", sleepReason: "settled" }, effects: ["sandbox.stop"] },
+    record({ sleepSnapshotAt: earlier }),
+    {
+      next: { state: "sleeping", sleepReason: "settled", sleepSnapshotAt: null },
+      effects: ["sandbox.stop"],
+    },
     [attached(owner, { settled: true }), attached(fork, { archived: true })],
   ],
   [
@@ -386,8 +392,11 @@ const rows: ReadonlyArray<Row> = [
   [
     "auto-sleep idle with only a question past its hold",
     autoSleep("idle"),
-    record(),
-    { next: { state: "sleeping", sleepReason: "idle" }, effects: ["sandbox.stop"] },
+    record({ sleepSnapshotAt: earlier }),
+    {
+      next: { state: "sleeping", sleepReason: "idle", sleepSnapshotAt: null },
+      effects: ["sandbox.stop"],
+    },
     [
       attached(owner, {
         activeRun: true,
@@ -416,16 +425,28 @@ const rows: ReadonlyArray<Row> = [
     "wrong-state",
   ],
   [
-    "stopped while ready",
+    "stopped while ready drops an older sleep's snapshot",
     { type: "sandbox.stopped", ...at(2) },
-    record(),
-    { next: { state: "sleeping" }, effects: [] },
+    record({ sleepSnapshotAt: earlier }),
+    { next: { state: "sleeping", sleepSnapshotAt: null }, effects: [] },
   ],
   [
     "stopped while sleeping",
     { type: "sandbox.stopped", ...at(2) },
     record({ state: "sleeping" }),
     "NoOp",
+  ],
+  [
+    "stopped after a snapshot records its time",
+    { type: "sandbox.stopped", ...at(2), sleepSnapshotAt: now },
+    record({ state: "sleeping", sleepSnapshotAt: null }),
+    { next: { state: "sleeping", sleepSnapshotAt: now }, effects: [] },
+  ],
+  [
+    "a wake keeps the last snapshot's time",
+    { type: "sandbox.wake", ...base },
+    record({ state: "sleeping", sleepSnapshotAt: earlier }),
+    { next: { state: "waking", sleepSnapshotAt: earlier }, effects: ["sandbox.start"] },
   ],
   [
     "stopped while failed keeps the failure",

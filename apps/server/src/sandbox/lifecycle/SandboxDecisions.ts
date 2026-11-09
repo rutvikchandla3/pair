@@ -512,7 +512,9 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
       if (record.state !== "ready") return refuse("wrong-state");
       return busy
         ? refuse("active-run")
-        : update({ state: "sleeping", sleepReason: "manual" }, ["sandbox.stop"]);
+        : update({ state: "sleeping", sleepReason: "manual", sleepSnapshotAt: null }, [
+            "sandbox.stop",
+          ]);
     case "sandbox.discard":
       if (record.state === "ready" && busy) return refuse("active-run");
       // Destroy stops a running sandbox too, so no separate stop effect.
@@ -541,7 +543,9 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         }
       }
       // Sleeping from the decision on, so a prompt before the stop runs wakes after it.
-      return update({ state: "sleeping", sleepReason: command.reason }, ["sandbox.stop"]);
+      return update({ state: "sleeping", sleepReason: command.reason, sleepSnapshotAt: null }, [
+        "sandbox.stop",
+      ]);
     }
   }
 
@@ -584,10 +588,16 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
         ? update({ runnerLostAt: record.runnerLostAt ?? now }, ["sandbox.status"])
         : refuse("wrong-state");
     case "sandbox.stopped":
+      if (record.state === "sleeping") {
+        return command.sleepSnapshotAt === undefined
+          ? noOp
+          : update({ sleepSnapshotAt: command.sleepSnapshotAt });
+      }
       // A failed sandbox keeps its failure; its backend stopping changes nothing.
-      if (record.state === "sleeping" || record.state === "failed") return noOp;
+      if (record.state === "failed") return noOp;
+      // Stopped under us, so no snapshot of this sleep; an older one would mislabel the files.
       return record.state === "ready" || record.state === "waking"
-        ? update({ state: "sleeping", runnerLostAt: null })
+        ? update({ state: "sleeping", runnerLostAt: null, sleepSnapshotAt: null })
         : refuse("wrong-state");
     case "sandbox.destroyed":
       return record.state === "destroyed" ? noOp : update({ state: "destroyed" });

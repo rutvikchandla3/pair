@@ -25,6 +25,12 @@ export class MirrorSyncWorker extends Context.Service<
     readonly flush: (sandboxId: SandboxId) => Effect.Effect<void>;
     /** For tests: runs one pass over every pending thread. */
     readonly drain: Effect.Effect<void>;
+    /** Syncs these refs of one checkout now; false on any failure, bounded at 15 s; never fails. */
+    readonly syncRefs: (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
+    }) => Effect.Effect<boolean>;
   }
 >()("t3/sandbox/mirror/MirrorSyncWorker") {}
 
@@ -159,6 +165,19 @@ const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
+  const syncRefs: MirrorSyncWorker["Service"]["syncRefs"] = (input) =>
+    syncCheckpoints(input).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.succeed(false)
+          : Effect.logWarning("Could not sync refs to the checkpoint mirror", {
+              threadId: input.threadId,
+              cause,
+            }).pipe(Effect.as(false)),
+      ),
+    );
+
   const hooks: MirrorSync.MirrorHooksShape = {
     afterCapture: ({ threadId, scope, checkpoints }) => {
       // Local and worktree captures stop at this prefix check.
@@ -198,9 +217,10 @@ const make = Effect.gen(function* () {
     },
   };
 
-  return Context.make(MirrorSyncWorker, MirrorSyncWorker.of({ enqueue, flush, drain })).pipe(
-    Context.add(MirrorSync.MirrorHooks, hooks),
-  );
+  return Context.make(
+    MirrorSyncWorker,
+    MirrorSyncWorker.of({ enqueue, flush, drain, syncRefs }),
+  ).pipe(Context.add(MirrorSync.MirrorHooks, hooks));
 });
 
 /** The retry worker and the real MirrorHooks, which hand failed syncs to it. */

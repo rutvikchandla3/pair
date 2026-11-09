@@ -147,6 +147,11 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
+  /** Commits a sandbox checkout's working tree to `ref`, replacing it; a local path is `missing`. */
+  readonly captureSnapshot: (input: {
+    readonly cwd: string;
+    readonly ref: CheckpointRef;
+  }) => Effect.Effect<CheckpointCapture.TurnCapture["status"]>;
 }
 
 export class CheckpointServiceV2 extends Context.Service<
@@ -513,7 +518,34 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const captureSnapshot: CheckpointServiceV2Shape["captureSnapshot"] = Effect.fn(
+      "CheckpointService.captureSnapshot",
+    )(
+      function* (input) {
+        const coarse = yield* coarseFor(input.cwd);
+        if (coarse === undefined) return "missing" as const;
+        // `turn` overwrites the ref where `baseline` keeps it; previous = ref skips the file summary.
+        const captured = yield* coarse.checkpointCapture({
+          _tag: "turn",
+          cwd: input.cwd,
+          checkpointRef: input.ref,
+          previousCheckpointRef: input.ref,
+        });
+        return captured.status;
+      },
+      (effect, input) =>
+        withWorkspaceLock(input.cwd, effect).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not snapshot a sandbox checkout", {
+              cwd: input.cwd,
+              cause,
+            }).pipe(Effect.as("error" as const)),
+          ),
+        ),
+    );
+
     return CheckpointServiceV2.of({
+      captureSnapshot,
       prepareRootRunScope: (input) =>
         makeRootRunScope({ ...input, idAllocator }).pipe(
           Effect.mapError(

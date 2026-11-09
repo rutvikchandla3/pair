@@ -869,8 +869,9 @@ because it is the one change to the stop path, and three rows read what it write
     previousCheckpointRef: ref })`. `turn` always overwrites the ref (`captureTurn`,
     `CheckpointCapture.ts` 50); `baseline` keeps an existing one. Passing the same ref as previous
     makes the file summary empty, which is the point; say so in a one-line comment. Returns
-    `"ready" | "missing" | "error"` from the result's `status`. No coarse host (a local path) returns
-    `"missing"`; snapshots are cloud-only.
+    `"ready" | "missing" | "error"` from the result's `status`, and never fails: a failed runner
+    call logs and returns `"error"`. No coarse host (a local path) returns `"missing"`; snapshots
+    are cloud-only.
   - `apps/server/src/sandbox/mirror/MirrorSyncWorker.ts`: add `syncRefs({ threadId, cwd,
     checkpointRefs }) => Effect<boolean>` to the service (20). It calls `MirrorSync.sync`, bounded
     by `SYNC_TIMEOUT` (16), and returns false on any failure or timeout. It never fails.
@@ -883,7 +884,8 @@ because it is the one change to the stop path, and three rows read what it write
       owner thread, else the oldest attached, names the ref). For each:
       `captureSnapshot` then `syncRefs({ threadId, cwd: worktreePath, checkpointRefs: [ref] })`.
       All threads run concurrently, the whole step under one 15 s `Effect.timeoutOption`. Returns
-      the capture instant when every checkout captured `ready` and synced, else `null`.
+      the capture instant when every checkout captured `ready` and synced, else `null` (also when
+      no attached thread has a checkout).
     - `sandbox.stop` case (388): when `record.state === "sleeping"` (manual, settled, archived, and
       2.1's idle and cap-pressure sleeps), run `snapshotBeforeSleep` before `mirrorSync.flush`. A
       boot-timeout stop (`record.state === "failed"`, decider 462–467) skips it. Pass the result to
@@ -900,7 +902,8 @@ because it is the one change to the stop path, and three rows read what it write
       new sleep has no snapshot yet. Track C's 2.1 idle arm does the same.
     - `sandbox.stopped` (454): on `sleeping`, `command.sleepSnapshotAt === undefined ? noOp :
       update({ sleepSnapshotAt: command.sleepSnapshotAt })`. `failed` stays `noOp`. The
-      ready/waking arm is unchanged.
+      ready/waking arm (a machine stopped under us) also patches `sleepSnapshotAt: null`: it took
+      no snapshot, and an older sleep's time would label the files with the wrong snapshot.
     - `nextGeneration` (357) leaves `sleepSnapshotAt` alone, so 2.13's rebuild can say which
       snapshot it restored.
 - **Types and services:** `CheckpointServiceV2.captureSnapshot`; `MirrorSyncWorker.syncRefs`;

@@ -478,6 +478,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   failure: Schema.NullOr(SandboxFailure),
   /** Set once the driver created from a base image; absent on records from before. */
   baseImage: Schema.optionalKey(SandboxBaseImageInfo),
+  /** When this sleep's working-tree snapshot reached the mirror; null until it does. */
+  sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -492,6 +494,7 @@ export const OrchestrationV2SandboxJson = OrchestrationV2Sandbox.mapFields((fiel
     })),
   ),
   runnerLostAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 }));
@@ -3923,7 +3926,11 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ...SandboxGenerationCommandFields,
     runnerBootId: TrimmedNonEmptyString,
   }),
-  Schema.Struct({ type: Schema.Literal("sandbox.stopped"), ...SandboxGenerationCommandFields }),
+  Schema.Struct({
+    type: Schema.Literal("sandbox.stopped"),
+    ...SandboxGenerationCommandFields,
+    sleepSnapshotAt: Schema.optionalKey(Schema.DateTimeUtc),
+  }),
   Schema.Struct({ type: Schema.Literal("sandbox.destroyed"), ...SandboxGenerationCommandFields }),
   Schema.Struct({
     type: Schema.Literal("sandbox.failed"),
