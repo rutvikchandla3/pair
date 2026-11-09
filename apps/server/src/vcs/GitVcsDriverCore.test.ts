@@ -1703,19 +1703,23 @@ describe("rejected git refs", () => {
     "workflow scope",
   ];
 
-  const failWith = (stderr: string) => {
-    const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeFailedHandle(stderr)));
-    const layer = GitVcsDriver.layer.pipe(
+  const layerFailingWith = (stderr: string) =>
+    GitVcsDriver.layer.pipe(
       Layer.provide(layerServerConfig),
       Layer.provide(WorkspaceHostTesting.layerFromContext),
       Layer.provideMerge(
         Layer.merge(
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(makeFailedHandle(stderr))),
+          ),
         ),
       ),
     );
-    return Effect.gen(function* () {
+
+  const failWith = (stderr: string) =>
+    Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
       return yield* driver
         .execute({
@@ -1724,8 +1728,7 @@ describe("rejected git refs", () => {
           args: ["push", "origin", "HEAD"],
         })
         .pipe(Effect.flip);
-    }).pipe(Effect.provide(layer));
-  };
+    }).pipe(Effect.provide(layerFailingWith(stderr)));
 
   it.effect.each([
     {
@@ -1772,6 +1775,83 @@ describe("rejected git refs", () => {
       assert.equal(error.reason, undefined);
       assert.equal(error.detail, "Git command exited with a non-zero status.");
     }),
+  );
+
+  const tokenUrl = "https://x-access-token:token-123@github.com/acme/app.git";
+  it.effect.each([
+    {
+      label: "the host doesn't resolve",
+      stderr: [
+        "Cloning into '/sandbox/repo'...",
+        `fatal: unable to access '${tokenUrl}/': Could not resolve host: github.com`,
+      ],
+      detail: "Could not resolve host: github.com",
+    },
+    {
+      label: "the remote names a URL with a token in it",
+      stderr: [`fatal: repository '${tokenUrl}/' not found`],
+      reason: "remote_unreachable" as const,
+      detail: "repository 'https://github.com/acme/app.git/' not found",
+    },
+    {
+      label: "the remote names a URL with a token in its query",
+      stderr: [
+        "fatal: repository 'https://github.com/acme/app.git/?access_token=abc123' not found",
+      ],
+      reason: "remote_unreachable" as const,
+      detail: "repository 'https://github.com/acme/app.git/' not found",
+    },
+    {
+      label: "the server says something first",
+      stderr: ["remote: token-123", "fatal: write error: No space left on device"],
+      detail: "write error: No space left on device",
+    },
+    {
+      label: "only the server says anything",
+      stderr: ["remote: Repository token-123 is archived.", "remote: fatal: token-123"],
+      detail: "git clone failed",
+    },
+    {
+      label: "git echoes the credential header",
+      stderr: [
+        "12:00:00.000000 http.c:756 => Send header: Authorization: Basic eC1hY2Nlc3MtdG9rZW46dG9rZW4tMTIz",
+        "error: bogus config parameter: http.https://github.com/.extraheader=Authorization: Basic eC1hY2Nlc3MtdG9rZW46dG9rZW4tMTIz",
+        "fatal: unable to parse command-line config",
+      ],
+      detail: "unable to parse command-line config",
+    },
+    {
+      label: "the credential helper echoes its answer",
+      stderr: [
+        "username=x-access-token",
+        "password=token-123",
+        "error: helper output: password=token-123",
+        `fatal: could not read Password for '${tokenUrl}': terminal prompts disabled`,
+      ],
+      reason: "authentication_failed" as const,
+      detail:
+        "could not read Password for 'https://github.com/acme/app.git': terminal prompts disabled",
+    },
+    {
+      // Cut before redacting, the token would survive without the `@` that marks it.
+      label: "the line is too long to quote whole",
+      stderr: [`fatal: ${"tree ".repeat(42)}${tokenUrl} ${"tree ".repeat(10)}`],
+      detail: `${`${"tree ".repeat(42)}https://github.com/acme/app.git ${"tree ".repeat(10)}`.slice(0, 239)}…`,
+    },
+  ])("says why a clone failed without credentials: $label", ({ stderr, detail, ...row }) =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const error = yield* driver
+        .cloneRepository({ cwd: "/sandbox", url: tokenUrl, path: "/sandbox/repo" })
+        .pipe(Effect.flip);
+
+      assert.equal(error.reason, "reason" in row ? row.reason : undefined);
+      assert.equal(error.detail, detail);
+      for (const text of ["token-", "abc123", "eC1hY2Nlc3MtdG9rZW46dG9rZW4tMTIz"]) {
+        assert.notInclude(error.detail, text);
+        assert.notInclude(error.message, text);
+      }
+    }).pipe(Effect.provide(layerFailingWith(stderr.join("\n")))),
   );
 });
 

@@ -4533,8 +4533,10 @@ Commits, in order:
       (410); leave it.
     - `apps/server/src/vcs/GitVcsDriverCore.ts`: add `cloneFailureDetail(stderr): string |
       undefined`. It takes the first line starting `fatal: ` or `error: ` and drops that prefix.
-      It drops a leading `unable to access '…': ` and applies `redactUrlCredentials`. It caps the
-      result at 240 characters with `…`, and returns undefined when no line matches.
+      It applies `redactUrlCredentials`, then drops a leading `unable to access '…': `. A line that
+      still names a credential (`Authorization:`, `extraheader`, `password=`, a `gh?_` token) is
+      skipped for the next one. It caps the result at 240 characters with `…`, and returns
+      undefined when no line matches.
       `cloneRepository` (1771) runs with `allowNonZeroExit: true`. On a non-zero exit it fails with
       `gitExitError("GitVcsDriver.cloneRepository", input.cwd, args, result,
       cloneFailureDetail(result.stderr) ?? "git clone failed")` (1155). That keeps
@@ -4569,8 +4571,8 @@ Commits, in order:
     worktree: Git command failed in GitVcsDriver.cloneRepository (/sandbox): git clone failed` →
     `Pair Cloud couldn't clone ${remote}: ${detail}`, for example `Pair Cloud couldn't clone
     github.com/acme/app: Could not resolve host: github.com`. When `detail` matches
-    `/Could not resolve host|Failed to connect|timed out|Network is unreachable/i`, add ` Run Test
-    in Settings → Cloud to check the machine's network.`
+    `/Could not resolve host|Failed to connect|timed out|Network is unreachable/i`, add `. Run
+    Test in Settings → Cloud to check the machine's network.`
 - **Proposed gap answers.**
   - **Proposed:** quote the first diagnostic line rather than add fixed diagnoses. The cause G2
     hit (DNS) and the likely next ones (firewall, disk full, an RPC drop mid-clone) are all in that

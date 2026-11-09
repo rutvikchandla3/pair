@@ -170,6 +170,19 @@ export function normalizeGitRemoteUrl(value: string): string {
   return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
 }
 
+// Userinfo can contain @; remove through the last one before the host boundary.
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi;
+// Git leaves quotes inside query tokens unescaped; consume through the closing quote.
+const QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\1(?=[\s:]|$)/gi;
+const URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
+
+export function redactUrlCredentials(text: string): string {
+  return text
+    .replace(QUOTED_URL_QUERY, "$1$2$1")
+    .replace(URL_QUERY, "$1")
+    .replace(URL_WITH_USERINFO, "$1");
+}
+
 function* gitConfigLines(configText: string) {
   let pending = "";
   let quoted = false;

@@ -36,6 +36,9 @@ import * as MirrorSync from "../mirror/MirrorSync.ts";
 import * as RunnerHub from "../runnerHub/RunnerHub.ts";
 import { SANDBOX_ROOT } from "../../workspaceHost/WorkspaceHost.ts";
 
+const NETWORK_FAILURE =
+  /Could not resolve host|Failed to connect|timed out|Network is unreachable/i;
+
 export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("CloudLaunchError", {
   projectId: ProjectId,
   reason: Schema.Literals([
@@ -45,6 +48,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "base-ref-missing",
     "branch-not-pushed",
     "repo-unreadable",
+    "clone-failed",
     "no-branch",
     "sandbox-failed",
     "local-launch",
@@ -54,6 +58,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
   branch: Schema.optional(Schema.String),
   /** The remote that was checked, as `host/path`. */
   remote: Schema.optional(Schema.String),
+  /** Git's redacted reason a clone failed. */
+  detail: Schema.optional(Schema.String),
   failure: Schema.optional(SandboxFailure),
 }) {
   override get message(): string {
@@ -70,6 +76,12 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return `${this.branch} is not on ${this.remote}. Push ${this.branch} first.`;
       case "repo-unreadable":
         return `Pair Cloud can't read ${this.remote}. Connect GitHub to clone private repos, in Settings → Team.`;
+      case "clone-failed": {
+        const detail = this.detail ?? "git clone failed";
+        return NETWORK_FAILURE.test(detail)
+          ? `Pair Cloud couldn't clone ${this.remote}: ${detail}. Run Test in Settings → Cloud to check the machine's network.`
+          : `Pair Cloud couldn't clone ${this.remote}: ${detail}`;
+      }
       case "no-branch":
         return "Name the existing branch to launch from.";
       case "sandbox-failed":
@@ -261,20 +273,25 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
       snapshotAt: null,
     };
   }
+  const cloning = !(yield* isCheckout(clonePath));
+  const remote = normalizeGitRemoteUrl(url);
   // Git can't tell a missing credential from one without access; both are fixed in Settings → Team.
-  const unreadable = (error: GitCommandError) =>
+  const cloneOrFetchFailed = (error: GitCommandError) =>
     error.reason === "authentication_failed" || error.reason === "remote_unreachable"
-      ? new CloudLaunchError({
-          projectId: input.projectId,
-          reason: "repo-unreadable",
-          remote: normalizeGitRemoteUrl(url),
-        })
-      : error;
+      ? new CloudLaunchError({ projectId: input.projectId, reason: "repo-unreadable", remote })
+      : cloning
+        ? new CloudLaunchError({
+            projectId: input.projectId,
+            reason: "clone-failed",
+            remote,
+            detail: error.detail,
+          })
+        : error;
   yield* (
-    (yield* isCheckout(clonePath))
-      ? git.fetchRemote({ cwd: clonePath, remoteName: "origin" })
-      : git.cloneRepository({ cwd: root, url, path: clonePath })
-  ).pipe(Effect.mapError(unreadable));
+    cloning
+      ? git.cloneRepository({ cwd: root, url, path: clonePath })
+      : git.fetchRemote({ cwd: clonePath, remoteName: "origin" })
+  ).pipe(Effect.mapError(cloneOrFetchFailed));
   const mirror = yield* Effect.serviceOption(MirrorSync.MirrorSync);
   if (input.existingWorktreePath !== null && Option.isSome(mirror)) {
     const restored = yield* mirror.value.restore({

@@ -2962,8 +2962,24 @@ it.effect.each([
         ),
     } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
     machineFails: false,
+    reason: "Pair Cloud couldn't clone github.com/acme/app: git clone failed",
+  },
+  {
+    name: "the machine can't resolve the remote's host",
+    git: {
+      cloneRepository: () =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.cloneRepository",
+            command: "git clone",
+            cwd: "/sandbox",
+            detail: "Could not resolve host: github.com",
+          }),
+        ),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
+    machineFails: false,
     reason:
-      "Workspace preparation failed during provision worktree: Git command failed in GitVcsDriver.cloneRepository (/sandbox): git clone failed (path_already_exists)",
+      "Pair Cloud couldn't clone github.com/acme/app: Could not resolve host: github.com. Run Test in Settings → Cloud to check the machine's network.",
   },
 ])("fails a cloud launch's run when $name", ({ git, workspace, machineFails, reason }) => {
   const harness = cloudHarness(git);

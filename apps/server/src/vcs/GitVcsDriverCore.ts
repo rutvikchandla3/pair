@@ -32,7 +32,7 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { dedupeRemoteBranchesWithLocalMatches, redactUrlCredentials } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -616,6 +616,29 @@ function fetchFailureDetail(stderr: string): string | undefined {
   }
   if (isRefLockFailure(stderr)) {
     return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
+  }
+  return undefined;
+}
+
+// Unlike the fixed details above, a clone quotes git, as SourceControlRepositoryService.runClone
+// does: its first diagnostic line names causes (DNS, a full disk, a dropped connection) no fixed
+// text covers. Only that line, with URL credentials removed; never a `remote:` line.
+const CLONE_DIAGNOSTIC_LINE = /^(?:fatal|error): (.+)$/;
+const NAMES_A_CREDENTIAL =
+  /authorization:|extraheader|\b(?:password|token|secret)=|\bbearer\s|\bgh[oprsu]_\w|github_pat_/i;
+const CLONE_DETAIL_MAX_LENGTH = 240;
+
+function cloneFailureDetail(stderr: string): string | undefined {
+  for (const line of stderr.split(/\r?\n|\r/)) {
+    const diagnostic = CLONE_DIAGNOSTIC_LINE.exec(line)?.[1];
+    if (diagnostic === undefined) continue;
+    const detail = redactUrlCredentials(diagnostic)
+      .replace(/^unable to access '.+?': /, "")
+      .trim();
+    if (detail.length === 0 || NAMES_A_CREDENTIAL.test(detail)) continue;
+    return detail.length > CLONE_DETAIL_MAX_LENGTH
+      ? `${detail.slice(0, CLONE_DETAIL_MAX_LENGTH - 1)}…`
+      : detail;
   }
   return undefined;
 }
@@ -1772,12 +1795,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { allowNonZeroExit: true },
     ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)));
 
-  const cloneRepository: GitVcsDriver.GitVcsDriver["Service"]["cloneRepository"] = (input) =>
-    runGit("GitVcsDriver.cloneRepository", input.cwd, ["clone", "--", input.url, input.path], {
+  const cloneRepository: GitVcsDriver.GitVcsDriver["Service"]["cloneRepository"] = (input) => {
+    const operation = "GitVcsDriver.cloneRepository";
+    const args = ["clone", "--", input.url, input.path];
+    return executeGit(operation, input.cwd, args, {
       // Cloning scales with the remote's size; let it finish or be cancelled.
       timeoutMs: null,
-      fallbackErrorDetail: "git clone failed",
-    });
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.filterOrFail(
+        (result) => result.exitCode === 0,
+        (result) =>
+          gitExitError(
+            operation,
+            input.cwd,
+            args,
+            result,
+            cloneFailureDetail(result.stderr) ?? "git clone failed",
+          ),
+      ),
+      Effect.asVoid,
+    );
+  };
 
   const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
     remoteExists({ cwd, remoteName: "origin" });
