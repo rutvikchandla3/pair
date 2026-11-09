@@ -1,6 +1,8 @@
 import * as NodeUtil from "node:util";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -216,7 +218,18 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         }
         yield* Console.log(formatServiceChange(result));
         if (!result.previouslyInstalled) {
-          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+          const { baseDir } = yield* ServerConfig.ServerConfig;
+          const { entries } = yield* readServiceEnv(baseDir);
+          const cloudOnly = yield* Config.Boolean("T3CODE_CLOUD_ONLY").pipe(
+            Config.withDefault(false),
+            (config) => config.parse(ConfigProvider.fromEnv({ env: entries })),
+            Effect.orElseSucceed(() => false),
+          );
+          yield* Console.log(
+            cloudOnly
+              ? `Put a proxy or Tailscale HTTPS in front of it, then sign in with \`t3 auth pairing create --base-url ${entries.T3CODE_PUBLIC_URL?.trim() || "<its URL>"}\`.`
+              : "Run `t3 up` to choose how your other devices reach it.",
+          );
         }
       }),
     ),

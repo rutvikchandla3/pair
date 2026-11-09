@@ -130,6 +130,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     }),
   );
 
+  it.effect.each([
+    { label: "a new server", env: "", says: "Run `t3 up`" },
+    {
+      label: "a new Pair Cloud",
+      env: "T3CODE_CLOUD_ONLY=1\nT3CODE_PUBLIC_URL=https://pair.example.com\n",
+      says: "t3 auth pairing create --base-url https://pair.example.com",
+    },
+    { label: "a bad cloud-only flag", env: "T3CODE_CLOUD_ONLY=maybe\n", says: "Run `t3 up`" },
+  ])("install on $label says how to reach it", (input) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      const { service } = makeTestService({ ...status, installed: false, current: false });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, service),
+      );
+
+      const lines = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "install",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(lines.at(-1)).toContain(input.says);
+    }),
+  );
+
   it.effect("protect refuses root before creating any T3 directories", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
