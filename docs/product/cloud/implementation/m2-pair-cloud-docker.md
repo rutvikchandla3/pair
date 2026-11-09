@@ -4219,12 +4219,14 @@ release, never from `~/pair`. Subagents do not start their own servers. Reach th
    machine-picker choice for local modes, and the desktop's own Settings has no Cloud (capture).
 3. **Cloud from a local project (Mac, Credentials).** On a local clone of
    `rutvikchandla3/pair-cloud-test`, pick **Cloud** on a pushed branch. Run a Haiku turn, a
-   terminal, a side chat and the diff, then **Commit, push & create PR**. The PR opens as the
-   App's bot. Then clear the App ID in Settings → Source Control: `makeSourceFor`
-   (GitCredentialService.ts 123) picks the App whenever one is configured. Set only the member's
-   token (**Use a token instead**) and create a second PR, which opens as the member. Restore the
-   App ID after. Passes when the resolver routes to the matching Pair Cloud project and both PRs
-   open.
+   terminal, a side chat and the diff, then **Commit, push & create PR**. The machine pushes with
+   the App (the log's credential source is `app-installation`), and the PR opens as the member
+   who connected GitHub (`actingCredentialFor`, GitManager.ts 810), else as the server's sign-in
+   with a `Requested by` footer. Then clear the App ID in Settings → Source Control:
+   `makeSourceFor` (GitCredentialService.ts 123) picks the App whenever one is configured. Set
+   only the member's token (**Use a token instead**) and create a second PR, which now pushes with
+   the member's credential. Restore the App ID after. Passes when the resolver routes to the
+   matching Pair Cloud project and both PRs open.
 4. **Unpushed branch (Mac).** Pick **Cloud** on a local-only branch, then on one ahead of its
    pushed copy. Passes on "Push <branch> first" (`branch-not-pushed`), and a warning before send on
    the second.
