@@ -251,7 +251,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const { cloudOnly } = serverConfig;
   const preparationScope = yield* Scope.make("sequential");
   // Keyed by run when there is one, so a re-arm never prepares a run a launch already prepares.
   const scheduledLaunches = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -261,6 +262,7 @@ const make = Effect.gen(function* () {
   const cloudServices = Context.make(GitWorkflow.GitWorkflowService, git).pipe(
     Context.add(ProjectionStore.ProjectionStoreV2, projections),
     Context.add(ServerSettings.ServerSettingsService, serverSettings),
+    Context.add(ServerConfig.ServerConfig, serverConfig),
     Context.add(ThreadManagement.ThreadManagementService, threads),
     (context) =>
       Option.isSome(runnerHub)

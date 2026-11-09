@@ -3640,27 +3640,6 @@ export const OrchestrationV2Command = Schema.Union([
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
-    type: Schema.Literal("delegated_task.request"),
-    ...OrchestrationV2CreationFields,
-    commandId: CommandId,
-    parentThreadId: ThreadId,
-    parentRunId: RunId,
-    parentNodeId: NodeId,
-    task: TrimmedNonEmptyString,
-    title: Schema.optional(TrimmedNonEmptyString),
-    modelSelection: ModelSelection,
-    runtimeMode: RuntimeMode,
-    interactionMode: ProviderInteractionMode,
-    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
-    /** A cloud task's own machine, provisioned in this commit; the `worktree` strategy is checked out there. */
-    sandbox: Schema.optional(
-      Schema.Struct({ sandboxId: SandboxId, driverId: ComputeDriverId, size: SandboxSize }),
-    ),
-    // Defaults to settled_only; fire-and-forget wakes require always.
-    completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
-    createdAt: Schema.optional(Schema.DateTimeUtc),
-  }),
-  Schema.Struct({
     type: Schema.Literal("delegated_task.wake-policy"),
     commandId: CommandId,
     parentThreadId: ThreadId,
@@ -3706,6 +3685,27 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.request"),
+    ...OrchestrationV2CreationFields,
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    parentRunId: RunId,
+    parentNodeId: NodeId,
+    task: TrimmedNonEmptyString,
+    title: Schema.optional(TrimmedNonEmptyString),
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    /** A cloud task's own machine, provisioned in this commit; the `worktree` strategy is checked out there. */
+    sandbox: Schema.optional(
+      Schema.Struct({ sandboxId: SandboxId, driverId: ComputeDriverId, size: SandboxSize }),
+    ),
+    // Defaults to settled_only; fire-and-forget wakes require always.
+    completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    createdAt: Schema.optional(Schema.DateTimeUtc),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

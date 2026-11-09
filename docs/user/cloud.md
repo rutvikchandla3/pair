@@ -12,6 +12,10 @@ as a [background service](./background-service.md).
 Cloud works on servers with one member too. Nothing changes for anyone until an admin adds a
 driver.
 
+New cloud machines start only on a server started with `--cloud-only`, your team's Pair Cloud. On
+any other server, cloud threads made earlier keep their machines: they sleep, wake from their kept
+disk and can be discarded, but a discarded machine is not replaced.
+
 ## Turn on Cloud
 
 Cloud machines are Docker containers. Admins set them up in **Settings → Cloud**:

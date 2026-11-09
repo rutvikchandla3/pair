@@ -86,6 +86,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { canChangeQueuedRun, runStarterId } from "@t3tools/shared/threadCollaboration";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
+import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -8437,7 +8438,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
-      command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "delegated_task.request" }>,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
@@ -10933,6 +10934,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ownerMemberId: thread?.ownerId ?? null,
       attachedThreads,
       admission,
+      cloudOnly,
       now,
     });
     if (decision._tag === "NoOp") return;
@@ -10946,7 +10948,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: `Machine ${command.sandboxId} refused ${command.type}: ${decision.reason}.`,
+            cause:
+              decision.reason === "not-cloud-only"
+                ? NOT_CLOUD_ONLY_MESSAGE
+                : `Machine ${command.sandboxId} refused ${command.type}: ${decision.reason}.`,
           });
     }
     const { next } = decision;
@@ -11109,6 +11114,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode: "start_immediately",
       checkout: null,
       admission: yield* sandboxAdmission.snapshot(record.driverId).pipe(mapProjection),
+      cloudOnly,
       now,
     });
     if (decision._tag === "Refuse") return yield* refuse(decision.message);
@@ -11182,6 +11188,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? { baseRef: firstCheckout.baseRef, branch: thread.branch }
           : null,
       admission,
+      cloudOnly,
       now,
     });
     if (decision._tag === "Send") return command;

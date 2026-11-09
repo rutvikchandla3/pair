@@ -121,6 +121,7 @@ const makeLayerTest = (
           {
             databaseLayer: layerDatabase,
             runEffectWorker: false,
+            cloudOnly: true,
             ...(sandboxAdmission === undefined
               ? {}
               : {

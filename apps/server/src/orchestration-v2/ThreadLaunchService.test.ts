@@ -162,7 +162,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
     layerRegistry,
-    { databaseLayer: layerDatabase, runEffectWorker: false },
+    { databaseLayer: layerDatabase, runEffectWorker: false, cloudOnly: options.cloudOnly ?? false },
   );
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
@@ -2530,6 +2530,7 @@ function cloudHarness(git: Partial<GitWorkflow.GitWorkflowService["Service"]> = 
       Effect.void,
   );
   const harness = makeHarness({
+    cloudOnly: true,
     serverSettings: cloudSettings,
     createWorktree: (input) =>
       Effect.succeed({
@@ -2772,10 +2773,17 @@ it.effect.each([
     workspace: { ...cloudWorkspace, existingBranch: true as const },
     refusal: { _tag: "CloudLaunchError", reason: "no-branch" },
   },
+  {
+    name: "a server that is not cloud-only",
+    settings: cloudSettings,
+    cloudOnly: false,
+    refusal: { _tag: "CloudLaunchError", reason: "not-cloud-only" },
+  },
 ])(
   "refuses a cloud launch for $name before any thread or machine",
-  ({ settings, git, workspace, refusal }) => {
+  ({ settings, git, workspace, cloudOnly = true, refusal }) => {
     const harness = makeHarness({
+      cloudOnly,
       serverSettings: settings,
       ...(git === undefined ? {} : { git }),
     });
@@ -2811,7 +2819,7 @@ it.effect("keeps a cloud run parked when the server stops before its machine is 
               CommandReceiptStore.layer,
               IdAllocator.layer,
               Layer.succeed(ServerConfig.ServerConfig, {
-                cloudOnly: false,
+                cloudOnly: true,
               } as ServerConfig.ServerConfig["Service"]),
             ),
           ),
@@ -2900,6 +2908,7 @@ it.live("launches a cloud thread end to end: machine, runner hello, clone, relea
 
     const fake = yield* FakeComputeDriver.make(ComputeDriverId.make("docker"));
     const harness = makeHarness({
+      cloudOnly: true,
       serverSettings: cloudSettings,
       createWorktree: (input, options) => git.createWorktree(input, options),
       git: {

@@ -22,6 +22,43 @@ describe("WebSocket RPC contracts", () => {
         }),
       ),
     ).toBe(true);
+    // Only the server's launch gate makes a machine.
+    const sandboxId = "sbx_0123456789abcdef0123";
+    const delegated = {
+      type: "delegated_task.request",
+      createdBy: "agent",
+      creationSource: "mcp",
+      commandId: "delegate-1",
+      parentThreadId: "thread-1",
+      parentRunId: "run-1",
+      parentNodeId: "node-1",
+      task: "Look into it",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    };
+    for (const forged of [
+      delegated,
+      { ...delegated, sandbox: { sandboxId, driverId: "docker", size: "default" } },
+      {
+        type: "sandbox.provision",
+        commandId: "provision-1",
+        threadId: "thread-1",
+        sandboxId,
+        projectId: "project-1",
+        driverId: "docker",
+        size: "default",
+      },
+      {
+        type: "sandbox.admit",
+        commandId: "admit-1",
+        threadId: "thread-1",
+        sandboxId,
+        generation: 1,
+      },
+    ]) {
+      expect(Exit.isFailure(decode(forged)), forged.type).toBe(true);
+    }
     expect(
       Exit.isSuccess(
         decode({

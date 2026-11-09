@@ -7,7 +7,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   TurnItemId,
-  type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -2483,7 +2483,7 @@ const make = Effect.gen(function* () {
       // The child's machine clones the remote, so it starts from the pushed branch, never the
       // parent's commit. Its run records `worktree`; the request provisions the machine with it.
       let sandbox: Extract<
-        OrchestrationV2Command,
+        OrchestrationV2ServerCommand,
         { readonly type: "delegated_task.request" }
       >["sandbox"];
       if (input.isolation === "cloud") {

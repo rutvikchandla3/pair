@@ -2,6 +2,9 @@ import type { ProjectId, ServerSettings } from "@t3tools/contracts";
 
 type CloudSettings = Pick<ServerSettings, "sandbox" | "projectSettingsOverrides">;
 
+export const NOT_CLOUD_ONLY_MESSAGE =
+  "New cloud threads run on your team's Pair Cloud. Connect to it to start one.";
+
 export type CloudAvailability =
   | { readonly available: true }
   | {

@@ -103,7 +103,6 @@ export function withCreationProvenance(
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":
-    case "delegated_task.request":
       return { ...command, ...provenance };
     default:
       return command;

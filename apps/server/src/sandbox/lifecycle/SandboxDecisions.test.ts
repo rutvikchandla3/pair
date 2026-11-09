@@ -9,6 +9,7 @@ import {
   SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
+import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
 import type { AdmissionSnapshot } from "./SandboxAdmission.ts";
@@ -89,6 +90,7 @@ type Row = readonly [
     | string,
   attachedThreads?: ReadonlyArray<SandboxAttachedThread>,
   admission?: AdmissionSnapshot,
+  cloudOnly?: boolean,
 ];
 
 const free: AdmissionSnapshot = { running: 0, waiting: 0, cap: 2, startAvailable: true };
@@ -518,26 +520,115 @@ const rows: ReadonlyArray<Row> = [
     record({ state: "sleeping" }),
     "not-owner-thread",
   ],
+  [
+    "provision on a server that is not cloud-only",
+    provision,
+    null,
+    "not-cloud-only",
+    [],
+    free,
+    false,
+  ],
+  [
+    "wake after discard on a server that is not cloud-only",
+    { type: "sandbox.wake", ...base },
+    record({ state: "destroyed" }),
+    "not-cloud-only",
+    [],
+    free,
+    false,
+  ],
+  [
+    "retry without a disk on a server that is not cloud-only",
+    { type: "sandbox.retry", ...base },
+    record({ state: "failed", failure: lost, driverRef: null }),
+    "not-cloud-only",
+    [],
+    free,
+    false,
+  ],
+  [
+    "wake from sleep starts the kept disk anywhere",
+    { type: "sandbox.wake", ...base },
+    record({ state: "sleeping", sleepReason: "idle" }),
+    { next: { state: "waking", generation: 3 }, effects: ["sandbox.start"] },
+    [],
+    free,
+    false,
+  ],
+  [
+    "sleep anywhere",
+    { type: "sandbox.sleep", ...base },
+    record(),
+    { next: { state: "sleeping", sleepReason: "manual" }, effects: ["sandbox.stop"] },
+    [],
+    free,
+    false,
+  ],
+  [
+    "discard anywhere",
+    { type: "sandbox.discard", ...base },
+    record({ state: "sleeping" }),
+    { next: { state: "destroyed" }, effects: ["sandbox.destroy"] },
+    [],
+    free,
+    false,
+  ],
+  [
+    "admit a waiting create on a server that is not cloud-only",
+    { type: "sandbox.admit", ...at(2) },
+    waiting("team-cap"),
+    {
+      next: {
+        state: "failed",
+        admission: null,
+        failure: {
+          code: "not-cloud-only",
+          message: NOT_CLOUD_ONLY_MESSAGE,
+          retryable: false,
+        },
+      },
+      effects: ["sandbox.release-waiters"],
+    },
+    [],
+    free,
+    false,
+  ],
+  [
+    "admit a waiting wake on a server that is not cloud-only starts its kept disk",
+    { type: "sandbox.admit", ...at(2) },
+    record({ state: "waking", admission: { reason: "rate-limit", since: earlier } }),
+    { next: { state: "waking", admission: null }, effects: ["sandbox.start"] },
+    [],
+    free,
+    false,
+  ],
 ];
 
 describe("decideSandboxCommand", () => {
   const cases = rows.map(
-    ([name, command, current, expected, attachedThreads = [], admission = free]) => ({
+    ([
       name,
       command,
       current,
       expected,
-      attachedThreads,
-      admission,
+      attachedThreads = [],
+      admission = free,
+      cloudOnly = true,
+    ]) => ({
+      name,
+      command,
+      current,
+      expected,
+      gathered: { attachedThreads, admission, cloudOnly },
     }),
   );
-  it.each(cases)("$name", ({ command, current, expected, attachedThreads, admission }) => {
+  it.each(cases)("$name", ({ command, current, expected, gathered }) => {
     const decision = decideSandboxCommand({
       command,
       record: current,
       ownerMemberId: MemberId.make("member"),
-      attachedThreads,
-      admission,
+      ...gathered,
       now,
     });
     if (expected === "NoOp") return expect(decision).toEqual({ _tag: "NoOp" });
@@ -833,7 +924,19 @@ describe("decideCloudPrompt", () => {
       threadId: sideChat,
       expected: { _tag: "Refuse", message: "Gone." },
     },
-  ])("$name", ({ current, threadId = owner, expected }) => {
+    {
+      name: "a discarded machine on a server that is not cloud-only points at Pair Cloud",
+      current: record({ state: "destroyed" }),
+      cloudOnly: false,
+      expected: { _tag: "Refuse", message: NOT_CLOUD_ONLY_MESSAGE },
+    },
+    {
+      name: "a sleeping machine on a server that is not cloud-only still wakes",
+      current: record({ state: "sleeping", sleepReason: "settled" }),
+      cloudOnly: false,
+      expected: { _tag: "Defer", workspaceStrategy: undefined, state: "waking", generation: 3 },
+    },
+  ])("$name", ({ current, threadId = owner, cloudOnly = true, expected }) => {
     const decision = decideCloudPrompt({
       record: current,
       commandId: CommandId.make("prompt"),
@@ -841,6 +944,7 @@ describe("decideCloudPrompt", () => {
       dispatchMode: "start_immediately",
       checkout,
       admission: free,
+      cloudOnly,
       now,
     });
     if (!("state" in expected)) return expect(decision).toEqual(expected);

@@ -1790,6 +1790,8 @@ split, and both need careful review.
 - **Migrations:** none.
 - **Proposed gap answer.** A waiting create on a server that isn't cloud-only fails for good on its
   next admit rather than waiting forever. Its thread shows the Pair Cloud message, and Discard works.
+  The sweep sends `sandbox.admit` only while its driver has a free slot (SandboxLifecycleWorker
+  `admitWaiters`), so at a full cap the waiter fails once a slot frees.
 
 **Tests.**
 

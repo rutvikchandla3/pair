@@ -11,6 +11,7 @@ import type {
   SandboxSleepReason,
   ThreadId,
 } from "@t3tools/contracts";
+import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
 import type { OrchestrationEffectRequestV2 } from "../../orchestration-v2/EffectOutbox.ts";
@@ -98,6 +99,8 @@ export interface SandboxDecisionInput {
   readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
   /** Read under the admission lock for commands that can start a machine; null for the rest. */
   readonly admission: AdmissionSnapshot | null;
+  /** Only a cloud-only server makes new machines; others still wake, sleep and discard theirs. */
+  readonly cloudOnly: boolean;
   readonly now: DateTime.Utc;
 }
 
@@ -110,7 +113,8 @@ type SandboxRefusalReason =
   | "in-use"
   | "stale-generation"
   /** `sandbox.admit` with no free slot or start token; the sweep tries again later. */
-  | "no-capacity";
+  | "no-capacity"
+  | "not-cloud-only";
 
 /**
  * Why a machine about to start must wait, or null to start it now. A new start also queues
@@ -322,6 +326,7 @@ export const decideCloudPrompt = (input: {
   /** The base the thread's checkout was first made from, and its branch now. */
   readonly checkout: { readonly baseRef: string; readonly branch: string | null } | null;
   readonly admission: AdmissionSnapshot | null;
+  readonly cloudOnly: boolean;
   readonly now: DateTime.Utc;
 }): CloudPromptDecision => {
   const { record } = input;
@@ -338,6 +343,7 @@ export const decideCloudPrompt = (input: {
     ownerMemberId: record.ownerMemberId,
     attachedThreads: [],
     admission: input.admission,
+    cloudOnly: input.cloudOnly,
     now: input.now,
   });
   // Provisioning and waking release their waiters on hello; nothing more to start.
@@ -345,7 +351,13 @@ export const decideCloudPrompt = (input: {
     return { _tag: "Defer", workspaceStrategy: undefined, wake: null };
   }
   if (decision._tag === "Refuse") {
-    return { _tag: "Refuse", message: record.failure?.message ?? "The machine is not running." };
+    return {
+      _tag: "Refuse",
+      message:
+        decision.reason === "not-cloud-only"
+          ? NOT_CLOUD_ONLY_MESSAGE
+          : (record.failure?.message ?? "The machine is not running."),
+    };
   }
   const wake =
     record.ownerThreadId === input.threadId
@@ -439,7 +451,7 @@ const decideProvision = (
 };
 
 /** 04 §1's state table for M1. */
-export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecision => {
+const decide = (input: SandboxDecisionInput): SandboxDecision => {
   const { command, record, now } = input;
   if (command.type === "sandbox.provision") return decideProvision({ ...input, command });
   if (record === null) return refuse("not-found");
@@ -622,6 +634,33 @@ export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecisi
             ["sandbox.release-waiters"],
           );
   }
+};
+
+/** A decision that would make a new machine is the launch gate's, and only cloud-only servers pass it. */
+const createsMachine = (record: OrchestrationV2Sandbox | null, decision: SandboxDecision) =>
+  decision._tag === "Accept" &&
+  (decision.effects.some((effect) => effect.type === "sandbox.create") ||
+    (decision.next.state === "provisioning" &&
+      (record === null || decision.next.generation !== record.generation)));
+
+/** 04 §1's state table, behind the launch gate. */
+export const decideSandboxCommand = (input: SandboxDecisionInput): SandboxDecision => {
+  const decision = decide(input);
+  if (input.cloudOnly || !createsMachine(input.record, decision)) return decision;
+  // A waiter left by an older server fails visibly, so its thread can discard it.
+  if (input.command.type === "sandbox.admit" && input.record !== null) {
+    return accept(
+      {
+        ...input.record,
+        state: "failed",
+        admission: null,
+        failure: { code: "not-cloud-only", message: NOT_CLOUD_ONLY_MESSAGE, retryable: false },
+        updatedAt: input.now,
+      },
+      ["sandbox.release-waiters"],
+    );
+  }
+  return refuse("not-cloud-only");
 };
 
 type GitCredentialRecord = Extract<

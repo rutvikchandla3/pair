@@ -12,7 +12,7 @@ import {
   type SandboxSize,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
-import { cloudAvailability } from "@t3tools/shared/sandbox";
+import { cloudAvailability, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import { sandboxCredentialSupport } from "@t3tools/shared/sandboxCredentials";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../config.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
@@ -43,6 +44,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "no-branch",
     "sandbox-failed",
     "local-launch",
+    "not-cloud-only",
   ]),
   baseRef: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.String),
@@ -68,6 +70,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return this.failure?.message ?? "The machine stopped before it was ready.";
       case "local-launch":
         return "This server runs threads only in the cloud. Launch it as a cloud thread.";
+      case "not-cloud-only":
+        return NOT_CLOUD_ONLY_MESSAGE;
     }
   }
 }
@@ -100,6 +104,9 @@ export const resolveCloudLaunch = Effect.fn("CloudPreparation.resolveCloudLaunch
   projectId: ProjectId,
   instanceId: ProviderInstanceId,
 ) {
+  if (!(yield* ServerConfig.ServerConfig).cloudOnly) {
+    return yield* new CloudLaunchError({ projectId, reason: "not-cloud-only" });
+  }
   const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
   const availability = cloudAvailability(settings, projectId);
   const sandbox = settings.sandbox;
