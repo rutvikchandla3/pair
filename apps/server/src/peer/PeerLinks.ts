@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentId,
   type ExecutionEnvironmentCapabilities,
+  type ExecutionEnvironmentDescriptor,
   MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
@@ -33,6 +34,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -56,6 +58,8 @@ export interface ResolvedPeerLink {
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
+  /** What that address reported just now, from the same descriptor probe that picked `url`. */
+  readonly capabilities: ExecutionEnvironmentCapabilities;
 }
 
 export const LINKED_ENVIRONMENTS_OFF =
@@ -72,6 +76,13 @@ export class PeerLinks extends Context.Service<
   {
     /** Whether the Linked environments beta (Settings → Labs) is on here. */
     readonly enabled: Effect.Effect<boolean>;
+    /**
+     * The links to a peer that reported `cloudLaunch` when last reached, expired
+     * ones included: they need no beta. None on a cloud-only server, whose links
+     * all need it. Read from the table on each call, since `t3 environment link`
+     * writes it from another process; unreadable is empty.
+     */
+    readonly agentLinks: Effect.Effect<ReadonlySet<EnvironmentId>>;
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     /**
      * The environment answering at `url`, or nothing when it is not a usable
@@ -112,6 +123,7 @@ interface PeerLinkRow {
   readonly last_reached_at: string | null;
   readonly last_error: string | null;
   readonly fenced: number;
+  readonly cloud_launch: number;
 }
 
 const decodeUrls = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -175,6 +187,7 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const enabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -409,9 +422,6 @@ const make = Effect.gen(function* () {
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
-    if (!(yield* enabled)) {
-      return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
-    }
     const urls = [input.url, ...(input.alternateUrls ?? [])];
     // The user picked a machine: link through the addresses that prove to
     // be it, so a reused LAN address never receives the pairing code.
@@ -423,6 +433,12 @@ const make = Effect.gen(function* () {
             input.expectedEnvironmentId,
             input.expectedLabel ?? input.expectedEnvironmentId,
           );
+    // An agent link (a laptop to a cloud-only peer) needs no beta, so the
+    // pairing code goes nowhere else while it is off.
+    const cloudLaunch = peer.capabilities.cloudLaunch === true;
+    if (!(yield* enabled) && (cloudOnly || !cloudLaunch)) {
+      return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
+    }
     const self = yield* environment.getDescriptor;
     if (peer.environmentId === self.environmentId) {
       return yield* new PeerLinkError({
@@ -461,15 +477,16 @@ const make = Effect.gen(function* () {
       yield* sql`
         INSERT INTO peer_environment_links (
           environment_id, secret_name, label, urls_json, access, linked_at, expires_at,
-          last_reached_at, last_error, fenced
+          last_reached_at, last_error, fenced, cloud_launch
         ) VALUES (
           ${linked.environmentId}, ${secretName}, ${linked.label}, ${urlsJson}, ${linked.access},
           ${DateTime.formatIso(linked.linkedAt)}, ${DateTime.formatIso(linked.expiresAt)},
-          ${DateTime.formatIso(now)}, NULL, 1
+          ${DateTime.formatIso(now)}, NULL, 1, ${cloudLaunch ? 1 : 0}
         )
         ON CONFLICT (environment_id) DO UPDATE SET
           secret_name = excluded.secret_name,
           fenced = excluded.fenced,
+          cloud_launch = excluded.cloud_launch,
           label = excluded.label,
           urls_json = excluded.urls_json,
           access = excluded.access,
@@ -495,43 +512,69 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none()),
     );
 
-  /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
-  const withLabel = (link: PeerLink, label: string) =>
-    label === link.label
+  /** The first of the link's addresses that answers as its peer, with what it reported. */
+  const firstAnswering = Effect.fn("PeerLinks.firstAnswering")(function* (link: PeerLink) {
+    for (const url of link.urls) {
+      const found = yield* describe(url);
+      if (Option.isSome(found) && found.value.environmentId === link.environmentId) {
+        return Option.some({ url, peer: found.value });
+      }
+    }
+    return Option.none<{ readonly url: string; readonly peer: ExecutionEnvironmentDescriptor }>();
+  });
+
+  /**
+   * A peer's label follows its machine name, and whether it launches in cloud
+   * follows its mode, so the row takes what its own address answers with.
+   * Writes only on a change.
+   */
+  const withPeer = (
+    link: PeerLink,
+    stored: PeerLinkRow,
+    peer: { readonly label: string; readonly capabilities: ExecutionEnvironmentCapabilities },
+  ) => {
+    const cloudLaunch = peer.capabilities.cloudLaunch === true ? 1 : 0;
+    return peer.label === link.label && cloudLaunch === stored.cloud_launch
       ? Effect.succeed(link)
       : sql`
-          UPDATE peer_environment_links SET label = ${label}
+          UPDATE peer_environment_links SET label = ${peer.label}, cloud_launch = ${cloudLaunch}
           WHERE environment_id = ${link.environmentId}
-        `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
+        `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label: peer.label }));
+  };
 
   const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
-    link: PeerLink,
+    stored: PeerLinkRow,
     now: DateTime.Utc,
-  ): Effect.fn.Return<PeerLinkSummary> {
+  ): Effect.fn.Return<PeerLinkSummary, PeerLinkError> {
+    const link = yield* toLink(stored);
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    let label = link.label;
-    const answered = yield* Effect.findFirst(link.urls, (url) =>
-      describe(url).pipe(
-        Effect.map((found) => {
-          if (Option.isNone(found) || found.value.environmentId !== link.environmentId) {
-            return false;
-          }
-          label = found.value.label;
-          return true;
-        }),
-      ),
-    );
+    const answered = yield* firstAnswering(link);
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
-    return { ...(yield* withLabel(link, label)), status: "reachable" };
+    return { ...(yield* withPeer(link, stored, answered.value.peer)), status: "reachable" };
   });
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
-    const links = yield* Effect.forEach(yield* readRows, toLink);
+    const rows = yield* readRows;
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(links, (link) => statusOf(link, now), {
+    return yield* Effect.forEach(rows, (row) => statusOf(row, now), {
       concurrency: "unbounded",
     });
   });
+
+  const noAgentLinks: ReadonlySet<EnvironmentId> = new Set();
+  const readAgentLinks = sql<{ readonly environment_id: string }>`
+    SELECT environment_id FROM peer_environment_links WHERE cloud_launch = 1
+  `.pipe(
+    NodeSqliteClient.readOnly,
+    Effect.map(
+      (rows): ReadonlySet<EnvironmentId> =>
+        new Set(rows.map((row) => EnvironmentId.make(row.environment_id))),
+    ),
+    Effect.catch((cause) =>
+      Effect.logWarning("Agent links could not be read", cause).pipe(Effect.as(noAgentLinks)),
+    ),
+  );
+  const agentLinks = cloudOnly ? Effect.succeed(noAgentLinks) : readAgentLinks;
 
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
     readRow(environmentId).pipe(
@@ -581,19 +624,8 @@ const make = Effect.gen(function* () {
       }
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
-      let fenced = true;
-      let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        describe(candidate).pipe(
-          Effect.map((found) => {
-            if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
-            fenced = linkLimitsHold(found.value);
-            label = found.value.label;
-            return true;
-          }),
-        ),
-      );
-      if (Option.isNone(url)) {
+      const answered = yield* firstAnswering(link);
+      if (Option.isNone(answered)) {
         return yield* new PeerLinkError({
           reason: "unreachable",
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
@@ -601,16 +633,18 @@ const make = Effect.gen(function* () {
       }
       // A link made before the peer had to fence linked work, or a peer moved
       // back to such a version, would carry work past those limits.
-      if (!fenced) {
+      const { url, peer } = answered.value;
+      if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs a Pair version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
       return {
-        link: yield* withLabel(link, label),
-        url: url.value,
+        link: yield* withPeer(link, row.value, peer),
+        url,
         token: new TextDecoder().decode(stored.value),
+        capabilities: peer.capabilities,
       };
     },
   );
@@ -635,6 +669,7 @@ const make = Effect.gen(function* () {
 
   return PeerLinks.of({
     enabled,
+    agentLinks,
     link,
     describe: describeUrl,
     list,

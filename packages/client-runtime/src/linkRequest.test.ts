@@ -14,6 +14,7 @@ import {
   linkRequestDisplay,
   linkRequestFailureMessage,
   linkRequestInitialMachine,
+  offersAgentLink,
   rankMachinesByHint,
 } from "./linkRequest.ts";
 
@@ -99,6 +100,7 @@ const presentation = (
     readonly saved?: ReadonlyArray<string>;
     readonly reported?: ReadonlyArray<string>;
     readonly connected?: boolean;
+    readonly cloudLaunch?: true;
   } = {},
 ): EnvironmentPresentation & { readonly environmentId: EnvironmentId } => {
   const environmentId = EnvironmentId.make(id);
@@ -136,7 +138,10 @@ const presentation = (
       options.reported === undefined
         ? null
         : ({
-            environment: { platform: { machine: "laptop" } },
+            environment: {
+              platform: { machine: "laptop" },
+              capabilities: options.cloudLaunch ? { cloudLaunch: true } : {},
+            },
             directEndpoints: options.reported.map((httpBaseUrl) => ({
               kind: "tailnet",
               httpBaseUrl,
@@ -192,9 +197,13 @@ describe("linkableMachines", () => {
       reported: ["https://vps.ts.net"],
     });
     const mini = presentation("environment-mini", "Mini", { connected: false });
+    const cloud = presentation("environment-cloud", "Pair Cloud", {
+      reported: ["https://cloud.example.com"],
+      cloudLaunch: true,
+    });
     expect(
       linkableMachines({
-        environments: [here, vps, mini],
+        environments: [here, vps, mini, cloud],
         threadEnvironmentId: here.environmentId,
         links: [{ environmentId: mini.environmentId, status: "unreachable" }],
         connect: new Map(),
@@ -207,6 +216,7 @@ describe("linkableMachines", () => {
         connected: true,
         connectOnly: false,
         linked: false,
+        cloud: false,
         urls: ["https://vps.ts.net", "https://vps.example.com"],
       },
       {
@@ -216,9 +226,32 @@ describe("linkableMachines", () => {
         connected: false,
         connectOnly: false,
         linked: true,
+        cloud: false,
         urls: [],
       },
+      {
+        environmentId: cloud.environmentId,
+        label: "Pair Cloud",
+        machine: "laptop",
+        connected: true,
+        connectOnly: false,
+        linked: false,
+        cloud: true,
+        urls: ["https://cloud.example.com"],
+      },
     ]);
+  });
+
+  it("offers an agent link from a server that links to a Pair Cloud the client knows", () => {
+    const config = (capabilities: object) =>
+      ({ environment: { capabilities } }) as unknown as ServerConfig;
+    const laptop = config({ peerLinks: true });
+    const pairCloud = config({ peerLinks: true, cloudLaunch: true });
+    const withPairCloud = [{ serverConfig: laptop }, { serverConfig: pairCloud }];
+    expect(offersAgentLink(laptop, withPairCloud)).toBe(true);
+    expect(offersAgentLink(pairCloud, withPairCloud)).toBe(false);
+    expect(offersAgentLink(config({}), withPairCloud)).toBe(false);
+    expect(offersAgentLink(laptop, [{ serverConfig: laptop }, { serverConfig: null }])).toBe(false);
   });
 
   it("reaches a machine saved only over T3 Connect at its Connect address", () => {
@@ -309,6 +342,7 @@ describe("linkableMachines", () => {
       connected: false,
       connectOnly: true,
       linked: false,
+      cloud: false,
       urls: ["https://environment-mini.t3.example"],
     });
     expect(listed[2]).toMatchObject({ machine: "server", linked: true });
@@ -371,6 +405,7 @@ describe("rankMachinesByHint", () => {
           connected: true,
           connectOnly: false,
           linked: false,
+          cloud: false,
           urls: [],
         }) as const,
     );

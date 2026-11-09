@@ -147,7 +147,8 @@ function LinkedEnvironmentsRow() {
           <Link to="/settings/connections" className="underline underline-offset-2">
             Connections
           </Link>
-          . While it is off, nothing new starts over a link; tasks already running finish.
+          . While it is off, only a link to Pair Cloud starts anything new; tasks already running
+          finish.
         </>
       }
       control={

@@ -65,6 +65,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
@@ -85,7 +86,7 @@ const modelSelection = { instanceId, model: "gpt-5.4" };
 
 type LaunchedWith = Pick<
   ThreadLaunch.ThreadLaunchInput,
-  "modelSelection" | "runtimeMode" | "interactionMode"
+  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceStrategy"
 >;
 
 /** The thread the box launches for the task, which the test finishes. */
@@ -204,9 +205,15 @@ const boxProjects: ReadonlyArray<Project> = [
   },
 ];
 
-const serveBox = (thread: BoxThread) => {
-  return servePeer(box, boxToolkitLayer(thread));
-};
+/** The box, or with `cloud` the box as Pair Cloud: cloud-only, every thread on a machine. */
+const serveBox = (thread: BoxThread, options?: { readonly cloud?: true }) =>
+  options?.cloud === true
+    ? servePeer(
+        descriptorOf("environment-box", "Box", { cloudLaunch: true }),
+        boxToolkitLayer(thread),
+        { cloudOnly: true },
+      )
+    : servePeer(box, boxToolkitLayer(thread));
 
 const boxRunId = RunId.make("run:box");
 const boxLaterRunId = RunId.make("run:box-later");
@@ -437,6 +444,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
+                workspaceStrategy: input.workspaceStrategy,
               }),
             ),
             Effect.andThen(Effect.flatten(Ref.get(thread.afterLaunch))),
@@ -467,7 +475,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
   });
   return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(layerSingleMemberViews)),
+    // The box's own team, whose owner approved the link, reads its threads.
+    McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(Layer.mock(ProjectionStore.ProjectionStoreV2)({})),
+    ),
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -553,6 +564,8 @@ const makeLaptop = (
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
+    /** Whether origin has the parent's branch, as `git ls-remote` would answer. */
+    const pushed = yield* Ref.make(true);
     const layerDatabase = Layer.succeedContext(database);
     const layerOrchestrator = Layer.mergeAll(
       layerDatabase,
@@ -620,6 +633,11 @@ const makeLaptop = (
       Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
       Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
       Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          remoteHasBranch: () => Ref.get(pushed),
+        }),
+      ),
+      Layer.provide(
         Layer.succeed(ServerConfig.ServerConfig, {
           cloudOnly: false,
         } as ServerConfig.ServerConfig["Service"]),
@@ -636,6 +654,7 @@ const makeLaptop = (
       threads: Context.get(here, ThreadManagement.ThreadManagementService),
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
+      pushed,
       call: (name: string, args: Record<string, unknown>, scope = parentScope) =>
         server
           .callTool({ name, arguments: args })
@@ -663,7 +682,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  branch: string | null = null,
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -678,7 +700,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
-      branch: null,
+      branch,
       worktreePath: null,
     });
     yield* laptopEnv.sink.write({
@@ -1122,6 +1144,7 @@ it.effect("a task named only by environment inherits the parent's model, within 
         modelSelection,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
+        workspaceStrategy: { type: "root" },
       });
 
       // Asking for more than the link allows is still refused there.
@@ -1136,31 +1159,100 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect.each(["worktree", "cloud"] as const)(
-  "refuses %s isolation for a task there before launching anything",
-  (isolation) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const thread = yield* makeBoxThread;
-        const b = yield* serveBox(thread);
-        const offers = yield* SubscriptionRef.make<
-          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-        >([]);
-        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-        const a = yield* makeLaptop(database, offers);
-        yield* linkTo(a.links, b, "auto");
-        yield* seedParent(a);
+it.effect.each([
+  { name: "worktree on Box", isolation: "worktree", refused: "a worktree workspaceStrategy" },
+  { name: "cloud on Box", isolation: "cloud", refused: "does not run cloud machines" },
+  {
+    name: "shared on a cloud box",
+    isolation: "shared",
+    cloud: true,
+    refused: "runs every task on a cloud machine of its own",
+  },
+  {
+    name: "no isolation on a cloud box",
+    isolation: undefined,
+    cloud: true,
+    refused: "runs every task on a cloud machine of its own",
+  },
+  {
+    name: "cloud on a cloud box from a parent with no branch",
+    isolation: "cloud",
+    cloud: true,
+    branch: null,
+    refused: "this thread has none",
+  },
+  {
+    name: "cloud on a cloud box when origin lacks the branch",
+    isolation: "cloud",
+    cloud: true,
+    branch: "fix/flaky",
+    pushed: false,
+    refused: "fix/flaky is not on origin",
+  },
+] as const)("refuses a task there before launching anything: $name", (row) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread, "cloud" in row ? { cloud: true } : undefined);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "auto");
+      yield* seedParent(a, "branch" in row ? row.branch : null);
+      yield* Ref.set(a.pushed, "pushed" in row ? row.pushed : true);
 
-        const result = yield* a.call("delegate_task", {
-          task: "Run the suite on the box.",
-          target: { environmentId: box.environmentId },
-          isolation,
-        });
-        expect(result.isError).toBe(true);
-        expect(JSON.stringify(result.content)).toContain(`a ${isolation} workspaceStrategy`);
-        expect(yield* Ref.get(thread.launched)).toBeNull();
-      }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: { environmentId: box.environmentId },
+        ...(row.isolation === undefined ? {} : { isolation: row.isolation }),
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain(row.refused);
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a cloud task goes to Pair Cloud as a cloud launch from the parent's pushed branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread, { cloud: true });
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "auto");
+      // An agent link needs no beta here.
+      yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+      yield* seedParent(a, "fix/flaky");
+
+      const result = yield* a.call("delegate_task", {
+        task: "Fix the flaky invoice test.",
+        target: { environmentId: box.environmentId },
+        isolation: "cloud",
+      });
+      expect(result.isError, JSON.stringify(result.content)).toBe(false);
+      const { taskId } = result.structuredContent as { taskId: NodeId };
+      expect((yield* Ref.get(thread.launchedWith))?.workspaceStrategy).toEqual({
+        type: "cloud",
+        baseRef: "fix/flaky",
+      });
+      expect(yield* Ref.get(thread.linkOrigin)).not.toBeNull();
+      expect(yield* Ref.get(thread.delegatedFrom)).toMatchObject({ threadId: parentThreadId });
+
+      yield* Ref.set(thread.reply, "Fixed the race in the invoice test.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, taskId)).toMatchObject({
+        status: "completed",
+        result: "Fixed the race in the invoice test.",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("follows an open task again after the laptop restarts", () =>

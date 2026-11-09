@@ -1,4 +1,4 @@
-import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
+import { offersAgentLink, offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import { useFocusEffect } from "@react-navigation/native";
 import { AuthAccessReadScope, type EnvironmentId } from "@t3tools/contracts";
@@ -7,7 +7,7 @@ import { useCallback, useState } from "react";
 import { AppState, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { useEnvironmentServerConfig } from "../../state/entities";
+import { useEnvironmentServerConfig, useServerConfigs } from "../../state/entities";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -19,7 +19,15 @@ export function LinkedEnvironmentsSection(props: {
 }) {
   const config = useEnvironmentServerConfig(props.environmentId);
   const canRead = useEnvironmentScope(props.environmentId, AuthAccessReadScope);
-  const supported = canRead && offersLinkedEnvironments(config);
+  const configs = useServerConfigs();
+  // Without the beta, the Mac's agent link to Pair Cloud is still listed.
+  const supported =
+    canRead &&
+    (offersLinkedEnvironments(config) ||
+      offersAgentLink(
+        config,
+        [...configs.values()].map((serverConfig) => ({ serverConfig })),
+      ));
   const links = useEnvironmentQuery(
     supported ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }) : null,
   );

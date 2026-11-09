@@ -48,8 +48,9 @@ export interface ProjectSetupScriptOutputLine {
 
 /**
  * A thread a link below full access started does not run this project's setup
- * script: the script is the user's own code, and such a link only grants T3's
- * tools (see `mcp/linkOrigin.ts`).
+ * script on this server's machine: the script is the user's own code, and such
+ * a link only grants T3's tools (see `mcp/linkOrigin.ts`). On a machine of its
+ * own the thread runs it, as any cloud thread does.
  */
 export interface ProjectSetupScriptRunnerResultSkippedForLink {
   readonly status: "skipped-for-link";
@@ -368,7 +369,11 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (thread?.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin))
+    if (
+      thread?.linkOrigin !== undefined &&
+      linkOriginIsFenced(thread.linkOrigin) &&
+      thread.sandboxId === undefined
+    )
       return { status: "skipped-for-link" } as const;
     const suppliedProject = input.project;
     const projectById =

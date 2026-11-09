@@ -23,6 +23,23 @@ export const offersLinkedEnvironments = (
   config?.environment.capabilities.peerLinks === true && config.settings.linkedEnvironmentsEnabled;
 
 /**
+ * Whether an environment offers an agent link to a Pair Cloud the client knows, which needs no
+ * Linked environments beta: it supports links, isn't Pair Cloud itself, and another connected
+ * environment launches in cloud.
+ */
+export const offersAgentLink = (
+  config: Pick<ServerConfig, "environment"> | null | undefined,
+  environments: ReadonlyArray<{
+    readonly serverConfig?: Pick<ServerConfig, "environment"> | null | undefined;
+  }>,
+): boolean =>
+  config?.environment.capabilities.peerLinks === true &&
+  config.environment.capabilities.cloudLaunch !== true &&
+  environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.cloudLaunch === true,
+  );
+
+/**
  * The machines an environment's agents can work on, by name: its links that have not
  * expired, named as this client names them, else as the link does.
  */
@@ -64,6 +81,8 @@ export interface LinkableMachine {
   readonly connectOnly: boolean;
   /** Whether the thread's environment already has a link to it. */
   readonly linked: boolean;
+  /** Pair Cloud: it runs every thread on a cloud machine, and a link to it needs no beta. */
+  readonly cloud: boolean;
   /**
    * Where the client knows it answers, most preferred first: the addresses it
    * reports, then its saved routes, then its T3 Connect address. The server
@@ -108,6 +127,7 @@ export function linkableMachines(input: {
         connected: environment.connection.phase === "connected",
         connectOnly: false,
         linked: linkedIds.has(environment.environmentId),
+        cloud: environment.serverConfig?.environment.capabilities.cloudLaunch === true,
         urls: [
           ...new Set([
             ...reported,
@@ -135,6 +155,7 @@ export function linkableMachines(input: {
         connected: false,
         connectOnly: true,
         linked: linkedIds.has(environment.environmentId),
+        cloud: descriptor?.capabilities.cloudLaunch === true,
         urls: [environment.endpoint.httpBaseUrl],
       };
     });

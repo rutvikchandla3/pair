@@ -132,7 +132,10 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
-  /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
+  /**
+   * False while no link here may start work: the Linked environments beta is off and this
+   * environment holds no agent link. `/mcp` reads it per request.
+   */
   readonly linkedEnvironments?: boolean;
 }
 

@@ -95,6 +95,7 @@ import Migration0088 from "./Migrations/088_SandboxProjections.ts";
 import Migration0089 from "./Migrations/089_SandboxRunnerGrants.ts";
 import Migration0090 from "./Migrations/090_MemberGitHubSource.ts";
 import Migration0091 from "./Migrations/091_ScheduledTaskCloudRuns.ts";
+import Migration0092 from "./Migrations/092_PeerLinkCloudLaunch.ts";
 import Migration0093 from "./Migrations/093_StagedCloudImports.ts";
 
 const migrationEntries = [
@@ -190,6 +191,7 @@ const migrationEntries = [
   [89, "SandboxRunnerGrants", Migration0089],
   [90, "MemberGitHubSource", Migration0090],
   [91, "ScheduledTaskCloudRuns", Migration0091],
+  [92, "PeerLinkCloudLaunch", Migration0092],
   [93, "StagedCloudImports", Migration0093],
 ] as const;
 

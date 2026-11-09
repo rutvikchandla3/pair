@@ -1568,7 +1568,13 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }
-  const mock = testCase.setup.mocks?.[name];
+  // A call that names a linked environment gets that environment's mock first.
+  const target = name === "delegate_task" && isRecord(input.target) ? input.target : input;
+  const environmentId = typeof target.environmentId === "string" ? target.environmentId : undefined;
+  const mock =
+    (environmentId === undefined
+      ? undefined
+      : testCase.setup.mocks?.[`${name}@${environmentId}`]) ?? testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
   const fromWorld = mock === undefined || mock === "default" || failure !== undefined;

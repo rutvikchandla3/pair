@@ -265,7 +265,8 @@ function BetaSettingsSection() {
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
+        machine. While it is off, only a link to Pair Cloud starts anything new; tasks already
+        running finish.
       </Text>
     </View>
   );

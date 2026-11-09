@@ -174,7 +174,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree", "cloud"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. 'cloud': own machine from the parent's pushed branch, if `features.cloudThreads`. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. 'cloud': own machine from the parent's pushed branch, if `features.cloudThreads` or `target.environmentId` is a `cloud` link. Uncommitted edits stay out.",
     }),
   ),
   mode: Schema.optional(
@@ -618,6 +618,9 @@ export const OrchestratorMcpEnvironmentLink = Schema.Struct({
   access: AuthMcpClientAccess,
   expiresAt: IsoDateTime,
   lastError: Schema.NullOr(Schema.String),
+  cloud: Schema.optional(Schema.Literal(true)).annotate({
+    description: "Pair Cloud: each thread there runs on a cloud machine of its own.",
+  }),
 });
 export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
 

@@ -87,6 +87,13 @@ export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
     "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
 });
 
+/** What an agent hears when it names a machine other than its Pair Cloud while the beta is off here. */
+const onlyAgentLinks = new OrchestratorMcpFailure({
+  code: "capability_denied",
+  message:
+    "Linked environments is off on this machine; only its Pair Cloud link works without it. The user can turn it on in Settings → Labs.",
+});
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
@@ -211,11 +218,23 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // While the beta is off, agents start nothing over links. Tasks already running there keep
-  // following through readThread, waitForThread and interruptThread, so they still finish.
-  const requireEnabled = links.enabled.pipe(
-    Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
-  );
+  // While the beta is off, agents start work only over agent links. Tasks already running
+  // elsewhere keep following through readThread, waitForThread and interruptThread, so they
+  // still finish.
+  const requireUsable = (environmentId: EnvironmentId) =>
+    links.enabled.pipe(
+      Effect.flatMap((enabled) =>
+        enabled
+          ? Effect.void
+          : links.agentLinks.pipe(
+              Effect.flatMap((agentLinks) =>
+                agentLinks.has(environmentId)
+                  ? Effect.void
+                  : Effect.fail(agentLinks.size === 0 ? linkedEnvironmentsOff : onlyAgentLinks),
+              ),
+            ),
+      ),
+    );
 
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
     const forwarded: Effect.Effect<
@@ -228,7 +247,7 @@ const make = Effect.gen(function* () {
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
-    return Effect.andThen(requireEnabled, forwarded);
+    return Effect.andThen(requireUsable(environmentId), forwarded);
   };
 
   /**
@@ -241,23 +260,31 @@ const make = Effect.gen(function* () {
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
       yield* callerLimits(scope);
-      yield* requireEnabled;
+      const enabled = yield* links.enabled;
+      if (!enabled && (yield* links.agentLinks).size === 0) {
+        return yield* linkedEnvironmentsOff;
+      }
       const listed = yield* links.list.pipe(
         Effect.mapError(
           (error) =>
             new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
         ),
       );
+      // Read after listing, which corrects each link's marker from what its peer reported.
+      const agentLinks = yield* links.agentLinks;
       return {
         environmentId: scope.environmentId,
-        links: listed.map((link) => ({
-          environmentId: link.environmentId,
-          label: link.label,
-          status: link.status,
-          access: link.access,
-          expiresAt: DateTime.formatIso(link.expiresAt),
-          lastError: link.lastError,
-        })),
+        links: listed
+          .filter((link) => enabled || agentLinks.has(link.environmentId))
+          .map((link) => ({
+            environmentId: link.environmentId,
+            label: link.label,
+            status: link.status,
+            access: link.access,
+            expiresAt: DateTime.formatIso(link.expiresAt),
+            lastError: link.lastError,
+            ...(agentLinks.has(link.environmentId) ? { cloud: true as const } : {}),
+          })),
         notListed: NOT_LISTED,
       };
     },

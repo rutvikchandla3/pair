@@ -83,8 +83,9 @@ const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
 const makeA = (
   descriptor: ExecutionEnvironmentDescriptor,
   secrets?: typeof ServerSecretStore.layer,
+  options?: { readonly cloudOnly?: boolean },
 ) =>
-  layerLinkingEnvironment(descriptor, secrets).pipe(
+  layerLinkingEnvironment(descriptor, secrets, undefined, options).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -238,6 +239,80 @@ it.effect(
         expect(yield* probe(a)).toEqual({ caller: "Pair · Laptop", modes: "auto/default" });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a link to a cloud-only server needs no Linked environments beta on either side", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cloud = descriptorOf("environment-cloud", "Pair Cloud", { cloudLaunch: true });
+      const b = yield* servePeer(
+        cloud,
+        McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers),
+        { cloudOnly: true },
+      );
+      const a = yield* makeA(laptop);
+      yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+      yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+      const linkTo = (links: PeerLinks.PeerLinks["Service"], url: string) =>
+        b.auth
+          .issuePairingCredential()
+          .pipe(
+            Effect.flatMap((pairing) =>
+              links.link({ url, pairingCode: pairing.credential, access: "auto" }),
+            ),
+          );
+
+      yield* linkTo(a.links, b.url);
+      expect([...(yield* a.links.agentLinks)]).toEqual([cloud.environmentId]);
+      const resolved = yield* a.links.resolve(cloud.environmentId);
+      expect(resolved.capabilities.cloudLaunch).toBe(true);
+      expect(
+        yield* a.peer.call({
+          environmentId: cloud.environmentId,
+          tool: "probe",
+          arguments: {},
+          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          success: Probe,
+        }),
+      ).toEqual({ caller: "Pair · Laptop", modes: "auto/default" });
+
+      // A link made before the marker existed reads 0 until its peer is reached again.
+      yield* a.sql`UPDATE peer_environment_links SET cloud_launch = 0`;
+      expect((yield* a.links.agentLinks).size).toBe(0);
+      yield* a.links.resolve(cloud.environmentId);
+      expect([...(yield* a.links.agentLinks)]).toEqual([cloud.environmentId]);
+
+      // Any other peer still needs the beta here, and hears so before any credential goes out.
+      const other = yield* serveApart(box);
+      const refused = yield* other.auth.issuePairingCredential().pipe(
+        Effect.flatMap((pairing) =>
+          a.links.link({ url: other.url, pairingCode: pairing.credential, access: "auto" }),
+        ),
+        Effect.flip,
+      );
+      expect(refused).toMatchObject({
+        reason: "disabled",
+        message: PeerLinks.LINKED_ENVIRONMENTS_OFF,
+      });
+      expect(yield* Ref.get(other.bearers)).toEqual([]);
+
+      // Cloud to cloud is not an agent link.
+      const cloudHere = yield* makeA(
+        descriptorOf("environment-cloud-2", "Other Cloud"),
+        undefined,
+        {
+          cloudOnly: true,
+        },
+      );
+      yield* cloudHere.settings.updateSettings({ linkedEnvironmentsEnabled: false });
+      expect(yield* linkTo(cloudHere.links, b.url).pipe(Effect.flip)).toMatchObject({
+        reason: "disabled",
+      });
+
+      expect(yield* a.links.unlink(cloud.environmentId)).toBe(true);
+      expect((yield* a.links.agentLinks).size).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a link whose row cannot be stored keeps none of its token", () =>

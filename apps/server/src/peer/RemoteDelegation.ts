@@ -35,11 +35,13 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -122,6 +124,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  const git = yield* GitWorkflowService.GitWorkflowService;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -184,6 +187,46 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * The parent's branch, which a cloud task there starts from. Asking origin here answers
+   * before a machine boots there; when origin can't say, the machine's own checkout decides.
+   */
+  const pushedBranch = Effect.fn("RemoteDelegation.pushedBranch")(function* (thread: {
+    readonly projectId: ProjectId;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  }) {
+    const branch = thread.branch;
+    if (branch === null) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: "A cloud task starts from a pushed branch; this thread has none.",
+      });
+    }
+    const cwd =
+      thread.worktreePath ??
+      (yield* projects.getById(thread.projectId).pipe(
+        Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot),
+        Effect.orElseSucceed(() => undefined),
+      ));
+    if (cwd === undefined) return branch;
+    const pushed = yield* git.remoteHasBranch({ cwd, remoteName: "origin", refName: branch }).pipe(
+      Effect.catchTags({
+        GitCommandError: (cause) =>
+          Effect.logWarning("Could not ask origin for a cloud task's branch", { cause }).pipe(
+            Effect.as(true),
+          ),
+      }),
+    );
+    if (!pushed) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: `${branch} is not on origin. Push it first: a cloud task starts from the pushed branch.`,
+      });
+    }
+    return branch;
+  });
+
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
     function* (scope, input) {
       const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
@@ -211,14 +254,31 @@ const make = Effect.gen(function* () {
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
       // A worktree there would branch from a commit this checkout has and the
-      // other may not, so a remote task runs in that project's checkout. Cloud
-      // placement is the target's to decide, with its own drivers and caps.
-      if (input.isolation === "worktree" || input.isolation === "cloud") {
+      // other may not, so a remote task runs in that project's checkout, or on
+      // a machine of its own where the target runs every thread on one.
+      if (input.isolation === "worktree") {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: `A task in a linked environment runs in that project's checkout; isolation "${input.isolation}" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a ${input.isolation} workspaceStrategy.`,
+          message: `A task in a linked environment runs in that project's checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.`,
         });
       }
+      const there = yield* links
+        .resolve(target.environmentId)
+        .pipe(Effect.mapError(PeerMcpClient.peerLinkFailure));
+      const cloud = there.capabilities.cloudLaunch === true;
+      if (input.isolation === "cloud" && !cloud) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `${there.link.label} does not run cloud machines, so isolation "cloud" is not supported there. Omit isolation to run in that project's checkout.`,
+        });
+      }
+      if (cloud && input.isolation !== "cloud") {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `${there.link.label} runs every task on a cloud machine of its own. Pass isolation "cloud".`,
+        });
+      }
+      const cloudBase = cloud ? yield* pushedBranch(parent.thread) : undefined;
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
@@ -269,6 +329,9 @@ const make = Effect.gen(function* () {
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
+          ...(cloudBase === undefined
+            ? {}
+            : { workspaceStrategy: { type: "cloud" as const, baseRef: cloudBase } }),
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
           // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {

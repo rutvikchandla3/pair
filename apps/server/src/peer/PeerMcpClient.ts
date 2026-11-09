@@ -66,7 +66,7 @@ const decodeFailure = Schema.decodeUnknownOption(
 );
 
 /** A peer link problem, as the agent that asked hears it. */
-const fromLinkError = (error: PeerLinkError) =>
+export const peerLinkFailure = (error: PeerLinkError) =>
   new OrchestratorMcpFailure({
     code:
       error.reason === "unknown_link"
@@ -157,7 +157,7 @@ const make = Effect.gen(function* () {
     function* (input) {
       const resolved = yield* links
         .resolve(input.environmentId)
-        .pipe(Effect.mapError(fromLinkError));
+        .pipe(Effect.mapError(peerLinkFailure));
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };

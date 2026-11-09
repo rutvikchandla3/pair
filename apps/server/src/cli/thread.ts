@@ -1,4 +1,6 @@
 import {
+  type EnvironmentId,
+  OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -172,7 +174,14 @@ const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
 
 const ProjectListResult = Schema.Struct({
   projects: Schema.Array(
-    Schema.Struct({ id: ProjectId, title: Schema.String, workspaceRoot: Schema.String }),
+    Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      workspaceRoot: Schema.String,
+      repositoryIdentity: Schema.optional(
+        Schema.NullOr(Schema.Struct({ canonicalKey: Schema.String })),
+      ),
+    }),
   ),
   nextCursor: Schema.NullOr(Schema.Int),
 });
@@ -227,12 +236,67 @@ const makeThreadTools = (session: McpToolSession, origin: string, rejectsToken: 
     }),
   };
 };
-export type ThreadTools = ReturnType<typeof makeThreadTools>;
+export interface ThreadTools {
+  readonly call: ReturnType<typeof makeThreadTools>["call"];
+  /** Through a link: this machine's own tools, unwrapped. */
+  readonly here?: ThreadTools;
+}
 
 export interface ThreadConnection {
   /** Project paths name folders on another machine, so they are not resolved here. */
   readonly remote: boolean;
+  /** The linked environment every call goes to, through this machine's link. */
+  readonly environmentId?: EnvironmentId;
+  /** That link's label, when it runs every thread on a cloud machine. */
+  readonly cloudLabel?: string;
 }
+
+/** `tools`, with every call sent to the linked environment `environmentId`. */
+export const inEnvironment = (tools: ThreadTools, environmentId: EnvironmentId): ThreadTools => ({
+  call: (tool, args, schema) => tools.call(tool, { ...args, environmentId }, schema),
+  here: tools,
+});
+
+/** The link `value` names: its id exactly, else its label in any case. */
+const findLink = Effect.fn("cli.thread.findLink")(function* (tools: ThreadTools, value: string) {
+  const { links } = yield* tools.call(
+    "t3_environment_links",
+    {},
+    OrchestratorMcpEnvironmentLinksResult,
+  );
+  const byId = links.find((link) => link.environmentId === value);
+  if (byId !== undefined) return byId;
+  const label = value.toLowerCase();
+  const byLabel = links.filter((link) => link.label.toLowerCase() === label);
+  if (byLabel.length > 1) {
+    return yield* new ThreadUsageError({
+      detail: `More than one linked environment is named '${value}'. Pass its id instead.`,
+    });
+  }
+  if (byLabel[0] === undefined) {
+    return yield* new ThreadUsageError({
+      detail: `No linked environment matches '${value}'. Link it in Settings → Environments, or with t3 environment link.`,
+    });
+  }
+  return byLabel[0];
+});
+
+/** Runs `run` in the linked environment `value` names, through this machine's link. */
+const throughLink =
+  <A, E, R>(
+    value: string,
+    run: (tools: ThreadTools, connection: ThreadConnection) => Effect.Effect<A, E, R>,
+  ) =>
+  (tools: ThreadTools, _here: ThreadConnection) =>
+    findLink(tools, value).pipe(
+      Effect.flatMap((link) =>
+        run(inEnvironment(tools, link.environmentId), {
+          remote: true,
+          environmentId: link.environmentId,
+          ...(link.cloud === true ? { cloudLabel: link.label } : {}),
+        }),
+      ),
+    );
 
 const ThreadEnvironment = Config.all({
   url: Config.option(Config.String("T3CODE_URL")),
@@ -271,8 +335,12 @@ const withTokenSession = Effect.fn("cli.thread.withTokenSession")(function* <A, 
  * session when the command ends.
  */
 const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string>; readonly url: Option.Option<string> },
-  run: (tools: ThreadTools, connection: ThreadConnection) => Effect.Effect<A, E, R>,
+  flags: {
+    readonly baseDir: Option.Option<string>;
+    readonly url: Option.Option<string>;
+    readonly environment: Option.Option<string>;
+  },
+  runHere: (tools: ThreadTools, connection: ThreadConnection) => Effect.Effect<A, E, R>,
 ) {
   const environment = yield* ThreadEnvironment;
   const url = Option.filter(
@@ -280,6 +348,15 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     isPresent,
   );
   const token = Option.filter(environment.token, (value) => isPresent(Redacted.value(value)));
+  const linked = Option.filter(flags.environment, isPresent);
+  if (Option.isSome(linked) && Option.isSome(url)) {
+    return yield* new ThreadUsageError({
+      detail: "--environment goes through this machine's server. Drop --url or unset T3CODE_URL.",
+    });
+  }
+  const run: ReturnType<typeof throughLink<A, E, R>> = Option.isSome(linked)
+    ? throughLink(linked.value, runHere)
+    : runHere;
   if (Option.isSome(url)) {
     if (Option.isNone(token)) {
       return yield* new ThreadUsageError({ detail: "Set T3CODE_TOKEN to an API token." });
@@ -379,12 +456,38 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
         detail: `More than one project is titled '${identifier}'. Pass its id instead.`,
       });
     }
-    if (byTitle[0] === undefined) {
+    if (byTitle[0] !== undefined) return byTitle[0];
+    if (connection.environmentId === undefined || tools.here === undefined) {
       return yield* new ThreadProjectNotFoundError({ identifier, remote: true });
     }
-    return byTitle[0];
+    // Through a link, a folder here names the project there with the same repository.
+    const here = yield* containingProject(yield* listAllProjects(tools.here), identifier);
+    const key = here.repositoryIdentity?.canonicalKey;
+    const sameRepository =
+      key === undefined
+        ? []
+        : projects.filter((project) => project.repositoryIdentity?.canonicalKey === key);
+    if (sameRepository.length > 1) {
+      return yield* new ThreadUsageError({
+        detail: `More than one project there has this repository: ${sameRepository
+          .map((project) => `${project.title} (${project.id})`)
+          .join(", ")}. Pass its id instead.`,
+      });
+    }
+    if (sameRepository[0] === undefined) {
+      return yield* new ThreadProjectNotFoundError({ identifier, remote: true });
+    }
+    return sameRepository[0];
   }
 
+  return yield* containingProject(projects, identifier);
+});
+
+/** The project whose folder holds `identifier`, a path on this machine (deepest wins). */
+const containingProject = Effect.fn("cli.thread.containingProject")(function* (
+  projects: ReadonlyArray<(typeof ProjectListResult.Type)["projects"][number]>,
+  identifier: string,
+) {
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   // Stored roots keep the path the project was added with, which may pass
@@ -691,6 +794,12 @@ const urlFlag = Flag.String("url").pipe(
   ),
   Flag.optional,
 );
+const environmentFlag = Flag.String("environment").pipe(
+  Flag.withDescription(
+    "A linked environment's id or name, such as Pair Cloud. Runs there through this machine's link.",
+  ),
+  Flag.optional,
+);
 const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message for the agent, or - to read it from stdin."),
 );
@@ -706,6 +815,7 @@ const decodeThreadId = (value: string) =>
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   url: urlFlag,
+  environment: environmentFlag,
   project: Flag.String("project").pipe(
     Flag.withDescription(
       "Project id or a path inside the project. Defaults to this directory. Required with --url, where it can also be the project's title.",
@@ -754,6 +864,7 @@ const threadListCommand = Command.make("list", {
 const threadStartCommand = Command.make("start", {
   ...projectLocationFlags,
   url: urlFlag,
+  environment: environmentFlag,
   project: Argument.String("project").pipe(
     Argument.withDescription(
       "Project id or a path inside the project, such as . With --url, the project's id, folder on the server, or title.",
@@ -805,6 +916,11 @@ const threadStartCommand = Command.make("start", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.start")(function* (tools, connection) {
+          if (connection.cloudLabel !== undefined && workspaceStrategy === undefined) {
+            return yield* new ThreadUsageError({
+              detail: `${connection.cloudLabel} runs every thread on a cloud machine. Pass --cloud <base-ref>.`,
+            });
+          }
           const project = yield* resolveProject(tools, flags.project, connection);
           const launched = yield* tools.call(
             "t3_thread_launch",
@@ -842,6 +958,7 @@ const threadStartCommand = Command.make("start", {
 const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   url: urlFlag,
+  environment: environmentFlag,
   thread: threadArgument,
   message: messageArgument,
   wait: waitFlag,
@@ -877,6 +994,7 @@ const threadSendCommand = Command.make("send", {
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   url: urlFlag,
+  environment: environmentFlag,
   thread: threadArgument,
   messages: Flag.Int("messages").pipe(
     Flag.withDescription("How many of the latest messages to print."),

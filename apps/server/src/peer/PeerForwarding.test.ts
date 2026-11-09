@@ -23,6 +23,7 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -206,7 +207,10 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
   servePeer(
     box,
     Layer.mergeAll(
-      McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(layerSingleMemberViews)),
+      // The box's own team, whose owner approved the link, reads its threads.
+      McpHttpServer.layerOrchestratorToolkit.pipe(
+        Layer.provide(Layer.mock(ProjectionStore.ProjectionStoreV2)({})),
+      ),
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
     ).pipe(
@@ -376,20 +380,31 @@ it.effect("an agent here works on a linked environment's threads within its own 
       const a = yield* makeLaptop;
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+      const cloud = descriptorOf("environment-cloud", "Pair Cloud", { cloudLaunch: true });
+      const pairCloud = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
+        Effect.flatMap((server) =>
+          servePeer(cloud, Layer.empty, { cloudOnly: true }).pipe(Effect.provideContext(server)),
+        ),
+      );
+      yield* linkTo(a.links, pairCloud, "auto");
 
       const listed = yield* a.call("thread:laptop-full", "t3_environment_links", {});
       expect(listed.structuredContent).toMatchObject({
         environmentId: laptop.environmentId,
         links: [
           { environmentId: box.environmentId, label: "Box", status: "reachable", access: "auto" },
+          { environmentId: cloud.environmentId, label: "Pair Cloud", cloud: true },
         ],
       });
+      expect(
+        (listed.structuredContent as { links: ReadonlyArray<object> }).links[0],
+      ).not.toHaveProperty("cloud");
 
       const threads = yield* a.call("thread:laptop-full", "t3_thread_list", {
         environmentId: box.environmentId,
         projectId: boxProject,
       });
-      expect(threads.isError).toBe(false);
+      expect(threads.isError, JSON.stringify(threads.content)).toBe(false);
       expect(threads.structuredContent).toMatchObject({
         projectId: boxProject,
         threads: [{ threadId: boxThread, runtimeMode: "auto" }],
@@ -518,6 +533,10 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       });
       const retried = yield* launch("thread:laptop-plan");
       const [launched, relaunched] = (yield* Ref.get(seen)).launches;
+      // The thread there belongs to the member whose pairing code made the link.
+      const linkMember = (yield* b.linkedSessions)[0]?.memberId;
+      expect(linkMember).toBeDefined();
+      expect(launched?.ownerId).toBe(linkMember);
       // The thread there runs with the caller's own modes here, below the
       // link's full access, and a retry asks for the same thread.
       expect(launched).toMatchObject({ runtimeMode: "full-access", interactionMode: "plan" });

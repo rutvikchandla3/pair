@@ -22,6 +22,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
@@ -39,6 +40,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -78,6 +80,9 @@ const client = McpSchema.McpServerClient.of({
     clientInfo: { name: "mcp-test", version: "1.0.0" },
   },
   getClient: Effect.die("unused"),
+});
+const layerTransportConfig = ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3-mcp-transport-test-",
 });
 const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -778,6 +783,7 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       };
       const layerServer = McpHttpServer.layerMcpTransport(Layer.empty).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerTransportConfig),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             endpoint: "http://127.0.0.1/mcp",
@@ -886,6 +892,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerTransportConfig),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             endpoint: "http://127.0.0.1/mcp",
@@ -996,6 +1003,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
         McpHttpServer.layerMcpTransport(Layer.empty).pipe(
           Layer.provide(McpOAuth.layerMcpClientAuthenticator),
           Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerTransportConfig),
         ),
         { disableListenLog: true, disableLogger: true },
       ).pipe(Layer.build);
@@ -1094,6 +1102,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
       );
       const settingsContext = yield* Layer.build(ServerSettings.layerTest());
       const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
+      const agentLinks = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
       const serverLayer = McpHttpServer.layerMcpTransport(
         McpHttpServer.toolkitRegistration(
           LinksToolkit,
@@ -1104,6 +1113,8 @@ it.effect("hides tools for links and refuses another environment while the beta 
         ),
       ).pipe(
         Layer.provide(Layer.succeedContext(settingsContext)),
+        Layer.provide(layerTransportConfig),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({ agentLinks: Ref.get(agentLinks) })),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -1173,6 +1184,15 @@ it.effect("hides tools for links and refuses another environment while the beta 
       });
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 
+      // An agent link to Pair Cloud works without the beta.
+      yield* Ref.set(agentLinks, new Set([elsewhere]));
+      expect(yield* listed()).toEqual(["links", "where"]);
+      expect(yield* ranIn(elsewhere)).toMatchObject({
+        isError: true,
+        content: [{ text: expect.stringContaining("cannot reach linked environments") }],
+      });
+      yield* Ref.set(agentLinks, new Set());
+
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
       expect(yield* listed()).toEqual(["links", "where"]);
       // On, the call goes on to the forwarding, which this server lacks.
@@ -1211,6 +1231,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         McpHttpServer.layerPullRequestsToolkit,
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerTransportConfig),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             endpoint: "http://127.0.0.1/mcp",
@@ -1320,6 +1341,7 @@ it.effect(
           ),
         ).pipe(
           Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerTransportConfig),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(
             Layer.mock(McpSessionRegistry.McpSessionRegistry)({

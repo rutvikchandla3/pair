@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -264,6 +265,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -346,7 +348,7 @@ const make = Effect.gen(function* () {
       }
       // RFC 7591 allows ignoring unsupported registration options; all clients use public PKCE.
       const peerLink = metadata.software_id === MCP_PEER_LINK_SOFTWARE_ID;
-      if (peerLink && !(yield* linksEnabled)) {
+      if (peerLink && !cloudOnly && !(yield* linksEnabled)) {
         return yield* new AuthMcpRegistrationError({
           error: "invalid_client_metadata",
           error_description:
@@ -622,7 +624,8 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     label: client.label,
                     access: client.access,
                     linked: client.peerLink,
-                    ...(client.peerLink ? {} : { hostedAppUrl, memberId: client.memberId }),
+                    memberId: client.memberId,
+                    ...(client.peerLink ? {} : { hostedAppUrl }),
                   },
                   capabilities: new Set<McpInvocationContext.McpCapability>([
                     "orchestration",

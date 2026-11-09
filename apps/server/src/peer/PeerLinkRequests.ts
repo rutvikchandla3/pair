@@ -204,7 +204,8 @@ const make = Effect.gen(function* () {
           message: "Only an admin can link a machine on this server.",
         });
       }
-      if (!(yield* peerLinks.enabled)) {
+      // The answer goes through PeerLinks.link, which allows only an agent link without the beta.
+      if (!(yield* peerLinks.enabled) && (yield* peerLinks.agentLinks).size === 0) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
           message: PeerLinks.LINKED_ENVIRONMENTS_OFF,

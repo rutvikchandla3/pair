@@ -55,6 +55,20 @@ export const descriptorOf = (
   },
 });
 
+interface ServeOptions {
+  /** Started cloud-only, as Pair Cloud is. */
+  readonly cloudOnly?: boolean;
+}
+
+const layerConfig = (prefix: string, options: ServeOptions | undefined) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      return { ...config, cloudOnly: options?.cloudOnly ?? false };
+    }),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix })));
+
 /**
  * The environment a link points at, as it runs: its descriptor, MCP OAuth,
  * and `/mcp` with `tools` behind the real client authenticator, on a real
@@ -64,6 +78,7 @@ export const descriptorOf = (
 export const servePeer = <E, R>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  options?: ServeOptions,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -79,7 +94,7 @@ export const servePeer = <E, R>(
       Layer.provide(Sqlite.layerMemory),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" })),
+      Layer.provideMerge(layerConfig("t3-peer-link-peer-", options)),
       Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.fresh,
       Layer.build,
@@ -162,6 +177,7 @@ export const layerLinkingEnvironment = <E = never>(
     SqlClient.SqlClient,
     E | Layer.Error<typeof Sqlite.layerMemory>
   > = Sqlite.layerMemory,
+  options?: ServeOptions,
 ) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
@@ -175,7 +191,7 @@ export const layerLinkingEnvironment = <E = never>(
         getDescriptor: Effect.succeed(descriptor),
       }),
     ),
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-here-" })),
+    Layer.provide(layerConfig("t3-peer-link-here-", options)),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.fresh,
   );

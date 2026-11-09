@@ -144,7 +144,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchInputWorkspaceStrategy.annotate({
         description:
-          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied. 'cloud': a new machine, checked out from `baseRef` on the remote, that keeps running when this computer sleeps. Only when `orchestrator_capabilities` reports `features.cloudThreads`. `existingBranch: true`: `branch` is already on the remote.",
+          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied. 'cloud': a new machine, checked out from `baseRef` on the remote, that keeps running when this computer sleeps. Only where `orchestrator_capabilities` reports `features.cloudThreads`, or with the `environmentId` of a `cloud` link from `t3_environment_links`. `existingBranch: true`: `branch` is already on the remote.",
       }),
     ),
     message: Schema.optional(

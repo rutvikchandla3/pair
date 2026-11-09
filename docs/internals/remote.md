@@ -77,7 +77,12 @@ sees one more OAuth client, lists it in Sharing & access, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
 - **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
-  sides.** Off on the linking side, `PeerLinks.link`, link requests and
+  sides, except a link to a cloud-only server (an agent link), which neither
+  side gates; while the beta is off, an environment's agents start work only
+  over its agent links.** The laptop exempts only a peer that reported
+  `cloudLaunch`, and only when it isn't cloud-only itself; the marker is stored
+  (`cloud_launch`) because the gates run per MCP request and cannot probe
+  peers. Off on the linking side, `PeerLinks.link`, link requests and
   `PeerForwarding.call`/`links` refuse; `readThread`, `waitForThread` and
   `interruptThread` do not, so a remote task already running still completes
   and can still be cancelled. Off on the receiving side, link registrations are
@@ -117,7 +122,8 @@ shared access declarations, not tool by tool:
   threads and not another link's;
 - it cannot change projects, settings or scheduled tasks, nor use the receiving
   environment's own links;
-- its project setup scripts are skipped
+- its project setup scripts are skipped unless the thread runs on a machine of
+  its own
   ([`ProjectSetupScriptRunner`](../../apps/server/src/project/ProjectSetupScriptRunner.ts)
   checks every path that runs them).
 

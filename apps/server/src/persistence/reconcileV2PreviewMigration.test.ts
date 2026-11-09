@@ -71,6 +71,7 @@ describe("V2 preview upgrade", () => {
         [89, "SandboxRunnerGrants"],
         [90, "MemberGitHubSource"],
         [91, "ScheduledTaskCloudRuns"],
+        [92, "PeerLinkCloudLaunch"],
         [93, "StagedCloudImports"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
@@ -186,6 +187,7 @@ describe("V2 preview upgrade", () => {
         [89, "SandboxRunnerGrants"],
         [90, "MemberGitHubSource"],
         [91, "ScheduledTaskCloudRuns"],
+        [92, "PeerLinkCloudLaunch"],
         [93, "StagedCloudImports"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),

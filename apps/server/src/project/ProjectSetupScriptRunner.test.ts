@@ -1,7 +1,9 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  type OrchestrationV2ThreadShell,
   ProjectId,
+  SandboxId,
   TerminalNotRunningError,
   type TerminalEvent,
   type TerminalSessionSnapshot,
@@ -41,6 +43,7 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
+  readonly thread?: Partial<OrchestrationV2ThreadShell> | null;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
@@ -69,7 +72,7 @@ const makeHarness = Effect.fn(function* (options: {
         terminals,
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadShell: () => Effect.succeed(null),
+          getThreadShell: () => Effect.succeed((options.thread ?? null) as never),
         }),
         ServerSettings.layerTest(),
         NodeCrypto.layer,
@@ -113,6 +116,23 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  const linkOrigin = { sessionId: "s", label: "Pair · Mac", access: "auto" } as const;
+  it.effect.each([
+    { name: "on this server", thread: { linkOrigin }, status: "skipped-for-link" },
+    {
+      name: "on a machine of its own",
+      thread: { linkOrigin, sandboxId: SandboxId.make("sbx_0123456789abcdef0123") },
+      status: "started",
+    },
+  ])(
+    "a link's thread below full access runs its setup script only on a machine of its own: $name",
+    ({ thread, status }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ thread });
+        expect((yield* harness.start).status).toBe(status);
+      }),
+  );
+
   it.effect("writes immediately when the spawned fallback is PowerShell", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup({

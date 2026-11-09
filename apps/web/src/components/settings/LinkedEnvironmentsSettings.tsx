@@ -1,9 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
-  AuthAccessWriteScope,
+  AuthAccessReadScope,
   type AuthMcpClientAccess,
   type EnvironmentId,
+  type PeerLink,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import {
@@ -18,8 +18,12 @@ import { PlusIcon } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { mintPairingCodeOn } from "~/state/peerPairingCode";
-import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
+import {
+  offersLinkedEnvironmentsAtom,
+  peerLinkEnvironment,
+  useLinkableMachines,
+  useLinkMachine,
+} from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -60,6 +64,7 @@ export function LinkedEnvironmentsSettings({
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
+  const labs = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (
     <SettingsSection
@@ -74,7 +79,11 @@ export function LinkedEnvironmentsSettings({
       ) : links.data.links.length === 0 ? (
         <SettingsRow
           title="No linked environments"
-          description="Link another machine running Pair, such as a VPS, so agents here can launch and drive threads there."
+          description={
+            labs
+              ? "Link another machine running Pair, such as a VPS, so agents here can launch and drive threads there."
+              : "Link Pair Cloud so you can move threads there and back, and agents here can start cloud threads there as you."
+          }
         />
       ) : (
         links.data.links.map((link) => (
@@ -168,7 +177,10 @@ function LinkedEnvironmentRow({
 
 function LinkEnvironmentAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const [open, setOpen] = useState(false);
-  const machines = useLinkableMachines(environmentId, open);
+  const labs = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
+  const linkable = useLinkableMachines(environmentId, open);
+  // Without the Linked environments beta, only a link to Pair Cloud works.
+  const machines = labs ? linkable : linkable.filter((candidate) => candidate.cloud);
   // Null until the user picks; with no other machines known, only an address is left.
   const [choice, setChoice] = useState<string | null>(null);
   const [address, setAddress] = useState("");
@@ -181,13 +193,20 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   const inFlight = useRef(false);
   const formId = useId();
   const link = useAtomCommand(peerLinkEnvironment.link, { label: "link environment" });
-  const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
+  const linkMachine = useLinkMachine(environmentId);
+  const selected =
+    choice ??
+    (machines.length === 0
+      ? ANOTHER_ADDRESS
+      : !labs && machines.length === 1
+        ? machines[0]!.environmentId
+        : null);
   const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
   // This client can mint a code there when it is connected to that
   // environment with a session that may create pairing links.
   const targetId = machine?.environmentId ?? null;
   const connected = usePreparedConnection(targetId);
-  const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
+  const mayMint = useEnvironmentScope(targetId, AuthAccessReadScope);
   const canMint =
     targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
   const needsAddress = selected === ANOTHER_ADDRESS || machine?.urls.length === 0;
@@ -205,45 +224,40 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
       setMintFailed(new Set());
     }
   };
-  // Settles to the code to link with, or null after reporting why there is none.
-  const resolvePairingCode = async () => {
-    if (!canMint || targetId === null) return pairingCode.trim();
-    const minted = await mintPairingCodeOn(targetId, access);
-    if (Result.isSuccess(minted)) return minted.success;
-    setMintFailed((failed) => new Set(failed).add(targetId));
-    failureToast("Could not link the environment", linkRequestFailureMessage(minted.failure));
-    return null;
+  // A machine this client knows is linked as it, with a code minted there when it can be.
+  const linkPicked = async (): Promise<Result.Result<PeerLink, string | null>> => {
+    if (machine !== null) {
+      const linked = await linkMachine(
+        needsAddress ? { ...machine, urls: [address.trim()] } : machine,
+        access,
+        canMint ? undefined : pairingCode.trim(),
+      );
+      if (Result.isSuccess(linked)) return Result.succeed(linked.success);
+      if (linked.failure.minting)
+        setMintFailed((failed) => new Set(failed).add(machine.environmentId));
+      return Result.fail(linked.failure.message);
+    }
+    const result = await link({
+      environmentId,
+      input: { url: address.trim(), pairingCode: pairingCode.trim(), access },
+    });
+    if (result._tag === "Success") return Result.succeed(result.value);
+    return Result.fail(
+      isAtomCommandInterrupted(result) ? null : String(squashAtomCommandFailure(result)),
+    );
   };
   const submit = async () => {
-    const [url, ...alternateUrls] =
-      machine === null || needsAddress ? [address.trim()] : machine.urls;
-    if (inFlight.current || !ready || url === undefined) return;
+    if (inFlight.current || !ready) return;
     inFlight.current = true;
     setBusy(true);
-    const code = await resolvePairingCode();
-    const result =
-      code === null
-        ? null
-        : await link({
-            environmentId,
-            input: {
-              url,
-              ...(alternateUrls.length > 0 ? { alternateUrls } : {}),
-              ...(machine === null
-                ? {}
-                : { expectedEnvironmentId: machine.environmentId, expectedLabel: machine.label }),
-              pairingCode: code,
-              access,
-            },
-          });
+    const result = await linkPicked();
     inFlight.current = false;
     setBusy(false);
-    if (result === null) return;
-    if (result._tag === "Success") {
-      toastManager.add({ type: "success", title: `Linked ${result.value.label}` });
+    if (Result.isSuccess(result)) {
+      toastManager.add({ type: "success", title: `Linked ${result.success.label}` });
       handleOpenChange(false);
-    } else if (!isAtomCommandInterrupted(result)) {
-      failureToast("Could not link the environment", String(squashAtomCommandFailure(result)));
+    } else if (result.failure !== null) {
+      failureToast("Could not link the environment", result.failure);
     }
   };
   return (

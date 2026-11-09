@@ -27,6 +27,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -185,7 +186,8 @@ const withModeLimit = (
     : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
 };
 
-// The Linked environments beta is off here: links wait until it is on again.
+// The Linked environments beta is off on a server that isn't cloud-only: links to it wait
+// until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
     error: "linked_environments_off",
@@ -199,10 +201,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const linksEnabled = serverSettings.getSettings.pipe(
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+  const labsEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+  // Agent links start work here without the beta.
+  const hasAgentLinks = Option.match(peerLinks, {
+    onNone: () => Effect.succeed(false),
+    onSome: (links) => links.agentLinks.pipe(Effect.map((agentLinks) => agentLinks.size > 0)),
+  });
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
@@ -232,8 +241,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(invocation, request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
-    if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    const labs = yield* labsEnabled;
+    // A cloud-only server takes links without the beta: each is a member's agent link.
+    if (limited.client?.linked === true && !labs && !cloudOnly) return linkedEnvironmentsOff;
+    const linkedEnvironments = labs || (yield* hasAgentLinks);
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,

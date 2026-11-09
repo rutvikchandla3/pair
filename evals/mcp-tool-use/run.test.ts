@@ -690,6 +690,57 @@ it.effect("saves a new secret file for each request and tells the shell simulato
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
+it.effect("answers a call that names a linked environment with that environment's mock", () =>
+  Effect.gen(function* () {
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const sample = makeSample(
+      {
+        ...childCase,
+        setup: {
+          ...childCase.setup,
+          mocks: {
+            t3_project_list: { projects: [{ id: "project-here" }] },
+            "t3_project_list@environment-pair-cloud": { projects: [{ id: "project-there" }] },
+            delegate_task: { taskId: "task-here" },
+            "delegate_task@environment-pair-cloud": { taskId: "task-there" },
+          },
+        },
+      },
+      base,
+    );
+    sample.tools.push(
+      { name: "mcp__t3-code__t3_project_list" },
+      { name: "mcp__t3-code__delegate_task" },
+    );
+    const config = {
+      apiKey: "",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      maxSteps: 6,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const answer = (tool: string, input: Record<string, unknown>) =>
+      answerToolCall(sample, config, {
+        type: "tool_use",
+        id: tool,
+        name: `mcp__t3-code__${tool}`,
+        input,
+      }).pipe(Effect.map((result) => String(result.content)));
+    const there = "environment-pair-cloud";
+    assert.include(yield* answer("t3_project_list", { environmentId: there }), "project-there");
+    assert.include(yield* answer("t3_project_list", {}), "project-here");
+    assert.include(
+      yield* answer("t3_project_list", { environmentId: "environment-vps" }),
+      "project-here",
+    );
+    assert.include(
+      yield* answer("delegate_task", { task: "x", target: { environmentId: there } }),
+      "task-there",
+    );
+    assert.include(yield* answer("delegate_task", { task: "x" }), "task-here");
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
 it.effect("saves a pasted value with no card where request_secret takes one", () =>
   Effect.gen(function* () {
     const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });

@@ -45,6 +45,7 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
 import {
+  inEnvironment,
   launchWorkspaceStrategy,
   readLatestMessages,
   resolveProject,
@@ -261,6 +262,62 @@ it.effect("resolves a remote project by id, server folder, or unique title", () 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "--environment sends every call there and finds this checkout's project there by repository",
+  () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-pair-cloud");
+      const here = {
+        id: "project-here",
+        title: "app",
+        workspaceRoot: process.cwd(),
+        repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+      };
+      const there = (id: string, canonicalKey: string) => ({
+        id,
+        title: id,
+        workspaceRoot: `/srv/${id}`,
+        repositoryIdentity: { canonicalKey },
+      });
+      const resolveThere = (projectsThere: ReadonlyArray<ReturnType<typeof there>>) => {
+        const scripted = scriptedTools({
+          t3_project_list: [
+            { projects: projectsThere, nextCursor: null },
+            { projects: [here], nextCursor: null },
+          ],
+        });
+        return resolveProject(inEnvironment(scripted.tools, environmentId), ".", {
+          remote: true,
+          environmentId,
+        }).pipe(
+          Effect.map((project) => ({ found: project.id as string, calls: scripted.calls })),
+          Effect.catch((error) => Effect.succeed({ found: error._tag, calls: scripted.calls })),
+        );
+      };
+
+      const matched = yield* resolveThere([
+        there("project-other", "github.com/acme/other"),
+        there("project-cloud-app", "github.com/acme/app"),
+      ]);
+      assert.strictEqual(matched.found, "project-cloud-app");
+      assert.deepStrictEqual(
+        matched.calls.map((entry) => (entry.args as { environmentId?: string }).environmentId),
+        [environmentId, undefined],
+      );
+      assert.strictEqual(
+        (yield* resolveThere([there("project-other", "github.com/acme/other")])).found,
+        "ThreadProjectNotFoundError",
+      );
+      assert.strictEqual(
+        (yield* resolveThere([
+          there("project-a", "github.com/acme/app"),
+          there("project-b", "github.com/acme/app"),
+        ])).found,
+        "ThreadUsageError",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const ProbeToolkit = Toolkit.make(
   Tool.make("t3_project_list", {
     description: "Lists projects.",
@@ -333,6 +390,7 @@ const serveMcp = Effect.gen(function* () {
     ).pipe(
       Layer.provide(McpOAuth.layerMcpClientAuthenticator),
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-thread-cli-test-" })),
     ),
     { disableListenLog: true, disableLogger: true },
   ).pipe(Layer.build);
@@ -379,6 +437,22 @@ it.effect("--url needs T3CODE_TOKEN", () =>
       {},
     ).pipe(Effect.flip);
     assert.instanceOf(error, ThreadUsageError);
+
+    const throughLink = yield* runCli(
+      [
+        "thread",
+        "list",
+        "--url",
+        "http://127.0.0.1:9",
+        "--environment",
+        "Pair Cloud",
+        "--project",
+        "API",
+      ],
+      { T3CODE_TOKEN: "token" },
+    ).pipe(Effect.flip);
+    assert.instanceOf(throughLink, ThreadUsageError);
+    assert.include(throughLink.message, "--environment goes through this machine's server");
   }),
 );
 

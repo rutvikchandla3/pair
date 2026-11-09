@@ -16,7 +16,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  AuthAccessWriteScope,
+  AuthAccessReadScope,
   type AuthMcpClientAccess,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
@@ -235,7 +235,7 @@ function LinkRequestDialog(props: {
   // environment with a session that may create pairing links.
   const targetId = target.kind === "machine" ? target.environmentId : null;
   const connected = usePreparedConnection(targetId);
-  const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
+  const mayMint = useEnvironmentScope(targetId, AuthAccessReadScope);
   const canMint =
     targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
   const needsAddress =

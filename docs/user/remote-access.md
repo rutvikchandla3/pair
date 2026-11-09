@@ -330,7 +330,8 @@ Linked environments is a beta. Turn it on for both machines in **Settings →
 Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
-off, its result arrives once it is back on.
+off, its result arrives once it is back on. A link to your team's Pair Cloud
+doesn't need the beta on either machine.
 
 On the machine you will work from, open **Settings → Environments → Linked environments**,
 choose **Link**, and pick the other machine or enter its address. The list
