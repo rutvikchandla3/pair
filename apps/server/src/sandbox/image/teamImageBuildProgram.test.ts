@@ -58,6 +58,7 @@ const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (ins
         },
       ],
       excludedEnvNames: ["NPM_TOKEN", "T3_CLONE_TOKEN_0"],
+      leakCheckNames: ["NPM_TOKEN", "T3_CLONE_TOKEN_0"],
       paths: {
         imageRoot: `${root}/image`,
         output: `${root}/etc/build.json`,
@@ -99,6 +100,12 @@ const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (ins
     output,
     exitCode,
     phases,
+    leaks: output
+      .split("\n")
+      .filter((line) => line.startsWith("::t3-leak::"))
+      .map((line) =>
+        line.slice("::t3-leak::".length).replace(home, "$HOME").replace(root, "$ROOT"),
+      ),
     result,
     gitCalls: yield* fs.readFileString(`${root}/git-calls`),
     buildDirLeft: yield* fs.exists(`${home}/.t3-build`),
@@ -147,6 +154,45 @@ describe("teamImageBuildProgram", () => {
       const build = yield* runBuild("exit 7");
       assert.strictEqual(build.exitCode, 7);
       assert.deepStrictEqual(build.phases, ["preflight", "clone", "install"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails at clean naming every secret and file, and never prints a value", () =>
+    Effect.gen(function* () {
+      const build = yield* runBuild(
+        [
+          `echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >"$HOME/.npmrc"`,
+          `mkdir -p "$HOME/.config/tool" && echo "$T3_CLONE_TOKEN_0" >"$HOME/.config/tool/auth"`,
+          `echo 'NPM_TOKEN=\${NPM_TOKEN}' >"$HOME/.netrc"`,
+        ].join("\n"),
+      );
+      assert.strictEqual(build.exitCode, 3, build.output);
+      assert.deepStrictEqual(build.phases, [
+        "preflight",
+        "clone",
+        "install",
+        "env",
+        "verify",
+        "clean",
+      ]);
+      // `.netrc` holds the text `${NPM_TOKEN}`, not the value, so it is not a hit.
+      assert.deepStrictEqual([...build.leaks].toSorted(), [
+        "NPM_TOKEN::$HOME/.npmrc",
+        "T3_CLONE_TOKEN_0::$HOME/.config/tool/auth",
+      ]);
+      assert.notInclude(build.output, "npm-secret-value");
+      assert.notInclude(build.output, "clone-token-value");
+      assert.isTrue(build.buildDirLeft);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails when an exported secret reaches the manifest's imageEnv", () =>
+    Effect.gen(function* () {
+      const build = yield* runBuild(`echo "export REGISTRY_AUTH=$NPM_TOKEN" >>"$HOME/.profile"`);
+      assert.strictEqual(build.exitCode, 3, build.output);
+      assert.strictEqual(build.phases.at(-1), "manifest");
+      assert.deepStrictEqual(build.leaks, ["NPM_TOKEN::$ROOT/etc/build.json"]);
+      assert.notInclude(build.output, "npm-secret-value");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

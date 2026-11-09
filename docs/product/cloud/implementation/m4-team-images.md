@@ -911,13 +911,18 @@ replaced with `***` before it is written to disk or sent to a reader.
     `/etc/t3/build.json` once it is written (05 §6's list, plus the clones and the manifest,
     which carries `imageEnv`). A hit prints `::t3-leak::<NAME>::<path>` and the program exits 3
     after checking every name. `grep`'s pattern comes from the variable, never from the command
-    line text, and the value is never printed. The manifest is written before the check so
-    `imageEnv` is covered.
+    line text, and the value is never printed (the pattern file is `grep`'s stdin). The manifest is
+    checked on its own right after it is written, so `imageEnv` is covered without moving the
+    `clean` and `manifest` phases. A value is checked line by line, skipping lines under 4
+    characters.
   - `TeamImageEffectsLive.ts`: a `::t3-leak::` line dispatches `fail { phase: "leak", detail:
-    "<NAME>'s value was found in <path>." … }`, taking the first hit and naming the count of the
-    rest. The server also checks the decoded `imageEnv` against the values it passed, as a second
+    "<NAME>'s value was found in <path>." … }`, taking the first hit, naming the count of the
+    rest, and ending with "Use ${NAME} instead." for a build secret. The log gets a sentence for
+    each hit, not the marker line. The server also checks the decoded `imageEnv` against the values it passed, as a second
     line of defense, before `program-finished`.
-  - `TeamImageBuildLog.ts`: `open` takes the values to redact. A build secret shorter than 4
+  - `TeamImageBuildLog.ts`: `open(number, values)` takes the values to redact, so the effects layer reads the recipe's
+    secrets and the clone tokens before it opens the log (a failure before then has an empty
+    `logTail`). A build secret shorter than 4
     characters fails the build at `install` before the program starts ("NPM_TOKEN is too short to
     keep out of the log."), since redacting it would star ordinary text. Each line is
     redacted before the file, the ring and live readers see it. Matching is per line: the program

@@ -4,6 +4,7 @@ import {
   ComputeDriverId,
   MemberId,
   SandboxId,
+  SecretProviderId,
   type TeamImageBuildStatus,
   TeamImageBuildId,
   type TeamImageError,
@@ -32,6 +33,7 @@ const recipe: TeamImageRecipe = {
   buildSecrets: {},
   install: "",
 };
+const secret = { provider: SecretProviderId.make("vault"), reference: "npm" };
 const manifest = {
   base: { ref: "pair:1", digest: null, pairVersion: "1" },
   providers: [],
@@ -152,6 +154,18 @@ describe("decideTeamImageCommand", () => {
       savedBy: { kind: "member", memberId: admin },
     });
     assert.strictEqual(refused(decide(state(null), save(null))), "recipe-changed");
+    for (const name of ["HOME", "PATH", "T3CODE_HOME", "T3_CLONE_TOKEN_0"]) {
+      for (const field of ["buildEnv", "buildSecrets"] as const) {
+        const reserved: TeamImageCommand = {
+          type: "team-image.recipe.save",
+          commandId,
+          baseRevision: 1,
+          savedBy: { kind: "member", memberId: admin },
+          recipe: { ...recipe, [field]: { [name]: field === "buildEnv" ? "x" : secret } },
+        };
+        assert.strictEqual(refused(decide(state(null), reserved)), "invalid-recipe");
+      }
+    }
     assert.deepStrictEqual(decided(decide(state(null), save(1))).events, [
       {
         type: "team-image.recipe-saved",

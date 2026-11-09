@@ -9,6 +9,7 @@ import {
   type Project,
   ProjectId,
   type SandboxId,
+  SecretProviderId,
   type TeamImageBuild,
   type TeamImageBuildStatus,
   type TeamImageRecipe,
@@ -59,7 +60,11 @@ import { TeamImageEffects } from "./TeamImageEffects.ts";
 import * as TeamImageEffectsLive from "./TeamImageEffectsLive.ts";
 import * as TeamImageService from "./TeamImageService.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
-import { TEAM_IMAGE_BUILD_OUTPUT, TEAM_IMAGE_PHASE_MARKER } from "./teamImageBuildProgram.ts";
+import {
+  TEAM_IMAGE_BUILD_OUTPUT,
+  TEAM_IMAGE_LEAK_MARKER,
+  TEAM_IMAGE_PHASE_MARKER,
+} from "./teamImageBuildProgram.ts";
 
 const docker = ComputeDriverId.make("docker");
 const dockerDriver: DockerSandboxDriver = { kind: "docker", id: docker, label: "Docker" };
@@ -71,6 +76,12 @@ const recipe: TeamImageRecipe = {
   buildEnv: { NODE_ENV: "production" },
   buildSecrets: {},
   install: "npm i -g pnpm",
+};
+
+const NPM_SECRET = "npm-secret-value";
+const secretRecipe: TeamImageRecipe = {
+  ...recipe,
+  buildSecrets: { NPM_TOKEN: { provider: SecretProviderId.make("vault"), reference: "npm" } },
 };
 
 const memberRecord: Members.MemberRecord = {
@@ -120,6 +131,8 @@ const phaseLine = (phase: string) => `${TEAM_IMAGE_PHASE_MARKER}${phase}`;
 const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (input: {
   readonly program: Program;
   readonly snapshot: "succeed" | "fail";
+  /** What every build secret reference reads as. */
+  readonly secretValue?: string;
 }) {
   const fake = yield* ComputeDriverTesting.make(docker);
   const boots = yield* Queue.unbounded<RunnerBoot>();
@@ -257,7 +270,9 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
       revoke: (sandboxId) => Effect.sync(() => void revokedTokens.push(sandboxId)),
     }),
     Layer.mock(MemberGitHub)({ enabled: false, credentialFor: () => Effect.succeedNone }),
-    Layer.mock(SecretResolver.SecretResolver)({}),
+    Layer.mock(SecretResolver.SecretResolver)({
+      read: (references) => Effect.succeed(references.map(() => input.secretValue)),
+    }),
     Layer.mock(ProjectService)({ getById: () => Effect.succeedSome(project) }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       readRemoteUrl: () => Effect.succeed("git@github.com:acme/web.git"),
@@ -363,12 +378,15 @@ const awaitStatus = Effect.fn("TeamImageEffectsLive.test.awaitStatus")(function*
 });
 
 /** Requests a build, launches it, boots its runner and starts its program. */
-const startProgram = Effect.fn("TeamImageEffectsLive.test.startProgram")(function* (world: World) {
+const startProgram = Effect.fn("TeamImageEffectsLive.test.startProgram")(function* (
+  world: World,
+  buildRecipe: TeamImageRecipe = recipe,
+) {
   const service = yield* TeamImageService.TeamImageService;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
   const { revision } = yield* service.saveRecipe({
     actorId: admin,
-    input: { baseRevision: null, recipe },
+    input: { baseRevision: null, recipe: buildRecipe },
   });
   const build = yield* service.startBuild({ actorId: admin, input: { recipeRevision: revision } });
   yield* worker.drain();
@@ -499,6 +517,100 @@ describe("TeamImageEffectsLive", () => {
         assert.isNotNull(result.destroyedAt);
         assert.include(world.revokedTokens, machine.sandboxId);
       }).pipe(Effect.provide(layerTest(world, 2)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a leak line fails the build at leak without a value anywhere", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({
+        program: {
+          lines: [
+            phaseLine("preflight"),
+            `npm used ${NPM_SECRET} with installation-token`,
+            phaseLine("clean"),
+            `${TEAM_IMAGE_LEAK_MARKER}NPM_TOKEN::/home/t3/.npmrc`,
+            `${TEAM_IMAGE_LEAK_MARKER}T3_CLONE_TOKEN_0::/home/t3/.config/git/credentials`,
+          ],
+          exitCode: 3,
+        },
+        snapshot: "succeed",
+        secretValue: NPM_SECRET,
+      });
+      yield* Effect.gen(function* () {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const buildLog = yield* TeamImageBuildLog.TeamImageBuildLog;
+        const { build, machine } = yield* startProgram(world, secretRecipe);
+        yield* awaitStatus("failed");
+        yield* worker.drain();
+
+        const result = yield* finished(build);
+        assert.deepStrictEqual(result.build?.failure, {
+          phase: "leak",
+          detail:
+            "NPM_TOKEN's value was found in /home/t3/.npmrc. 1 more place leaks a secret. Use ${NPM_TOKEN} instead.",
+          logTail: [
+            "npm used *** with ***",
+            "NPM_TOKEN's value was found in /home/t3/.npmrc.",
+            "T3_CLONE_TOKEN_0's value was found in /home/t3/.config/git/credentials.",
+          ],
+        });
+        assert.deepStrictEqual(world.snapshots, []);
+        assert.deepStrictEqual(world.destroyed, [machine.driverRef]);
+        const [log] = yield* Stream.runCollect(buildLog.read(1));
+        assert.notInclude(log?.text, NPM_SECRET);
+        assert.notInclude(log?.text, "installation-token");
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("an image env that holds a secret fails the build even if the program did not", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({
+        program: succeeding,
+        snapshot: "succeed",
+        secretValue: NPM_SECRET,
+      });
+      world.files.set(
+        TEAM_IMAGE_BUILD_OUTPUT,
+        JSON.stringify({
+          ...JSON.parse(buildOutput),
+          imageEnv: { REGISTRY_AUTH: `Bearer ${NPM_SECRET}` },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const { build } = yield* startProgram(world, secretRecipe);
+        yield* awaitStatus("failed");
+
+        const result = yield* finished(build);
+        assert.deepInclude(result.build?.failure, {
+          phase: "leak",
+          detail: "NPM_TOKEN's value was found in the image environment (REGISTRY_AUTH).",
+        });
+        assert.deepStrictEqual(world.snapshots, []);
+        assert.notInclude(JSON.stringify(result.build), NPM_SECRET);
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a build secret too short to redact fails at install before the program starts", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({
+        program: succeeding,
+        snapshot: "succeed",
+        secretValue: "abc",
+      });
+      yield* Effect.gen(function* () {
+        const { build } = yield* startProgram(world, secretRecipe);
+        yield* awaitStatus("failed");
+
+        const result = yield* finished(build);
+        assert.deepStrictEqual(result.build?.failure, {
+          phase: "install",
+          detail: "NPM_TOKEN is too short to keep out of the log.",
+          logTail: [],
+        });
+        assert.isFalse(world.files.has("/home/t3/.t3-build/t3-build.sh"));
+      }).pipe(Effect.provide(layerTest(world)));
     }).pipe(Effect.scoped),
   );
 });

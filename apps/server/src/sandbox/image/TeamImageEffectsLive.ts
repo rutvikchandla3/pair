@@ -55,7 +55,10 @@ import { TeamImageEffects } from "./TeamImageEffects.ts";
 import { TeamImageService } from "./TeamImageService.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
 import {
+  isRedactableSecret,
+  secretFragments,
   TEAM_IMAGE_BUILD_OUTPUT,
+  TEAM_IMAGE_LEAK_MARKER,
   TEAM_IMAGE_ROOT,
   TeamImageBuildOutput,
   teamImageBuildProgram,
@@ -77,6 +80,11 @@ const isPermanent = Schema.is(
   Schema.Union([TeamImageError, ComputeDriverNotConfiguredError, ComputeDriverError]),
 );
 const decodeOutput = Schema.decodeUnknownEffect(Schema.fromJsonString(TeamImageBuildOutput));
+
+interface Leak {
+  readonly name: string;
+  readonly path: string;
+}
 
 const requesterMember = (requester: TeamImageRequester): MemberId | undefined =>
   requester.kind === "member" ? requester.memberId : requester.authorIds[0];
@@ -255,24 +263,64 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+      if (!isRedactableSecret(value)) {
+        return yield* new BuildStopped({
+          phase: "install",
+          detail: `${name} is too short to keep out of the log.`,
+        });
+      }
       env[name] = Redacted.make(value);
     }
     return env;
   });
 
+  /** Everything the program needs that can fail before it starts; nothing here is logged. */
+  const prepare = Effect.fnUntraced(function* (record: TeamImageBuildRecord) {
+    const revision = yield* store.readRevision(record.build.recipeRevision);
+    if (Option.isNone(revision)) {
+      return yield* new BuildStopped({ phase: "preflight", detail: "The build's recipe is gone." });
+    }
+    const { recipe } = revision.value;
+    const secretEnv = yield* resolveSecrets(recipe);
+    const { repos, env: tokenEnv } = yield* prepareRepos(record, recipe.projectIds);
+    const secrets = { ...secretEnv, ...tokenEnv };
+    return {
+      recipe,
+      repos,
+      secretEnv,
+      tokenEnv,
+      secretValues: Object.values(secrets).map(Redacted.value),
+    };
+  });
+  type Prepared = Effect.Success<ReturnType<typeof prepare>>;
+
+  /** The first `::t3-leak::` hit names the failure; the rest are only counted. */
+  const leakFailure = (leaks: ReadonlyArray<Leak>, tokenNames: ReadonlyArray<string>) => {
+    const [first, ...rest] = leaks;
+    if (first === undefined) return null;
+    return new BuildStopped({
+      phase: "leak",
+      detail: [
+        `${first.name}'s value was found in ${first.path}.`,
+        rest.length > 0
+          ? `${rest.length} more ${rest.length === 1 ? "place leaks" : "places leak"} a secret.`
+          : null,
+        tokenNames.includes(first.name) ? null : `Use \${${first.name}} instead.`,
+      ]
+        .filter((part) => part !== null)
+        .join(" "),
+    });
+  };
+
   const runBuild = Effect.fnUntraced(function* (
     record: TeamImageBuildRecord,
+    prepared: Prepared,
     writer: TeamImageBuildLog.TeamImageBuildLogWriter,
     progress: { phase: TeamImageBuildPhase },
   ) {
     const { build, machine } = record;
+    const { recipe, repos, secretEnv, tokenEnv } = prepared;
     const stopped = (detail: string) => () => new BuildStopped({ phase: progress.phase, detail });
-
-    const revision = yield* store.readRevision(build.recipeRevision);
-    if (Option.isNone(revision)) return yield* stopped("The build's recipe is gone.")();
-    const { recipe } = revision.value;
-    const secretEnv = yield* resolveSecrets(recipe);
-    const { repos, env: tokenEnv } = yield* prepareRepos(record, recipe.projectIds);
 
     const host = yield* hosts
       .forPath(`${SANDBOX_ROOT}/${machine.sandboxId}`)
@@ -286,6 +334,7 @@ const make = Effect.gen(function* () {
         ...Object.keys(secretEnv),
         ...Object.keys(tokenEnv),
       ],
+      leakCheckNames: [...Object.keys(secretEnv), ...Object.keys(tokenEnv)],
     });
     yield* Effect.all([
       host.fileSystem.makeDirectory(buildDir, { recursive: true }),
@@ -295,6 +344,7 @@ const make = Effect.gen(function* () {
       Effect.mapError(stopped("Pair Cloud could not write the build program to the machine.")),
     );
 
+    const leaks: Array<Leak> = [];
     const exitCode = yield* Effect.scoped(
       Effect.gen(function* () {
         const child = yield* host.spawner.spawn(
@@ -308,8 +358,14 @@ const make = Effect.gen(function* () {
         yield* child.all.pipe(
           Stream.decodeText(),
           Stream.splitLines,
-          Stream.runForEach((line) =>
-            writer.write(line).pipe(
+          Stream.runForEach((line) => {
+            if (line.startsWith(TEAM_IMAGE_LEAK_MARKER)) {
+              // The marker names a place, never a value; the log gets a sentence instead.
+              const [name = "", ...path] = line.slice(TEAM_IMAGE_LEAK_MARKER.length).split("::");
+              leaks.push({ name, path: path.join("::") });
+              return writer.write(`${name}'s value was found in ${path.join("::")}.`);
+            }
+            return writer.write(line).pipe(
               Effect.flatMap((next) => {
                 if (next === null) return Effect.void;
                 progress.phase = next;
@@ -320,13 +376,15 @@ const make = Effect.gen(function* () {
                   phase: next,
                 });
               }),
-            ),
-          ),
+            );
+          }),
         );
         return Number(yield* child.exitCode);
       }),
     ).pipe(Effect.mapError(stopped("The build machine stopped answering.")));
 
+    const leaked = leakFailure(leaks, Object.keys(tokenEnv));
+    if (leaked !== null) return yield* leaked;
     if (exitCode !== 0) {
       return yield* new BuildStopped({
         phase: progress.phase,
@@ -341,6 +399,19 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeOutput),
         Effect.mapError(stopped("The build wrote a manifest Pair Cloud could not read.")),
       );
+    // The program's own check of the manifest is the first line; this is the second.
+    for (const [name, value] of Object.entries({ ...secretEnv, ...tokenEnv })) {
+      const fragments = secretFragments(Redacted.value(value));
+      const hit = Object.entries(output.imageEnv).find(([, envValue]) =>
+        fragments.some((fragment) => envValue.includes(fragment)),
+      );
+      if (hit !== undefined) {
+        return yield* new BuildStopped({
+          phase: "leak",
+          detail: `${name}'s value was found in the image environment (${hit[0]}).`,
+        });
+      }
+    }
     const base = baseImages.get(build.id) ?? null;
     const manifest: TeamImageManifest = {
       base: {
@@ -367,10 +438,10 @@ const make = Effect.gen(function* () {
   /** Runs `t3-build.sh` to its end; a failure is dispatched, never returned. */
   const program = Effect.fn("TeamImageEffects.program")(
     function* (record: TeamImageBuildRecord) {
-      const writer = yield* buildLog.open(record.build.number);
       const progress: { phase: TeamImageBuildPhase } = { phase: "preflight" };
-      yield* runBuild(record, writer, progress).pipe(
-        Effect.catchCause((cause) =>
+      const failed =
+        (tail: Effect.Effect<ReadonlyArray<string>>) =>
+        <E>(cause: Cause.Cause<E>) =>
           Effect.gen(function* () {
             if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause);
             const stopped = Option.filter(Cause.findErrorOption(cause), isBuildStopped);
@@ -389,10 +460,20 @@ const make = Effect.gen(function* () {
               phase: failure.phase,
               detail: failure.detail,
               ...(failure.exitCode === undefined ? {} : { exitCode: failure.exitCode }),
-              logTail: yield* writer.tail,
+              logTail: yield* tail,
             });
-          }),
+          });
+      // The log redacts the secrets it is opened with, so it opens once they are read.
+      const prepared = yield* prepare(record).pipe(
+        Effect.asSome,
+        Effect.catchCause((cause) =>
+          failed(Effect.succeed([]))(cause).pipe(Effect.as(Option.none<Prepared>())),
         ),
+      );
+      if (Option.isNone(prepared)) return;
+      const writer = yield* buildLog.open(record.build.number, prepared.value.secretValues);
+      yield* runBuild(record, prepared.value, writer, progress).pipe(
+        Effect.catchCause(failed(writer.tail)),
       );
     },
     (effect, record) =>

@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ServerConfig } from "../../config.ts";
-import { TEAM_IMAGE_PHASE_MARKER } from "./teamImageBuildProgram.ts";
+import { secretFragments, TEAM_IMAGE_PHASE_MARKER } from "./teamImageBuildProgram.ts";
 
 const FILE_LIMIT_BYTES = 1024 * 1024;
 const RING_LIMIT_BYTES = 4 * 1024 * 1024;
@@ -37,9 +37,13 @@ export interface TeamImageBuildLogWriter {
 export class TeamImageBuildLog extends Context.Service<
   TeamImageBuildLog,
   {
-    /** The writer closes with the scope: the ring is appended and live readers end. */
+    /**
+     * Every line has the `redact` values replaced with `***` before the file, the ring and live
+     * readers see it. The writer closes with the scope: the ring is appended and live readers end.
+     */
     readonly open: (
       number: number,
+      redact: ReadonlyArray<string>,
     ) => Effect.Effect<TeamImageBuildLogWriter, PlatformError.PlatformError, Scope.Scope>;
     /** Waits until the build's writer is open; returns at once if it is. */
     readonly whenOpen: (number: number) => Effect.Effect<void>;
@@ -63,6 +67,15 @@ interface OpenLog {
 const isPhase = Schema.is(TeamImageBuildPhase);
 const encoder = new TextEncoder();
 
+/** Replaces every secret value with `***`; matching is per line, so a split value is not one. */
+const redactor = (values: ReadonlyArray<string>) => {
+  const fragments = [...new Set(values.flatMap(secretFragments))].toSorted(
+    (a, b) => b.length - a.length,
+  );
+  return (line: string) =>
+    fragments.reduce((text, fragment) => text.replaceAll(fragment, "***"), line);
+};
+
 const leftOutLine = (bytes: number) => `… ${bytes} bytes left out …\n`;
 
 export const make = Effect.gen(function* () {
@@ -85,7 +98,11 @@ export const make = Effect.gen(function* () {
   const ringText = (log: OpenLog) =>
     (log.leftOutBytes > 0 ? leftOutLine(log.leftOutBytes) : "") + log.ring.join("");
 
-  const open = Effect.fn("TeamImageBuildLog.open")(function* (number: number) {
+  const open = Effect.fn("TeamImageBuildLog.open")(function* (
+    number: number,
+    redact: ReadonlyArray<string>,
+  ) {
+    const redactLine = redactor(redact);
     yield* fs.makeDirectory(directory, { recursive: true });
     const file = yield* fs.open(fileOf(number), { flag: "w" });
     const log: OpenLog = {
@@ -111,11 +128,12 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const write = Effect.fn("TeamImageBuildLog.write")(function* (line: string) {
-      if (line.startsWith(TEAM_IMAGE_PHASE_MARKER)) {
-        const phase = line.slice(TEAM_IMAGE_PHASE_MARKER.length).trim();
+    const write = Effect.fn("TeamImageBuildLog.write")(function* (raw: string) {
+      if (raw.startsWith(TEAM_IMAGE_PHASE_MARKER)) {
+        const phase = raw.slice(TEAM_IMAGE_PHASE_MARKER.length).trim();
         return isPhase(phase) ? phase : null;
       }
+      const line = redactLine(raw);
       const text = `${line}\n`;
       const bytes = encoder.encode(text);
       yield* log.lock.withPermits(1)(

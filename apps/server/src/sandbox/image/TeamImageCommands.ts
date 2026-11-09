@@ -120,6 +120,10 @@ export interface TeamImageDecision {
 export const isLiveTeamImageBuild = (status: TeamImageBuildStatus) =>
   status === "queued" || status === "launching" || status === "running" || status === "capturing";
 
+// Names the server sets itself on the build's process.
+const isReservedBuildName = (name: string) =>
+  name === "HOME" || name === "PATH" || /^(T3CODE_|T3_CLONE_TOKEN_)/.test(name);
+
 const NOTHING: TeamImageDecision = { events: [], effects: [] };
 
 const refuse = (reason: TeamImageError["reason"], message: string) =>
@@ -149,6 +153,13 @@ export function decideTeamImageCommand(
   now: DateTime.Utc,
 ): Result.Result<TeamImageDecision, TeamImageError> {
   if (command.type === "team-image.recipe.save") {
+    const reserved = [
+      ...Object.keys(command.recipe.buildEnv),
+      ...Object.keys(command.recipe.buildSecrets),
+    ].find(isReservedBuildName);
+    if (reserved !== undefined) {
+      return refuse("invalid-recipe", `${reserved} is reserved for Pair Cloud's own use.`);
+    }
     if (command.baseRevision !== state.latestRevision) {
       return refuse(
         "recipe-changed",

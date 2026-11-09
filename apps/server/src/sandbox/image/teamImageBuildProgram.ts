@@ -4,6 +4,17 @@ import * as Schema from "effect/Schema";
 export const TEAM_IMAGE_ROOT = "/t3-sandbox/.image";
 export const TEAM_IMAGE_BUILD_OUTPUT = "/etc/t3/build.json";
 export const TEAM_IMAGE_PHASE_MARKER = "::t3-phase::";
+/** `::t3-leak::<NAME>::<path>`, one per file that holds a secret's value. */
+export const TEAM_IMAGE_LEAK_MARKER = "::t3-leak::";
+const TEAM_IMAGE_LEAK_EXIT_CODE = 3;
+
+/** Shorter lines would star ordinary text in a log and match anywhere in a file. */
+const MIN_SECRET_FRAGMENT_LENGTH = 4;
+export const isRedactableSecret = (value: string) => value.length >= MIN_SECRET_FRAGMENT_LENGTH;
+
+/** What the leak check and the log redactor look for: each line of the value, so a PEM key works. */
+export const secretFragments = (value: string): ReadonlyArray<string> =>
+  value.split(/\r?\n/).filter(isRedactableSecret);
 
 /** What the program writes to `/etc/t3/build.json`; the server trusts nothing past this schema. */
 export const TeamImageBuildOutput = Schema.Struct({
@@ -26,6 +37,8 @@ export interface TeamImageBuildProgramInput {
   }>;
   /** Build env, secret and token names, never recorded in `imageEnv`. */
   readonly excludedEnvNames: ReadonlyArray<string>;
+  /** The secret and clone token names whose values must not be on disk when the build ends. */
+  readonly leakCheckNames: ReadonlyArray<string>;
   /** Tests point these at a temporary directory. */
   readonly paths?: {
     readonly imageRoot: string;
@@ -52,6 +65,9 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     output: TEAM_IMAGE_BUILD_OUTPUT,
     baseInfo: "/etc/pair-image.json",
   };
+  for (const name of input.leakCheckNames) {
+    if (!VARIABLE_NAME.test(name)) throw new Error(`Not a variable name: ${name}`);
+  }
   for (const repo of input.repos) {
     if (repo.tokenVariable !== null && !VARIABLE_NAME.test(repo.tokenVariable)) {
       throw new Error(`Not a variable name: ${repo.tokenVariable}`);
@@ -87,6 +103,30 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     .map((_, index) => `{projectId: $id${index}, path: $path${index}, headSha: $head${index}}`)
     .join(", ");
   const excluded = JSON.stringify(["PWD", "SHLVL", "_", "OLDPWD", ...input.excludedEnvNames]);
+  // Each place a secret could be left: 05 §6's list, the clones' git config and the manifest.
+  const leakPaths = [
+    '"$HOME/.npmrc"',
+    '"$HOME/.config"',
+    '"$HOME/.docker/config.json"',
+    '"$HOME/.git-credentials"',
+    '"$HOME/.netrc"',
+    '"$HOME/.bash_history"',
+    "/etc/environment",
+    ...input.repos.map((repo) => quote(`${repo.path}/.git/config`)),
+  ];
+  // The pattern file is stdin, so no value is ever on a command line.
+  const leakCheck =
+    input.leakCheckNames.length === 0
+      ? ["    return 0"]
+      : [
+          `    for name in ${input.leakCheckNames.join(" ")}; do`,
+          '      [ -n "${!name:-}" ] || continue',
+          "      while IFS= read -r path; do",
+          `        printf '${TEAM_IMAGE_LEAK_MARKER}%s::%s\\n' "$name" "$path"`,
+          "        leaked=1",
+          `      done < <(printf '%s\\n' "\${!name}" | awk 'length($0) >= ${MIN_SECRET_FRAGMENT_LENGTH}' | grep -rlF -f - "\${targets[@]}" 2>/dev/null || true)`,
+          "    done",
+        ];
   const providerCases = PROVIDER_CLIS.map(([kind, cli]) => `      ${kind}) ${cli} --version ;;`);
 
   return [
@@ -98,6 +138,16 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     '  local build_dir="$HOME/.t3-build"',
     `  phase() { printf '${TEAM_IMAGE_PHASE_MARKER}%s\\n' "$1"; }`,
     `  fail() { printf '%s\\n' "$1"; exit 1; }`,
+    "  local leaked=0",
+    // Prints a leak line for each file that holds a secret's value; the caller exits after all names.
+    "  leak_check() {",
+    "    local name path targets=()",
+    '    for path in "$@"; do',
+    '      if [ -e "$path" ]; then targets+=("$path"); fi',
+    "    done",
+    '    [ "${#targets[@]}" -gt 0 ] || return 0',
+    ...leakCheck,
+    "  }",
     "  capture_env() {",
     `    env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" SHELL=/bin/bash PATH=${quote(CLEAN_PATH)} /bin/bash -lc 'env -0'`,
     "  }",
@@ -142,6 +192,8 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     ...verifyRepos,
     "",
     "  phase clean",
+    `  leak_check ${leakPaths.join(" ")}`,
+    `  [ "$leaked" = 0 ] || exit ${TEAM_IMAGE_LEAK_EXIT_CODE}`,
     '  rm -rf "$build_dir" "$HOME/.bash_history"',
     "",
     "  phase manifest",
@@ -150,6 +202,9 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     `    '{pairVersion: $base[0].pairVersion, providers: $base[0].providers, repos: [${repoList}], imageEnv: $imageEnv}' \\`,
     `    | sudo tee ${quote(paths.output)} >/dev/null`,
     `  sudo chmod 0644 ${quote(paths.output)}`,
+    // `imageEnv` is only on disk now.
+    `  leak_check ${quote(paths.output)}`,
+    `  [ "$leaked" = 0 ] || exit ${TEAM_IMAGE_LEAK_EXIT_CODE}`,
     "}",
     'main "$@"',
     "",
