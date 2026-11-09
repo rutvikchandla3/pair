@@ -192,6 +192,7 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
+import { useContinueLocally } from "../hooks/useContinueLocally";
 import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
 import { readContinueInCloudOffer } from "../state/sandbox";
 import {
@@ -1011,6 +1012,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     deleteThread,
   } = useThreadActions();
   const runSandboxAction = useSandboxActionRunner();
+  const continueLocally = useContinueLocally();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2731,6 +2733,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const teamMenu = readThreadTeamMenu(thread);
         const machine = readSandboxThreadMachine(threadRef);
         const cloudOffer = readContinueInCloudOffer(threadRef);
+        const moveOffer = continueLocally.offerFor(threadRef);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2765,6 +2768,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 : {
                     continueInCloud: {
                       label: cloudOffer.kind === "disabled" ? cloudOffer.label : null,
+                    },
+                  }),
+              ...(moveOffer.kind === "hidden"
+                ? {}
+                : {
+                    continueLocally: {
+                      disabledLabel: moveOffer.kind === "disabled" ? moveOffer.label : null,
                     },
                   }),
               supports: {
@@ -2934,6 +2944,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "continue-in-cloud":
             openContinueInCloudDialog(threadRef);
+            return;
+          case "continue-locally":
+            await continueLocally.run(threadRef);
             return;
           case "copy-path":
             if (!threadWorkspacePath) {
