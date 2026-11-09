@@ -176,6 +176,7 @@ import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
+  webhookOrigin,
 } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -592,21 +593,23 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   ScheduledTaskWebhookOrigin,
   Effect.gen(function* () {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const { publicUrl } = yield* ServerConfig.ServerConfig;
     return Effect.gen(function* () {
       const [relayUrl, tunnelConfig] = yield* Effect.all([
         secrets.get(RELAY_URL_SECRET),
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
       if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
-        return { relayHookBaseUrl: null };
+        return webhookOrigin({ relayHookBaseUrl: null, publicUrl });
       }
       const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
-      return {
+      return webhookOrigin({
         relayHookBaseUrl: relayHookBaseUrl({
           relayUrl: new TextDecoder().decode(relayUrl.value),
           tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
         }),
-      };
+        publicUrl,
+      });
     });
   }),
 );

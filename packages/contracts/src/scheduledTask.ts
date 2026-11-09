@@ -221,6 +221,8 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
   path: TrimmedNonEmptyString,
   url: Schema.NullOr(TrimmedNonEmptyString),
   hasSecret: Schema.Boolean,
+  /** The URL goes through the T3 Connect relay, which holds requests while the server is offline. */
+  relayed: Schema.optionalKey(Schema.Boolean),
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 

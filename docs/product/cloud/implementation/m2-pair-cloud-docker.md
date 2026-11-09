@@ -2762,8 +2762,9 @@ only scheduled tasks and the CLI, and wave 1 has room.
     the flag record (220) and its interfaces (203, 215). Resolve flag over env as the other flags do.
     Refuse at startup a URL with a path other than `/`, a query or a fragment:
     "--public-url must be an origin, like https://pair.example.com."
-  - `apps/server/src/config.ts`: `ServerConfig` gains `readonly publicUrl: URL | undefined` beside
-    `devUrl` (92); `layerTest` defaults it to `undefined`.
+  - `apps/server/src/config.ts`: `ServerConfig` gains `readonly publicUrl?: URL | undefined` beside
+    `devUrl` (92), optional so hand-built test configs need no change; `layerTest` sets it to
+    `undefined`.
   - `apps/server/src/scheduledTasks/ScheduledTaskService.ts`: rename `WebhookOrigin.relayHookBaseUrl`
     (100) to `hookBaseUrl` and add `relayed: boolean`. `ScheduledTaskWebhookOrigin` (118) default
     becomes `{ hookBaseUrl: null, relayed: false }`. `webhookEndpoint` (350) reads `hookBaseUrl` and
@@ -2774,6 +2775,8 @@ only scheduled tasks and the CLI, and wave 1 has room.
     "Hold webhooks while offline" working. With no tunnel and a `publicUrl`, return
     `{ hookBaseUrl: new URL(WEBHOOK_ROUTE_PREFIX, publicUrl).href, relayed: false }`
     (`WEBHOOK_ROUTE_PREFIX` (78) is `/api/hooks`). Otherwise `{ hookBaseUrl: null, relayed: false }`.
+    That choice is the exported `webhookOrigin({ relayHookBaseUrl, publicUrl })` in
+    `ScheduledTaskService.ts`, so the test drives it without the secret store.
   - `packages/contracts/src/scheduledTask.ts` `ScheduledTaskWebhookEndpoint` (220): add
     `relayed: Schema.optionalKey(Schema.Boolean)`.
   - `apps/web/src/components/settings/ScheduledTasksSettings.tsx` (1093): show

@@ -98,7 +98,8 @@ const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
 ]);
 
 interface WebhookOrigin {
-  readonly relayHookBaseUrl: string | null;
+  readonly hookBaseUrl: string | null;
+  readonly relayed: boolean;
 }
 
 const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
@@ -115,10 +116,24 @@ export function relayHookBaseUrl(input: {
   return `${relayUrl}/v1/hooks/${endpointKey}`;
 }
 
+// The tunnel wins over a public URL: only the relay holds requests while this server is offline.
+export function webhookOrigin(input: {
+  readonly relayHookBaseUrl: string | null;
+  readonly publicUrl: URL | undefined;
+}): WebhookOrigin {
+  if (input.relayHookBaseUrl !== null) {
+    return { hookBaseUrl: input.relayHookBaseUrl, relayed: true };
+  }
+  if (input.publicUrl !== undefined) {
+    return { hookBaseUrl: new URL(WEBHOOK_ROUTE_PREFIX, input.publicUrl).href, relayed: false };
+  }
+  return { hookBaseUrl: null, relayed: false };
+}
+
 export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<WebhookOrigin>>(
   "t3/scheduledTasks/ScheduledTaskWebhookOrigin",
   {
-    defaultValue: () => Effect.succeed({ relayHookBaseUrl: null }),
+    defaultValue: () => Effect.succeed({ hookBaseUrl: null, relayed: false }),
   },
 ) {}
 
@@ -352,11 +367,12 @@ function webhookEndpoint(
   origin: WebhookOrigin | null,
 ): ScheduledTask["webhook"] {
   if (row.webhook_token === null) return undefined;
-  const base = origin?.relayHookBaseUrl ?? null;
+  const base = origin?.hookBaseUrl ?? null;
   return {
     path: webhookPath(row.task_id, row.webhook_token),
     url: base === null ? null : `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`,
     hasSecret: row.webhook_secret !== null,
+    ...(base === null ? {} : { relayed: origin?.relayed ?? false }),
   };
 }
 

@@ -172,7 +172,7 @@ const withService = <A, E>(
     readonly failLaunches?: { remaining: number };
     readonly gate?: Deferred.Deferred<void>;
     readonly gateForTask?: (input: LaunchInput) => Deferred.Deferred<void> | undefined;
-    readonly relayHookBaseUrl?: string;
+    readonly webhookOrigin?: ReturnType<typeof ScheduledTaskService.webhookOrigin>;
     readonly sql?: SqlClient.SqlClient;
     readonly workers?: Map<string, Effect.Effect<void>>;
     readonly policy?: ManagedPolicyDocument;
@@ -252,7 +252,7 @@ const withService = <A, E>(
       }),
       Layer.succeed(
         ScheduledTaskService.ScheduledTaskWebhookOrigin,
-        Effect.succeed({ relayHookBaseUrl: options.relayHookBaseUrl ?? null }),
+        Effect.succeed(options.webhookOrigin ?? { hookBaseUrl: null, relayed: false }),
       ),
       ManagedPolicy.layerTest(options.policy),
     );
@@ -329,19 +329,33 @@ it("builds the relay hook URL from the managed tunnel's key, never the environme
   }
 });
 
-it.effect("gives webhook tasks a relay URL when the environment has a managed tunnel", () =>
-  withService(
-    ({ service }) =>
-      Effect.gen(function* () {
-        const { task } = yield* service.upsert(yield* webhookTaskInput());
-        const token = task.webhook!.path.split("/").at(-1);
-        assert.equal(
-          task.webhook?.url,
-          `https://relay.example.com/v1/hooks/0123456789abcdef/scheduled-task%3Ahook/${token}`,
-        );
-      }),
-    { relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef" },
-  ),
+it.effect("gives webhook tasks the managed tunnel's relay URL, else the server's public URL", () =>
+  Effect.gen(function* () {
+    const relayHookBaseUrl = "https://relay.example.com/v1/hooks/0123456789abcdef";
+    const publicUrl = new URL("https://pair.example.com");
+    const cases = [
+      { relayHookBaseUrl, publicUrl: undefined, base: relayHookBaseUrl, relayed: true },
+      { relayHookBaseUrl: null, publicUrl, base: "https://pair.example.com/api/hooks" },
+      { relayHookBaseUrl, publicUrl, base: relayHookBaseUrl, relayed: true },
+      { relayHookBaseUrl: null, publicUrl: undefined, base: null },
+    ];
+    for (const { base, relayed, ...input } of cases) {
+      const taskInput = yield* webhookTaskInput();
+      const webhook = yield* withService(
+        ({ service }) => service.upsert(taskInput).pipe(Effect.map(({ task }) => task.webhook)),
+        { webhookOrigin: ScheduledTaskService.webhookOrigin(input) },
+      );
+      const token = webhook!.path.split("/").at(-1);
+      assert.deepStrictEqual(
+        { url: webhook?.url, relayed: webhook?.relayed },
+        {
+          url: base === null ? null : `${base}/scheduled-task%3Ahook/${token}`,
+          relayed: base === null ? undefined : (relayed ?? false),
+        },
+        JSON.stringify(input),
+      );
+    }
+  }),
 );
 
 it.effect("answers not found for a wrong token or unknown hook without logging", () =>

@@ -43,6 +43,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   baseDir: Option.some(baseDir),
   cwd: Option.none<string>(),
   devUrl: Option.none<URL>(),
+  publicUrl: Option.none<URL>(),
   noBrowser: Option.none<boolean>(),
   bootstrapFd: Option.none<number>(),
   autoBootstrapProjectFromCwd: Option.none<boolean>(),
@@ -226,6 +227,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         baseDir: Option.some(baseDir),
         cwd: Option.none<string>(),
         devUrl: Option.some(new URL("http://127.0.0.1:5173")),
+        publicUrl: Option.none<URL>(),
         noBrowser: Option.none<boolean>(),
         bootstrapFd: Option.none<number>(),
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
@@ -271,6 +273,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         baseDir: Option.some(baseDir),
         cwd: Option.none<string>(),
         devUrl: Option.some(new URL("http://127.0.0.1:5173")),
+        publicUrl: Option.none<URL>(),
         noBrowser: Option.none<boolean>(),
         bootstrapFd: Option.none<number>(),
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
@@ -327,6 +330,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.some(new URL("http://127.0.0.1:4173")),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.some(false),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.some(false),
@@ -404,6 +408,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.none(),
           cwd: Option.none(),
           devUrl: Option.some(new URL("http://127.0.0.1:4173")),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.none(),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
@@ -552,6 +557,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.none(),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
@@ -601,6 +607,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.none(),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
@@ -642,6 +649,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.none(),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
@@ -705,6 +713,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),
+          publicUrl: Option.none<URL>(),
           noBrowser: Option.none(),
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
@@ -745,6 +754,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     baseDir: Option.some(baseDir),
     cwd: Option.none<string>(),
     devUrl: Option.none<URL>(),
+    publicUrl: Option.none<URL>(),
     noBrowser: Option.none<boolean>(),
     bootstrapFd: Option.none<number>(),
     autoBootstrapProjectFromCwd: Option.none<boolean>(),
@@ -789,6 +799,49 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       ).toBe(3773);
       expect(selected).toEqual([3773]);
     }),
+  );
+
+  it.effect(
+    "takes an origin from --public-url over T3CODE_PUBLIC_URL and refuses anything else",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = yield* FileSystem.FileSystem.pipe(
+          Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-public-url-" })),
+        );
+        const resolvePublicUrl = (flag: string | undefined, env: Record<string, string> = {}) =>
+          resolveServerConfig(
+            {
+              ...minimalWebFlags(baseDir),
+              port: Option.some(8788),
+              publicUrl: Option.fromUndefinedOr(flag).pipe(Option.map((url) => new URL(url))),
+            },
+            Option.none(),
+          ).pipe(
+            Effect.map((config) => config.publicUrl?.href),
+            Effect.provide(
+              Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+            ),
+          );
+
+        const env = { T3CODE_PUBLIC_URL: "https://env.example.com" };
+        expect(yield* resolvePublicUrl("https://pair.example.com", env)).toBe(
+          "https://pair.example.com/",
+        );
+        expect(yield* resolvePublicUrl(undefined, env)).toBe("https://env.example.com/");
+        expect(yield* resolvePublicUrl(undefined)).toBeUndefined();
+        for (const url of [
+          "https://x/path",
+          "https://x/?a=1",
+          "https://x/#a",
+          "https://user:pass@x",
+          "ftp://x",
+        ]) {
+          const error = yield* resolvePublicUrl(url).pipe(Effect.flip);
+          expect(String(error.cause), url).toBe(
+            "--public-url must be an origin, like https://pair.example.com.",
+          );
+        }
+      }),
   );
 
   it.effect(

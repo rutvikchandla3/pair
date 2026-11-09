@@ -1090,7 +1090,10 @@ function WebhookEndpointField({
         </Button>
       </div>
       {note !== null ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-      {endpoint.url !== null ? <WebhookDeliveryMode environmentId={environmentId} /> : null}
+      {/* An older server sends no `relayed`; its only full URL was the relay's. */}
+      {(endpoint.relayed ?? endpoint.url !== null) ? (
+        <WebhookDeliveryMode environmentId={environmentId} />
+      ) : null}
     </div>
   );
 }

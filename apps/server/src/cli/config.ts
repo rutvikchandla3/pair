@@ -52,6 +52,13 @@ const devUrlFlag = Flag.String("dev-url").pipe(
   Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
   Flag.optional,
 );
+const publicUrlFlag = Flag.String("public-url").pipe(
+  Flag.withSchema(Schema.URLFromString),
+  Flag.withDescription(
+    "Public origin this server is reached at, used for full webhook URLs (equivalent to T3CODE_PUBLIC_URL).",
+  ),
+  Flag.optional,
+);
 const noBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
@@ -138,6 +145,7 @@ const EnvServerConfig = Config.all({
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  publicUrl: Config.URL("T3CODE_PUBLIC_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
     Config.map((value) =>
@@ -201,6 +209,7 @@ export interface CliServerFlags {
   readonly baseDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
+  readonly publicUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
@@ -236,6 +245,7 @@ export const sharedServerCommandFlags = {
     Argument.optional,
   ),
   devUrl: devUrlFlag,
+  publicUrl: publicUrlFlag,
   noBrowser: noBrowserFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
@@ -244,6 +254,16 @@ export const sharedServerCommandFlags = {
   tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
 } as const;
+
+const PUBLIC_URL_NOT_ORIGIN = "--public-url must be an origin, like https://pair.example.com.";
+
+const isOrigin = (url: URL) =>
+  (url.protocol === "https:" || url.protocol === "http:") &&
+  url.username === "" &&
+  url.password === "" &&
+  url.pathname === "/" &&
+  url.search === "" &&
+  url.hash === "";
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -284,6 +304,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     baseDir: flags.baseDir ?? Option.none(),
     cwd: flags.cwd ?? Option.none(),
     devUrl: flags.devUrl ?? Option.none(),
+    publicUrl: flags.publicUrl ?? Option.none(),
     noBrowser: flags.noBrowser ?? Option.none(),
     bootstrapFd: flags.bootstrapFd ?? Option.none(),
     autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
@@ -330,6 +351,12 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const devAuthToken =
     mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
+  const publicUrl = Option.getOrUndefined(
+    resolveOptionPrecedence(normalizedFlags.publicUrl, Option.fromUndefinedOr(env.publicUrl)),
+  );
+  if (publicUrl !== undefined && !isOrigin(publicUrl)) {
+    return yield* new CliError.UserError({ cause: PUBLIC_URL_NOT_ORIGIN });
+  }
   const explicitBaseDir = resolveOptionPrecedence(
     normalizedFlags.baseDir,
     Option.fromUndefinedOr(env.t3Home),
@@ -507,6 +534,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
     staticDir,
     devUrl,
+    publicUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
     devAllowedOrigins: env.devAllowedOrigins,
     noBrowser,
@@ -541,6 +569,7 @@ export const resolveCliAuthConfig = (
       baseDir: flags.baseDir,
       cwd: Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
+      publicUrl: Option.none(),
       noBrowser: Option.none(),
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
