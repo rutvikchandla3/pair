@@ -62,6 +62,8 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const CODEX_STANDALONE_HOME_PATTERN = /^(.*)\/packages\/standalone\//is;
+const CLOUD_ONLY_UNAUTHENTICATED_MESSAGE =
+  "Codex has no account on Pair Cloud. Choose Continue with ChatGPT, or set OPENAI_API_KEY in this provider's environment variables.";
 
 function codexStandaloneHome(commandPath: string): string | null {
   // Slash replacement preserves indices; Unicode lowercasing can change the path length.
@@ -154,6 +156,7 @@ export const CodexDriver: ProviderDriver<
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
+    const { cloudOnly } = yield* ServerConfig.ServerConfig;
     const processEnv = yield* mergeProviderInstanceEnvironment(
       environment,
       yield* HostProcess.Environment,
@@ -238,6 +241,11 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },
         ),
+      ),
+      Effect.map((provider) =>
+        cloudOnly && provider.auth.status === "unauthenticated"
+          ? { ...provider, message: CLOUD_ONLY_UNAUTHENTICATED_MESSAGE }
+          : provider,
       ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
