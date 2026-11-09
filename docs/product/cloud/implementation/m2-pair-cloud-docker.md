@@ -3565,8 +3565,11 @@ nothing in M2 should wait on it.
   2. One dev server at a time, so the two never share CPU. Export OTLP to local LGTM
      (observability.md "LGTM", env per its OTLP section).
   3. Ten Replay turns per build: five on a local thread and five on a worktree thread of the same
-     Hello-World project. Use `node apps/server/src/bin.ts thread start --base-dir .t3 --provider devReplay --model showcase [--worktree main] <project> "go"`
-     (the flag exists on both, thread.ts 775).
+     Hello-World project. Use `node apps/server/src/bin.ts thread start --base-dir .t3 --provider devReplay --model showcase --wait [--worktree main] <project> "go"`
+     (the flag exists on both, thread.ts 775). Without `--wait` the turns overlap.
+     As landed: with no LGTM image pulled, a local OTLP/HTTP JSON sink stood in, with quantiles
+     from the exported histogram buckets. Set `T3CODE_TRACE_FILE` per run so `node
+     apps/server/src/bin.ts trace summary --since` doesn't mix runs.
   4. Record per build: `t3_git_commands_total` (same operations and counts, or the difference
      explained); count-weighted p50 and p95 of `t3_git_command_duration` by `operation`; and
      `t3 trace summary --since 30m` percentiles for `VcsProcess.run` and `VcsProcess.spawn`.
@@ -3587,7 +3590,8 @@ transcript (the two `t3 trace summary` outputs).
 
 **Reviewer checks.**
 
-- Both builds made the same git operations the same number of times, or the PR says why not.
+- Both builds made the same set of git operations, with counts inside each build's own run-to-run
+  spread (worktree status refreshes are timing-dependent: 689–751 commands per run on the Mac).
 - The runs alternated and used the same seeded data.
 - A claimed fix moves the number the profile blamed, and the rerun shows it.
 - Any gated background work still runs where Cloud is configured.
@@ -4244,11 +4248,12 @@ release, never from `~/pair`. Subagents do not start their own servers. Reach th
     start one more machine, stop, put the backup back, and start with restore mode (2.38). Passes
     when the machine started after the backup is stopped and listed for admins, and none is
     destroyed.
-12. **Numbers (Mac for R1).** On the VM: `git -C ~/pair worktree add ~/pair-bench v$V2`, `vp i`
+12. **Numbers.** On the VM: `git -C ~/pair worktree add ~/pair-bench v$V2`, `vp i`
     there, then `vp run bench:runner --load --runner-dir ~/.t3/runtime/versions/$V2/runner` (bench
     only, against the release's own runner tree). Then `git -C ~/pair worktree remove ~/pair-bench`.
-    On the Mac: 2.41's R1 procedure. Also measure on the release: first token on a ready cloud
-    session vs a local worktree thread (p50 within 300 ms), Send → runner connected (p50 under
+    R1: 2.41 ran on the Mac with head inside `main`'s noise (progress.md, 2.41). M0's +15% was
+    measured on this VM, so rerun 2.41's procedure here too. Also measure on the release: first
+    token on a ready cloud session vs a local worktree thread (p50 within 300 ms), Send → runner connected (p50 under
     5 s), and asleep → first token (p50 under 20 s, p95 under 45 s), ten sends each.
 13. **Managed Codex (Credentials).** A managed Codex turn on its cheapest model streams on a
     machine.

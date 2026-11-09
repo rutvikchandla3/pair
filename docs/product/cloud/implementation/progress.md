@@ -17,9 +17,10 @@ specs yet ([README](./README.md): each milestone's are written while the previou
 - M1, complete (46): 1.1–1.45 with 1.28a. Plus follow-ups: `perf-pty` (runner output coalescing),
   the runner revoke fix, `fix-flaky-kill` and `fix-cloud-delegate`.
 
-**M2 (35 of 36 landed):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
-Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.21–2.40, 2.42–2.47. Left: 2.41 (the R1 git
-p50 comparison, lead-run), then the M2 integrated pass. Lead decision
+**M2 (36 of 36 done):** full specs in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md).
+Landed: 2.1, 2.2, 2.4, 2.7–2.9, 2.12, 2.13, 2.18, 2.21–2.40, 2.42–2.47; 2.41 measured with no
+change needed on the Mac (rerun on the VM in G2). Next: the M2 integrated pass on release
+`0.1.7-pair.1`. Lead decision
 awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sign-in first and the
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
@@ -1469,6 +1470,23 @@ Where the code differs from the spec, and what later PRs must know. Workers read
   t3code.service`); `t3 update` doesn't drain, **Update server** does.
 - G2 to confirm: whether the Claude and Codex CLIs must be on the server host, and gVisor with the
   machines' local socket.
+
+## 2.41 local git p50 on the Mac (no change)
+
+Five A B pairs on the Mac (load 4.9–12.1), each 5 local + 5 worktree Replay `showcase` turns on a
+Hello-World project, both builds seeded from one snapshot of real data. Both made the same 43 git
+operations; per-run totals vary within each build (689–751) from worktree status refreshes.
+
+| build              | metric p50 mean (range), ms | metric p95 mean | `VcsProcess.run` span p50 |
+| ------------------ | --------------------------- | --------------- | ------------------------- |
+| `main` `e8eb50b4b` | 17.7 (16.5–19.0)            | 41.4            | 16.8 (15.9–17.5)          |
+| head `b82f045a9`   | 17.5 (16.9–18.5)            | 39.7            | 16.8 (16.3–17.4)          |
+
+Head sits inside `main`'s range, so M0's +15% does not reproduce on macOS and no profile or fix
+followed. M0 measured it on the Linux VM, whose git spawn path differs, so G2 step 12 reruns the
+procedure there. Head-only background work is the sandbox lifecycle sweep (every 5 s) and a few
+sandbox projection reads, about 7 ms of span time per run: not worth gating. Raw tables, trace
+summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committed).
 
 ## Open follow-ups and risks
 
