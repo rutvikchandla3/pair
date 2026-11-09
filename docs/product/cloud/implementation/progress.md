@@ -26,18 +26,21 @@ awaiting maintainer sign-off: 2.44 reads pull requests with the server's own sig
 App only where that can't (07 open question 1 recommended App-first). Open maintainer questions are
 under the spec page's "What the code changed in 10 §2".
 
-**M3 (6 of 8), specs written 2026-11-09:** full specs in
+**M3 (8 of 8, plus fix row 3.27), G3 running:** full specs in
 [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), copy reviewed (87adfbf41). Landed: 3.20
 (78669f835), 3.19 (2cd926a34), 3.21 (0689f46ff), 3.22 (598da8e4b), 3.25 (9018429b7) and 3.23
-(cea3b8942), so waves 1–4 are done. In flight on the Mac (2026-11-10): 3.24 and 3.26. Next: a
-release with M3 (`0.1.7-pair.4`), then G3 by the spec's
-[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass) without its phone step.
+(cea3b8942), 3.26 (13ab74753), 3.24 (63e12b0e3) and the eval fix 3.27 (529fd4920). Release
+`0.1.7-pair.4` (V4) is published as a prerelease. G3 is running by the spec's
+[integrated pass](./m3-continue-in-cloud.md#m3-integrated-pass) without its phone step: see
+[G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4).
 
 **M4 (0 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
-under that page's "What the code changed in 10 §2". M4's rows are built while G3 runs and land
-after it passes.
+under that page's "What the code changed in 10 §2". M4's rows are built while G3 runs. They are
+integrated on the local branch `m4` (checkout `../pair-wt/m4`, pushed as `wip/m4`) and
+`feat/pair` fast-forwards to it once G3 passes: 4.11 (e8ad2d5c0) and 4.12 (86d84b583) are there,
+4.13 is in flight. `land.sh` and `mkwt.sh` take `BASE=m4` (and `LEAD=../pair-wt/m4`) for that.
 
 ### M3 maintainer answers (2026-11-09)
 
@@ -358,6 +361,39 @@ Follow-ups from G2:
 - 32: 2.57 recreates `versions/<old>/runner` as an empty folder that the start prune never removes
   (it skips entries without `.install-complete`).
 - Startup and CPU over budget on the VM (03 §2.3 and §9), and the load test (2.59).
+
+### G3 on real hardware (2026-11-10, Mac → `pair-cloud-pass`, release V4)
+
+In progress. Pair Cloud runs [v0.1.7-pair.4](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.4)
+(prerelease, tagged at `e231e566f`: every M3 row but 3.27). The Mac runs two worktrees at the tag,
+`../pair-wt/g3-a` (member A, seeded) and `../pair-wt/g3-b` (member B), each with a clone of
+`pair-cloud-test` under `../pair-wt/g3-repos/`. Evidence is in `../pair-wt/g3-evidence/` (not
+committed). The VM has a `shutdown -h` timer as a guard while the maintainer is away.
+
+0. **Before: passed.** `t3 drain`, `t3 update 0.1.7-pair.4 --yes`, `t3 --version` prints
+   `v0.1.7-pair.4` (transcript `upgrade-v4.txt`). `~/g2-local` is deleted. g3-a's client added Pair
+   Cloud with a one-time owner link, and Settings → Environments offered **Link** with Linked
+   environments off in Labs; the link lists as "Supervised · Reachable". The link was made
+   Supervised (the dialog's default), so cloud turns started through it ask before commands.
+1. **Continue in cloud: passed (first move).** A local worktree thread on `g3/move-1` with two
+   unpushed commits, a changed `README.md`, untracked `notes/seed.md` and `scratch.env`, and an
+   ignored `node_modules/`. The preview listed both commits, `README.md`, `notes/` and
+   `scratch.env`, and not `node_modules/`. With `scratch.env` excluded the cloud session opened on
+   Pair Cloud with the conversation as history ("Continued from … on Rutvik Chandla"), its machine
+   had both commits, the `README.md` change and `notes/`, and no `scratch.env`; Haiku's first turn
+   reported exactly that from the history. The local thread shows "Continued in cloud on
+   pair-cloud-pass…", and its worktree, branch and origin are unchanged. Seed 1,490 bytes, export
+   1,829 bytes, upload 261 ms, 1.6 s in all (`cloud move` in g3-a's trace). Still to run: the
+   pushed-branch move with no seed, and the palette entry.
+
+Findings so far:
+
+- The preview lists an untracked folder as `notes/` with `+0 −0`, not its files (the spec's step
+  expects `notes/seed.md`). Cosmetic.
+- The live evals (Sonnet 5.5 and Opus 5.5, nine cloud cases, `m3-sonnet/`, `m3-opus/`): seven pass
+  on both, including both Continue in cloud cases. `agent-link-laptop-can-sleep` failed 0 of 2 on
+  both (the launch left out `projectId`) and `agent-link-vps-stays-vps` failed on a missing mock.
+  Fixed by 3.27 (529fd4920), which is after the V4 tag; its two cases are still to re-run live.
 
 ## How to resume
 
@@ -1871,6 +1907,51 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   against an expected 33.
 - Owes, with G3: a web pass with a local server linked to Pair Cloud, a real seed upload, and the
   live evals.
+
+## 3.24 mobile Continue in cloud (landed 63e12b0e3)
+
+- `resolveContinueInCloud`, `cloudTargetEnvironments` and `sameContinueInCloudOffer` in
+  client-runtime's `cloudTarget.ts`; web's `state/sandbox.ts` calls them too.
+- Mobile: `ContinueInCloudSheet.tsx` (route `ThreadContinueInCloud`), the header's Cloud menu
+  (`buildThreadCloudHeaderMenu`, in the machine menu's slot for a thread with no machine) and the
+  row menu. A confirm while `preview.moving` joins the running move; web disables it there.
+- Not run on a phone or simulator (maintainer, 2026-11-10). Owes the whole `test-t3-mobile` pass:
+  both entry points, the sheet's notices, a move with one file off, no entry on a Pair Cloud
+  thread or a phone paired only with the Mac, rejoin after reconnect, and Android's sheet layout.
+
+## 3.26 docs (landed 13ab74753, 908432a48)
+
+- `docs/user/cloud.md` "Move a thread between your Mac and Pair Cloud", `outside-agents.md` "Pair
+  Cloud from your Mac's agents", and sentences in remote-access, portable-handoffs, pair-cloud,
+  context-handoffs, overview and pair-features. Facts read from code: 512 MB seed cap; history
+  capped at 1,000 messages or 2 MB; the copy branch is `<branch>-copy`; a member's link goes up to
+  Auto. The lead corrected "desktop only": Continue locally also shows in a local server's web.
+
+## 3.27 a linked launch finds the project by repository (landed 529fd4920)
+
+- From the live evals. `PeerForwarding.resolveProject` (moved from RemoteDelegation) resolves the
+  project for a forwarded `t3_thread_launch` with no `projectId` or `scratch`, from the calling
+  thread's repository. Not in V4.
+- Same hole, left: `t3_thread_search` with `environmentId` and no `projectId` searches every
+  project there.
+
+## 4.12 team image contracts (on `m4`, 86d84b583)
+
+- `packages/contracts/src/sandboxImage.ts`: schemas only. No RPC methods or scopes yet: 4.13 adds
+  them with their handlers. `TeamImageBuildId` and `SandboxImageBuildRef` are in `sandbox.ts`;
+  `ExecutionEnvironmentCapabilities.teamImages`, `sandbox.teamImage.keepSucceeded` and
+  `ServerDrainStatus.runningBuilds` exist as schema.
+
+## 4.11 outbox aggregate key (on `m4`, e8ad2d5c0)
+
+- Migration 094. `aggregate_id` is a generated column (`COALESCE(thread_id, aggregate_kind)`) and
+  `aggregate_kind` defaults to `'thread'`, so raw-row thread tests stand unedited.
+- `EventSinkV2.commitTeamImageCommand` / `commitRejectedTeamImageCommand` (no lock: the service
+  holds it), `appendTeamImageEvents`, `TeamImageCommandReceiptV2`. Effects run one at a time on
+  `('team-image', 'team-image')` in the shared lane; launch, destroy-machine and delete-image are
+  bounded at 60 s, capture at 20 min, run-program is unbounded and cancelled on process loss.
+- `OrchestrationEffectExecutionError.retryable: false` skips the remaining attempts. 4.14 ships
+  the live `TeamImageEffects` layer.
 
 ## Open follow-ups and risks
 
