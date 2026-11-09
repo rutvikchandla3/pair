@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleNullable, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { CLOUD_ONLY_MESSAGE } from "./environment.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -88,6 +88,13 @@ export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 
+/** Why the server stopped an exited terminal's shell; a reason this client does not know decodes as null. */
+export const TerminalStoppedBy = Schema.Struct({
+  reason: ForwardCompatibleNullable(Schema.Literals(["sleep"])),
+  at: Schema.String,
+});
+export type TerminalStoppedBy = typeof TerminalStoppedBy.Type;
+
 export const TerminalSessionSnapshot = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
@@ -104,6 +111,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   // The PTY grid every renderer of this terminal should draw; absent from older servers.
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
+  stoppedBy: Schema.optionalKey(TerminalStoppedBy),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
@@ -119,6 +127,7 @@ export const TerminalSummary = Schema.Struct({
   hasRunningSubprocess: Schema.Boolean,
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  stoppedBy: Schema.optionalKey(TerminalStoppedBy),
 });
 export type TerminalSummary = typeof TerminalSummary.Type;
 
@@ -168,6 +177,7 @@ const TerminalExitedEvent = Schema.Struct({
   type: Schema.Literal("exited"),
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
+  stoppedBy: Schema.optionalKey(TerminalStoppedBy),
 });
 
 const TerminalClosedEvent = Schema.Struct({

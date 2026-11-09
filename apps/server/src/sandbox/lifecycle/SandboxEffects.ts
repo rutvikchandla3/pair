@@ -38,7 +38,7 @@ import * as ComputeDriverRegistry from "../compute/ComputeDriverRegistry.ts";
 import * as SandboxCredentialRevocation from "../credentials/SandboxCredentialRevocation.ts";
 import * as RunnerBundle from "../runnerHub/RunnerBundle.ts";
 import * as RunnerEndpoint from "../runnerHub/RunnerEndpoint.ts";
-import { sandboxSnapshotRef } from "../mirror/CheckpointMirror.ts";
+import { sandboxSnapshotRef, snapshotNamers } from "../mirror/CheckpointMirror.ts";
 import * as MirrorSyncWorker from "../mirror/MirrorSyncWorker.ts";
 import * as SandboxBootstrapSource from "./SandboxBootstrapSource.ts";
 import { SANDBOX_BACKEND_MISSING, type SandboxEffectRequest } from "./SandboxDecisions.ts";
@@ -152,6 +152,20 @@ const failureFor = (
   };
 };
 
+interface SandboxSleepHooksShape {
+  /** Runs once the machine's work is saved and before the driver stops it. */
+  readonly beforeSleep: (input: {
+    readonly sandboxId: SandboxId;
+    readonly at: DateTime.Utc;
+  }) => Effect.Effect<void>;
+}
+
+/** A Reference with a no-op default, so lifecycle tests need no terminal manager. */
+export const SandboxSleepHooks = Context.Reference<SandboxSleepHooksShape>(
+  "t3/sandbox/lifecycle/SandboxEffects/SandboxSleepHooks",
+  { defaultValue: () => ({ beforeSleep: () => Effect.void }) },
+);
+
 const make = Effect.gen(function* () {
   const registry = yield* ComputeDriverRegistry.ComputeDriverRegistry;
   const bootstraps = yield* SandboxBootstrapSource.SandboxBootstrapSource;
@@ -164,6 +178,7 @@ const make = Effect.gen(function* () {
   // The server provides it; lifecycle tests run without a mirror.
   const mirrorSync = yield* Effect.serviceOption(MirrorSyncWorker.MirrorSyncWorker);
   const checkpoints = yield* Effect.serviceOption(CheckpointService.CheckpointServiceV2);
+  const sleepHooks = yield* SandboxSleepHooks;
 
   // The server provides it; without it a re-armed checkout waits for the next restart's recovery.
   const threadLaunch = yield* Effect.serviceOption(ThreadLaunch.ThreadLaunchService);
@@ -232,13 +247,12 @@ const make = Effect.gen(function* () {
     function* (record: OrchestrationV2Sandbox) {
       if (Option.isNone(checkpoints) || Option.isNone(mirrorSync)) return null;
       const rows = yield* projections.listSandboxThreads(record.id);
-      // Side chats share the parent's checkout: the owner, else the oldest attached, names its ref.
-      const namers = new Map<string, ThreadId>();
+      const threads: Array<{ threadId: ThreadId; worktreePath: string | null }> = [];
       for (const threadId of new Set([record.ownerThreadId, ...rows.map((row) => row.threadId)])) {
-        const worktreePath = (yield* projections.getThreadShell(threadId))?.worktreePath;
-        if (worktreePath == null || namers.has(worktreePath)) continue;
-        namers.set(worktreePath, threadId);
+        const worktreePath = (yield* projections.getThreadShell(threadId))?.worktreePath ?? null;
+        threads.push({ threadId, worktreePath });
       }
+      const namers = snapshotNamers(record.ownerThreadId, threads);
       if (namers.size === 0) return null;
       const capturedAt = yield* DateTime.now;
       const synced = yield* Effect.forEach(
@@ -477,6 +491,10 @@ const make = Effect.gen(function* () {
             record.state === "sleeping" ? yield* snapshotBeforeSleep(record) : null;
           // A settled thread's last diff must be in the mirror before its disk goes away.
           if (Option.isSome(mirrorSync)) yield* mirrorSync.value.flush(record.id);
+          // Terminals record the stop now, so the reason never races the runner's disconnect.
+          if (record.state === "sleeping") {
+            yield* sleepHooks.beforeSleep({ sandboxId: record.id, at: yield* DateTime.now });
+          }
           if (record.driverRef !== null) yield* callIgnoringMissing(driver.stop(record.driverRef));
           yield* revokeCredentials(record, "stop");
           return yield* report(record, {

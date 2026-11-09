@@ -90,7 +90,9 @@ state while it is not simply running:
 | **Machine discarded**       | The machine and its files are gone. Choose **Start a new machine**, or send a message, for a fresh one.     |
 
 A Docker machine goes to sleep once every thread on it is settled or archived and none is running.
-While it sleeps, the thread's files and diffs show as of its last turn; terminals need it awake.
+While it sleeps, its files, search and Changes are read-only and show as of the moment it slept
+(or its last turn, when nothing was saved at sleep). Its terminals stop and keep their output;
+after a wake, typing in one starts a new shell.
 
 Anyone can wake or retry a machine. Only the thread's owner or an admin can choose **Sleep now** or
 **Discard machine**, from the thread's menu (on a phone, the **Machine** menu in the thread

@@ -19,6 +19,7 @@ import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts"
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
@@ -146,6 +147,7 @@ import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader
 import * as StoppedSandboxReads from "./sandbox/mirror/StoppedSandboxReads.ts";
 import * as MirrorSync from "./sandbox/mirror/MirrorSync.ts";
 import * as MirrorSyncWorker from "./sandbox/mirror/MirrorSyncWorker.ts";
+import * as SandboxEffects from "./sandbox/lifecycle/SandboxEffects.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -486,7 +488,14 @@ const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
   Layer.provide(GitVcsDriver.layer),
 );
 
+const layerStoppedSandboxReads = StoppedSandboxReads.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(VcsProcess.layer),
+);
+
+// Reads StoppedSandboxReads optionally at construction; without it a stopped machine's Changes fail.
 const layerReview = ReviewService.layer.pipe(
+  Layer.provide(layerStoppedSandboxReads),
   Layer.provideMerge(layerKnownWorkspaces),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
@@ -542,11 +551,6 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NetService.layer),
-);
-
-const layerStoppedSandboxReads = StoppedSandboxReads.layer.pipe(
-  Layer.provide(ProjectionStoreV2.layer),
-  Layer.provide(VcsProcess.layer),
 );
 
 // Both read StoppedSandboxReads optionally at construction; without it stopped machines' files fail.
@@ -622,8 +626,22 @@ const layerMirrorSync = MirrorSyncWorker.layer.pipe(
   Layer.provide(ProjectionStoreV2.layer),
 );
 
+// SandboxEffects reads the hooks at construction; the terminal manager comes from below.
+const layerSandboxSleepHooks = Layer.effect(
+  SandboxEffects.SandboxSleepHooks,
+  Effect.gen(function* () {
+    const terminals = yield* TerminalManager.TerminalManager;
+    return {
+      beforeSleep: Effect.fn("SandboxSleepHooks.beforeSleep")(function* ({ sandboxId, at }) {
+        yield* terminals.stopForSleep({ sandboxId, at: DateTime.formatIso(at) });
+      }),
+    };
+  }),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerMirrorSync),
+  Layer.provide(layerSandboxSleepHooks),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderUsageAnalytics.layer),
   Layer.provide(layerCheckpointStore),

@@ -143,6 +143,8 @@ export type TerminalLifecycleEvent =
       readonly type: "status";
       readonly status: TerminalBufferState["status"];
       readonly version: number;
+      /** The server stopped the shell (its machine slept); it waits for typing or Wake. */
+      readonly stopped?: boolean;
     }
   | { readonly type: "reopen-failed" };
 
@@ -173,6 +175,7 @@ export function transitionTerminalLifecycle(
         return { state: { ...state, wasRunning: true, reopened: false }, command: null };
       }
       if (event.status !== "closed" && event.status !== "exited") return { state, command: null };
+      if (event.stopped === true) return { state: { ...state, wasRunning: false }, command: null };
       if (state.wasRunning) {
         return { state: { ...state, wasRunning: false, reopened: true }, command: "exit" };
       }
@@ -363,7 +366,11 @@ export function createTerminalSession(
       });
     }
 
-    apply({ type: "status", status, version: buffer.version }, registry, input);
+    apply(
+      { type: "status", status, version: buffer.version, stopped: buffer.stoppedBy !== null },
+      registry,
+      input,
+    );
   };
 
   const label = `terminal-session:${environmentId}:${threadId}:${terminalId}`;

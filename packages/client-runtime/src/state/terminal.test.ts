@@ -52,6 +52,24 @@ it("keeps a detached terminal from being mistaken for a live exit", () => {
   ).toEqual(["reopen"]);
 });
 
+it("neither closes nor reopens a shell its machine's sleep stopped", () => {
+  const stopped: TerminalLifecycleEvent = {
+    type: "status",
+    status: "exited",
+    version: 2,
+    stopped: true,
+  };
+  expect(run([status("running"), stopped, status("running", 3), status("exited", 4)])).toEqual([
+    "exit",
+  ]);
+  expect(
+    run([
+      { ...stopped, version: 1 },
+      { ...stopped, version: 2 },
+    ]),
+  ).toEqual([]);
+});
+
 it("leaves the history a viewer was reading when operate is granted", () => {
   expect(run([{ type: "observed" }, status("exited")])).toEqual([]);
 });

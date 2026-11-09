@@ -12,9 +12,12 @@ import {
   createSandboxEnvironmentAtoms,
   SANDBOX_ACTION_FAILURE_TITLES,
   SANDBOX_DISCARD_CONFIRMATION,
+  sameStoppedFiles,
   sharesOtherOwnersMachine,
+  stoppedFilesFromProjection,
   type SandboxAction,
   type SandboxThreadMachine,
+  type StoppedFiles,
 } from "@t3tools/client-runtime/state/sandbox";
 import type { EnvironmentId, MemberId, SandboxId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -81,6 +84,25 @@ const sharedMachineOwnerFamily = Atom.family((key: string) => {
       : null;
   }).pipe(Atom.withLabel(`mobile-shared-machine:${key}`));
 });
+
+const stoppedFilesFamily = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get): StoppedFiles | null => {
+    const projection = get(environmentThreadDetails.quietThreadAtom(ref))?.projection;
+    return projection === undefined ? null : stoppedFilesFromProjection(projection);
+  }).pipe(Atom.withEquality(sameStoppedFiles), Atom.withLabel(`mobile-stopped-files:${key}`));
+});
+
+const NOT_STOPPED_ATOM = Atom.make<StoppedFiles | null>(null).pipe(
+  Atom.withLabel("mobile-stopped-files:none"),
+);
+
+/** Null for a local thread or a running machine; otherwise the server reads files from the mirror. */
+export function useStoppedFiles(threadRef: ScopedThreadRef | null): StoppedFiles | null {
+  return useAtomValue(
+    threadRef === null ? NOT_STOPPED_ATOM : stoppedFilesFamily(threadKey(threadRef)),
+  );
+}
 
 const NO_TEXT_ATOM = Atom.make<string | null>(null).pipe(Atom.withLabel("mobile-sandbox:none"));
 const NO_MEMBER_ATOM = Atom.make<MemberId | null>(null).pipe(

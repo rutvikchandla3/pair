@@ -119,6 +119,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
                   sandboxId === synced
                     ? Effect.succeed({
                         sandboxId,
+                        source: "checkpoint" as const,
                         threadId: ThreadId.make("thread:stopped"),
                         turn: 3,
                         commit: "0".repeat(40),
@@ -137,6 +138,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
                 searchContents: () => Effect.die("unused"),
                 browse: () => Effect.die("unused"),
                 readFile: () => Effect.die("unused"),
+                diffPreview: () => Effect.die("unused"),
               }),
             ),
           );

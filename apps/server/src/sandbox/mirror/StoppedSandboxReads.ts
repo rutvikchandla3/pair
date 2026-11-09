@@ -2,6 +2,7 @@
 import * as NodePath from "node:path";
 
 import {
+  GitCommandError,
   type ProjectEntry,
   type ProjectSearchContentsInput,
   type ProjectSearchContentsResult,
@@ -17,12 +18,20 @@ import {
   type RankedSearchResult,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  parseReviewNumstat,
+  REVIEW_DIFF_ARGS,
+  REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES,
+  REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+  REVIEW_METADATA_MAX_OUTPUT_BYTES,
+} from "../../vcs/GitVcsDriverCore.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
@@ -175,7 +184,33 @@ const make = Effect.gen(function* () {
       readonly ref: string;
       readonly turn: number;
       readonly scopeCwd: string;
+      readonly source: StoppedView["source"];
     }> = [];
+    // Only this sleep's snapshot: an older one may still be in the mirror after a failed capture.
+    if (sandbox.sleepSnapshotAt != null) {
+      const checkouts: Array<{ threadId: ThreadId; worktreePath: string | null }> = [];
+      for (const threadId of new Set([
+        sandbox.ownerThreadId,
+        ...threads.map((row) => row.threadId),
+      ])) {
+        const shell = yield* projection.getThreadShell(threadId).pipe(Effect.orDie);
+        checkouts.push({ threadId, worktreePath: shell?.worktreePath ?? null });
+      }
+      for (const [worktreePath, threadId] of CheckpointMirror.snapshotNamers(
+        sandbox.ownerThreadId,
+        checkouts,
+      )) {
+        const scopeCwd = posix.resolve(worktreePath);
+        if (!isInside(scopeCwd, cwd)) continue;
+        candidates.push({
+          threadId,
+          ref: CheckpointMirror.sandboxSnapshotRef(threadId),
+          turn: 0,
+          scopeCwd,
+          source: "snapshot",
+        });
+      }
+    }
     for (const { threadId } of threads) {
       const context = yield* projection.getCheckpointContext(threadId).pipe(Effect.orDie);
       const scopeCwds = new Map(
@@ -191,6 +226,7 @@ const make = Effect.gen(function* () {
           ref: checkpoint.ref,
           turn: checkpoint.appRunOrdinal ?? 0,
           scopeCwd,
+          source: "checkpoint",
         });
       }
     }
@@ -224,7 +260,8 @@ const make = Effect.gen(function* () {
     for (const candidate of candidates) {
       const tip = refs.get(candidate.ref);
       if (tip === undefined) continue;
-      // The innermost checkout first, then the newest capture.
+      // The innermost checkout first, then the newest capture; a snapshot taken at sleep is newer
+      // than every checkpoint before it.
       const better =
         best === undefined ||
         bestTip === undefined ||
@@ -240,6 +277,7 @@ const make = Effect.gen(function* () {
     if (best === undefined || bestTip === undefined) return yield* asleep;
     return {
       sandboxId,
+      source: best.source,
       threadId: best.threadId,
       turn: best.turn,
       commit: bestTip.oid,
@@ -527,7 +565,107 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const diffPreview: StoppedSandboxReads["Service"]["diffPreview"] = Effect.fn(
+    "StoppedSandboxReads.diffPreview",
+  )(function* (view, input) {
+    const generatedAt = yield* DateTime.now;
+    const sourceKind = input.file?.sourceKind ?? input.sourceKind;
+    // Branch commits and the base branch never reach the mirror: only the uncommitted changes.
+    if (
+      input.commitSha !== undefined ||
+      (sourceKind !== undefined && sourceKind !== "working-tree")
+    ) {
+      return { cwd: input.cwd, generatedAt, sources: [] };
+    }
+    const failed = (operation: string, command: string, exitCode: number) =>
+      new GitCommandError({
+        operation: `StoppedSandboxReads.${operation}`,
+        command,
+        cwd: input.cwd,
+        exitCode,
+        detail: "Could not read the stopped machine's changes from the checkpoint mirror.",
+      });
+    const parent = yield* git(view.gitDir, "diffPreview.parent", [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${view.commit}^`,
+    ]);
+    const base =
+      parent.exitCode === 0
+        ? parent.stdout.trim()
+        : (yield* git(
+            view.gitDir,
+            "diffPreview.emptyTree",
+            ["hash-object", "-t", "tree", "--stdin"],
+            {
+              allowNonZeroExit: false,
+              stdin: "",
+            },
+          )).stdout.trim();
+    // Live diffs name paths from the repository root, which is the checkout the view's tree holds.
+    const pathArgs = input.file
+      ? [input.file.path, ...(input.file.previousPath ? [input.file.previousPath] : [])].map(
+          (filePath) => `:(top,literal)${filePath}`,
+        )
+      : [];
+    const diffArgs = [
+      ...REVIEW_DIFF_ARGS,
+      "--minimal",
+      ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+    ];
+    const stat = yield* git(
+      view.gitDir,
+      "diffPreview.stat",
+      [...diffArgs, "--numstat", "-z", base, view.commit, "--", ...pathArgs],
+      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    if (stat.exitCode !== 0)
+      return yield* failed("diffPreview.stat", "git diff --numstat", stat.exitCode);
+    const files = parseReviewNumstat(stat.stdout);
+    const deferred = input.metadataOnly === true && !input.file;
+    const patch =
+      deferred || files.length === 0
+        ? { stdout: "", stdoutTruncated: false }
+        : yield* git(
+            view.gitDir,
+            "diffPreview.patch",
+            [...diffArgs, "--patch", base, view.commit, "--", ...pathArgs],
+            {
+              maxOutputBytes: input.file
+                ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES
+                : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          ).pipe(
+            Effect.filterOrFail(
+              (result) => result.exitCode === 0,
+              (result) => failed("diffPreview.patch", "git diff --patch", result.exitCode),
+            ),
+          );
+    return {
+      cwd: input.cwd,
+      generatedAt,
+      sources: [
+        {
+          id: "working-tree",
+          kind: "working-tree" as const,
+          title: "Uncommitted",
+          baseRef: "HEAD",
+          headRef: null,
+          diff: patch.stdout,
+          files,
+          // The two commits fix the content, so they name it.
+          diffHash: [base, view.commit, input.ignoreWhitespace ? "w" : "", ...pathArgs].join(":"),
+          truncated: patch.stdoutTruncated,
+          ...(deferred ? { patchesDeferred: true } : {}),
+        },
+      ],
+    };
+  });
+
   return StoppedSandboxReads.of({
+    diffPreview,
     viewFor,
     refuseWrite,
     list,

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import {
@@ -18,10 +19,13 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import { isWithinRoot } from "../workspace/WorkspacePaths.ts";
+import { sandboxIdFromPath } from "../workspaceHost/WorkspaceHost.ts";
+import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 
 const WORKSPACE_BOUND_SUBJECTS = {
   "ReviewService.getBranchCommits": "commit list",
@@ -52,6 +56,29 @@ export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
+  const hosts = yield* WorkspaceHosts.WorkspaceHosts;
+  // Absent inside the runner, where every path is local.
+  const stopped = yield* Effect.serviceOption(StoppedSandboxReads.StoppedSandboxReads);
+
+  /**
+   * A /t3-sandbox/ cwd whose machine is unreachable reads from the mirror without waking it: the
+   * view, or "none" before any checkpoint synced. Null for every reachable path.
+   */
+  const stoppedViewFor = Effect.fn("ReviewService.stoppedViewFor")(function* (cwd: string) {
+    const sandboxId = sandboxIdFromPath(cwd);
+    if (sandboxId === undefined || Option.isNone(stopped)) return null;
+    const reachable = yield* hosts
+      .forPath(cwd)
+      .pipe(
+        Effect.as(true),
+        Effect.catchTags({ WorkspaceHostUnavailableError: () => Effect.succeed(false) }),
+      );
+    if (reachable) return null;
+    return yield* stopped.value.viewFor(cwd, sandboxId).pipe(
+      Effect.map((view) => ({ reads: stopped.value, view })),
+      Effect.catchTags({ SandboxAsleep: () => Effect.succeed("none" as const) }),
+    );
+  });
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -97,6 +124,8 @@ export const make = Effect.gen(function* () {
   const getBranchCommits: ReviewService["Service"]["getBranchCommits"] = Effect.fn(
     "ReviewService.getBranchCommits",
   )(function* (input) {
+    // The mirror holds no base branch; the commit list waits for the machine.
+    if ((yield* stoppedViewFor(input.cwd)) !== null) return { commits: [], truncated: false };
     yield* assertWorkspaceBoundCwd("ReviewService.getBranchCommits", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
@@ -114,6 +143,9 @@ export const make = Effect.gen(function* () {
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
+    const asleep = yield* stoppedViewFor(input.cwd);
+    if (asleep === "none") return { cwd: input.cwd, generatedAt: yield* DateTime.now, sources: [] };
+    if (asleep !== null) return yield* asleep.reads.diffPreview(asleep.view, input);
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
@@ -131,6 +163,13 @@ export const make = Effect.gen(function* () {
   const getDiffFileContents: ReviewService["Service"]["getDiffFileContents"] = Effect.fn(
     "ReviewService.getDiffFileContents",
   )(function* (input) {
+    if ((yield* stoppedViewFor(input.cwd)) !== null) {
+      return yield* new VcsUnsupportedOperationError({
+        operation: "ReviewService.getDiffFileContents",
+        kind: "git",
+        detail: "This machine is asleep. Wake it to expand unchanged lines.",
+      });
+    }
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });

@@ -5,10 +5,12 @@ import {
   SandboxId,
   ThreadId,
   type AuthSessionState,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
   type TeamMember,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -20,6 +22,8 @@ import {
   createSandboxEnvironmentAtoms,
   sandboxStatePresentation,
   sharesOtherOwnersMachine,
+  stoppedFilesFromProjection,
+  stoppedReadLabel,
   type SandboxAction,
   type SandboxStatePresentation,
 } from "./sandbox.ts";
@@ -234,6 +238,74 @@ describe("sharesOtherOwnersMachine", () => {
     ["a solo server", { sandboxId, ownerId: null }, { ownerMemberId: null }, false],
   ] as const)("%s", (_name, thread, sandbox, expected) => {
     expect(sharesOtherOwnersMachine(thread, sandbox)).toBe(expected);
+  });
+});
+
+describe("stopped reads", () => {
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const clock = (time: DateTime.Utc) => DateTime.formatIso(time).slice(11, 16);
+  const projection = (
+    sandbox: { state: string; runnerLostAt?: string; sleepSnapshotAt?: string },
+    checkpoints: ReadonlyArray<{ turn: number | null; capturedAt: string; ready?: boolean }>,
+  ) =>
+    ({
+      sandbox: {
+        id: SandboxId.make("sbx_0123456789abcdef0123"),
+        ownerMemberId: null,
+        state: sandbox.state,
+        runnerLostAt: sandbox.runnerLostAt === undefined ? null : at(sandbox.runnerLostAt),
+        ...(sandbox.sleepSnapshotAt === undefined
+          ? {}
+          : { sleepSnapshotAt: at(sandbox.sleepSnapshotAt) }),
+      },
+      checkpoints: checkpoints.map((checkpoint) => ({
+        status: checkpoint.ready === false ? "missing" : "ready",
+        appRunOrdinal: checkpoint.turn,
+        capturedAt: at(checkpoint.capturedAt),
+      })),
+    }) as unknown as Pick<OrchestrationV2ThreadProjection, "sandbox" | "checkpoints">;
+  const label = (input: Parameters<typeof projection>) => {
+    const stopped = stoppedFilesFromProjection(projection(...input));
+    return stopped === null ? null : stoppedReadLabel(stopped, clock);
+  };
+
+  it.each([
+    ["a running machine reads itself", [{ state: "ready" }, []], null],
+    [
+      "a lost runner reads the newest ready turn",
+      [
+        { state: "ready", runnerLostAt: "2036-04-07T10:00:00Z" },
+        [
+          { turn: 7, capturedAt: "2036-04-07T09:00:00Z" },
+          { turn: 8, capturedAt: "2036-04-07T09:30:00Z", ready: false },
+          { turn: 6, capturedAt: "2036-04-07T08:00:00Z" },
+        ],
+      ],
+      "As of turn 7",
+    ],
+    ["no turn yet", [{ state: "sleeping" }, []], "No saved turn to show yet"],
+    [
+      "the sleep snapshot",
+      [
+        { state: "sleeping", sleepSnapshotAt: "2036-04-07T14:02:00Z" },
+        [{ turn: 7, capturedAt: "2036-04-07T09:00:00Z" }],
+      ],
+      "As of 14:02, when the machine slept",
+    ],
+    [
+      "a turn after a later wake beats an old snapshot",
+      [
+        {
+          state: "ready",
+          runnerLostAt: "2036-04-08T10:00:00Z",
+          sleepSnapshotAt: "2036-04-07T14:02:00Z",
+        },
+        [{ turn: 9, capturedAt: "2036-04-08T09:00:00Z" }],
+      ],
+      "As of turn 9",
+    ],
+  ] as const)("%s", (_name, input, expected) => {
+    expect(label(input as unknown as Parameters<typeof projection>)).toBe(expected);
   });
 });
 

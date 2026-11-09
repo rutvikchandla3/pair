@@ -100,6 +100,22 @@ export const sandboxThreadRefPrefix = (threadId: ThreadId) =>
 export const sandboxSnapshotRef = (threadId: ThreadId) =>
   CheckpointRef.make(`${sandboxThreadRefPrefix(threadId)}snapshot`);
 
+/**
+ * Which thread's snapshot ref holds each checkout. Side chats share the parent's checkout: the
+ * owner names it, else the oldest attached (`threads` in attach order).
+ */
+export const snapshotNamers = (
+  ownerThreadId: ThreadId,
+  threads: ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string | null }>,
+): ReadonlyMap<string, ThreadId> => {
+  const namers = new Map<string, ThreadId>();
+  const owner = threads.filter((thread) => thread.threadId === ownerThreadId);
+  for (const { threadId, worktreePath } of [...owner, ...threads]) {
+    if (worktreePath !== null && !namers.has(worktreePath)) namers.set(worktreePath, threadId);
+  }
+  return namers;
+};
+
 interface BundleHeader {
   readonly prerequisites: ReadonlyArray<string>;
   readonly refs: ReadonlyMap<string, string>;

@@ -31,6 +31,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { terminalStoppedLabel } from "@t3tools/client-runtime/state/sandbox";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -93,6 +94,8 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { readSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
+import { TerminalStoppedNotice, terminalStoppedByAtom } from "./terminal/TerminalStoppedNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -585,6 +588,7 @@ function TerminalSessionViewport({
   const runTerminalResize = useAtomCommand(terminalEnvironment.resize, {
     reportFailure: false,
   });
+  const runTerminalOpen = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
   const hasHandledExitRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
@@ -625,6 +629,24 @@ function TerminalSessionViewport({
   // the surface reads the session itself, so output chunks never re-render here.
   useAtomMount(terminalSessionAtom);
   const readTerminalSession = useEffectEvent(() => appAtomRegistry.get(terminalSessionAtom));
+  const stoppedBy = useAtomValue(terminalStoppedByAtom(terminalSessionAtom));
+  const isMachineReady = useEffectEvent(
+    () => readSandboxThreadMachine(threadRef)?.state === "ready",
+  );
+  // Only an explicit open restarts a shell the machine's sleep stopped; attaching never does.
+  const restartStoppedTerminal = useEffectEvent(() =>
+    runTerminalOpen({
+      environmentId,
+      input: {
+        threadId,
+        terminalId,
+        cwd,
+        ...(worktreePath !== undefined ? { worktreePath } : {}),
+        ...(runtimeEnv ? { env: runtimeEnv } : {}),
+        ...(providerInstanceId ? { providerInstanceId } : {}),
+      },
+    }),
+  );
   const subscribeTerminalSession = useEffectEvent(
     (listener: (session: TerminalSessionState) => void) =>
       appAtomRegistry.subscribe(terminalSessionAtom, listener),
@@ -647,10 +669,16 @@ function TerminalSessionViewport({
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const synchronizeTerminalStatus = useEffectEvent(
-    (terminal: GhosttyTerminalSurface, status: TerminalSessionState["status"], version: number) => {
+    (terminal: GhosttyTerminalSurface, session: TerminalSessionState) => {
+      const { status, version } = session;
       const synchronized = synchronizedStatusRef.current;
       if (version > 0 && status === "running") {
         hasHandledExitRef.current = false;
+      } else if (status === "exited" && session.stoppedBy !== null) {
+        // The machine slept: the terminal stays open for Wake or typing to restart it.
+        if (!hasHandledExitRef.current)
+          writeSystemMessage(terminal, terminalStoppedLabel(session.stoppedBy));
+        hasHandledExitRef.current = true;
       } else if (
         shouldHandleTerminalExit(status, synchronized, hasHandledExitRef.current, version)
       ) {
@@ -765,7 +793,7 @@ function TerminalSessionViewport({
       outputCursorRef.current = initialOutput.cursor;
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
       synchronizedStatusRef.current = "closed";
-      synchronizeTerminalStatus(terminal, latestSession.status, latestSession.version);
+      synchronizeTerminalStatus(terminal, latestSession);
       // Read and subscribe in one synchronous step so no output lands between them.
       let previousSession = latestSession;
       let resizeGeneration = writableSessionGeneration(latestSession, hasTerminalWriteAccess());
@@ -781,7 +809,7 @@ function TerminalSessionViewport({
           const previous = previousSession;
           previousSession = session;
           terminal.setSharedGrid(session.grid);
-          synchronizeTerminalStatus(terminal, session.status, session.version);
+          synchronizeTerminalStatus(terminal, session);
           outputCursorRef.current = synchronizeTerminalSession(
             terminal,
             previous,
@@ -1092,6 +1120,15 @@ function TerminalSessionViewport({
 
       function handleData(data: string): void {
         if (!hasTerminalWriteAccess()) return;
+        const session = readTerminalSession();
+        if (session.status === "exited" && session.stoppedBy !== null) {
+          if (!isMachineReady()) return;
+          void (async () => {
+            const restarted = await restartStoppedTerminal();
+            if (restarted._tag === "Success") await writeTerminal(data);
+          })();
+          return;
+        }
         void (async () => {
           const result = await writeTerminal(data);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
@@ -1214,11 +1251,20 @@ function TerminalSessionViewport({
     };
   };
   return (
-    <div
-      ref={attachContainer}
-      tabIndex={-1}
-      className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={attachContainer}
+        tabIndex={-1}
+        className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
+      />
+      {stoppedBy !== null ? (
+        <TerminalStoppedNotice
+          threadRef={threadRef}
+          stoppedBy={stoppedBy}
+          onRestart={() => void restartStoppedTerminal()}
+        />
+      ) : null}
+    </div>
   );
 }
 

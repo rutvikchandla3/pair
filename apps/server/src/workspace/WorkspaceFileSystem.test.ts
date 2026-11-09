@@ -530,6 +530,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
               searchContents: () => Effect.die("unused"),
               browse: () => Effect.die("unused"),
               readFile: () => Effect.die("unused"),
+              diffPreview: () => Effect.die("unused"),
             }),
           ),
         );

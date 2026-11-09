@@ -30,6 +30,7 @@ import {
   type ResourceMonitorProcessTableEntry,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
+  type TerminalStoppedBy,
   type TerminalSummary,
   type TerminalWriteInput,
   ClaudeSettings,
@@ -81,9 +82,9 @@ import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import {
   type WorkspaceHost,
   LOCAL_WORKSPACE_HOST_ID,
+  sandboxIdFromPath,
   type WorkspaceHostId,
   type WorkspaceHostInfo,
-  sandboxIdFromPath,
 } from "../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import {
@@ -229,6 +230,12 @@ export class TerminalManager extends Context.Service<
 
     /** Epoch ms of the latest event in these threads' sessions; null with none. */
     readonly lastActivityAt: (threadIds: ReadonlyArray<string>) => Effect.Effect<number | null>;
+
+    /** Stops every running shell on the machine before it sleeps; each stays exited with `stoppedBy`. */
+    readonly stopForSleep: (input: {
+      readonly sandboxId: string;
+      readonly at: string;
+    }) => Effect.Effect<void>;
   }
 >()("t3/terminal/Manager/TerminalManager") {}
 
@@ -303,6 +310,8 @@ interface TerminalSessionState {
   runtimeEnv: Record<string, string> | null;
   /** Set at each spawn from the host of `cwd`; the subprocess poll groups sessions by it. */
   hostId: WorkspaceHostId;
+  /** Why the server stopped this shell; cleared when it starts again. */
+  stoppedBy: TerminalStoppedBy | null;
 }
 
 interface TerminalGrid {
@@ -398,6 +407,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     sequence: session.eventSequence,
     cols: session.cols,
     rows: session.rows,
+    ...(session.stoppedBy === null ? {} : { stoppedBy: session.stoppedBy }),
   };
 }
 
@@ -414,8 +424,12 @@ function summary(session: TerminalSessionState): TerminalSummary {
     hasRunningSubprocess: session.hasRunningSubprocess,
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
+    ...(session.stoppedBy === null ? {} : { stoppedBy: session.stoppedBy }),
   };
 }
+
+// History only: the new shell never sees it.
+const MACHINE_WOKE_DIVIDER = "\r\n\x1b[2mMachine woke. Earlier processes were stopped.\x1b[0m\r\n";
 
 function shouldPublishTerminalMetadataEvent(event: TerminalEvent): boolean {
   switch (event.type) {
@@ -2947,6 +2961,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
         hostId: host.id,
+        stoppedBy: null,
       };
 
       const createdSession = session;
@@ -2986,6 +3001,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     if (launchContextChanged) {
       yield* stopProcess(liveSession);
+      liveSession.stoppedBy = null;
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
@@ -2994,6 +3010,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
+      yield* persistHistory(liveSession.threadId, liveSession.terminalId, liveSession.history);
+    } else if (liveSession.stoppedBy !== null && !liveSession.process) {
+      // A shell sleep stopped keeps its history, with a line where the machine woke.
+      liveSession.stoppedBy = null;
+      liveSession.runtimeEnv = nextRuntimeEnv;
+      liveSession.worktreePath = nextWorktreePath;
+      liveSession.history.append(MACHINE_WOKE_DIVIDER);
+      liveSession.pendingHistoryControlSequence = "";
       yield* persistHistory(liveSession.threadId, liveSession.terminalId, liveSession.history);
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.runtimeEnv = nextRuntimeEnv;
@@ -3555,7 +3579,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const stopForSleep: TerminalManager["Service"]["stopForSleep"] = Effect.fn(
+    "terminal.stopForSleep",
+  )(function* ({ sandboxId, at }) {
+    const sessions = [...(yield* readManagerState).sessions.values()].filter(
+      (session) => session.process !== null && sandboxIdFromPath(session.cwd) === sandboxId,
+    );
+    const stoppedBy = { reason: "sleep" as const, at };
+    yield* Effect.forEach(
+      sessions,
+      (session) =>
+        withThreadLock(
+          session.threadId,
+          Effect.gen(function* () {
+            if (session.process === null) return;
+            session.stoppedBy = stoppedBy;
+            session.exitCode = null;
+            session.exitSignal = null;
+            yield* stopProcess(session);
+            yield* publishEvent({
+              type: "exited",
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+              sequence: advanceEventSequence(session).sequence,
+              exitCode: null,
+              exitSignal: null,
+              stoppedBy,
+            });
+          }),
+        ),
+      { discard: true },
+    );
+  });
+
   return TerminalManager.of({
+    stopForSleep,
     open,
     getShell,
     attachStream,

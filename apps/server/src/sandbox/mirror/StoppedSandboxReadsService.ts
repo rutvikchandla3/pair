@@ -9,6 +9,9 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ReviewDiffPreviewError,
+  ReviewDiffPreviewInput,
+  ReviewDiffPreviewResult,
   SandboxAsleep,
   SandboxId,
   ThreadId,
@@ -25,9 +28,11 @@ import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 
 export interface StoppedView {
   readonly sandboxId: SandboxId;
-  /** Whose checkpoint backs the view. */
+  /** The sleep's working-tree snapshot, or a turn's checkpoint. */
+  readonly source: "snapshot" | "checkpoint";
+  /** Whose snapshot or checkpoint backs the view. */
   readonly threadId: ThreadId;
-  /** The checkpoint's appRunOrdinal, for "As of turn N" (0 when it has none). */
+  /** The checkpoint's appRunOrdinal, for "As of turn N" (0 for a snapshot or none). */
   readonly turn: number;
   /** The checkpoint's oid in the mirror. */
   readonly commit: string;
@@ -72,5 +77,10 @@ export class StoppedSandboxReads extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystem.WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
+    /** The view's uncommitted changes as one `working-tree` source; the mirror has no base branch. */
+    readonly diffPreview: (
+      view: StoppedView,
+      input: ReviewDiffPreviewInput,
+    ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
   }
 >()("t3/sandbox/mirror/StoppedSandboxReadsService/StoppedSandboxReads") {}

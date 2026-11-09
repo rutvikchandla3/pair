@@ -3,6 +3,7 @@ import type {
   TerminalAttachStreamEvent,
   TerminalMetadataStreamEvent,
   TerminalSessionSnapshot,
+  TerminalStoppedBy,
   TerminalSummary,
   ThreadId,
 } from "@t3tools/contracts";
@@ -37,6 +38,8 @@ export interface TerminalSessionState {
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
+  /** Set while the shell is exited because the server stopped it, as when its machine slept. */
+  readonly stoppedBy: TerminalStoppedBy | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
   readonly version: number;
@@ -48,6 +51,7 @@ export interface TerminalBufferState {
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
+  readonly stoppedBy: TerminalStoppedBy | null;
   readonly updatedAt: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
@@ -77,6 +81,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   grid: null,
   status: "closed",
   error: null,
+  stoppedBy: null,
   updatedAt: null,
   version: 0,
   lifecycleVersion: 0,
@@ -88,6 +93,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   grid: null,
   status: "closed",
   error: null,
+  stoppedBy: null,
   hasRunningSubprocess: false,
   updatedAt: null,
   version: 0,
@@ -117,6 +123,7 @@ function terminalBufferStateFromSnapshot(
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
     error: null,
+    stoppedBy: snapshot.stoppedBy ?? null,
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
@@ -149,6 +156,7 @@ export function combineTerminalSessionState(
     grid: buffer.grid,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
+    stoppedBy: buffer.version > 0 ? buffer.stoppedBy : (summary?.stoppedBy ?? null),
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
     version: buffer.version,
@@ -202,6 +210,7 @@ export function applyTerminalAttachStreamEvent(
         ...current,
         status: "exited",
         error: null,
+        stoppedBy: event.stoppedBy ?? null,
         version: current.version + 1,
       };
     case "closed":

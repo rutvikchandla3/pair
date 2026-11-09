@@ -713,32 +713,43 @@ it.layer(
   );
 
   it.effect(
-    "keeps a stopped machine's terminal exited, starts no new one there, and wakes on a key",
+    "keeps a stopped machine's terminal exited, wakes it on a key, and restarts under a divider",
     () =>
       Effect.gen(function* () {
         const { manager, ptyAdapter, hosts } = yield* createManager();
-        const root = "/t3-sandbox/sbx_0000000000000000000b";
+        const sandboxId = "sbx_0000000000000000000b";
+        const root = `/t3-sandbox/${sandboxId}`;
         const cwd = `${root}/worktrees/main`;
-        const machine = yield* Scope.make();
-        yield* hosts
-          .register(root, {
-            ...hosts.local,
-            fileSystem: {
-              ...hosts.local.fileSystem,
-              stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
-            },
-          })
-          .pipe(Scope.provide(machine));
-        const exited = yield* Deferred.make<void>();
+        const registerMachine = Effect.gen(function* () {
+          const machine = yield* Scope.make();
+          yield* hosts
+            .register(root, {
+              ...hosts.local,
+              fileSystem: {
+                ...hosts.local.fileSystem,
+                stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
+              },
+            })
+            .pipe(Scope.provide(machine));
+          return machine;
+        });
+        const machine = yield* registerMachine;
+        const printed = yield* Deferred.make<void>();
+        const exited = yield* Deferred.make<TerminalEvent>();
         const unsubscribeEvents = yield* manager.subscribe((event) =>
           event.type === "exited"
-            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
-            : Effect.void,
+            ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+            : event.type === "output"
+              ? Deferred.succeed(printed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
         );
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribeEvents));
         yield* manager.open(openInput({ cwd }));
-        ptyAdapter.processes[0]?.emitExit({ exitCode: 0, signal: 0 });
-        yield* Deferred.await(exited);
+        ptyAdapter.processes[0]?.emitData("before sleep\n");
+        yield* Deferred.await(printed);
+        const stoppedBy = { reason: "sleep", at: "2026-11-09T14:02:00.000Z" } as const;
+        yield* manager.stopForSleep({ sandboxId, at: stoppedBy.at });
+        expect(yield* Deferred.await(exited)).toMatchObject({ type: "exited", stoppedBy });
         // The machine stops: its root is no longer registered.
         yield* Scope.close(machine, Exit.void);
 
@@ -749,7 +760,10 @@ it.layer(
         );
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
         expect(yield* Ref.get(attachEvents)).toEqual([
-          { type: "snapshot", snapshot: expect.objectContaining({ status: "exited" }) },
+          {
+            type: "snapshot",
+            snapshot: expect.objectContaining({ status: "exited", stoppedBy }),
+          },
         ]);
         const fresh = yield* manager
           .open(openInput({ cwd, terminalId: "second" }))
@@ -757,19 +771,38 @@ it.layer(
         expect(fresh._tag).toBe("TerminalNotRunningError");
         expect(ptyAdapter.spawnInputs).toHaveLength(1);
 
-        const woken = yield* Ref.make<ReadonlyArray<string>>([]);
+        const keyWakes = yield* Ref.make<ReadonlyArray<string>>([]);
         yield* manager
           .write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "l" })
           .pipe(
             Effect.provideService(
               SandboxWake,
               SandboxWake.of({
-                wake: ({ threadId }) => Ref.update(woken, (threads) => [...threads, threadId]),
+                wake: ({ threadId }) => Ref.update(keyWakes, (threads) => [...threads, threadId]),
                 viewed: () => Effect.die("unused"),
               }),
             ),
           );
-        expect(yield* Ref.get(woken)).toEqual(["thread-1"]);
+        expect(yield* Ref.get(keyWakes)).toEqual(["thread-1"]);
+
+        // The machine wakes: the next attach starts a fresh shell under a divider.
+        const awake = yield* registerMachine;
+        yield* Effect.addFinalizer(() => Scope.close(awake, Exit.void));
+        const woken = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+        const unsubscribeWoken = yield* manager.attachStream(
+          { ...openInput({ cwd }), restartIfNotRunning: true },
+          (event) => Ref.update(woken, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeWoken));
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        const [restarted] = yield* Ref.get(woken);
+        assert(restarted?.type === "snapshot");
+        expect(restarted.snapshot.status).toBe("running");
+        expect(restarted.snapshot.stoppedBy).toBeUndefined();
+        expect(restarted.snapshot.history).toContain("before sleep\n");
+        expect(restarted.snapshot.history).toContain(
+          "Machine woke. Earlier processes were stopped.",
+        );
       }),
   );
 

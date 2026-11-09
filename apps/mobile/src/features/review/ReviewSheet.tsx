@@ -37,6 +37,8 @@ import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnection
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useStoppedFiles } from "../../state/sandbox";
+import { StoppedFilesNotice } from "../threads/StoppedMachineNotice";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
@@ -373,6 +375,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { draftMessage, draftContext } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const stoppedFiles = useStoppedFiles({ environmentId, threadId });
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
   const topContentInset = Platform.OS === "ios" ? safeArea.top : 0;
@@ -569,6 +572,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   const listHeader = (() => {
     const children: ReactElement[] = [];
+
+    if (stoppedFiles !== null) {
+      children.push(
+        <StoppedFilesNotice
+          key="review-stopped"
+          threadRef={{ environmentId, threadId }}
+          stopped={stoppedFiles}
+        />,
+      );
+    }
 
     if (error) {
       children.push(

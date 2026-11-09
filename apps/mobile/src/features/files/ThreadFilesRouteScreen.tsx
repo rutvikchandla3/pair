@@ -47,6 +47,8 @@ import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { useStoppedFiles } from "../../state/sandbox";
+import { StoppedFilesNotice } from "../threads/StoppedMachineNotice";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { AppBar } from "../../components/ui/AppBar";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
@@ -212,6 +214,7 @@ function defaultViewMode(path: string | null): FileViewMode {
 }
 
 function FileContent(props: {
+  readonly stoppedFiles: ThreadStoppedFiles;
   readonly activeMode: FileViewMode;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -234,7 +237,9 @@ function FileContent(props: {
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
   const reservedHeaderInset =
-    Platform.OS === "ios" && props.truncated ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
+    Platform.OS === "ios" && (props.truncated || props.stoppedFiles !== null)
+      ? (columnMetrics?.safeArea.top ?? insets.top)
+      : 0;
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const delimiter = filePreviewDelimiter({ name: props.relativePath });
   const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
@@ -307,6 +312,7 @@ function FileContent(props: {
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingTop: reservedHeaderInset }}>
+      {props.stoppedFiles !== null ? <StoppedFilesNotice {...props.stoppedFiles} /> : null}
       {props.truncated ? (
         <FilePreviewNotice title="Partial file">
           Preview limited to the first 1 MB of a truncated file.
@@ -370,6 +376,9 @@ function useThreadFilesWorkspace(params: {
       ? EnvironmentId.make(routeEnvironmentId)
       : (selectedThread?.environmentId ?? null);
   const threadId = routeThreadId !== null ? ThreadId.make(routeThreadId) : null;
+  const threadRef =
+    environmentId !== null && threadId !== null ? { environmentId, threadId } : null;
+  const stopped = useStoppedFiles(threadRef);
   const project = selectedThreadProject as {
     readonly title?: string;
     readonly workspaceRoot?: string;
@@ -382,7 +391,23 @@ function useThreadFilesWorkspace(params: {
     relativePath: normalizeRoutePath(params.path),
     selectedThread,
     threadId,
+    stoppedFiles: threadRef !== null && stopped !== null ? { threadRef, stopped } : null,
   };
+}
+
+type ThreadStoppedFiles = ReturnType<typeof useThreadFilesWorkspace>["stoppedFiles"];
+
+/** Over a tree the iOS header overlays, so the notice keeps clear of it. */
+function TreeStoppedFilesNotice(props: { readonly stoppedFiles: ThreadStoppedFiles }) {
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  if (props.stoppedFiles === null) return null;
+  return (
+    <StoppedFilesNotice
+      {...props.stoppedFiles}
+      topInset={Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? insets.top) : 0}
+    />
+  );
 }
 
 function FilesUnavailable({
@@ -431,9 +456,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, selectedThread, stoppedFiles, threadId } =
+    useThreadFilesWorkspace(props.route.params);
   const hasFileInspector = fileInspector.supported && threadId !== null;
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
@@ -550,6 +574,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         onRefresh={entriesQuery.refresh}
         onBack={handleReturnToThread}
       />
+      <TreeStoppedFilesNotice stoppedFiles={stoppedFiles} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
@@ -588,7 +613,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const iconColor = useUniwindTheme()["--color-icon"];
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
+  const { cwd, environmentId, projectName, relativePath, selectedThread, stoppedFiles, threadId } =
     useThreadFilesWorkspace(props.route.params);
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
@@ -943,6 +968,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           onRefresh={entriesQuery.refresh}
           onBack={handleBack}
         />
+        <TreeStoppedFilesNotice stoppedFiles={stoppedFiles} />
         <ScreenContent>
           <FileTreeBrowser
             key={JSON.stringify([environmentId, directoryPath])}
@@ -988,6 +1014,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       <ScreenContent>
         <FileContent
           key={previewKey}
+          stoppedFiles={stoppedFiles}
           activeMode={resolvedActiveMode}
           cwd={cwd}
           environmentId={environmentId}

@@ -70,18 +70,18 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
-const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
+export const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
-const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+export const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 // Client patch parsers drop blank context lines under diff.suppressBlankEmpty and summaries under diff.submodule.
-const REVIEW_DIFF_ARGS = [
+export const REVIEW_DIFF_ARGS = [
   "-c",
   "diff.suppressBlankEmpty=false",
   "diff",
@@ -205,7 +205,7 @@ function parseBranchAb(value: string): { ahead: number; behind: number } {
   };
 }
 
-function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
+export function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const fields = stdout.split("\0");
   const files: ReviewDiffFileStat[] = [];
   for (let index = 0; index < fields.length; index++) {

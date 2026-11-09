@@ -978,8 +978,9 @@ the label, the reads and the terminal state are one user-visible state across we
   - `apps/server/src/sandbox/mirror/StoppedSandboxReadsService.ts` `StoppedView` (26): add
     `source: "snapshot" | "checkpoint"`. Add to the service (42)
     `diffPreview(view, input: ReviewDiffPreviewInput) => Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>`.
-    It returns one `working-tree` source: `git --git-dir <mirror> diff --no-color <commit>^ <commit>
-    -- <prefix>` (empty tree when the commit has no parent), with the same byte cap and
+    It returns one `working-tree` source: `git --git-dir <mirror> diff --no-color <commit>^ <commit>`
+    over the whole tree, so paths stay repo-relative as the live diff's are (empty tree when the
+    commit has no parent), with the same byte cap and
     `metadataOnly`/`file` handling the live path uses (`GitVcsDriver.getReviewDiffPreview`). No
     `branch-range` source: the mirror does not hold the base branch (07 §6 says Changes diffs the
     snapshot against the branch).
@@ -989,7 +990,8 @@ the label, the reads and the terminal state are one user-visible state across we
     Read `StoppedSandboxReads` with `Effect.serviceOption` (the runner bundle has no layer).
     `SandboxAsleep` from `viewFor` (no checkpoint yet) returns `{ cwd, generatedAt, sources: [] }`.
     `getBranchCommits` returns `{ commits: [], truncated: false }` on the same condition, and
-    `getDiffFileContents` fails with the existing `SandboxAsleep`.
+    `getDiffFileContents` fails with `VcsUnsupportedOperationError` ("This machine is asleep. Wake
+    it to expand unchanged lines."): `ReviewDiffPreviewError` has no `SandboxAsleep`.
   - `packages/contracts/src/terminal.ts`: add
     `TerminalStoppedBy = Schema.Struct({ reason: ForwardCompatibleNullable(Schema.Literals(["sleep"])), at: Schema.String })`
     and `stoppedBy: Schema.optionalKey(TerminalStoppedBy)` on `TerminalSessionSnapshot` (90),
@@ -1001,8 +1003,9 @@ the label, the reads and the terminal state are one user-visible state across we
     and publish `exited` with `stoppedBy`. `snapshot` (378) and the summary copy the field.
     `openWithWorkspaceLease` (2877): the stopped-machine branch (2884–2890) is unchanged. On a
     reachable host, an existing session with `stoppedBy` and `restartIfNotRunning: true`
-    (`TerminalAttachInput` 55) appends "Machine woke at 15:10. Earlier processes were stopped." to
-    history (history only, not written to the PTY), clears `stoppedBy`, and restarts. `write` and
+    (`TerminalAttachInput` 55), or an explicit `open`, appends "Machine woke. Earlier processes were
+    stopped." to history (history only, not written to the PTY; no time, since the server does not
+    know the viewer's zone), clears `stoppedBy`, and restarts. `write` and
     `resize` on a stopped machine already fail; map them to `SandboxAsleep` if they do not.
   - `apps/server/src/sandbox/lifecycle/SandboxEffects.ts`: add a hook
     `SandboxSleepHooks = Context.Reference<{ beforeSleep: (input: { sandboxId; at }) => Effect<void> }>`
@@ -1017,11 +1020,13 @@ the label, the reads and the terminal state are one user-visible state across we
     (`stoppedFilesNotice.tsx` 37), now also returning `sleepSnapshotAt`. Also
     `terminalStoppedLabel(stoppedBy)` ("Stopped when the machine slept at 14:02").
   - `packages/client-runtime/src/state/terminalSession.ts` `exited` case (200): keep `stoppedBy`
-    from the event on the session state.
+    from the event on the session state. `transitionTerminalLifecycle` neither closes nor reopens
+    a stopped shell, so attaching to it after a wake does not restart it; typing (once the machine
+    is ready) or this viewer's **Wake** calls `terminal.open`.
   - Web: `apps/web/src/components/sandbox/stoppedFilesNotice.tsx` `StoppedFiles` (20) gains
     `sleepSnapshotAt`; `StoppedFilesNotice` (83) uses `stoppedReadLabel`. The Changes panel (the
     consumer of `packages/client-runtime/src/state/review.ts`) shows the same notice above an
-    asleep diff. The terminal drawer shows "This machine is asleep" with **Wake** (allowed via
+    asleep diff and shows the Uncommitted scope, the only source asleep. The terminal drawer shows "This machine is asleep" with **Wake** (allowed via
     `sandboxEnvironment.actionAllowedAtom`) for a session with `stoppedBy`.
   - Mobile: `apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx`,
     `apps/mobile/src/features/review/ReviewSheet.tsx` and the terminal screen in

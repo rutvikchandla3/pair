@@ -68,6 +68,7 @@ import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
+import { StoppedFilesNotice, useStoppedFiles } from "./sandbox/stoppedFilesNotice";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -317,10 +318,14 @@ export default function DiffPanel({
   }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
+  const stoppedFiles = useStoppedFiles(isGitSelection ? routeThreadRef : null);
+  // An asleep machine's mirror holds no base branch, so its Changes are the working tree alone.
   const selectedGitScope =
-    diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
-      ? diffSelection.kind
-      : "branch";
+    diffSelection.kind === "commit"
+      ? "commit"
+      : diffSelection.kind === "unstaged" || stoppedFiles !== null
+        ? "unstaged"
+        : "branch";
   const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.sha : null;
   const selectedBaseRef =
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
@@ -1301,6 +1306,9 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {stoppedFiles !== null && routeThreadRef ? (
+              <StoppedFilesNotice threadRef={routeThreadRef} stopped={stoppedFiles} />
+            ) : null}
             {preview?.incomplete && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 {selectedPatchError

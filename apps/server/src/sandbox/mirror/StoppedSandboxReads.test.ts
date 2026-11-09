@@ -4,6 +4,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   type OrchestrationV2Sandbox,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   RunId,
   SandboxId,
@@ -64,12 +65,23 @@ const contextFor = (
   };
 };
 
-const layerReads = (contexts: ReadonlyMap<ThreadId, ProjectionCheckpointContext>) =>
+const layerReads = (
+  contexts: ReadonlyMap<ThreadId, ProjectionCheckpointContext>,
+  sleepSnapshotAt: DateTime.Utc | null = null,
+) =>
   StoppedSandboxReads.layer.pipe(
     Layer.provide(
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
         getSandbox: () =>
-          Effect.succeed({ id: sandboxId, projectId, state: "sleeping" } as OrchestrationV2Sandbox),
+          Effect.succeed({
+            id: sandboxId,
+            projectId,
+            state: "sleeping",
+            ownerThreadId: [...contexts.keys()][0],
+            sleepSnapshotAt,
+          } as OrchestrationV2Sandbox),
+        getThreadShell: () =>
+          Effect.succeed({ worktreePath: checkout } as OrchestrationV2ThreadShell),
         listSandboxThreads: () =>
           Effect.succeed(
             [...contexts.keys()].map((threadId) => ({
@@ -310,37 +322,112 @@ it.effect("reads the newest checkpoint among threads sharing the checkout", () =
   Effect.gen(function* () {
     const forkRef = "refs/t3/checkpoints/stopped-reads/fork-2";
     const pendingRef = "refs/t3/checkpoints/stopped-reads/fork-3";
+    const snapshotRef = CheckpointMirror.sandboxSnapshotRef(firstThread);
     yield* seedMirror(
       [
         { ref: firstRef, date: "2026-01-01T00:00:00Z", files: { "README.md": "first\n" } },
         { ref: forkRef, date: "2026-01-02T00:00:00Z", files: { "README.md": "fork\n" } },
         { ref: pendingRef, date: "2026-01-03T00:00:00Z", files: { "README.md": "pending\n" } },
+        { ref: snapshotRef, date: "2026-01-04T00:00:00Z", files: { "README.md": "slept\n" } },
       ],
       // The fork's newest capture has not synced; the view must not name it.
-      [firstRef, forkRef],
+      [firstRef, forkRef, snapshotRef],
+    );
+    const contexts = new Map([
+      [firstThread, contextFor([{ ref: firstRef, turn: 7 }])],
+      [
+        forkThread,
+        contextFor([
+          { ref: forkRef, turn: 2 },
+          { ref: pendingRef, turn: 3 },
+        ]),
+      ],
+    ]);
+    const readsWith = (sleepSnapshotAt: DateTime.Utc | null) =>
+      StoppedSandboxReads.StoppedSandboxReads.pipe(
+        Effect.provide(layerReads(contexts, sleepSnapshotAt)),
+      );
+
+    // A snapshot ref this sleep did not record is an older sleep's, so checkpoints win.
+    const reads = yield* readsWith(null);
+    const view = yield* reads.viewFor(checkout, sandboxId);
+    assert.deepStrictEqual(
+      { source: view.source, threadId: view.threadId, turn: view.turn },
+      { source: "checkpoint", threadId: forkThread, turn: 2 },
+    );
+    const file = yield* reads.readFile(view, { cwd: checkout, relativePath: "README.md" });
+    assert.strictEqual(file.contents, "fork\n");
+
+    const slept = yield* readsWith(DateTime.makeUnsafe("2026-01-04T00:00:00Z"));
+    const snapshot = yield* slept.viewFor(checkout, sandboxId);
+    assert.deepStrictEqual(
+      { source: snapshot.source, threadId: snapshot.threadId, turn: snapshot.turn },
+      { source: "snapshot", threadId: firstThread, turn: 0 },
+    );
+    const sleptFile = yield* slept.readFile(snapshot, { cwd: checkout, relativePath: "README.md" });
+    assert.strictEqual(sleptFile.contents, "slept\n");
+  }).pipe(Effect.provide(layerBase), Effect.scoped),
+);
+
+it.effect("diffs the sleep snapshot against its branch tip", () =>
+  Effect.gen(function* () {
+    const tipRef = "refs/heads/main";
+    const snapshotRef = CheckpointMirror.sandboxSnapshotRef(firstThread);
+    yield* seedMirror(
+      [
+        {
+          ref: tipRef,
+          date: "2026-01-01T00:00:00Z",
+          files: { "README.md": "hello\n", "src/keep.ts": "keep\n" },
+        },
+        {
+          ref: snapshotRef,
+          date: "2026-01-02T00:00:00Z",
+          files: { "README.md": "hello\nworld\n", "src/new.ts": "fresh\n" },
+        },
+      ],
+      [snapshotRef],
     );
     const reads = yield* StoppedSandboxReads.StoppedSandboxReads.pipe(
       Effect.provide(
         layerReads(
-          new Map([
-            [firstThread, contextFor([{ ref: firstRef, turn: 7 }])],
-            [
-              forkThread,
-              contextFor([
-                { ref: forkRef, turn: 2 },
-                { ref: pendingRef, turn: 3 },
-              ]),
-            ],
-          ]),
+          new Map([[firstThread, contextFor([])]]),
+          DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
         ),
       ),
     );
     const view = yield* reads.viewFor(checkout, sandboxId);
+    assert.strictEqual(view.source, "snapshot");
+
+    const preview = yield* reads.diffPreview(view, { cwd: checkout });
     assert.deepStrictEqual(
-      { threadId: view.threadId, turn: view.turn },
-      { threadId: forkThread, turn: 2 },
+      preview.sources.map((source) => [source.kind, source.files]),
+      [
+        [
+          "working-tree",
+          [
+            { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+            { path: "src/new.ts", previousPath: null, additions: 1, deletions: 0 },
+          ],
+        ],
+      ],
     );
-    const file = yield* reads.readFile(view, { cwd: checkout, relativePath: "README.md" });
-    assert.strictEqual(file.contents, "fork\n");
+    assert.match(preview.sources[0]?.diff ?? "", /\+world/);
+    assert.notMatch(preview.sources[0]?.diff ?? "", /keep/);
+
+    const metadata = yield* reads.diffPreview(view, { cwd: checkout, metadataOnly: true });
+    assert.deepStrictEqual(
+      [metadata.sources[0]?.diff, metadata.sources[0]?.patchesDeferred],
+      ["", true],
+    );
+    const oneFile = yield* reads.diffPreview(view, {
+      cwd: checkout,
+      file: { path: "src/new.ts", previousPath: null, sourceKind: "working-tree" },
+    });
+    assert.match(oneFile.sources[0]?.diff ?? "", /\+fresh/);
+    assert.notMatch(oneFile.sources[0]?.diff ?? "", /world/);
+    // The base branch never reaches the mirror.
+    const branch = yield* reads.diffPreview(view, { cwd: checkout, sourceKind: "branch-range" });
+    assert.deepStrictEqual(branch.sources, []);
   }).pipe(Effect.provide(layerBase), Effect.scoped),
 );

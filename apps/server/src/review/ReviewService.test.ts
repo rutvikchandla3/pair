@@ -4,10 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, SandboxAsleep, SandboxId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as StoppedSandboxReads from "../sandbox/mirror/StoppedSandboxReadsService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -28,9 +30,15 @@ function layer(input: {
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
   readonly gitWorktrees?: ReadonlyArray<string>;
   readonly hosts?: Layer.Layer<WorkspaceHosts.WorkspaceHosts, never, NodeServices.NodeServices>;
+  readonly stopped?: StoppedSandboxReads.StoppedSandboxReads["Service"];
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
+    Layer.provide(
+      input.stopped === undefined
+        ? Layer.empty
+        : Layer.succeed(StoppedSandboxReads.StoppedSandboxReads, input.stopped),
+    ),
     Layer.provide(KnownWorkspaces.layer),
     Layer.provide(
       Layer.effectDiscard(
@@ -302,6 +310,84 @@ describe("ReviewService", () => {
         const error = yield* review(cwd).pipe(Effect.flip);
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  it.effect("serves a stopped machine's diff from the mirror", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const synced = SandboxId.make("sbx_000000000000000000a1");
+      const pending = SandboxId.make("sbx_000000000000000000a2");
+      const generatedAt = DateTime.makeUnsafe("2026-01-02T00:00:00Z");
+      const unused = () => Effect.die("unused");
+      const stopped = StoppedSandboxReads.StoppedSandboxReads.of({
+        viewFor: (cwd, sandboxId) =>
+          sandboxId === synced
+            ? Effect.succeed({
+                sandboxId,
+                source: "snapshot" as const,
+                threadId: ThreadId.make("thread:asleep"),
+                turn: 0,
+                commit: "0".repeat(40),
+                gitDir: "/mirror.git",
+                prefix: "",
+                cwd,
+              })
+            : Effect.fail(new SandboxAsleep({ sandboxId, state: "sleeping" })),
+        diffPreview: (view, input) =>
+          Effect.succeed({
+            cwd: input.cwd,
+            generatedAt,
+            sources: [
+              {
+                id: "working-tree",
+                kind: "working-tree" as const,
+                title: "Uncommitted",
+                baseRef: "HEAD",
+                headRef: null,
+                diff: `from ${view.commit.slice(0, 4)}`,
+                diffHash: "hash",
+                truncated: false,
+              },
+            ],
+          }),
+        refuseWrite: unused,
+        list: unused,
+        search: unused,
+        searchContents: unused,
+        browse: unused,
+        readFile: unused,
+      });
+      const cwdOf = (sandboxId: SandboxId) => `/t3-sandbox/${sandboxId}/worktrees/main`;
+
+      const results = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return {
+          diff: yield* review.getDiffPreview({ cwd: cwdOf(synced) }),
+          beforeSync: yield* review.getDiffPreview({ cwd: cwdOf(pending) }),
+          commits: yield* review.getBranchCommits({ cwd: cwdOf(synced) }),
+          contents: yield* review
+            .getDiffFileContents({
+              cwd: cwdOf(synced),
+              sourceKind: "working-tree",
+              changeType: "change",
+              baseRef: "HEAD",
+              headRef: null,
+              oldPath: "README.md",
+              newPath: "README.md",
+            })
+            .pipe(Effect.flip),
+        };
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, stopped })));
+
+      assert.deepStrictEqual(
+        results.diff.sources.map((source) => source.diff),
+        ["from 0000"],
+      );
+      assert.deepStrictEqual(results.beforeSync.sources, []);
+      assert.deepStrictEqual(results.commits, { commits: [], truncated: false });
+      assert.strictEqual(results.contents._tag, "VcsUnsupportedOperationError");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

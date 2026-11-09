@@ -6,16 +6,20 @@ import {
   type MemberId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Sandbox,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
   type SandboxDriverHealth,
   type SandboxId,
   type SandboxOverview,
+  type SandboxState,
   type ScopedThreadRef,
   type ServerSettings,
   type TeamMember,
+  type TerminalStoppedBy,
 } from "@t3tools/contracts";
-import type * as DateTime from "effect/DateTime";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -191,6 +195,94 @@ export function sandboxStatePresentation(
       return presentation({ label: "Machine status unknown", composer: "normal" });
   }
 }
+
+/** A cloud thread whose machine is not reachable: the server reads its files from the mirror. */
+export interface StoppedFiles {
+  readonly sandboxId: SandboxId;
+  readonly state: SandboxState;
+  readonly ownerMemberId: MemberId | null;
+  /** The newest ready checkpoint's turn; null before the first. */
+  readonly turn: number | null;
+  /** Set while the sleep snapshot is what the server reads: no checkpoint is newer. */
+  readonly sleepSnapshotAt: DateTime.Utc | null;
+}
+
+/** Null for a local thread or a running machine, so file surfaces read the machine as before. */
+export function stoppedFilesFromProjection(
+  projection: Pick<OrchestrationV2ThreadProjection, "sandbox" | "checkpoints">,
+): StoppedFiles | null {
+  const sandbox = projection.sandbox;
+  if (sandbox == null || (sandbox.state === "ready" && sandbox.runnerLostAt === null)) return null;
+  let newest: (typeof projection.checkpoints)[number] | undefined;
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.status !== "ready" || checkpoint.appRunOrdinal === null) continue;
+    if (newest === undefined || DateTime.isGreaterThan(checkpoint.capturedAt, newest.capturedAt)) {
+      newest = checkpoint;
+    }
+  }
+  const snapshotAt = sandbox.sleepSnapshotAt ?? null;
+  return {
+    sandboxId: sandbox.id,
+    state: sandbox.state,
+    ownerMemberId: sandbox.ownerMemberId,
+    turn: newest?.appRunOrdinal ?? null,
+    // The server ranks reads by capture time, so a turn after a later wake beats the snapshot.
+    sleepSnapshotAt:
+      snapshotAt !== null &&
+      (newest === undefined || !DateTime.isGreaterThan(newest.capturedAt, snapshotAt))
+        ? snapshotAt
+        : null,
+  };
+}
+
+export function sameStoppedFiles(left: StoppedFiles | null, right: StoppedFiles | null): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.sandboxId === right.sandboxId &&
+      left.state === right.state &&
+      left.ownerMemberId === right.ownerMemberId &&
+      left.turn === right.turn &&
+      (left.sleepSnapshotAt === null || right.sleepSnapshotAt === null
+        ? left.sleepSnapshotAt === right.sleepSnapshotAt
+        : DateTime.Equivalence(left.sleepSnapshotAt, right.sleepSnapshotAt)))
+  );
+}
+
+/** "14:02" today, with the date on other days, in the viewer's locale. */
+function stoppedClockLabel(at: DateTime.Utc, now: DateTime.Utc = DateTime.nowUnsafe()): string {
+  const date = DateTime.toDateUtc(at);
+  const time = { hour: "2-digit", minute: "2-digit" } as const;
+  return date.toDateString() === DateTime.toDateUtc(now).toDateString()
+    ? date.toLocaleTimeString(undefined, time)
+    : date.toLocaleString(undefined, { month: "short", day: "numeric", ...time });
+}
+
+/** What an asleep file, search or Changes read shows, so the viewer knows how old it is. */
+export function stoppedReadLabel(
+  stopped: Pick<StoppedFiles, "sleepSnapshotAt" | "turn">,
+  formatTime: (at: DateTime.Utc) => string = stoppedClockLabel,
+): string {
+  if (stopped.sleepSnapshotAt !== null) {
+    return `As of ${formatTime(stopped.sleepSnapshotAt)}, when the machine slept`;
+  }
+  return stopped.turn === null ? "No saved turn to show yet" : `As of turn ${stopped.turn}`;
+}
+
+/** Why a terminal the server stopped is not running. */
+export function terminalStoppedLabel(
+  stoppedBy: TerminalStoppedBy,
+  formatTime: (at: DateTime.Utc) => string = stoppedClockLabel,
+): string {
+  const at = DateTime.make(stoppedBy.at);
+  const when = Option.isSome(at) ? ` at ${formatTime(DateTime.toUtc(at.value))}` : "";
+  return stoppedBy.reason === "sleep"
+    ? `Stopped when the machine slept${when}`
+    : `Stopped by the server${when}`;
+}
+
+export const TERMINAL_ASLEEP_LABEL = "This machine is asleep";
 
 /** A cloud thread's machine as every surface shows it: one rule for its line, notice and menus. */
 export interface SandboxThreadMachine {

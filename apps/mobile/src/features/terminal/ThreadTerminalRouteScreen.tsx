@@ -47,6 +47,8 @@ import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSandboxThreadMachine } from "../../state/sandbox";
+import { TerminalStoppedNotice } from "../threads/StoppedMachineNotice";
 import { uuidv4 } from "../../lib/uuid";
 import { useServerConfigs } from "../../state/entities";
 import { useConnectionsReady } from "../../state/workspace";
@@ -379,6 +381,7 @@ function ThreadTerminal(props: {
   const nativeColumnMetrics = useNativeColumnLayoutMetrics();
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const selectedThreadDetail = useSelectedThreadProjection();
@@ -521,6 +524,11 @@ function ThreadTerminal(props: {
     ),
   );
   const isRunning = terminal.status === "running" || terminal.status === "starting";
+  const terminalThreadRef = useMemo(
+    () => ({ environmentId: selectedThread.environmentId, threadId: selectedThread.id }),
+    [selectedThread.environmentId, selectedThread.id],
+  );
+  const machine = useSandboxThreadMachine(terminalThreadRef);
 
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
@@ -602,11 +610,29 @@ function ThreadTerminal(props: {
     },
   });
 
+  const restartStoppedTerminal = async (): Promise<boolean> => {
+    if (terminalAttachInput === null) return false;
+    const {
+      cols: _cols,
+      rows: _rows,
+      restartIfNotRunning: _restart,
+      ...open
+    } = terminalAttachInput;
+    if (open.cwd === undefined) return false;
+    const result = await openTerminal({
+      environmentId: selectedThread.environmentId,
+      input: { ...open, cwd: open.cwd },
+    });
+    return result._tag === "Success";
+  };
+  const stoppedBy = terminal.status === "exited" ? terminal.stoppedBy : null;
+
   const writeInput = async (data: string): Promise<boolean> => {
-    if (
-      !isRunning ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
-    ) {
+    // Typing in a shell the machine's sleep stopped starts a new one once the machine is up.
+    if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return false;
+    if (stoppedBy !== null) {
+      if (machine?.state !== "ready" || !(await restartStoppedTerminal())) return false;
+    } else if (!isRunning) {
       return false;
     }
 
@@ -912,6 +938,13 @@ function ThreadTerminal(props: {
                     backgroundColor: terminalTheme.background,
                   }}
                 />
+                {stoppedBy !== null ? (
+                  <TerminalStoppedNotice
+                    threadRef={terminalThreadRef}
+                    stoppedBy={stoppedBy}
+                    onRestart={() => void restartStoppedTerminal()}
+                  />
+                ) : null}
                 <TerminalSurface
                   ref={surfaceRef}
                   autoFocus={canOperateTerminal && terminalAutoFocus}
