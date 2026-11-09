@@ -2855,10 +2855,11 @@ its own PR because it changes the install identifiers, which `decisions.md` hold
     - The existing `T3CODE_IOS_BUNDLE_ID`, `T3CODE_IOS_TEAM_ID`, `T3CODE_EAS_PROJECT_ID` and
       `T3CODE_EAS_OWNER` are unchanged.
   - `apps/mobile/eas.json`: add `pair-production` build and submit profiles whose `env` sets the five
-    overrides to Pair's ids and `T3CODE_ANDROID_GOOGLE_SERVICES_FILE` to an EAS file secret (without
-    it app.config.ts 319–321 adds no `googleServicesFile`, and Android pushes can't register), plus
-    Pair's `ascAppId`. The maintainer supplies the values, the EAS
-    project has push access-token enforcement off, and Firebase/FCM is set up for Android.
+    overrides to Pair's ids, plus Pair's `ascAppId`. `T3CODE_ANDROID_GOOGLE_SERVICES_FILE` is an EAS
+    file variable in Pair's project's production environment, as for T3's build, not a profile
+    `env` entry, which would replace the file with a literal (without it app.config.ts 319–321 adds
+    no `googleServicesFile`, and Android pushes can't register). The maintainer supplies the values,
+    the EAS project has push access-token enforcement off, and Firebase/FCM is set up for Android.
   - `docs/product/decisions.md` "Identifiers and builds" (119–125): rewrite to say that Pair ships
     one build under its own ids, and that T3's ids stay for T3's builds.
   - `docs/operations/team-push.md` (13–31): replace the per-team build with "use Pair's app" and
@@ -2878,8 +2879,9 @@ its own PR because it changes the install identifiers, which `decisions.md` hold
   sent; with true the single member gets the completion push.
 - `AgentAwarenessRelay.test.ts`: extend "publishes nothing for a completion on a team server" (520)
   with a cloud-only single-member row.
-- `apps/mobile/app.config.test.ts`: extend "keeps the iOS and Android identifiers for
-  APP_VARIANT=%j" (28) with an override row for `T3CODE_ANDROID_PACKAGE`.
+- `apps/mobile/app.config.test.ts`: beside "keeps the iOS and Android identifiers for
+  APP_VARIANT=%j" (28), a case that the iOS and Android overrides replace both ids. It is its own
+  case because that table also asserts app.t3.codes lists the id, which Pair's build isn't.
 
 **Verify.**
 

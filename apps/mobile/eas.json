@@ -75,6 +75,16 @@
       "ios": {
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
+    },
+    "pair-production": {
+      "extends": "production",
+      "env": {
+        "T3CODE_IOS_BUNDLE_ID": "PAIR_IOS_BUNDLE_ID_PLACEHOLDER",
+        "T3CODE_IOS_TEAM_ID": "PAIR_APPLE_TEAM_ID_PLACEHOLDER",
+        "T3CODE_ANDROID_PACKAGE": "PAIR_ANDROID_PACKAGE_PLACEHOLDER",
+        "T3CODE_EAS_PROJECT_ID": "PAIR_EAS_PROJECT_ID_PLACEHOLDER",
+        "T3CODE_EAS_OWNER": "PAIR_EAS_OWNER_PLACEHOLDER"
+      }
     }
   },
   "submit": {
@@ -84,6 +94,14 @@
     "production": {
       "ios": {
         "ascAppId": "6787819824"
+      },
+      "android": {
+        "track": "internal"
+      }
+    },
+    "pair-production": {
+      "ios": {
+        "ascAppId": "PAIR_ASC_APP_ID_PLACEHOLDER"
       },
       "android": {
         "track": "internal"

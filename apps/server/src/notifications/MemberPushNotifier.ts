@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { holderOf, isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -39,7 +40,7 @@ export const MemberPushEndpoint = Context.Reference<string>("t3/notifications/Me
 
 /**
  * Sends a team server's thread notifications to its members' phones through Expo, routed as web
- * routes them. A single-member server sends nothing.
+ * routes them. A single-member server sends nothing unless it is cloud-only.
  */
 export class MemberPushNotifier extends Context.Service<
   MemberPushNotifier,
@@ -78,6 +79,9 @@ export const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
   const endpoint = yield* MemberPushEndpoint;
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  // Pair Cloud skips T3 Connect, so even its first member hears pushes from here.
+  const pushes = cloudOnly ? Effect.succeed(true) : team.isTeamMode;
 
   // Each thread's holder as last seen, so a metadata update can tell an Assign apart.
   const holders = new Map<ThreadId, MemberId>();
@@ -306,7 +310,7 @@ export const make = Effect.gen(function* () {
 
   const handle = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
     if (isMemberThreadEvent(event)) return;
-    if (!(yield* team.isTeamMode)) {
+    if (!(yield* pushes)) {
       // Holders go stale while solo; reseed if a second member joins.
       if (yield* Ref.get(seeded)) {
         holders.clear();
@@ -324,7 +328,7 @@ export const make = Effect.gen(function* () {
   const start: MemberPushNotifier["Service"]["start"] = Effect.fn("MemberPushNotifier.start")(
     function* () {
       yield* forkParked(
-        Effect.when(seedHolders, team.isTeamMode).pipe(
+        Effect.when(seedHolders, pushes).pipe(
           Effect.andThen(Stream.runForEach(threads.streamDomainEvents, worker.enqueue)),
         ),
       );

@@ -68,10 +68,11 @@ page says how it must behave. The decisions came from a product design review du
 - **Machine failed** (a cloud thread's machine fails to start or wake) is routed like a failed
   turn: the prompter and the owner. Machines starting, sleeping, waking or waiting at a cap notify
   nobody; the status line says it.
-- **Mobile push** goes through Expo with the team's own app build. T3 Connect push stays off on a
-  team server because it can't route per member. A member viewing a thread anywhere gets no push
-  for it. A push carries the thread's title and never message or agent text. A device belongs to
-  the auth session that registered it and goes away with that session.
+- **Mobile push** goes through Expo to Pair's app build. T3 Connect push stays off on a team
+  server because it can't route per member, and on a cloud-only server, which pushes from its first
+  member. A member viewing a thread anywhere gets no push for it. A push carries the thread's title
+  and never message or agent text. A device belongs to the auth session that registered it and goes
+  away with that session.
 
 ## Provider accounts
 
@@ -118,11 +119,13 @@ page says how it must behave. The decisions came from a product design review du
 
 ## Identifiers and builds
 
-- Install identifiers stay T3 Code's: `@t3tools/*`, `t3`, `T3CODE_*`, `~/.t3`, bundle ids,
-  app.t3.codes and T3 Connect.
-- Pair can't ship to the app stores under T3's ids. A team builds its own mobile app with the
-  bundle id, Apple team and EAS project overrides in
-  [Team push notifications](../operations/team-push.md).
+- Install identifiers stay T3 Code's: `@t3tools/*`, `t3`, `T3CODE_*`, `~/.t3`, app.t3.codes and
+  T3 Connect. T3's bundle ids, Apple team and EAS project stay the defaults, for T3's own builds.
+- Pair ships one mobile app under its own store ids, Apple team and EAS project (the
+  `pair-production` EAS profile), and any Pair server can push to it. No team builds its own;
+  a fork can still set the overrides in [Team push notifications](../operations/team-push.md).
+- Pair's app isn't listed on app.t3.codes, so copied thread and pairing links open in the browser
+  until Pair has its own domain.
 
 ## Non-goals
 

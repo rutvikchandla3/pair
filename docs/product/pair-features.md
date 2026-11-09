@@ -113,8 +113,9 @@ T3 Code throughout.
   the background. The thread header shows who else is viewing.
 - **Your own accounts.** The model picker leaves out teammates' accounts, and new tasks default to
   your own. You add your account on the web.
-- **Push per member.** A team server pushes to the members a thread concerns, through your team's
-  own mobile build ([setup](../operations/team-push.md)). A push carries only the thread's title.
+- **Push per member.** A team server pushes to the members a thread concerns, through Pair's
+  mobile app ([setup](../operations/team-push.md)); a Pair Cloud server does so from its first
+  member. A push carries only the thread's title.
   **Settings → Notifications** shows whether each team server notifies the device.
 - Checked end to end with mobile's own logic over the WebSocket. The phone screens still need a
   pass on real devices.

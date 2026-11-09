@@ -32,6 +32,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as EnvironmentKeys from "../cloud/environmentKeys.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -172,6 +173,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
     readonly members?: ReadonlyArray<MemberRecord>;
     readonly memberChanges?: Stream.Stream<TeamStreamEvent>;
+    readonly cloudOnly?: boolean;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -310,6 +312,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const relay = yield* AgentAwarenessRelay.make.pipe(
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(TeamState.TeamState, teamState),
+    Effect.provide(
+      Layer.mock(ServerConfig.ServerConfig)({ cloudOnly: options.cloudOnly ?? false } as never),
+    ),
     Effect.provideService(
       TeamMembers.TeamMembers,
       TeamMembers.TeamMembers.of({
@@ -517,11 +522,12 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("publishes nothing for a completion on a team server", () =>
+  it.effect.each([
+    { row: "a team server", members: [OWNER, BOB], cloudOnly: false },
+    { row: "a single-member cloud-only server", members: [OWNER], cloudOnly: true },
+  ])("publishes nothing for a completion on $row", ({ members, cloudOnly }) =>
     Effect.gen(function* () {
-      const { relay, currentShell, publications } = yield* makeTestRelay({
-        members: [OWNER, BOB],
-      });
+      const { relay, currentShell, publications } = yield* makeTestRelay({ members, cloudOnly });
       yield* relay.publishThread(THREAD_ID);
       yield* Ref.set(currentShell, shell({ status: "completed" }));
       yield* relay.publishThread(THREAD_ID);

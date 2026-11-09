@@ -573,9 +573,9 @@ delivers only to the EAS project that issued a token, and every Pair phone's tok
 Pair's project, so a self-hosted Pair Cloud reaches it with no per-team build and no Pair-hosted
 relay. That needs Pair's EAS project to keep its push access-token requirement off, and Pair Cloud
 to reach `exp.host` outbound (09). A cloud-only server also sends member pushes from its first
-member, where today a server with one active member sends none. When that PR ships, the team-build
+member, where today a server with one active member sends none. The team-build
 guidance in [decisions.md](../decisions.md) ("Identifiers and builds") and
-[Team push notifications](../../operations/team-push.md) changes with it. Live Activities ride the
+[Team push notifications](../../operations/team-push.md) changed with it (2.35). Live Activities ride the
 T3 Connect relay ([CloudLink.ts](../../../apps/server/src/cloud/CloudLink.ts)), which Pair Cloud
 doesn't use, so cloud sessions notify by push.
 
@@ -876,10 +876,9 @@ provider picker marking OpenCode, Grok and Kiro as cloud-ready; the hosted vendo
    client-dispatchable. They are in `OrchestrationV2InternalCommand`, which `dispatchCommand`
    can't decode. The real hole is `delegated_task.request.sandbox`, closed in M2 when the command becomes
    internal (section 2).
-4. **One app build.** [decisions.md](../decisions.md) and
-   [Team push notifications](../../operations/team-push.md) say each team builds its own mobile
-   app. The plan's decision is one Pair-published build any Pair Cloud can notify. Those two docs
-   change when 2.12 ships.
+4. **One app build.** The plan's decision is one Pair-published build any Pair Cloud can notify.
+   [decisions.md](../decisions.md) and [Team push notifications](../../operations/team-push.md)
+   say so since M2's 2.35.
 5. **A prompt for phones paired only with the Mac.** Dropped: nothing tells such a phone that a Pair
    Cloud exists, and prompting everyone would break "Local stays T3 Code". The phone shows Cloud
    once it is paired with an environment that reports `cloudLaunch`.

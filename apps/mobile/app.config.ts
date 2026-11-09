@@ -18,9 +18,11 @@ const runtimeVersionPolicy =
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const ANDROID_PACKAGE_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
-// A team's own push-capable build signs with its Apple team and EAS project. Unset, today's values.
+// Pair's push-capable build (or a fork's) signs with its own ids and EAS project. Unset, T3's values.
 const teamIosBundleIdentifier = repoEnv.T3CODE_IOS_BUNDLE_ID?.trim() || undefined;
+const androidPackageOverride = repoEnv.T3CODE_ANDROID_PACKAGE?.trim() || undefined;
 const appleTeamId = repoEnv.T3CODE_IOS_TEAM_ID?.trim() || "ARK85ZXQ4Z";
 const easProjectId =
   repoEnv.T3CODE_EAS_PROJECT_ID?.trim() || "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
@@ -39,6 +41,10 @@ if (teamIosBundleIdentifier && !IOS_BUNDLE_IDENTIFIER_PATTERN.test(teamIosBundle
   throw new Error(
     "T3CODE_IOS_BUNDLE_ID must be a reverse-DNS identifier such as com.example.pair.",
   );
+}
+
+if (androidPackageOverride && !ANDROID_PACKAGE_PATTERN.test(androidPackageOverride)) {
+  throw new Error("T3CODE_ANDROID_PACKAGE must be a Java package name such as com.example.pair.");
 }
 
 if (
@@ -315,7 +321,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: androidPackageOverride ?? variant.androidPackage,
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),

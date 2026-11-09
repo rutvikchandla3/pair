@@ -35,6 +35,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -371,6 +372,13 @@ export const make = Effect.gen(function* () {
   const signingKey = yield* EnvironmentSigningKey;
   const team = yield* Effect.serviceOption(TeamState.TeamState);
   const teamMembers = yield* Effect.serviceOption(TeamMembers.TeamMembers);
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  // A cloud-only server pushes to its first member through MemberPushNotifier, so it publishes none.
+  const publishesNone = cloudOnly
+    ? Effect.succeed(true)
+    : Option.isSome(team)
+      ? team.value.isTeamMode
+      : Effect.succeed(false);
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -516,7 +524,7 @@ export const make = Effect.gen(function* () {
     });
 
     // The relay keeps one state per thread and can't route per member, so a team publishes none.
-    if (Option.isSome(team) && (yield* team.value.isTeamMode)) {
+    if (yield* publishesNone) {
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
       if (hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)) {
@@ -860,8 +868,8 @@ export const make = Effect.gen(function* () {
         // Clears the linked admin's cards as soon as a second member joins, not on the next event.
         yield* forkParked(
           Stream.runForEach(teamMembers.value.streamChanges, () =>
-            Effect.flatMap(team.value.isTeamMode, (teamMode) =>
-              teamMode ? enqueueLivePublishedThreads : Effect.void,
+            Effect.flatMap(publishesNone, (none) =>
+              none ? enqueueLivePublishedThreads : Effect.void,
             ),
           ),
         );

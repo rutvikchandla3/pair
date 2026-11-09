@@ -6,16 +6,22 @@ import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
 vi.mock("../../scripts/lib/public-config.ts", () => ({
-  loadRepoEnv: () => ({ APP_VARIANT: process.env.APP_VARIANT }),
+  loadRepoEnv: () => ({
+    APP_VARIANT: process.env.APP_VARIANT,
+    T3CODE_IOS_BUNDLE_ID: process.env.T3CODE_IOS_BUNDLE_ID,
+    T3CODE_ANDROID_PACKAGE: process.env.T3CODE_ANDROID_PACKAGE,
+  }),
 }));
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function loadConfig(variant: string | undefined) {
+async function loadConfig(variant: string | undefined, overrideIdentifier?: string) {
   vi.resetModules();
   vi.stubEnv("APP_VARIANT", variant);
+  vi.stubEnv("T3CODE_IOS_BUNDLE_ID", overrideIdentifier);
+  vi.stubEnv("T3CODE_ANDROID_PACKAGE", overrideIdentifier);
   return (await import("./app.config.ts")).default;
 }
 
@@ -44,4 +50,11 @@ it.each([
     { scheme: "https", host, pathPrefix: "/threads/" },
   ]);
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
+});
+
+// Pair's store build sets both; app.t3.codes doesn't list it, so its links open in the browser.
+it("takes the iOS and Android identifiers from the overrides", async () => {
+  const config = await loadConfig("production", "com.example.pair");
+  expect(config.ios?.bundleIdentifier).toBe("com.example.pair");
+  expect(config.android?.package).toBe("com.example.pair");
 });

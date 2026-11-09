@@ -492,8 +492,8 @@ threads keep today's rule.
 Notifications keep going only to the people a thread concerns
 ([threadNotificationRouting.ts](../../../packages/shared/src/threadNotificationRouting.ts)). A push
 still carries the thread title and nothing else. From M2, Pair publishes one mobile build that any
-Pair Cloud server can push to, instead of each team building its own as
-[Team push notifications](../../operations/team-push.md) describes today.
+Pair Cloud server can push to ([Team push notifications](../../operations/team-push.md)), so no
+team builds its own.
 
 | Event                                                | Who hears                                      | Push title        | Milestone                   |
 | ---------------------------------------------------- | ---------------------------------------------- | ----------------- | --------------------------- |

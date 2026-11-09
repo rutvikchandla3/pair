@@ -24,6 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -173,6 +174,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   readonly unregistered?: ReadonlyArray<string>;
   readonly endpoint?: string;
   readonly shell?: OrchestrationV2ThreadShell;
+  readonly cloudOnly?: boolean;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations();
@@ -244,6 +246,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(ENVIRONMENT_ID),
         }),
+        Layer.mock(ServerConfig.ServerConfig)({ cloudOnly: options.cloudOnly ?? false } as never),
       ),
     ),
     Effect.provideService(HttpClient.HttpClient, http),
@@ -420,13 +423,20 @@ describe("MemberPushNotifier", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("sends nothing and reads nothing on a single-member server", () =>
+  it.effect.each([
+    { row: "sends nothing and reads nothing", cloudOnly: false, recipients: [] },
+    {
+      row: "pushes the completion to its member when cloud-only",
+      cloudOnly: true,
+      recipients: [token(ALICE)],
+    },
+  ])("on a single-member server, $row", ({ cloudOnly, recipients }) =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ members: [ALICE] });
+      const harness = yield* makeHarness({ members: [ALICE], cloudOnly });
       yield* harness.emit(runCompleted);
 
-      assert.deepStrictEqual(harness.requests, []);
-      assert.deepStrictEqual(harness.shellReads, []);
+      assert.deepStrictEqual(harness.recipients(), recipients);
+      assert.deepStrictEqual(harness.shellReads, cloudOnly ? [THREAD_ID] : []);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

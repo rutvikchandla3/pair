@@ -2029,7 +2029,9 @@ export const layerWsRpc = (
           ...(memberGitHub.enabled ? { teamGitHub: true } : {}),
           apiTokens: true,
           presence: true,
-          ...((yield* teamState.isTeamMode) ? { memberPush: true as const } : {}),
+          ...(config.cloudOnly || (yield* teamState.isTeamMode)
+            ? { memberPush: true as const }
+            : {}),
           secretProviderSettings: true,
           secretReferences: true,
           ...Option.match(scratchWorkspaceRoot, {
