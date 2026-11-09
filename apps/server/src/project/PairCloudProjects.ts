@@ -65,6 +65,7 @@ export class PairCloudProjectError extends Schema.TaggedError<PairCloudProjectEr
       "unsupported-remote",
       "already-added",
       "no-access",
+      "app-no-access",
       "github-not-connected",
       "github-token-needed",
     ]),
@@ -80,7 +81,12 @@ export class PairCloudProjectError extends Schema.TaggedError<PairCloudProjectEr
       case "already-added":
         return `${repository} is already on Pair Cloud.`;
       case "no-access":
-        return `Your GitHub account can't read ${repository}.`;
+        return `Your GitHub token can't read ${repository}. Check that the token and your account both have access to it.`;
+      case "app-no-access": {
+        const owner = this.repository?.split("/")[0];
+        const ask = owner === undefined ? "Ask its owner" : `Ask an owner of ${owner}`;
+        return `Your GitHub connection can't see ${repository}. ${ask} to add it to the team's GitHub App, or check that your account can read it.`;
+      }
       case "github-not-connected":
         return "Connect GitHub to clone private repos, in Settings → Team.";
       case "github-token-needed":
@@ -196,16 +202,14 @@ const make = Effect.gen(function* () {
   // Two adds of the same repository must not both pass the duplicate check.
   const addLock = yield* Semaphore.make(1);
 
-  const memberToken = (memberId: MemberId | null | undefined) =>
+  const memberCredential = (memberId: MemberId | null | undefined) =>
     memberId === null || memberId === undefined
       ? Effect.succeed(null)
       : members
           .credentialFor(memberId)
           .pipe(
             Effect.map((credential) =>
-              Option.isSome(credential) && credential.value.host === HOST
-                ? credential.value.token
-                : null,
+              Option.isSome(credential) && credential.value.host === HOST ? credential.value : null,
             ),
           );
 
@@ -217,7 +221,7 @@ const make = Effect.gen(function* () {
       Effect.map((token) => token.token),
       Effect.orElseSucceed(() => null),
     );
-    const token = appToken ?? (yield* memberToken(memberId));
+    const token = appToken ?? (yield* memberCredential(memberId))?.token ?? null;
     if (token === null) return { ...ISOLATED_GIT_ENV };
     const basic = Base64.encode(`x-access-token:${Redacted.value(token)}`);
     return {
@@ -261,14 +265,16 @@ const make = Effect.gen(function* () {
     repository: string,
     memberId: MemberId | null,
   ) {
-    const token = yield* memberToken(memberId);
+    const credential = yield* memberCredential(memberId);
     const status = yield* httpClient
       .execute(
         HttpClientRequest.get(`https://api.${HOST}/repos/${repository}`).pipe(
           HttpClientRequest.setHeaders({
             accept: "application/vnd.github+json",
             "user-agent": "t3code",
-            ...(token === null ? {} : { authorization: `Bearer ${Redacted.value(token)}` }),
+            ...(credential === null
+              ? {}
+              : { authorization: `Bearer ${Redacted.value(credential.token)}` }),
           }),
         ),
       )
@@ -281,10 +287,13 @@ const make = Effect.gen(function* () {
         ),
       );
     if (status === 200) return;
-    if (token !== null && (status === 404 || status === 403)) {
-      return yield* new PairCloudProjectError({ reason: "no-access", repository });
+    if (credential !== null && (status === 404 || status === 403)) {
+      return yield* new PairCloudProjectError({
+        reason: credential.source === "app" ? "app-no-access" : "no-access",
+        repository,
+      });
     }
-    if (token === null && status === 404) {
+    if (credential === null && status === 404) {
       return yield* new PairCloudProjectError({
         // Without a Client ID, Settings → Team offers no Connect GitHub, only a token.
         reason: members.enabled ? "github-not-connected" : "github-token-needed",

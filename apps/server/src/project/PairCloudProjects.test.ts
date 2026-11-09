@@ -51,6 +51,7 @@ const header = (token: string) =>
 function makeHarness(options: {
   readonly app?: string;
   readonly member?: string;
+  readonly memberSource?: "app" | "token";
   readonly status?: number;
   readonly shells?: ReadonlyArray<OrchestrationProjectShell>;
   readonly githubApp?: boolean;
@@ -96,7 +97,7 @@ function makeHarness(options: {
                 : Option.some({
                     host: "github.com",
                     token: Redacted.make(options.member),
-                    source: "token" as const,
+                    source: options.memberSource ?? "token",
                   }),
             ),
         }),
@@ -187,6 +188,13 @@ describe("PairCloudProjects", () => {
       status: 404,
       reason: "no-access",
     },
+    {
+      name: "a repository the team's GitHub App can't see for the member",
+      member: "ghu_member",
+      memberSource: "app",
+      status: 404,
+      reason: "app-no-access",
+    },
     { name: "a private repository without GitHub", status: 404, reason: "github-not-connected" },
     {
       name: "a private repository on a server without the GitHub App",
@@ -197,6 +205,7 @@ describe("PairCloudProjects", () => {
   ] as const)("refuses adding $name before any git runs", (row) => {
     const harness = makeHarness({
       ...("member" in row ? { member: row.member } : {}),
+      ...("memberSource" in row ? { memberSource: row.memberSource } : {}),
       ...("status" in row ? { status: row.status } : {}),
       ...("shells" in row ? { shells: row.shells } : {}),
       ...("githubApp" in row ? { githubApp: row.githubApp } : {}),

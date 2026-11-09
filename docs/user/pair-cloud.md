@@ -159,7 +159,8 @@ Add each repository once. In the command palette (`Cmd/Ctrl+K`), choose **Add Pr
 **GitHub repository** or **Git URL**, and enter `<owner>/<name>` or
 `https://github.com/<owner>/<name>`. Pair Cloud clones it into its own folder, so there is no
 destination to pick. It checks that your GitHub can read the repository, so connect yours first for
-a private one.
+a private one. If you connected with **Connect GitHub**, the App must be installed on the repository
+too.
 
 Members can also add one from the desktop or web app: on a local project whose `origin` is on
 github.com, the workspace menu offers **Add to Pair Cloud**. After that, choosing **Cloud** on their own clone

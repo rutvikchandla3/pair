@@ -109,8 +109,10 @@ the top of **Settings → Team**, and members can still
 3. Under **Repository permissions**, set **Contents** to read and write, **Pull requests** to read
    and write, and **Checks**, **Commit statuses** and **Metadata** to read-only.
 4. Create the app and copy its **Client ID**. It is public: there is no secret to store.
-5. Choose **Install App** and install it on your organization. If you are not an owner of the
-   organization, GitHub sends a request that an organization owner must approve.
+5. Choose **Install App** and install it on your organization. Under **Repository access**, pick
+   **All repositories** or the ones your team works in. Connected members see only those, and an
+   owner can add more later from the App's **Configure** page on GitHub. If you are not an owner of
+   the organization, GitHub sends a request that an organization owner must approve.
 
 Then give the client ID to the server as `T3CODE_GITHUB_APP_CLIENT_ID` and restart it:
 
