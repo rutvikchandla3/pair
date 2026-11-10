@@ -188,6 +188,24 @@ export function terminalMetadataForViewer(
   }
 }
 
+/** Device state without the sessions and boots of threads the viewer may not open. */
+export function deviceStateForViewer<
+  State extends {
+    readonly sessions: ReadonlyArray<{ readonly threadId: string }>;
+    readonly bootingDevices?: ReadonlyArray<{ readonly threadId: string }> | undefined;
+  },
+>(viewer: ThreadViewer | null, state: State): State {
+  if (viewer?.access === undefined) return state;
+  const mayOpen = ({ threadId }: { readonly threadId: string }) => viewerMayOpen(viewer, threadId);
+  return {
+    ...state,
+    sessions: state.sessions.filter(mayOpen),
+    ...(state.bootingDevices === undefined
+      ? {}
+      : { bootingDevices: state.bootingDevices.filter(mayOpen) }),
+  };
+}
+
 /** Provider config without the workspace snapshots of machines the viewer cannot open. */
 export function providersForViewer(
   viewer: ThreadViewer | null,

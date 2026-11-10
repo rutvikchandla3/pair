@@ -1,10 +1,24 @@
 import { expect, it } from "@effect/vitest";
+import * as RpcSchema from "effect/rpc/RpcSchema";
 import type * as SchemaAST from "effect/SchemaAST";
 import { RpcThreadAccess, WsRpcGroup } from "./rpc.ts";
-import { RPC_THREAD_TARGET_EXEMPT, RPC_THREAD_TARGETS } from "./rpcThreadTargets.ts";
+import {
+  RPC_OUTPUT_EXEMPT,
+  RPC_OUTPUT_FILTERED,
+  RPC_THREAD_TARGET_EXEMPT,
+  RPC_THREAD_TARGETS,
+} from "./rpcThreadTargets.ts";
 
 const TARGET_FIELD =
   /^(threadIds?|sandboxIds?|cwd|paths?|root)$|(ThreadIds?|SandboxIds?|Path|Paths|Root)$/;
+
+// Brands are type-only in Effect 4, so a `ThreadId` is found by its field's name and a `SandboxId`
+// by its pattern check, which no other string carries.
+const isSandboxId = (ast: SchemaAST.AST) =>
+  ast._tag === "String" &&
+  (ast.checks ?? []).some((check) =>
+    String(JSON.stringify(check.annotations?.["representation"])).includes("^sbx_"),
+  );
 
 const targetFields = (
   ast: SchemaAST.AST,
@@ -13,6 +27,7 @@ const targetFields = (
 ): ReadonlyArray<string> => {
   if (seen.has(ast)) return [];
   seen.add(ast);
+  if (isSandboxId(ast)) return [`${prefix}:SandboxId`];
   switch (ast._tag) {
     case "Objects":
       return [
@@ -65,6 +80,14 @@ const matched = [...WsRpcGroup.requests.values()].flatMap((rpc) => {
   return fields.length === 0 ? [] : [{ method: rpc._tag, fields }];
 });
 
+const outputMatched = [...WsRpcGroup.requests.values()].flatMap((rpc) => {
+  const success = RpcSchema.isStreamSchema(rpc.successSchema)
+    ? rpc.successSchema.success
+    : rpc.successSchema;
+  const fields = [...new Set(targetFields(success.ast))];
+  return fields.length === 0 ? [] : [{ method: rpc._tag, fields }];
+});
+
 it("names every RPC whose input points at a thread, a machine or a path", () => {
   const unguarded = matched.filter(
     ({ method }) => !(method in RPC_THREAD_TARGETS) && !(method in RPC_THREAD_TARGET_EXEMPT),
@@ -80,6 +103,7 @@ it("names every RPC whose input points at a thread, a machine or a path", () => 
   );
   expect(matched.find(({ method }) => method === "sandbox.stopById")?.fields).toEqual([
     ".sandboxId",
+    ".sandboxId:SandboxId",
   ]);
 });
 
@@ -88,6 +112,35 @@ it("runs the access middleware on every RPC the WebSocket serves", () => {
     .filter((rpc) => !rpc.middlewares.has(RpcThreadAccess))
     .map((rpc) => rpc._tag);
   expect(unwrapped).toEqual([]);
+});
+
+it("names every RPC whose output points at a thread, a machine or a path", () => {
+  const unaccounted = outputMatched.filter(
+    ({ method }) =>
+      !(method in RPC_THREAD_TARGETS) &&
+      !(method in RPC_OUTPUT_FILTERED) &&
+      !(method in RPC_OUTPUT_EXEMPT),
+  );
+  expect(unaccounted).toEqual([]);
+  // The walk must see through streams, unions, records and the type-only SandboxId brand.
+  const fieldsOf = (method: string) => outputMatched.find((match) => match.method === method);
+  expect(fieldsOf("subscribeServerConfig")?.fields).toContain(
+    ".config.providers[].workspaceSnapshots[].cwd",
+  );
+  expect(fieldsOf("sandbox.overview")?.fields).toContain(
+    ".restoreMode.machines[].sandboxId:SandboxId",
+  );
+  expect(fieldsOf("subscribeDeviceState")?.fields).toContain(".sessions[].threadId");
+
+  const named = new Set<string>(outputMatched.map(({ method }) => method));
+  const listed = [...Object.keys(RPC_OUTPUT_FILTERED), ...Object.keys(RPC_OUTPUT_EXEMPT)];
+  expect(listed.filter((method) => !named.has(method))).toEqual([]);
+  expect(Object.keys(RPC_OUTPUT_FILTERED).filter((method) => method in RPC_OUTPUT_EXEMPT)).toEqual(
+    [],
+  );
+  expect(Object.keys(RPC_OUTPUT_EXEMPT).filter((method) => method in RPC_THREAD_TARGETS)).toEqual(
+    [],
+  );
 });
 
 it("keeps the table and the exemptions to methods that name something", () => {

@@ -31,6 +31,7 @@ import {
   makeThreadEventView,
   overlayForViewer,
   providerStreamForViewer,
+  deviceStateForViewer,
   terminalMetadataForViewer,
   type ThreadViewer,
   type ViewerAccess,
@@ -320,10 +321,20 @@ describe("terminalMetadataForViewer and viewerMayOpen", () => {
     };
     const upsert = { type: "upsert" as const, terminal: terminal("thread-machine") };
     const remove = { type: "remove" as const, threadId: "thread-machine", terminalId: "default" };
+    const devices = {
+      revision: 1,
+      sessions: [{ threadId: "thread-machine" }, { threadId: "thread-unknown" }],
+      bootingDevices: [{ threadId: "thread-unknown" }],
+    };
 
     expect(terminalMetadataForViewer(viewer, snapshot)).toEqual({
       type: "snapshot",
       terminals: [terminal("thread-machine")],
+    });
+    expect(deviceStateForViewer(viewer, devices)).toEqual({
+      revision: 1,
+      sessions: [{ threadId: "thread-machine" }],
+      bootingDevices: [],
     });
     expect(terminalMetadataForViewer(viewer, upsert)).toBe(upsert);
     expect(viewerMayOpen(viewer, "thread-machine")).toBe(true);
@@ -337,6 +348,7 @@ describe("terminalMetadataForViewer and viewerMayOpen", () => {
     // Off a cloud-only server, and for guests, nothing changes.
     const unchecked = viewerWith(bob, new Map(), []);
     expect(terminalMetadataForViewer(unchecked, snapshot)).toBe(snapshot);
+    expect(deviceStateForViewer(unchecked, devices)).toBe(devices);
     expect(viewerMayOpen(null, "thread-unknown")).toBe(true);
   });
 });

@@ -146,6 +146,12 @@ it.effect("refuses unknown threads and machines, and paths that climb into anoth
     expect(yield* launch("thread-private")).toBe("missing");
     expect(yield* launch("thread-new")).toBe("allowed");
     expect(yield* launch("thread-shared")).toBe("allowed");
+    // The guard sees only the member, so an admin's `access:write` methods refuse alike.
+    for (const method of [WS_METHODS.guestShareCreate, WS_METHODS.peerLinksAnswerRequest]) {
+      const unknown = yield* call(method, { threadId: "thread-unknown" });
+      expect(yield* call(method, { threadId: "thread-private" })).toEqual(unknown);
+      expect(unknown).toEqual({ result: "missing", ran: false });
+    }
   }),
 );
 

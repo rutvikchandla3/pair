@@ -214,3 +214,90 @@ export const RPC_THREAD_TARGET_EXEMPT: { readonly [M in WsMethod]?: string } = {
     "Paths are inside a pull request, marked on the code host.",
   [WS_METHODS.pullRequestsSubmitReview]: "Paths are inside a pull request, sent to the code host.",
 };
+
+/**
+ * Methods whose output names threads, machines or paths beyond what their input names, and the
+ * server function that leaves out what the session's member cannot open (11 §4). A method in
+ * `RPC_THREAD_TARGETS` whose output names only its guarded target needs no entry.
+ */
+export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
+  [WS_METHODS.serverGetConfig]: "orchestration-v2/MemberThreadView.ts providersForViewer",
+  [WS_METHODS.subscribeServerConfig]:
+    "orchestration-v2/MemberThreadView.ts providerStreamForViewer",
+  [WS_METHODS.serverRefreshProviders]: "orchestration-v2/MemberThreadView.ts providersForViewer",
+  [WS_METHODS.serverUpdateProvider]: "orchestration-v2/MemberThreadView.ts providersForViewer",
+  [WS_METHODS.serverRunStorageCleanup]: "storageCleanup.ts reportForReader",
+  [WS_METHODS.serverGetStorageCleanupReport]: "storageCleanup.ts reportForReader",
+  [WS_METHODS.presenceSubscribe]: "team/Presence.ts subscribe (mayOpen)",
+  [WS_METHODS.sandboxOverview]: "sandbox/lifecycle/SandboxOverview.ts read",
+  [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks/ScheduledTaskService.ts subscribeList",
+  [WS_METHODS.scheduledTasksUpsert]:
+    "scheduledTasks/ScheduledTaskService.ts scheduledTaskForReader",
+  [WS_METHODS.scheduledTasksSetEnabled]:
+    "scheduledTasks/ScheduledTaskService.ts scheduledTaskForReader",
+  [WS_METHODS.scheduledTasksRunNow]:
+    "scheduledTasks/ScheduledTaskService.ts scheduledTaskForReader",
+  [WS_METHODS.scheduledTasksRotateWebhookToken]:
+    "scheduledTasks/ScheduledTaskService.ts scheduledTaskForReader",
+  [WS_METHODS.subscribeTerminalMetadata]:
+    "orchestration-v2/MemberThreadView.ts terminalMetadataForViewer",
+  [WS_METHODS.subscribePreviewEvents]: "orchestration-v2/MemberThreadView.ts viewerMayOpen",
+  [WS_METHODS.deviceConfigure]: "orchestration-v2/MemberThreadView.ts deviceStateForViewer",
+  [WS_METHODS.deviceList]: "orchestration-v2/MemberThreadView.ts deviceStateForViewer",
+  [WS_METHODS.subscribeDeviceState]: "orchestration-v2/MemberThreadView.ts deviceStateForViewer",
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]:
+    "orchestration-v2/MemberThreadView.ts overlayForViewer",
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]:
+    "orchestration-v2/MemberThreadView.ts overlayForViewer, after the search's threadAllowsSql",
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]:
+    "orchestration-v2/MemberThreadView.ts overlayForViewer",
+  [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]:
+    "orchestration-v2/MemberThreadView.ts olderSettledReaderOf",
+  [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: "orchestration-v2/ShellStream.ts mayShowShellEvent",
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]:
+    "orchestration-v2/MemberThreadView.ts assertViewerThread, makeThreadEventView",
+};
+
+const ownBinary = "`executablePath` is the server's own binary, not a machine's.";
+const refusedOnCloudOnly =
+  "Refused on a cloud-only server, where the host's history is not offered.";
+const adminDiagnostics =
+  "Needs `diagnostics:read`, which a cloud-only server keeps to admins (EnvironmentAuth effectiveScopes).";
+const teamImage =
+  "The team image is the team's. An agent's save or proposal names its thread, which opens only with access.";
+const pullRequestPaths = "Paths are inside a pull request, read from the code host.";
+const projectRoot =
+  "A project's root: projects are team records, and a cloud-only server checks them out under its own root.";
+
+/** Methods whose output has a target-like field that names nothing a member could be refused, and why. */
+export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
+  [WS_METHODS.providerInstallStart]: ownBinary,
+  [WS_METHODS.providerInstallCancel]: ownBinary,
+  [WS_METHODS.providerInstallSubscribe]: ownBinary,
+  [WS_METHODS.providerInstallRemove]: ownBinary,
+  [WS_METHODS.cloudGetRelayClientStatus]: ownBinary,
+  [WS_METHODS.cloudInstallRelayClient]: ownBinary,
+  [WS_METHODS.threadMoveToLocal]: "`threadId` is the thread this server just made for the caller.",
+  [WS_METHODS.serverListAcpRegistrySessions]: refusedOnCloudOnly,
+  [WS_METHODS.serverImportAcpRegistrySession]: refusedOnCloudOnly,
+  [WS_METHODS.agentSessionsScan]: refusedOnCloudOnly,
+  [WS_METHODS.subscribeDiscoveredLocalServers]:
+    "A cloud-only server scans no ports and sends an empty list.",
+  [WS_METHODS.serverGetTraceDiagnostics]: adminDiagnostics,
+  [WS_METHODS.serverGetProcessResourceHistory]: adminDiagnostics,
+  [WS_METHODS.serverGetUsageSummary]: adminDiagnostics,
+  [WS_METHODS.teamImageSubscribe]: teamImage,
+  [WS_METHODS.teamImageSaveRecipe]: teamImage,
+  [WS_METHODS.teamImageStartBuild]: teamImage,
+  [WS_METHODS.teamImageReadRecipe]: teamImage,
+  [WS_METHODS.pullRequestsRouting]: projectRoot,
+  [WS_METHODS.pullRequestsDetail]: projectRoot,
+  [WS_METHODS.pullRequestsActivity]: pullRequestPaths,
+  [WS_METHODS.pullRequestsReviewGuide]: pullRequestPaths,
+  [WS_METHODS.pullRequestsGenerateReviewGuide]: pullRequestPaths,
+  [WS_METHODS.pullRequestsFilesViewed]: pullRequestPaths,
+  [WS_METHODS.subscribeProjectClones]: projectRoot,
+  [WS_METHODS.projectsCreateNew]: projectRoot,
+  [WS_METHODS.subscribeServerLifecycle]:
+    "The server's own cwd, and the thread it opens for that cwd at startup, which a cloud-only server never does.",
+};

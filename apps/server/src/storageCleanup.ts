@@ -274,19 +274,16 @@ export function storageCleanupPullRequestMerged(
 
 /** Each entry stays; a thread the reader cannot open loses its id and title. */
 export const reportForReader = (
-  report: StorageCleanupReport | null,
+  report: StorageCleanupReport,
   mayOpen: (threadId: ThreadId) => boolean,
-): StorageCleanupReport | null =>
-  report === null
-    ? null
-    : {
-        ...report,
-        entries: report.entries.map((entry) =>
-          entry.threadId === null || mayOpen(entry.threadId)
-            ? entry
-            : { ...entry, threadId: null, threadTitle: null },
-        ),
-      };
+): StorageCleanupReport => ({
+  ...report,
+  entries: report.entries.map((entry) =>
+    entry.threadId === null || mayOpen(entry.threadId)
+      ? entry
+      : { ...entry, threadId: null, threadTitle: null },
+  ),
+});
 
 export class StorageCleanup extends Context.Service<
   StorageCleanup,

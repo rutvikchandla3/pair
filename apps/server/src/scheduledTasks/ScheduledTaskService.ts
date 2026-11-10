@@ -263,6 +263,18 @@ interface WebhookDeliveryRow {
   readonly error: string | null;
 }
 
+/** A task without its last run's thread when the reader cannot open it; the run stays. */
+export const scheduledTaskForReader = (
+  task: ScheduledTask,
+  reader: Pick<ViewerAccess, "allowsThreadId">,
+): ScheduledTask => {
+  if (task.lastRunThreadId === undefined || reader.allowsThreadId(task.lastRunThreadId)) {
+    return task;
+  }
+  const { lastRunThreadId: _hidden, ...run } = task;
+  return run;
+};
+
 export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
@@ -1316,12 +1328,7 @@ export const layer = Layer.effect(
           : reader.caughtUp.pipe(
               Effect.andThen(list()),
               Effect.map(({ tasks }) => ({
-                tasks: tasks.map((task) => {
-                  if (task.lastRunThreadId === undefined) return task;
-                  if (reader.allowsThreadId(task.lastRunThreadId)) return task;
-                  const { lastRunThreadId: _hidden, ...run } = task;
-                  return run;
-                }),
+                tasks: tasks.map((task) => scheduledTaskForReader(task, reader)),
               })),
             );
       return Stream.unwrap(

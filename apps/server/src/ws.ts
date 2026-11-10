@@ -38,6 +38,7 @@ import {
   type AuthEnvironmentScope,
   type MemberId,
   type ScheduledTaskListResult,
+  type ScheduledTaskMutationResult,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -179,6 +180,7 @@ import {
   makeThreadEventView,
   makeThreadViewers,
   olderSettledReaderOf,
+  deviceStateForViewer,
   overlayForViewer,
   providersForViewer,
   providerStreamForViewer,
@@ -1743,6 +1745,19 @@ export const layerWsRpc = (
           : {
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      const withVisibleLastRun = <Result extends ScheduledTaskMutationResult>(
+        result: Result,
+      ): Effect.Effect<Result> => {
+        const access = threadViewer?.access;
+        return access === undefined
+          ? Effect.succeed(result)
+          : access.caughtUp.pipe(
+              Effect.map(() => ({
+                ...result,
+                task: ScheduledTasks.scheduledTaskForReader(result.task, access),
+              })),
+            );
+      };
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -2638,10 +2653,13 @@ export const layerWsRpc = (
             .subscribeList(threadViewer?.access)
             .pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
-          scheduledTasks.upsert(input, currentSession.memberId),
+          scheduledTasks
+            .upsert(input, currentSession.memberId)
+            .pipe(Effect.flatMap(withVisibleLastRun)),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.flatMap(withVisibleLastRun),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
@@ -2650,10 +2668,12 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
+            Effect.flatMap(withVisibleLastRun),
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+            Effect.flatMap(withVisibleLastRun),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -2953,7 +2973,11 @@ export const layerWsRpc = (
               ),
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
-          providerMaintenanceRunner.updateProvider(input),
+          providerMaintenanceRunner.updateProvider(input).pipe(
+            Effect.map(({ providers }) => ({
+              providers: providersForViewer(threadViewer, providers),
+            })),
+          ),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -3034,7 +3058,18 @@ export const layerWsRpc = (
           Effect.fnUntraced(function* (rule) {
             return yield* keybindings.removeKeybindingRule(rule);
           }),
-        [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
+        [WS_METHODS.serverRunStorageCleanup]: () => {
+          const access = threadViewer?.access;
+          return access === undefined
+            ? storageCleanup.runNow
+            : storageCleanup.runNow.pipe(
+                Effect.flatMap((report) =>
+                  access.caughtUp.pipe(
+                    Effect.map(() => StorageCleanup.reportForReader(report, access.allowsThreadId)),
+                  ),
+                ),
+              );
+        },
         [WS_METHODS.serverGetStorageCleanupReport]: () => {
           const access = threadViewer?.access;
           return access === undefined
@@ -3042,7 +3077,11 @@ export const layerWsRpc = (
             : storageCleanup.reports.pipe(
                 Stream.mapEffect((report) =>
                   access.caughtUp.pipe(
-                    Effect.as(StorageCleanup.reportForReader(report, access.allowsThreadId)),
+                    Effect.map(() =>
+                      report === null
+                        ? null
+                        : StorageCleanup.reportForReader(report, access.allowsThreadId),
+                    ),
                   ),
                 ),
               );
@@ -3670,12 +3709,15 @@ export const layerWsRpc = (
           previewManager.events.pipe(
             Stream.filter((event) => viewerMayOpen(threadViewer, event.threadId)),
           ),
-        [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
+        [WS_METHODS.deviceConfigure]: (input) =>
+          deviceService
+            .configure(input)
+            .pipe(Effect.map((state) => deviceStateForViewer(threadViewer, state))),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>
-          input.inspectOnly && !input.updateTool
+          (input.inspectOnly && !input.updateTool
             ? deviceService.inspect
             : authorizeEffect(
                 requiredScopeForDeviceList(input),
@@ -3684,7 +3726,8 @@ export const layerWsRpc = (
                   : input.retryHostId
                     ? deviceService.retryHost(input.retryHostId)
                     : deviceService.list,
-              ),
+              )
+          ).pipe(Effect.map((state) => deviceStateForViewer(threadViewer, state))),
         [WS_METHODS.deviceOpen]: (input) =>
           threadWorkspaceRoot(input.threadId).pipe(
             Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),
@@ -3693,7 +3736,10 @@ export const layerWsRpc = (
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
-        [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
+        [WS_METHODS.subscribeDeviceState]: (_input) =>
+          DeviceService.stateStream(deviceService).pipe(
+            Stream.map((state) => deviceStateForViewer(threadViewer, state)),
+          ),
         [WS_METHODS.previewStopLocalServer]: (input) =>
           refuseOnCloudOnly("preview.stopLocalServer").pipe(
             Effect.andThen(portDiscovery.stopServer(input)),

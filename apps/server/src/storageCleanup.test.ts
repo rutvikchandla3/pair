@@ -129,12 +129,12 @@ it("keeps every report entry but names only the threads the reader can open", ()
     bytesFreed: 0,
   };
   const read = StorageCleanup.reportForReader(report, (threadId) => threadId !== "private");
-  expect(read?.entries.map(({ threadId, threadTitle }) => [threadId, threadTitle])).toEqual([
+  expect(read.entries.map(({ threadId, threadTitle }) => [threadId, threadTitle])).toEqual([
     ["mine", "Title of mine"],
     [null, null],
     [null, null],
   ]);
-  expect(read?.counts).toEqual(report.counts);
+  expect(read.counts).toEqual(report.counts);
 });
 
 describe("V2 storage cleanup eligibility", () => {
