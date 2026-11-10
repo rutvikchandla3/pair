@@ -66,7 +66,9 @@ every AWS row.
 **M6 private cloud threads, proposed 2026-11-10:** [11 Private threads](../11-private-threads.md)
 is the maintainer's request to make a cloud thread private to its owner until shared with named
 members. It holds the UX, the access model, where the server enforces it and rows 6.1 to 6.9. It
-reverses "everyone sees every thread" on Pair Cloud. Nothing is built and no row has a full spec.
+reverses "everyone sees every thread" on Pair Cloud. The maintainer said to build it (2026-11-10),
+with the doc's open questions answered as proposed. Rows have no per-row spec page: the lead's
+worker prompt is each row's scope. Landed: 6.1 (5bc3e5646).
 
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -2592,6 +2594,34 @@ Built without 5.8's proxy and CA fields and without 5.13's metrics.
   changed with it. This replaces 1.36's note that removing the default driver keeps the id.
 - Members still receive `defaultDriverId` and see no Compute section. No mobile change.
 - Seen on V10: the button moved the marker in both directions and the next launch followed it.
+
+## 6.1 who can open a cloud session (landed 5bc3e5646)
+
+- Contracts: `SandboxAccess`, `SandboxAccessAudience`, `SANDBOX_ACCESS_MEMBER_LIMIT` (50),
+  `SandboxAccessChange`; `access?` on the machine record and on the shell's machine summary
+  (`audience` null when unknown); the command `sandbox.access.set` and the event
+  `sandbox.access-changed { sandboxId, access, added, removed, audienceChanged, actorId }`.
+- `added` and `removed` are the set difference of owner plus list while the audience stays
+  `members`. A switch between `members` and `team` has both empty and `audienceChanged` true, so a
+  consumer re-evaluates everyone. An owner change lists the new owner in `added` unless already
+  listed, and keeps the previous owner on the list.
+- A new machine starts private; a record with no `access` reads as `team`. Only the owner sets
+  access; the active-member check is in `dispatchSandboxCommand`, since sandbox commands skip
+  `assertTeamPermission`. `withActor` stamps `actorId` on `sandbox.access.set`.
+- Migration `097_SandboxAccess`: `audience` on the sandboxes projection and
+  `orchestration_v2_projection_sandbox_members`.
+- `apps/server/src/team/ThreadAccess.ts`: `allowsSandbox`, `allowsThread`, `assertThread` (fails
+  with `ProjectionStoreThreadNotFoundError`), `assertPath` (fails with
+  `WorkspaceHostUnavailableError`), `changes`; pure `sandboxAllows` and `threadAllows`.
+  `EventSink` updates the index after the SQL commit and before any live publication.
+- Deviations, written back into 11: an ownerless machine is the server owner's and cannot be
+  shared; an owner change can leave the list at 51; setting access does not bump `updatedAt`; the
+  index keeps destroyed machines.
+- For later rows: a database read can see a commit a moment before the index does (6.2 closes
+  it). `sandbox.sleep` and `sandbox.discard` are not stamped by `withActor`, so a client can forge
+  `actorId` past the owner-or-admin check (6.3 fixes it, test first).
+- Also fixed: `reconcileV2PreviewMigration.test.ts` lacked migration 96. Still failing on
+  `feat/pair` and untouched: `mcp/toolkits/core.test.ts` (its fixture sets `lastRunThreadId: null`).
 
 ## Open follow-ups and risks
 
