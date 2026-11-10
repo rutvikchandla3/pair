@@ -1,8 +1,9 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { Globe, History, RadioTower } from "lucide-react";
+import { Globe, History, MoonStar, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
+import { useSandboxThreadMachine } from "../sandbox/useSandboxThreadStatus";
 import { DiscoveryList } from "../ui/discovery-list";
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
@@ -28,9 +29,24 @@ export function PreviewEmptyState({
 }: Props) {
   const servers = useDiscoveredLocalServers({
     environmentId,
+    threadId: threadRef.threadId,
     configuredUrls,
   });
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
+  // A sleeping machine closed its tabs; opening one wakes it.
+  const asleep = useSandboxThreadMachine(threadRef)?.state === "sleeping";
+
+  if (asleep && recents.length === 0) {
+    return (
+      <Empty>
+        <EmptyMedia variant="icon">
+          <MoonStar className="size-4.5 text-muted-foreground" />
+        </EmptyMedia>
+        <EmptyTitle>This machine is asleep</EmptyTitle>
+        <EmptyDescription>Open a tab to wake it.</EmptyDescription>
+      </Empty>
+    );
+  }
 
   if (servers.length === 0 && recents.length === 0) {
     return (
@@ -50,6 +66,11 @@ export function PreviewEmptyState({
   return (
     <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-5 py-8">
       <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
+        {asleep ? (
+          <p role="status" className="px-1 text-sm text-muted-foreground">
+            This machine is asleep. Open a tab to wake it.
+          </p>
+        ) : null}
         {recents.length > 0 ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

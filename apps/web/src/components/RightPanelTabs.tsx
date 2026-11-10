@@ -82,6 +82,8 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
+import { MACHINE_BROWSER_PROFILES } from "~/browser/previewRuntime";
+import { useEnvironmentHasMachineBrowser } from "~/state/entities";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
@@ -1025,7 +1027,9 @@ function RightPanelTab(
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
-  const browserProfiles = useBrowserDefaults().profiles;
+  const userBrowserProfiles = useBrowserDefaults().profiles;
+  const machineBrowser = useEnvironmentHasMachineBrowser(props.environmentId);
+  const browserProfiles = machineBrowser ? MACHINE_BROWSER_PROFILES : userBrowserProfiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);

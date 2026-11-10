@@ -18,6 +18,7 @@ import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver"
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
+import { useEnvironmentHasMachineBrowser } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { useEnvironmentScope } from "../../state/session";
@@ -34,6 +35,10 @@ const SERVER_PAGE_COUNT = 4;
 
 const serverKey = (server: DiscoveredLocalServer) => `${server.pid}:${server.port}`;
 
+// A machine cannot tell its terminals' servers from its agent's, so it names neither.
+const serverSource = (server: DiscoveredLocalServer, machine: boolean) =>
+  machine ? null : server.terminal === null ? "Agent" : "Terminal";
+
 interface ThreadServersPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -46,6 +51,7 @@ export function ThreadServersPanel(props: ThreadServersPanelProps) {
 
 function ThreadServersList(props: ThreadServersPanelProps) {
   const servers = useThreadDiscoveredPorts(props);
+  const machineBrowser = useEnvironmentHasMachineBrowser(props.environmentId);
   const canOpen = useEnvironmentScope(props.environmentId, AuthPreviewOperateScope);
   const canStop = useAtomValue(
     previewEnvironment.stopLocalServer.permissionAtom(props.environmentId),
@@ -77,8 +83,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
 
   const open = async (server: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
     if (event.button > 1) return;
-    // Like links: modified and middle clicks go to the system browser.
-    if (event.metaKey || event.ctrlKey || event.button === 1) {
+    // Like links: modified and middle clicks go to the system browser. A machine's
+    // localhost is not reachable from this computer.
+    if (!machineBrowser && (event.metaKey || event.ctrlKey || event.button === 1)) {
       event.preventDefault();
       const url = resolveDiscoveredServerUrl(props.environmentId, server.url);
       await readLocalApi()
@@ -97,7 +104,11 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     setStoppingKey(serverKey(server));
     const result = await stopServer({
       environmentId: props.environmentId,
-      input: { pid: server.pid, port: server.port },
+      input: {
+        pid: server.pid,
+        port: server.port,
+        ...(machineBrowser ? { threadId: props.threadId } : {}),
+      },
     });
     setStoppingKey(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -139,14 +150,16 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                       localhost:{server.port}
                     </span>
                     <span className="truncate text-2xs font-normal leading-4 text-muted-foreground">
-                      {[server.terminal === null ? "Agent" : "Terminal", server.processName]
+                      {[serverSource(server, machineBrowser), server.processName]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
                   </span>
                 </TooltipTrigger>
                 <TooltipPopup side="left">
-                  Open in the browser panel. {externalClickLabel} for your browser.
+                  {machineBrowser
+                    ? "Open in the browser panel."
+                    : `Open in the browser panel. ${externalClickLabel} for your browser.`}
                 </TooltipPopup>
               </Tooltip>
               {stoppable ? (

@@ -3,13 +3,18 @@ import { isPrivateNetworkHost, isPublicFaviconHost } from "@t3tools/shared/hostC
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
+const readEnvironmentHasMachineBrowser = vi.fn(() => false);
 const env = vi.hoisted(() => ({ isElectron: false }));
 
 vi.mock("~/state/session", () => ({ readPreparedConnection }));
+vi.mock("~/state/entities", () => ({ readEnvironmentHasMachineBrowser }));
 vi.mock("~/env", () => env);
 
 describe("browser target resolver", () => {
-  beforeEach(() => readPreparedConnection.mockReset());
+  beforeEach(() => {
+    readPreparedConnection.mockReset();
+    readEnvironmentHasMachineBrowser.mockReturnValue(false);
+  });
 
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
@@ -36,6 +41,11 @@ describe("browser target resolver", () => {
     expect(
       resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3000/app"),
     ).toBe("http://192.168.1.25:3000/app");
+    // A Pair Cloud thread's tab runs in its machine's Chrome, where localhost is the machine.
+    readEnvironmentHasMachineBrowser.mockReturnValue(true);
+    expect(
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3000/app"),
+    ).toBe("http://localhost:3000/app");
   });
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {

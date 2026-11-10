@@ -244,6 +244,8 @@ tabs from any device. The desktop app shows its own environment's tabs
 directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
+On Pair Cloud, a cloud thread's tabs run on the thread's machine instead; see
+[Browser](./cloud.md#browser) in the Cloud guide.
 
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it

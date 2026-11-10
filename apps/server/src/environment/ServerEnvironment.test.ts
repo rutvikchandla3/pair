@@ -124,7 +124,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }
     }),
   );
-  it.effect.each([false, true])("offers the server browser unless cloud-only: %s", (cloudOnly) =>
+  it.effect.each([false, true])("offers machine tabs only when cloud-only: %s", (cloudOnly) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const config = yield* makeServerConfig(yield* fs.makeTempDirectoryScoped());
@@ -139,7 +139,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           ),
         ),
       );
-      expect(capabilities.serverBrowser).toBe(cloudOnly ? undefined : true);
+      expect(capabilities.serverBrowser).toBe(true);
+      expect(capabilities.machineBrowser).toBe(cloudOnly ? true : undefined);
       expect(capabilities.cloudLaunch).toBe(cloudOnly ? true : undefined);
       expect(capabilities.cloudImport).toBe(cloudOnly ? true : undefined);
     }),

@@ -25,7 +25,9 @@ export interface ProfileReport {
 const reportTargetsAtom = Atom.make((get) => {
   const targets = new Map<EnvironmentId, EnvironmentServerConfig>();
   for (const [environmentId, config] of get(environmentPresentations.serverConfigsAtom)) {
-    if (!config.environment.capabilities.serverBrowser) continue;
+    const { serverBrowser, machineBrowser } = config.environment.capabilities;
+    // A machine's Chrome has one profile; this client's named profiles stay local (Q2).
+    if (!serverBrowser || machineBrowser) continue;
     const session = get(environmentSession.sessionStateAtom(environmentId));
     if (!sessionHasScope(session, AuthPreviewOperateScope)) continue;
     targets.set(environmentId, config);

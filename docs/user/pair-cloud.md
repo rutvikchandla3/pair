@@ -257,6 +257,9 @@ the server boots now ("This server runs 0.1.9. Rebuild to update provider CLIs."
 rebuilds the saved recipe. Nothing rebuilds by itself, and the old build keeps working. A pinned
 **Base image** that matches the build never shows it.
 
+A team image built before Pair Cloud had a [Browser](./cloud.md#browser) has no browser in it, and
+its sessions' Browser tab says so. Rebuild it; sessions started after the build get the browser.
+
 **Edit with an agent** opens a new cloud thread on a project you choose, with a first message you
 can edit before sending.
 

@@ -353,6 +353,21 @@ export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentI
   );
 }
 
+export function useEnvironmentHasMachineBrowser(environmentId: EnvironmentId | null): boolean {
+  const configs = useServerConfigs();
+  return (
+    environmentId !== null &&
+    configs.get(environmentId)?.environment.capabilities.machineBrowser === true
+  );
+}
+
+export function readEnvironmentHasMachineBrowser(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .machineBrowser === true
+  );
+}
+
 export function readEnvironmentServerConfigLoaded(environmentId: EnvironmentId): boolean {
   return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
 }

@@ -40,7 +40,10 @@ import {
   useThreadPreviewState,
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
+import {
+  useEnvironmentHasMachineBrowser,
+  useEnvironmentSupportsServerBrowser,
+} from "~/state/entities";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
@@ -77,7 +80,11 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
+import {
+  alternatePreviewRuntime,
+  machineBrowserProfileId,
+  useRendersServerTabNatively,
+} from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -169,6 +176,7 @@ export function PreviewView({
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
+  const machineBrowser = useEnvironmentHasMachineBrowser(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -223,7 +231,14 @@ export function PreviewView({
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
+  // A machine's Chrome opens every named profile as its one profile (Q2).
+  const shownProfileId = machineBrowser
+    ? machineBrowserProfileId(activeProfileId)
+    : activeProfileId;
+  const defaultProfileId = machineBrowser
+    ? machineBrowserProfileId(browserDefaults.profileId)
+    : browserDefaults.profileId;
+  const activeProfileName = previewProfileName(browserDefaults.profiles, shownProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -385,6 +400,7 @@ export function PreviewView({
     threadRef.environmentId,
     primaryEnvironmentId,
     serverBrowser,
+    machineBrowser,
     snapshot,
   );
   const moveLabel =
@@ -905,7 +921,7 @@ export function PreviewView({
           isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
         }
         leadingActions={
-          activeProfileId !== browserDefaults.profileId ? (
+          shownProfileId !== defaultProfileId ? (
             <Tooltip>
               <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
                 <span className="truncate">{activeProfileName}</span>

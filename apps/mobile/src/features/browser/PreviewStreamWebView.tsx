@@ -386,7 +386,11 @@ function PreviewStreamDocumentView({
                 onGone?.();
                 return;
               case "hostSetup":
-                setHostSetup({ need: message.need, command: message.command });
+                setHostSetup({
+                  need: message.need,
+                  command: message.command,
+                  ...(message.reason === undefined ? {} : { reason: message.reason }),
+                });
                 fail(previewStreamHostSetupMessage(message));
                 return;
               case "viewport":
@@ -496,7 +500,7 @@ function PreviewStreamDocumentView({
               {status === "error" ? error : "Connecting to browser..."}
             </AppText>
           )}
-          {status === "error" && hostSetup && !compact ? (
+          {status === "error" && hostSetup?.command && !compact ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Copy ${hostSetup.command}`}

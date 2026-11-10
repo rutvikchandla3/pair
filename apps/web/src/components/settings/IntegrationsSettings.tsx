@@ -1136,10 +1136,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const serverProfileData: ServerProfileData = {
     environmentIds: environments
       .map((environment) => environment.environmentId)
-      .filter(
-        (environmentId) =>
-          serverConfigs.get(environmentId)?.environment.capabilities.serverBrowser === true,
-      ),
+      .filter((environmentId) => {
+        const capabilities = serverConfigs.get(environmentId)?.environment.capabilities;
+        // A machine's browser does not keep this client's profiles.
+        return capabilities?.serverBrowser === true && capabilities.machineBrowser !== true;
+      }),
     clear: async (environmentId, profileId) => {
       const result = await runClearServerProfile({ environmentId, input: { profileId } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);

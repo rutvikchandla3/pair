@@ -2,6 +2,7 @@
 import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
 import {
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
+  PreviewMachineBrowserReason,
   type PreviewStreamHostSetup,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
@@ -450,9 +451,18 @@ export function createPreviewFramePainter(
   };
 }
 
+const isMachineBrowserReason = (value: unknown): value is PreviewMachineBrowserReason =>
+  PreviewMachineBrowserReason.literals.some((reason) => reason === value);
+
 const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
   try {
     const value = JSON.parse(reason) as Partial<PreviewStreamHostSetup>;
+    // A reason a newer server adds reads as an unexplained machine failure.
+    if (value.need === "machine") {
+      return isMachineBrowserReason(value.reason)
+        ? { need: "machine", command: "", reason: value.reason }
+        : { need: "machine", command: "" };
+    }
     if (
       (value.need === "sandbox" || value.need === "libraries") &&
       typeof value.command === "string"
@@ -463,7 +473,25 @@ const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
   return { need: "sandbox", command: "sudo npx t3 browser setup" };
 };
 
+const machineBrowserMessage = (reason: PreviewMachineBrowserReason | undefined) => {
+  switch (reason) {
+    case "not-installed":
+      return "This machine's image has no browser. Rebuild the team image, then start a new session.";
+    case "machine-unavailable":
+      return "The machine did not wake. Try again.";
+    case "runner-outdated":
+      return "This machine's runner is too old for the browser. Stop the machine and start it again.";
+    case "launch-failed":
+      return "The machine's browser did not start. Try again.";
+    case undefined:
+      return "The machine's browser is unavailable. Try again.";
+  }
+};
+
+/** Shown above `setup.command`, which is empty for a machine: its fix is not a command. */
 export const previewStreamHostSetupMessage = (setup: PreviewStreamHostSetup) =>
-  setup.need === "sandbox"
-    ? "This server's host blocks the sandbox its browser runs in. Run this once on the host, then try again:"
-    : "This server's host is missing libraries its browser needs. Run this once on the host, then try again:";
+  setup.need === "machine"
+    ? machineBrowserMessage(setup.reason)
+    : setup.need === "sandbox"
+      ? "This server's host blocks the sandbox its browser runs in. Run this once on the host, then try again:"
+      : "This server's host is missing libraries its browser needs. Run this once on the host, then try again:";

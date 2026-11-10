@@ -256,6 +256,29 @@ When a machine can't clone a private repository, the thread says "Pair Cloud can
 
 Cloud threads push only to github.com for now.
 
+## Browser
+
+A cloud thread's **Browser** tab runs Chrome on the thread's machine. You and the thread's agent
+share its tabs, and anyone who can open the thread sees them, on the web, the desktop app and the
+phone. `localhost` in a tab is the machine, so a dev server the agent or your terminal starts
+opens as `http://localhost:<port>`, and the tab's list of running servers shows the machine's
+ports. **Stop** on a listed server stops it in the machine.
+
+The tab streams from the machine on every device, including the desktop app, which uses its own
+built-in browser only for threads on your Mac. Pages on the internet load from the machine's
+network, not yours.
+
+- **Opening a tab wakes the machine.** While someone watches a tab, the machine stays awake. When
+  it goes to sleep, its tabs close; open a tab again to wake it.
+- **One profile per machine.** Cookies and logins stay on the machine between sessions, and side
+  chats and forks on the same machine share them. Incognito tabs and the agent's tabs keep their
+  own storage. Your named profiles and cookie import stay on your Mac.
+- **What doesn't carry over.** Audio doesn't play. You can watch a tab on the phone, but open new tabs from the web or
+  desktop app.
+- **Older team images.** A machine started from a team image built before the browser came to
+  Pair Cloud says "This machine's image has no browser." An admin rebuilds the
+  [team image](./pair-cloud.md#build-a-team-image), then start a new session.
+
 ## Who can open a cloud thread
 
 A cloud thread is private. Only you can see it, in the sidebar, the **Team** shelf, search and the

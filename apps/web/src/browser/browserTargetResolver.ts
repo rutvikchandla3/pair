@@ -10,6 +10,7 @@ import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
+import { readEnvironmentHasMachineBrowser } from "~/state/entities";
 import { readPreparedConnection } from "~/state/session";
 
 export { normalizeHostname, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
@@ -68,6 +69,8 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
     const normalizedUrl = normalizePreviewUrl(rawUrl);
     const parsed = new URL(normalizedUrl);
     if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
+    // The thread's machine runs the tab's Chrome, which resolves its own loopback.
+    if (readEnvironmentHasMachineBrowser(environmentId)) return normalizedUrl;
     const target = readPreparedConnection(environmentId)?.target;
     if (target && reachesEnvironmentLoopback(target)) return normalizedUrl;
     return resolveEnvironmentPortTarget(

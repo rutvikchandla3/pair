@@ -603,6 +603,20 @@ The Browser tab is enabled for cloud sessions on web, desktop and mobile, and al
     it. Product voice, no implementation detail.
   - [08 §9](../08-clients-and-contracts.md) and [10](../10-delivery-plan.md): the capability and
     the row, as landed.
+- **As built:** every server now advertises `serverBrowser`; a cloud-only one adds
+  `machineBrowser` (it always runs `MachineBrowser`). Clients pass `threadId` to the server list
+  and Stop only when the environment has `machineBrowser`, so a local server keeps one shared
+  scan. The profile picker offers only Default and Incognito on a machine environment
+  (`MACHINE_BROWSER_PROFILES`), the tab's profile badge reads a named profile as Default, and
+  profile reporting and Settings' clear-profile skip it. The machine close's messages live in
+  `previewStreamHostSetupMessage`: `machine-unavailable` reads "The machine did not wake. Try
+  again." (7.6's wake failure) and an unknown reason reads as an unexplained machine failure; web
+  and mobile show no command block when `command` is empty. The server list names neither
+  "Agent" nor "Terminal" for a machine's servers, since the runner cannot tell them apart, and
+  ⌘-click no longer opens a machine's `localhost` on the member's computer. A sleeping machine's
+  empty Browser says "This machine is asleep. Open a tab to wake it." There is no ChatView browser
+  test: the panel's availability already follows `serverBrowser`, and the runtime choice is unit
+  tested. Mobile has no way to open a tab, so the phone watches tabs only.
 - **Types and services:** the `machineBrowser` capability. **Commands and events:** none.
   **Migrations:** none.
 - **Tests:**

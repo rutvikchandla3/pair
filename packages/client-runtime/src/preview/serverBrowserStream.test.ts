@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createPreviewStreamClient, type PreviewStreamControl } from "./serverBrowserStream.ts";
+import {
+  createPreviewStreamClient,
+  previewStreamHostSetupMessage,
+  type PreviewStreamControl,
+} from "./serverBrowserStream.ts";
 
 class FakeSocket extends EventTarget {
   static readonly OPEN = 1;
@@ -19,6 +23,9 @@ class FakeSocket extends EventTarget {
   }
   close() {
     this.readyState = 3;
+  }
+  closed(code: number, reason = "") {
+    this.dispatchEvent(Object.assign(new Event("close"), { code, reason }));
   }
   message(data: unknown) {
     this.dispatchEvent(new MessageEvent("message", { data }));
@@ -161,6 +168,46 @@ describe("preview stream downloads", () => {
       sizeBytes: 3,
       url: "http://preview.test/api/preview-stream/download?threadId=thread&tabId=tab&id=d1&wsTicket=ticket",
     });
+  });
+});
+
+describe("preview stream closes", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+  const connect = () => {
+    const events = { onGone: vi.fn(), onHostSetup: vi.fn() };
+    createPreviewStreamClient(target, {
+      ...events,
+      onFrame: vi.fn(),
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    });
+    return { socket: FakeSocket.current, ...events };
+  };
+
+  it("names a machine's missing browser, and an unknown reason, without a setup command", () => {
+    const missing = connect();
+    missing.socket.closed(
+      4503,
+      JSON.stringify({ need: "machine", command: "", reason: "not-installed" }),
+    );
+    const setup = missing.onHostSetup.mock.lastCall?.[0];
+    expect(setup).toEqual({ need: "machine", command: "", reason: "not-installed" });
+    expect(previewStreamHostSetupMessage(setup)).toBe(
+      "This machine's image has no browser. Rebuild the team image, then start a new session.",
+    );
+
+    const newer = connect();
+    newer.socket.closed(4503, JSON.stringify({ need: "machine", command: "", reason: "later" }));
+    expect(newer.onHostSetup).toHaveBeenCalledWith({ need: "machine", command: "" });
+  });
+
+  it("stops quietly when a member loses the thread, not as a browser error", () => {
+    const { socket, onGone, onHostSetup } = connect();
+    socket.closed(4404, "tab closed");
+    expect(onGone).toHaveBeenCalledOnce();
+    expect(onHostSetup).not.toHaveBeenCalled();
   });
 });
 

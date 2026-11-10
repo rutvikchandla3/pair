@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 
+import { useEnvironmentHasMachineBrowser } from "./state/entities";
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
 
@@ -40,24 +41,24 @@ export function boundConfiguredLocalServerUrls(
   return bounded;
 }
 
-function useDiscoveredPorts(
-  environmentId: EnvironmentId | null,
-  configuredUrls?: ReadonlyArray<string>,
-): ReadonlyArray<DiscoveredLocalServer> {
-  return useDiscoveredPortsState(environmentId, configuredUrls).servers;
-}
-
+/** `threadId` scopes the scan to that thread's machine where tabs run on machines. */
 export function useDiscoveredPortsState(
   environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
   configuredUrls?: ReadonlyArray<string>,
 ): DiscoveredPortsState {
   const boundedConfiguredUrls = boundConfiguredLocalServerUrls(configuredUrls);
+  // Elsewhere the server scans its own host for every thread, so the subscription is shared.
+  const machineThreadId = useEnvironmentHasMachineBrowser(environmentId) ? threadId : null;
   const query = useEnvironmentQuery(
     environmentId === null
       ? null
       : previewEnvironment.discoveredServers({
           environmentId,
-          input: boundedConfiguredUrls.length ? { configuredUrls: boundedConfiguredUrls } : {},
+          input: {
+            ...(boundedConfiguredUrls.length ? { configuredUrls: boundedConfiguredUrls } : {}),
+            ...(machineThreadId === null ? {} : { threadId: machineThreadId }),
+          },
         }),
   );
   return {
@@ -70,7 +71,7 @@ export function useThreadDiscoveredPorts(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<DiscoveredLocalServer> {
-  const ports = useDiscoveredPorts(input.environmentId);
+  const ports = useDiscoveredPortsState(input.environmentId, input.threadId).servers;
   return input.threadId
     ? ports.filter(
         (port) =>
