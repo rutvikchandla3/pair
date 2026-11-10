@@ -79,8 +79,11 @@ are prereleases. **The M6 pass passed on `.13` on 2026-11-10**: see
 **M7 cloud browser, building since 2026-11-11 (maintainer's request):** specs in
 [m7-cloud-browser.md](./m7-cloud-browser.md), written by another session before the M5 slice and
 M6 landed, so each worker's prompt carries what changed (VM images, private threads, per-boot
-forwards). Workers are Opus at medium effort. Landed: 7.1 (a6de84ca5), 7.5 (ad9a88cff) and 7.2
-(1621691f9).
+forwards). Workers are Opus at medium effort. All seven rows are landed: 7.1 (a6de84ca5), 7.5
+(ad9a88cff), 7.2 (1621691f9), 7.3 (68343cd94), 7.4 (35b3e389f), 7.6 (9b47d852a) and 7.7
+(38dc554c5). Release `0.1.7-pair.14` carries them. **The M7 integrated pass has not run**: no row
+has been exercised on a real server or in a real client, apart from 7.1's image build and 7.4's
+spike.
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
@@ -2920,6 +2923,74 @@ Each item had a failing test first, except the two that needed no code.
 - `ECONNREFUSED` maps to `NotFound`, which is what "Chrome is not listening yet" looks like.
 - `handlers.test` "signals a ready watch, then reports events in batches" fails 2 of 3 runs on
   this Mac on `feat/pair` (fs.watch timing).
+
+## 7.3 a machine's Chrome over the runner (landed 68343cd94)
+
+- `sandbox/browser/MachineBrowser.ts`, built only on a cloud-only server:
+  `endpoint(sandboxId)` returns `ws://127.0.0.1:<bridgePort>/devtools/browser/<guid>` and
+  `processId(sandboxId)`. One Chrome per machine per runner boot; concurrent calls share a start.
+- `MachineBrowserError.reason`: `not-installed`, `machine-unavailable`, `runner-outdated` (added:
+  `endpoint` dials Chrome once before returning), `launch-failed`.
+- The bridge passes only `GET <Chrome's exact path> HTTP/1.1`, compared in constant time, and
+  answers 404 otherwise: Chrome's own `/json` pages print the guid. The endpoint is never logged.
+- Chrome runs as the agent user with the host's base environment minus every `GIT_*` variable;
+  `--no-sandbox` only on Docker. Boots come from `hub.connection(sandboxId)` and its `ended`.
+- `MachinePorts` leaves Chrome's listener out of the list and refuses it in `stop`.
+- `toDuplex` moved to `sandbox/runnerHub/tcpDuplex.ts`; `PREVIEW_BROWSER_ARGS` is exported.
+
+## 7.4 a cloud session's tabs on its machine (landed 35b3e389f)
+
+- `preview/PreviewMachine.ts` (a reference whose default answers none, so a local server is
+  unchanged) and `sandbox/browser/PreviewMachineLive.ts`. `ServerBrowserContexts` keeps one CDP
+  connection per machine; a disconnect closes that machine's tabs.
+- **The spike ran on the real image** (Chrome 156 in a container on the test server, runc and
+  gVisor, Playwright 1.60 over `connectOverCDP`): the persistent profile, isolated contexts,
+  screencast and input, PDFs, `presentAsChrome` and `localhost` in the machine all work.
+- **Uploads were a hole in the plan, not "expected to fail".** A path given to Playwright's
+  upload is read on the **server's** disk, and `uploadFiles` passed an agent's paths through. On
+  a machine tab an agent's paths must sit under `/t3-sandbox/<its sandbox id>/`, the machine's
+  host confirms each is a file, and Chrome gets them by raw CDP `DOM.setFileInputFiles`. A
+  member's files are written into the machine first. `setInputFiles` is never called.
+- Downloads land in `/t3-sandbox/<id>/browser/downloads/<Chrome's download id>` (`allowAndName`)
+  and are served through the machine's host. Playwright resets the download setting on connect
+  and on each new context, so every new tab sets it again.
+- Recording encodes in a scratch context of the machine's Chrome; a test fails if the machine
+  path touches the server's Chromium. The finished file is still a server attachment.
+- Machine tabs present a fixed platform version, `6.8.0`, never the server's `os.release()`.
+- The stream closes with 4503 and `need: "machine"` plus a reason.
+- Measured on one host at 1280×800, jpeg q70: 15 fps on runc and 12.6 on gVisor, about 141 KiB a
+  frame (2 MB/s) on a busy page, input to frame 55–66 ms idle and 160–230 ms busy, Chrome at 1.5
+  to 1.75 cores and about 0.58 GB. `MACHINE_SCREENCAST` holds the limits.
+
+## 7.6 tabs wake a machine and keep it awake (landed 9b47d852a)
+
+- `PreviewMachineLive` sends one `sandbox.wake` for a tab on a sleeping machine and waits for the
+  runner. The wake is in `host`, not `endpoint`, so a reconnecting context never wakes a machine.
+  After 120 s it keeps waiting only while the machine is provisioning or waking; otherwise "The
+  machine did not wake. Try again."
+- While a member watches a machine tab the stream renews their viewer lease at attach and every
+  five minutes; losing access stops it at once. An unwatched agent tab holds nothing.
+- `MachineBrowser.stopForSleep` sends Chrome SIGTERM and waits at most 2 s before a manual sleep
+  and before an idle, cap-pressure, settled or archived sleep. Not on discard, expiry, a
+  `discardOnSettle` settle, a boot-deadline failure or a lost runner. The spike showed a cookie
+  set in the last 30 s is lost on SIGKILL.
+- Opening a tab wakes even a settled thread's machine; watching one does not.
+
+## 7.7 the Browser tab on cloud sessions (landed 38dc554c5)
+
+- Capability `machineBrowser`, advertised by a cloud-only server; every server now advertises
+  `serverBrowser`. A machine environment always gets the streamed runtime, on desktop too, with
+  no "move tab" option. `localhost` URLs are left alone for a machine environment.
+- The servers list and Stop pass `threadId` only on a machine environment. A machine's servers
+  show the process name, not "Agent" or "Terminal". ⌘-click opens one in the panel.
+- Profiles on a cloud session are Default and Incognito. Each `need: "machine"` reason has its
+  message; a sleeping machine's empty Browser reads "This machine is asleep. Open a tab to wake
+  it."
+- Mobile watches a machine's tab and cannot open one. An older desktop app sees `serverBrowser`
+  on Pair Cloud, asks for its own webview and is refused cleanly.
+- Not run: `ThreadServersPanel`, `PreviewView` and `ServerBrowserSurface` browser tests.
+  `ServerEnvironment` "publishes proven install ownership only for manually updated servers"
+  fails on this Mac on `feat/pair` too.
 
 ## Open follow-ups and risks
 
