@@ -12,9 +12,9 @@ export const threadAllowsSql = (
   serverOwnerId: MemberId | string | null,
 ) => {
   const t = sql.literal(alias);
-  return sql`(NOT EXISTS (
+  return sql`(EXISTS (
   SELECT 1 FROM members access_reader
-  WHERE access_reader.id = ${memberId} AND access_reader.removed_at IS NOT NULL
+  WHERE access_reader.id = ${memberId} AND access_reader.removed_at IS NULL
 ) AND CASE
   WHEN json_extract(${t}.payload_json, '$.sandboxId') IS NULL
     THEN COALESCE(json_extract(${t}.payload_json, '$.ownerId') = ${memberId}, 1)

@@ -24,6 +24,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -33,6 +34,7 @@ import type * as Members from "../persistence/Members.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { WorkspaceHostUnavailableError } from "../workspaceHost/WorkspaceHost.ts";
 import * as ThreadAccess from "./ThreadAccess.ts";
+import { threadAllowsSql } from "./threadAccessSql.ts";
 import * as TeamState from "./TeamState.ts";
 
 const alice = MemberId.make("member-alice");
@@ -99,6 +101,113 @@ describe("threadAllows", () => {
   it("is not consulted off a cloud-only server", () => {
     assert.isTrue(ThreadAccess.threadAllows(roster(false), { ownerId: alice }, undefined, bob));
   });
+});
+
+describe("threadAllowsSql", () => {
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const stranger = MemberId.make("member-stranger");
+  type Machine = { readonly audience: "members" | "team" | null; readonly owner: MemberId | null };
+  const machine = (audience: Machine["audience"], owner: MemberId | null = alice): Machine => ({
+    audience,
+    owner,
+  });
+  // The same rows through the paged read's SQL and the in-memory rule; `bob` is listed.
+  const cases = [
+    ["the machine's owner", { sandboxId, ownerId: alice }, machine("members"), alice],
+    ["a listed member", { sandboxId, ownerId: alice }, machine("members"), bob],
+    ["an unlisted member", { sandboxId, ownerId: alice }, machine("members"), carol],
+    ["an unlisted admin", { sandboxId, ownerId: alice }, machine("members"), erin],
+    [
+      "the server's owner, unlisted",
+      { sandboxId, ownerId: alice },
+      machine("members"),
+      serverOwner,
+    ],
+    ["anyone, on a team machine", { sandboxId, ownerId: alice }, machine("team"), carol],
+    ["anyone, on a machine with no audience", { sandboxId, ownerId: alice }, machine(null), carol],
+    [
+      "the server's owner, on an ownerless machine",
+      { sandboxId },
+      machine("members", null),
+      serverOwner,
+    ],
+    ["another member, on an ownerless machine", { sandboxId }, machine("members", null), alice],
+    ["the holder of a machine with no record", { sandboxId, ownerId: alice }, undefined, alice],
+    ["another member, on a machine with no record", { sandboxId, ownerId: alice }, undefined, bob],
+    [
+      "the server's owner, on an ownerless machine with no record",
+      { sandboxId },
+      undefined,
+      serverOwner,
+    ],
+    ["a removed member, listed", { sandboxId, ownerId: alice }, machine("members"), dave],
+    ["a removed member, on a team machine", { sandboxId, ownerId: alice }, machine("team"), dave],
+    [
+      "a member with no record, on a team machine",
+      { sandboxId, ownerId: alice },
+      machine("team"),
+      stranger,
+    ],
+    ["a thread with no machine, its owner", { ownerId: alice }, undefined, alice],
+    ["a thread with no machine, another member", { ownerId: alice }, undefined, bob],
+    ["an ownerless thread with no machine", { ownerId: null }, undefined, carol],
+    ["a removed member, on an ownerless thread", {}, undefined, dave],
+    ["a member with no record, on an ownerless thread", {}, undefined, stranger],
+  ] as const;
+  it.effect.each(
+    cases.map(([name, target, sandbox, memberId]) => ({ name, target, sandbox, memberId })),
+  )("$name", ({ target, sandbox, memberId }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const [id, removedAt] of [
+        [serverOwner, null],
+        [alice, null],
+        [bob, null],
+        [carol, null],
+        [erin, null],
+        [dave, "2026-11-01T00:00:00.000Z"],
+      ] as const) {
+        yield* sql`INSERT INTO members (id, name, role, created_at, removed_at)
+          VALUES (${id}, ${id}, 'member', '2026-01-01T00:00:00.000Z', ${removedAt})`;
+      }
+      yield* sql`INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+           created_at, updated_at, payload_json)
+        VALUES ('thread:parity', 'project:parity', 'Parity', 'codex', 'full-access', 'default',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ${JSON.stringify(target)})`;
+      if (sandbox !== undefined) {
+        yield* sql`INSERT INTO orchestration_v2_projection_sandboxes
+            (sandbox_id, project_id, owner_thread_id, owner_member_id, driver_id, state,
+             generation, updated_at, payload_json, audience)
+          VALUES (${sandboxId}, 'project:parity', 'thread:parity', ${sandbox.owner}, 'docker',
+            'ready', 1, '2026-01-01T00:00:00.000Z', '{}', ${sandbox.audience})`;
+        for (const listed of [bob, dave]) {
+          yield* sql`INSERT INTO orchestration_v2_projection_sandbox_members (sandbox_id, member_id)
+            VALUES (${sandboxId}, ${listed})`;
+        }
+      }
+      const rows = yield* sql<{ readonly allowed: number }>`
+        SELECT ${threadAllowsSql(sql, "t", memberId, serverOwner)} AS allowed
+        FROM orchestration_v2_projection_threads t`;
+      const parityRoster: ThreadAccess.ThreadAccessRoster = {
+        cloudOnly: true,
+        serverOwnerId: serverOwner,
+        isActive: (id) => id !== dave && id !== stranger,
+      };
+      const entry =
+        sandbox === undefined
+          ? undefined
+          : {
+              ownerMemberId: sandbox.owner,
+              audience: sandbox.audience ?? ("team" as const),
+              memberIds: new Set([bob, dave]),
+            };
+      assert.strictEqual(
+        rows[0]?.allowed === 1,
+        ThreadAccess.threadAllows(parityRoster, target, entry, memberId),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
 });
 
 describe("sessionReaches", () => {

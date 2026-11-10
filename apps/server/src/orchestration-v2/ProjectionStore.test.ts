@@ -2143,6 +2143,10 @@ it.effect("SQL list older settled threads below a cursor", () =>
     // A member's pages and counts hold only the threads they can open.
     const bob = MemberId.make("member-bob");
     const carol = MemberId.make("member-carol");
+    for (const memberId of [alice, bob, carol]) {
+      yield* sql`INSERT OR IGNORE INTO members (id, name, role, created_at)
+        VALUES (${memberId}, ${memberId}, 'member', '2026-01-01T00:00:00.000Z')`;
+    }
     const machine = (name: string, hex: string, audience?: "members" | "team") => {
       const sandboxId = SandboxId.make(`sbx_${hex.repeat(20)}`);
       return store
@@ -2215,10 +2219,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
     assert.deepEqual(yield* countFor(bob), cloudCount(4));
     assert.deepEqual(yield* countFor(carol), cloudCount(2));
     // A removed member opens nothing, even a team machine or their own thread.
-    yield* sql`
-      INSERT INTO members (id, name, role, created_at, removed_at)
-      VALUES (${bob}, 'Bob', 'member', ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)})
-    `;
+    yield* sql`UPDATE members SET removed_at = ${DateTime.formatIso(now)} WHERE id = ${bob}`;
     assert.deepEqual(yield* pageIds(bob, null), []);
     assert.deepEqual(yield* countFor(bob), []);
   }).pipe(Effect.provide(layerTest)),

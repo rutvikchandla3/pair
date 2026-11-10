@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import type * as SchemaAST from "effect/SchemaAST";
-import { WsRpcGroup } from "./rpc.ts";
+import { RpcThreadAccess, WsRpcGroup } from "./rpc.ts";
 import { RPC_THREAD_TARGET_EXEMPT, RPC_THREAD_TARGETS } from "./rpcThreadTargets.ts";
 
 const TARGET_FIELD =
@@ -35,8 +35,28 @@ const targetFields = (
       return targetFields(ast.thunk(), prefix, seen);
     case "Declaration":
       return ast.typeParameters.flatMap((parameter) => targetFields(parameter, prefix, seen));
-    default:
+    case "Null":
+    case "Undefined":
+    case "Void":
+    case "Never":
+    case "Any":
+    case "Unknown":
+    case "ObjectKeyword":
+    case "Enum":
+    case "TemplateLiteral":
+    case "UniqueSymbol":
+    case "Literal":
+    case "String":
+    case "Number":
+    case "Boolean":
+    case "Symbol":
+    case "BigInt":
       return [];
+    default: {
+      // A node the walk does not know could hide a target; fail rather than skip it.
+      const unknown: never = ast;
+      throw new Error(`rpcThreadTargets walk: unhandled AST node ${JSON.stringify(unknown)}`);
+    }
   }
 };
 
@@ -58,6 +78,16 @@ it("names every RPC whose input points at a thread, a machine or a path", () => 
   expect(matched.find(({ method }) => method === "filesystem.getMetadata")?.fields).toContain(
     ".paths",
   );
+  expect(matched.find(({ method }) => method === "sandbox.stopById")?.fields).toEqual([
+    ".sandboxId",
+  ]);
+});
+
+it("runs the access middleware on every RPC the WebSocket serves", () => {
+  const unwrapped = [...WsRpcGroup.requests.values()]
+    .filter((rpc) => !rpc.middlewares.has(RpcThreadAccess))
+    .map((rpc) => rpc._tag);
+  expect(unwrapped).toEqual([]);
 });
 
 it("keeps the table and the exemptions to methods that name something", () => {
