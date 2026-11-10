@@ -197,19 +197,24 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
   },
 );
 
-/** The existing threads and the workspace paths one command reads or changes. */
+/** The threads, new thread ids and workspace paths one command reads or changes. */
 const commandTargets = (
   command: Exclude<OrchestrationV2Command, SandboxClientCommand>,
 ): {
   readonly threadIds: ReadonlyArray<ThreadId>;
+  /** Ids the command creates: refused only when one names a thread the member cannot open. */
+  readonly newThreadIds?: ReadonlyArray<ThreadId>;
   readonly paths: ReadonlyArray<string | null | undefined>;
 } => {
   switch (command.type) {
-    // A new thread names nothing yet; its workspace still must be the member's.
     case "thread.create":
-      return { threadIds: [], paths: [command.worktreePath] };
+      return { threadIds: [], newThreadIds: [command.threadId], paths: [command.worktreePath] };
     case "thread.fork":
-      return { threadIds: [command.sourceThreadId], paths: [] };
+      return {
+        threadIds: [command.sourceThreadId],
+        newThreadIds: [command.targetThreadId],
+        paths: [],
+      };
     case "thread.merge_back":
       return { threadIds: [command.sourceThreadId, command.targetThreadId], paths: [] };
     case "thread.created.record":
@@ -281,11 +286,18 @@ export const assertCommandAccess = Effect.fn("ThreadMessageIntake.assertCommandA
       cause: `Thread ${command.threadId} does not use machine ${command.sandboxId}.`,
     });
   }
-  const { threadIds, paths } = commandTargets(command);
+  const { threadIds, newThreadIds = [], paths } = commandTargets(command);
   for (const threadId of threadIds) {
     const target = yield* ThreadAccess.resolveThreadTarget(access, threadId);
     if (target !== undefined && access.allowsThread(memberId, target)) continue;
     yield* denied({ threadId, sandboxId: target?.sandboxId });
+    return yield* missing(threadId);
+  }
+  for (const threadId of newThreadIds) {
+    // Not "already exists": that would confirm the thread to a member who cannot open it.
+    const target = access.threadTarget(threadId);
+    if (target === undefined || access.allowsThread(memberId, target)) continue;
+    yield* denied({ threadId, sandboxId: target.sandboxId });
     return yield* missing(threadId);
   }
   for (const path of paths) {

@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   type ApplicationStoredEvent,
   MemberId,
@@ -14,13 +14,20 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { ThreadAccessTarget } from "../team/ThreadAccess.ts";
+import {
+  makeTest as makeThreadAccess,
+  type SandboxAccessEntry,
+  type ThreadAccessTarget,
+} from "../team/ThreadAccess.ts";
 import { EMPTY_MEMBER_STATE } from "./MemberThreadState.ts";
 import {
   makeThreadEventView,
   overlayForViewer,
+  terminalMetadataForViewer,
   type ThreadViewer,
   type ViewerAccess,
+  viewerAccessOf,
+  viewerMayOpen,
 } from "./MemberThreadView.ts";
 import { isOtherMembersShellEvent } from "./ShellStream.ts";
 
@@ -264,4 +271,61 @@ describe("makeThreadEventView", () => {
       assert.strictEqual(yield* view.event(holders), holders);
     }),
   );
+});
+
+describe("terminalMetadataForViewer and viewerMayOpen", () => {
+  const terminal = (threadId: string) => ({
+    threadId,
+    terminalId: "default",
+    cwd: "/t3-sandbox/repo",
+    worktreePath: null,
+    status: "running" as const,
+    pid: 1,
+    exitCode: null,
+    exitSignal: null,
+    hasRunningSubprocess: false,
+    label: "Terminal",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  });
+
+  it("sends a viewer only what belongs to threads they can open, as access is when it is sent", () => {
+    const machines = new Map<SandboxId, SandboxAccessEntry>([
+      [machine, { ownerMemberId: alice, audience: "team", memberIds: new Set() }],
+    ]);
+    const access = viewerAccessOf(
+      makeThreadAccess({
+        serverOwnerId: owner,
+        machines,
+        threads: new Map([
+          [ThreadId.make("thread-machine"), { ownerId: alice, sandboxId: machine }],
+        ]),
+      }),
+      bob,
+    );
+    const viewer: ThreadViewer = { ...viewerWith(bob, new Map(), []), ...(access && { access }) };
+    const snapshot = {
+      type: "snapshot" as const,
+      terminals: [terminal("thread-machine"), terminal("thread-unknown")],
+    };
+    const upsert = { type: "upsert" as const, terminal: terminal("thread-machine") };
+    const remove = { type: "remove" as const, threadId: "thread-machine", terminalId: "default" };
+
+    expect(terminalMetadataForViewer(viewer, snapshot)).toEqual({
+      type: "snapshot",
+      terminals: [terminal("thread-machine")],
+    });
+    expect(terminalMetadataForViewer(viewer, upsert)).toBe(upsert);
+    expect(viewerMayOpen(viewer, "thread-machine")).toBe(true);
+    expect(viewerMayOpen(viewer, "thread-unknown")).toBe(false);
+
+    // Alice makes her machine hers alone: the next items for its thread are not sent.
+    machines.set(machine, { ownerMemberId: alice, audience: "members", memberIds: new Set() });
+    expect(terminalMetadataForViewer(viewer, upsert)).toBeNull();
+    expect(terminalMetadataForViewer(viewer, remove)).toBeNull();
+    expect(viewerMayOpen(viewer, "thread-machine")).toBe(false);
+    // Off a cloud-only server, and for guests, nothing changes.
+    const unchecked = viewerWith(bob, new Map(), []);
+    expect(terminalMetadataForViewer(unchecked, snapshot)).toBe(snapshot);
+    expect(viewerMayOpen(null, "thread-unknown")).toBe(true);
+  });
 });

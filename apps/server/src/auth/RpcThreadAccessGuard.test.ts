@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   MemberId,
+  ORCHESTRATION_V2_WS_METHODS,
   RPC_THREAD_TARGETS,
   RpcThreadAccess,
   SandboxId,
@@ -125,6 +126,15 @@ it.effect("refuses unknown threads and machines, and paths that climb into anoth
     // Local paths are 2.45's to confine, so a cloud-only server's own disk passes here.
     expect(yield* read("/home/carol/repo")).toBe("allowed");
     expect(yield* read("relative/repo")).toBe("allowed");
+    // A launch's new id that names Bob's private thread is refused as missing, not "already exists".
+    const launch = (threadId: string) =>
+      call(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+        threadId,
+        workspaceStrategy: { type: "local" },
+      }).pipe(Effect.map(({ result }) => result));
+    expect(yield* launch("thread-private")).toBe("missing");
+    expect(yield* launch("thread-new")).toBe("allowed");
+    expect(yield* launch("thread-shared")).toBe("allowed");
   }),
 );
 

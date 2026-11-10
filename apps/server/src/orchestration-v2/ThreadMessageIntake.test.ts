@@ -683,6 +683,20 @@ it.effect("refuses a member's command that names a thread, machine or path they 
         worktreePath: "/home/carol/repo",
       }),
     ).toBe("allowed");
+    // A new id that names Bob's private thread is not "already exists" to her: it is missing.
+    expect(
+      yield* check({ type: "thread.create", threadId: "thread-private", worktreePath: null }),
+    ).toBe("missing thread-private");
+    expect(
+      yield* check({
+        type: "thread.fork",
+        sourceThreadId: "thread-shared",
+        targetThreadId: "thread-private",
+      }),
+    ).toBe("missing thread-private");
+    expect(
+      yield* check({ type: "thread.create", threadId: "thread-shared", worktreePath: null }),
+    ).toBe("allowed");
   }).pipe(Effect.provide(bobsAccess)),
 );
 

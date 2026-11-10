@@ -4,6 +4,7 @@ import {
   type OrchestrationV2DomainEvent,
   type SandboxAccessChange,
   type SandboxId,
+  type TerminalMetadataStreamEvent,
   ThreadId,
   type ThreadMemberState,
 } from "@t3tools/contracts";
@@ -144,6 +145,34 @@ export function assertViewerThread(
   threadId: ThreadId,
 ): Effect.Effect<void, ProjectionStore.ProjectionStoreV2Error> {
   return viewer?.access === undefined ? Effect.void : viewer.access.assertThread(threadId);
+}
+
+/**
+ * Whether one thread's item may go to the viewer. Streams ask as each item is sent, so the item
+ * after a revoke is already dropped. A thread the index has never seen is refused.
+ */
+export function viewerMayOpen(viewer: ThreadViewer | null, threadId: string): boolean {
+  const access = viewer?.access;
+  return access === undefined || access.allowsThreadId(ThreadId.make(threadId));
+}
+
+/** Terminal metadata without the terminals of threads the viewer may not open. */
+export function terminalMetadataForViewer(
+  viewer: ThreadViewer | null,
+  event: TerminalMetadataStreamEvent,
+): TerminalMetadataStreamEvent | null {
+  if (viewer?.access === undefined) return event;
+  switch (event.type) {
+    case "snapshot":
+      return {
+        ...event,
+        terminals: event.terminals.filter((terminal) => viewerMayOpen(viewer, terminal.threadId)),
+      };
+    case "upsert":
+      return viewerMayOpen(viewer, event.terminal.threadId) ? event : null;
+    case "remove":
+      return viewerMayOpen(viewer, event.threadId) ? event : null;
+  }
 }
 
 /** Titles by thread id, without threads the viewer may not open. */

@@ -6,6 +6,8 @@ import { WS_METHODS, type WsRpcGroup } from "./rpc.ts";
 /** What one RPC input points at. A member's session may use it only with access (11 §4). */
 export type RpcThreadTarget =
   | { readonly threadId: string }
+  /** An id the input may be creating: refused only when it names a thread the member cannot open. */
+  | { readonly newThreadId: string }
   | { readonly sandboxId: string }
   | { readonly path: string };
 
@@ -160,9 +162,14 @@ export const RPC_THREAD_TARGETS: {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: thread,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: (input) => paths(input.worktreePath),
   [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: thread,
-  // A new thread's id names nothing yet; only a reused one must be the member's to open.
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) => [
-    ...(input.reuseExistingThread === true && input.threadId ? [{ threadId: input.threadId }] : []),
+    ...(input.threadId === undefined
+      ? []
+      : [
+          input.reuseExistingThread === true
+            ? { threadId: input.threadId }
+            : { newThreadId: input.threadId },
+        ]),
     ...paths(
       "worktreePath" in input.workspaceStrategy ? input.workspaceStrategy.worktreePath : undefined,
     ),

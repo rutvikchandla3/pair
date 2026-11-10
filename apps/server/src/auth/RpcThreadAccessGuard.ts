@@ -61,6 +61,12 @@ export const layer = (memberId: MemberId) =>
           return Effect.succeed(sandboxId === undefined ? REFUSED : machine(sandboxId));
         }
         if ("sandboxId" in target) return Effect.succeed(machine(target.sandboxId));
+        if ("newThreadId" in target) {
+          const threadId = decodeThreadId(target.newThreadId);
+          // A member learns a thread id only once it is published, by when the index has it.
+          const known = Option.isSome(threadId) ? access.threadTarget(threadId.value) : undefined;
+          return Effect.succeed(known === undefined ? ALLOWED : thread(known));
+        }
         const threadId = decodeThreadId(target.threadId);
         if (Option.isNone(threadId)) return Effect.succeed(REFUSED);
         return Effect.map(ThreadAccess.resolveThreadTarget(access, threadId.value), (known) =>

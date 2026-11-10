@@ -179,7 +179,9 @@ import {
   makeThreadViewers,
   olderSettledReaderOf,
   overlayForViewer,
+  terminalMetadataForViewer,
   titlesVisibleToViewer,
+  viewerMayOpen,
   visibleToViewer,
   type ThreadViewer,
 } from "./orchestration-v2/MemberThreadView.ts";
@@ -3576,7 +3578,10 @@ export const layerWsRpc = (
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
           Stream.callback<TerminalMetadataStreamEvent>((queue) =>
             Effect.acquireRelease(
-              terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+              terminalManager.subscribeMetadata((event) => {
+                const visible = terminalMetadataForViewer(threadViewer, event);
+                return visible === null ? Effect.void : Queue.offer(queue, visible);
+              }),
               (unsubscribe) => Effect.sync(unsubscribe),
             ),
           ),
@@ -3588,7 +3593,10 @@ export const layerWsRpc = (
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
-        [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
+        [WS_METHODS.subscribePreviewEvents]: (_input) =>
+          previewManager.events.pipe(
+            Stream.filter((event) => viewerMayOpen(threadViewer, event.threadId)),
+          ),
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
