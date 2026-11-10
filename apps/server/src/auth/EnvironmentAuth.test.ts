@@ -3,7 +3,12 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes, MemberId } from "@t3tools/contracts";
+import {
+  AuthDiagnosticsReadScope,
+  authScopeResponse,
+  AuthStandardClientScopes,
+  MemberId,
+} from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -345,11 +350,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           pairing.credential,
           requestMetadata,
         );
-        expect(
-          (yield* serverAuth.authenticateHttpRequest(
-            makeCookieRequest(sessions.cookieName, exchange.sessionToken),
-          )).memberId,
-        ).toBe(alice);
+        const aliceSession = yield* serverAuth.authenticateHttpRequest(
+          makeCookieRequest(sessions.cookieName, exchange.sessionToken),
+        );
+        expect(aliceSession.memberId).toBe(alice);
+        // Off a cloud-only server a member reads diagnostics as before.
+        expect(aliceSession.scopes).toContain(AuthDiagnosticsReadScope);
         expect((yield* Effect.flip(authenticate(legacy.token)))._tag).toBe(
           "ServerAuthInvalidCredentialError",
         );
@@ -362,6 +368,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         );
         expect((yield* authenticate(legacy.token)).memberId).toBe(teamState.ownerId);
       }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("keeps server-wide diagnostics to admins on a cloud-only server", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const teamState = yield* TeamState.TeamState;
+        const members = yield* Members.MemberRepository;
+        const insert = (id: MemberId, role: "admin" | "member") =>
+          members.insert({
+            id,
+            name: id,
+            role,
+            gitName: null,
+            gitEmail: null,
+            createdAt: "2026-09-01T00:00:00.000Z",
+          });
+        const alice = MemberId.make("member-alice");
+        const bob = MemberId.make("member-bob");
+        yield* insert(alice, "member");
+        yield* insert(bob, "admin");
+        yield* teamState.reload;
+
+        const scopesOf = Effect.fnUntraced(function* (memberId: MemberId) {
+          const issued = yield* serverAuth.issueSession({ memberId });
+          const http = yield* serverAuth.authenticateHttpRequest(makeBearerRequest(issued.token));
+          const state = yield* serverAuth.getSessionState(makeBearerRequest(issued.token));
+          const ticket = yield* serverAuth.issueWebSocketTicket(http, { use: "rpc" });
+          const socket = yield* serverAuth.authenticateWebSocketUpgrade(
+            {
+              method: "GET",
+              url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+              cookies: {},
+              headers: {},
+            } as never,
+            "rpc",
+          );
+          return { http: http.scopes, state: state.permissions, socket: socket.scopes };
+        });
+
+        const member = yield* scopesOf(alice);
+        expect(member.http).not.toContain(AuthDiagnosticsReadScope);
+        expect(member.state).not.toContain(AuthDiagnosticsReadScope);
+        expect(member.socket).not.toContain(AuthDiagnosticsReadScope);
+        expect(member.http).toContain("orchestration:read");
+        for (const admin of [bob, teamState.ownerId]) {
+          const scopes = yield* scopesOf(admin);
+          expect(scopes.http).toContain(AuthDiagnosticsReadScope);
+          expect(scopes.state).toContain(AuthDiagnosticsReadScope);
+          expect(scopes.socket).toContain(AuthDiagnosticsReadScope);
+        }
+      }).pipe(Effect.provide(layerEnvironmentAuth({ cloudOnly: true }))),
     );
 
     it.effect("prefers a bearer token over a stale legacy cookie", () =>

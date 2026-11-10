@@ -1,6 +1,7 @@
 import {
   AuthAccessTokenType,
   AuthAccessWriteScope,
+  AuthDiagnosticsReadScope,
   AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
   type AuthAccessTokenResult,
@@ -795,6 +796,22 @@ export const make = Effect.gen(function* () {
     return memberId;
   });
 
+  // On a cloud-only server, traces and process lists name every member's threads and machines
+  // (11 §4), so only an admin keeps `diagnostics:read`. Narrowed here, so a role change applies
+  // to tokens already issued.
+  const effectiveScopes = (
+    memberId: MemberId,
+    scopes: ReadonlyArray<AuthEnvironmentScope>,
+  ): Effect.Effect<ReadonlyArray<AuthEnvironmentScope>> =>
+    !config.cloudOnly || !scopes.includes(AuthDiagnosticsReadScope)
+      ? Effect.succeed(scopes)
+      : Effect.map(Ref.get(teamState.members), (members) => {
+          const member = members.get(memberId);
+          return member?.role === "admin" || member?.isOwner === true
+            ? scopes
+            : scopes.filter((scope) => scope !== AuthDiagnosticsReadScope);
+        });
+
   const authenticateToken = (
     token: string,
   ): Effect.Effect<
@@ -814,19 +831,20 @@ export const make = Effect.gen(function* () {
       mapSessionVerificationErrors,
       Effect.flatMap(rejectMcpClientAudience),
       Effect.flatMap((session) =>
-        resolveMember(session.memberId).pipe(
-          Effect.map((memberId) => ({
+        Effect.gen(function* () {
+          const memberId = yield* resolveMember(session.memberId);
+          return {
             sessionId: session.sessionId,
             subject: session.subject,
             memberId,
             method: session.method,
-            scopes: session.scopes,
+            scopes: yield* effectiveScopes(memberId, session.scopes),
             ...(session.proofKeyThumbprint
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
             ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-          })),
-        ),
+          };
+        }),
       ),
     );
 
@@ -1398,12 +1416,13 @@ export const make = Effect.gen(function* () {
               Effect.provideService(Digest.Digest, digest),
             );
           }
+          const memberId = yield* resolveMember(session.memberId);
           return {
             sessionId: session.sessionId,
             subject: session.subject,
-            memberId: yield* resolveMember(session.memberId),
+            memberId,
             method: session.method,
-            scopes: session.scopes,
+            scopes: yield* effectiveScopes(memberId, session.scopes),
             ...(session.proofKeyThumbprint
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
