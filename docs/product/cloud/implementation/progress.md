@@ -47,8 +47,17 @@ Release `0.1.7-pair.6` (V6) is published and on the VM; see
 [G4 step 1 on real hardware](#g4-step-1-on-real-hardware-2026-11-10-pair-cloud-pass-release-v6).
 
 **M5, specs written 2026-11-10:** [m5-byoc.md](./m5-byoc.md) (b4dad95d5), Google Cloud first and
-AWS second (maintainer, 2026-11-10), with every open question answered as proposed. No row built. Then a release with M4 and the M4 integrated pass (G4
-step 1).
+AWS second (maintainer, 2026-11-10), with every open question answered as proposed.
+
+**M5 slice, started 2026-11-10 (maintainer's brief):** build only as far as "one Compute Engine VM
+per cloud thread, and a real agent turn runs on it", then stop. Rows: 5.5 (GCP), 5.19, 5.11 and
+5.7 (GCP) without its `vm-provision` CI job, release gating and docs, split as 5.7a (guest files,
+provision tree, release archive, the base image state machine) and 5.7b (the driver builds its
+base). 5.8 and 5.13 are left out: 5.11 writes no proxy or CA fields and there are no driver
+metrics. The pass runs in project `vm-provider-dev` (the maintainer's choice: about 30 instances
+against about 770 in `vm-provider`), on a clone of `pair-cloud-pass`, with the project's default
+compute service account, since the maintainer is Editor and cannot bind a custom role. Landed:
+5.5 (8ceeb1d83).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2349,6 +2358,26 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   and fails the build at `verify`.
 - `mergeSandboxPatch` (`packages/shared/src/serverSettings.ts`) dropped `teamImage`, so Keep
   succeeded builds never saved.
+
+## 5.5 (GCP) gce driver settings (landed 8ceeb1d83)
+
+- `ComputeDriverKind` is `docker | gce`; `SANDBOX_VM_DRIVER_KINDS` (`gce`) is read by the web
+  page's limits row. `GceSandboxDriver` is the spec's struct, with no credential key and an id
+  checked against the Compute Engine label charset.
+- `RunnerEndpoint.planFor`, `routeFor` and `dialsOverTcp` take any driver. `chooseRunnerRoute`
+  takes `dockerHost: DockerHost | null`, null meaning a VM driver: it uses the driver's runner URL
+  or fails `runner-url-required` (reworded). 5.19 adds the listener's address before that failure.
+- `ComputeDriverRegistry` picks a factory through a helper generic in the kind; indexing by the
+  union `kind` stopped type-checking.
+- Web: **Add driver** (Docker, Google Cloud), `GceDriverFormRow`, `gceDriverFormError`,
+  `gceDriverFromForm` (keeps keys the form doesn't show), `nextDriverId(drivers, kind)`.
+- A member-view test checks by name that `project`, `zones`, `subnetwork`, `kmsKey`, `baseImage`,
+  `networkTags` and `runnerUrl` never reach a member.
+- Deviations: one existing test stub narrowed by `kind` (`SandboxBootstrapSource.test.ts`); the
+  team-image hint reads "Add a driver under Compute first."; the `docs/user/cloud.md` sentence has
+  no link, since 5.18 is not built.
+- Owed: the `test-t3-app` capture of the form. 5.5 (AWS) needs a `DRIVER_KIND_LABELS` entry and a
+  `driverDescription` case.
 
 ## Open follow-ups and risks
 
