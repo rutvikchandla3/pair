@@ -148,6 +148,7 @@ import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as MachineBrowser from "./sandbox/browser/MachineBrowser.ts";
 import * as PreviewMachineLive from "./sandbox/browser/PreviewMachineLive.ts";
+import * as PreviewMachine from "./preview/PreviewMachine.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
@@ -647,15 +648,28 @@ const layerMirrorSync = MirrorSyncWorker.layer.pipe(
 );
 
 // A machine's Chrome serves its Browser tabs; no other server runs one. One instance, by
-// memoization, for the runtime core and the sleep hooks.
+// memoization of `MachineBrowser.layer`, for the sleep hooks and the machine services.
 const layerMachineBrowser = Layer.unwrap(
   Effect.gen(function* () {
     const { cloudOnly } = yield* ServerConfig.ServerConfig;
-    return cloudOnly
-      ? MachineBrowser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))
-      : Layer.empty;
+    return cloudOnly ? MachineBrowser.layer : Layer.empty;
   }),
 );
+
+/**
+ * Where each thread's Browser tabs run, with the runtime services: routes read it as they build
+ * and requests as they run. A route layer's own provisions never reach the requests it serves.
+ */
+export const layerMachineServices = Layer.unwrap(
+  Effect.gen(function* () {
+    const { cloudOnly } = yield* ServerConfig.ServerConfig;
+    return cloudOnly
+      ? PreviewMachineLive.layer.pipe(Layer.provideMerge(MachineBrowser.layer))
+      : PreviewMachine.layerNone;
+  }),
+);
+
+const layerSandboxWake = SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer));
 
 // SandboxEffects reads the hooks at construction; the terminal manager comes from below.
 const layerSandboxSleepHooks = Layer.effect(
@@ -670,7 +684,7 @@ const layerSandboxSleepHooks = Layer.effect(
       }),
     };
   }),
-).pipe(Layer.provide(layerMachineBrowser));
+).pipe(Layer.provide(layerMachineBrowser), Layer.provide(ProjectionStoreV2.layer));
 
 const layerPairCloudProjects = PairCloudProjects.layer.pipe(
   Layer.provide(RuntimeLayer.layerProjectService),
@@ -797,9 +811,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   MemberProviderAccounts.layer,
   TeamRemoval.layer,
-  SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  layerSandboxWake,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
-  layerMachineBrowser,
+  layerMachineServices.pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, layerSandboxWake))),
   // Above the orchestration layers: a git credential's audit event is dispatched through them.
   // Forwards also reach the broker, the hub below and the MCP registry provided at the root.
   RunnerForwards.layer.pipe(
@@ -1008,8 +1022,6 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
     ),
   ),
-  // A cloud-only server's tabs open in each thread's machine; read by the browser and `preview.open`.
-  Layer.provide(PreviewMachineLive.layer),
   Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
   Layer.provide(

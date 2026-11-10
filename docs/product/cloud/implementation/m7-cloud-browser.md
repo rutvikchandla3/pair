@@ -342,12 +342,13 @@ starts a GPU process, and dbus errors on stderr are noise, not a failed launch. 
 
 - **Needs:** 7.3. **Unblocks:** 7.6, 7.7.
 - **Files:**
-  - New `apps/server/src/preview/PreviewMachine.ts`: a `Context.Reference` with a no-op default.
+  - New `apps/server/src/preview/PreviewMachine.ts`: a service, with `layerNone` for every other
+    server (7.8: a reference's default hid that requests never saw the live one).
     - `forThread(threadId): Effect<Option<{ sandboxId, endpoint: Effect<string, …>, host: Effect<WorkspaceHost, …> }>>`.
       The default answers `none`, so a local server's behaviour is bit for bit today's. `host` is
       an effect, read per tab, since a machine that slept has none until it wakes.
     - The sandbox layer's implementation (`sandbox/browser/PreviewMachineLive.ts`, provided in
-      `server.ts` only when `MachineBrowser` exists) reads the thread shell's `sandboxId` from the
+      `server.ts` with the runtime services on a cloud-only server) reads the thread shell's `sandboxId` from the
       projection (README P6: callers needing sandbox state read the projection) and returns
       `MachineBrowser.endpoint` and the sandbox's workspace host.
   - `apps/server/src/preview/Manager.ts` (`open`, 179–183): replace the unconditional refusal.

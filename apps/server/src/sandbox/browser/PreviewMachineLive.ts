@@ -25,7 +25,7 @@ export const make = Effect.gen(function* () {
   const browser = yield* MachineBrowser;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const hub = yield* RunnerHub;
-  const wake = yield* Effect.serviceOption(SandboxWake);
+  const wake = yield* SandboxWake;
 
   /**
    * Wakes a sleeping machine and waits for its runner's hello: 2 minutes, or longer while the
@@ -36,7 +36,7 @@ export const make = Effect.gen(function* () {
     sandboxId: SandboxId,
   ) {
     const unavailable = () => new MachineBrowserError({ sandboxId, reason: "machine-unavailable" });
-    if (Option.isSome(wake)) yield* wake.value.wake({ threadId });
+    yield* wake.wake({ threadId });
     const readRecord = projections.getSandbox(sandboxId).pipe(Effect.orElseSucceed(() => null));
     const record = yield* readRecord;
     if (record === null) return yield* unavailable();
@@ -77,15 +77,4 @@ export const make = Effect.gen(function* () {
   return { forThread };
 });
 
-/** Empty without a `MachineBrowser`, which only a cloud-only server builds. */
-export const layer = Layer.unwrap(
-  Effect.map(Effect.serviceOption(MachineBrowser), (browser) =>
-    Option.isSome(browser)
-      ? Layer.effect(PreviewMachine, make).pipe(
-          Layer.provide(
-            Layer.merge(ProjectionStore.layer, Layer.succeed(MachineBrowser, browser.value)),
-          ),
-        )
-      : Layer.empty,
-  ),
-);
+export const layer = Layer.effect(PreviewMachine, make);

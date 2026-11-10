@@ -3020,7 +3020,9 @@ const make = Effect.gen(function* () {
   });
 
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
+  // A cloud-only server's tabs run on its machines, never in this host's browser.
   if (
+    !config.cloudOnly &&
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)
   ) {

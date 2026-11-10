@@ -1,6 +1,8 @@
 import type { PreviewMachineBrowserReason, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import { constant } from "effect/Function";
+import * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
 
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
@@ -29,11 +31,15 @@ export interface PreviewMachineTarget {
 }
 
 /**
- * The machine a thread's browser tabs run on (07 §5, 7.4). Only a cloud-only server provides one;
- * the default answers none, so every other server keeps its own browser.
+ * The machine a thread's browser tabs run on (07 §5, 7.4). A service, not a reference with a
+ * default: a reader the server forgot to provide it to fails to compile instead of opening nothing.
  */
-export class PreviewMachine extends Context.Reference<{
-  readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<PreviewMachineTarget>>;
-}>("t3/preview/PreviewMachine", {
-  defaultValue: () => ({ forThread: () => Effect.succeedNone }),
-}) {}
+export class PreviewMachine extends Context.Service<
+  PreviewMachine,
+  {
+    readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<PreviewMachineTarget>>;
+  }
+>()("t3/preview/PreviewMachine") {}
+
+/** Every server but a cloud-only one: no thread has a machine, so tabs use the server's browser. */
+export const layerNone = Layer.succeed(PreviewMachine, { forThread: constant(Effect.succeedNone) });

@@ -10,7 +10,7 @@ import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "./Manager.ts";
-import { PreviewMachine } from "./PreviewMachine.ts";
+import { layerNone, PreviewMachine } from "./PreviewMachine.ts";
 
 const DRAIN_LIMIT = 100;
 
@@ -39,6 +39,7 @@ const layer = PreviewManager.layer.pipe(
   Layer.provide(layerConfig),
   Layer.provide(NodeCrypto.layer),
   Layer.provide(NodeServices.layer),
+  Layer.merge(layerNone),
 );
 
 it.layer(layer)("PreviewManager", (it) => {

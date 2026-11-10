@@ -22,6 +22,9 @@ import {
   AcpRegistryOperationError,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
+  PreviewError,
+  PreviewOpenInput,
+  PreviewSessionSnapshot,
   type OrchestrationProjectShell,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -34,6 +37,7 @@ import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -78,12 +82,18 @@ import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
 import * as MachinePorts from "./sandbox/browser/MachinePorts.ts";
+import * as ComputeDriverRegistry from "./sandbox/compute/ComputeDriverRegistry.ts";
+import { MachineBrowser } from "./sandbox/browser/MachineBrowser.ts";
+import { RunnerHub } from "./sandbox/runnerHub/RunnerHub.ts";
+import { layerMachineServices } from "./server.ts";
+import * as WorkspaceHostTesting from "./workspaceHost/WorkspaceHostTesting.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewMachine from "./preview/PreviewMachine.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as PairCloudProjects from "./project/PairCloudProjects.ts";
@@ -756,6 +766,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
+  PreviewMachine.layerNone,
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
   Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
@@ -1554,15 +1565,20 @@ it.effect("thread resume at its own high-water below the pruned boundary skips t
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
-it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
+const layerCloudOnlyConfig = Layer.effect(
+  ServerConfigModule.ServerConfig,
+  Effect.map(ServerConfigModule.ServerConfig, (config) => ({ ...config, cloudOnly: true })),
+);
+
+/** One request through a cloud-only server's WebSocket handlers, above `services`. */
+const callCloudOnly = <R extends Rpc.Any>(
+  rpc: R,
+  payload: Rpc.Payload<R>,
+  services: Layer.Layer<never, never, ServerConfigModule.ServerConfig> = Layer.empty,
+) =>
   Effect.gen(function* () {
     const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
-    const ListSessions = Rpc.make(WS_METHODS.serverListAcpRegistrySessions, {
-      payload: AcpRegistryListSessionsInput,
-      success: AcpRegistryListSessionsResult,
-      error: AcpRegistryOperationError,
-    });
-    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(ListSessions), {
+    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(rpc), {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
@@ -1570,8 +1586,8 @@ it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
       Effect.provide(
         layerWsRpc(
           {
-            sessionId: AuthSessionId.make("acp-test"),
-            subject: "acp-test",
+            sessionId: AuthSessionId.make("cloud-only-test"),
+            subject: "cloud-only-test",
             memberId: MemberId.make("member-test"),
             method: "browser-session-cookie",
             scopes: [],
@@ -1596,36 +1612,21 @@ it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
               Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+              services,
             ),
           ),
-          Layer.provide(
-            Layer.effect(
-              ServerConfigModule.ServerConfig,
-              Effect.map(ServerConfigModule.ServerConfig, (config) => ({
-                ...config,
-                cloudOnly: true,
-              })),
-            ),
-          ),
+          Layer.provide(layerCloudOnlyConfig),
         ),
       ),
     );
     yield* server.write(0, {
       _tag: "Request",
-      id: RpcMessage.RequestId("list"),
-      tag: WS_METHODS.serverListAcpRegistrySessions,
-      payload: {
-        instanceId: ProviderInstanceId.make("acp"),
-        projectId: ProjectId.make("project:acp"),
-      },
+      id: RpcMessage.RequestId("cloud-only"),
+      tag: rpc._tag as Rpc.Tag<R>,
+      payload,
       headers: Headers.empty,
     });
-    const exit = yield* Queue.take(exits);
-    if (!Exit.isFailure(exit)) return yield* Effect.die("Expected a refusal");
-    assert.equal(
-      (Cause.squash(exit.cause) as AcpRegistryOperationError).message,
-      CloudOnly.CLOUD_ONLY_MESSAGE,
-    );
+    return yield* Queue.take(exits);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1635,5 +1636,95 @@ it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
       ),
     ),
     Effect.scoped,
-  ),
+  );
+
+it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
+  Effect.gen(function* () {
+    const ListSessions = Rpc.make(WS_METHODS.serverListAcpRegistrySessions, {
+      payload: AcpRegistryListSessionsInput,
+      success: AcpRegistryListSessionsResult,
+      error: AcpRegistryOperationError,
+    });
+    const exit = yield* callCloudOnly(ListSessions, {
+      instanceId: ProviderInstanceId.make("acp"),
+      projectId: ProjectId.make("project:acp"),
+    });
+    if (!Exit.isFailure(exit)) return yield* Effect.die("Expected a refusal");
+    assert.equal(
+      (Cause.squash(exit.cause) as AcpRegistryOperationError).message,
+      CloudOnly.CLOUD_ONLY_MESSAGE,
+    );
+  }),
+);
+
+const machineSandboxId = SandboxId.make("sbx_dddddddddddddddddddd");
+/** What the machine services read from the runtime below them, as on the real server. */
+const layerMachineServiceInputs = (wakes: Array<ThreadId> = []) =>
+  Layer.mergeAll(
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadShell: () =>
+        Effect.succeed({ sandboxId: machineSandboxId } as OrchestrationV2ThreadShell),
+      getSandbox: () => Effect.succeed(null),
+    }),
+    Layer.mock(ComputeDriverRegistry.ComputeDriverRegistry)({}),
+    Layer.mock(RunnerHub)({}),
+    WorkspaceHostTesting.layerFromContext,
+    Layer.mock(SandboxWake)({
+      wake: ({ threadId }) => Effect.sync(() => void wakes.push(threadId)),
+    }),
+  );
+
+it.effect("a cloud-only server opens a thread's Browser tab on its machine", () =>
+  Effect.gen(function* () {
+    const PreviewOpen = Rpc.make(WS_METHODS.previewOpen, {
+      payload: PreviewOpenInput,
+      success: PreviewSessionSnapshot,
+      error: PreviewError,
+    });
+    // What the server provides above every request, as server.ts composes it.
+    const exit = yield* callCloudOnly(
+      PreviewOpen,
+      { threadId: ThreadId.make("thread:machine"), runtime: "server" },
+      Layer.mergeAll(PreviewManager.layer, layerMachineServices).pipe(
+        Layer.provide(Layer.merge(layerMachineServiceInputs(), NodeCrypto.layer)),
+      ),
+    );
+    if (!Exit.isSuccess(exit)) return yield* Effect.die(Cause.squash(exit.cause));
+    assert.equal((exit.value as PreviewSessionSnapshot).runtime, "server");
+  }),
+);
+
+it.effect.each([true, false])(
+  "the machine services are live exactly when the server is cloud-only (%s)",
+  (cloudOnly) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:machine");
+      const wakes: Array<ThreadId> = [];
+      const { machine, browser } = yield* Effect.gen(function* () {
+        return {
+          machine: yield* PreviewMachine.PreviewMachine,
+          // Read optionally by the sleep hooks and, per connection, by MachinePorts.
+          browser: yield* Effect.serviceOption(MachineBrowser),
+        };
+      }).pipe(
+        Effect.provide(
+          layerMachineServices.pipe(
+            Layer.provide(layerMachineServiceInputs(wakes)),
+            Layer.provide(cloudOnly ? layerCloudOnlyConfig : Layer.empty),
+            Layer.provide(
+              ServerConfigModule.layerTest(process.cwd(), { prefix: "t3-machine-services-" }),
+            ),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      );
+      const target = yield* machine.forThread(threadId);
+      assert.equal(Option.isSome(browser), cloudOnly);
+      if (!cloudOnly) return assert.isTrue(Option.isNone(target));
+      if (Option.isNone(target)) return yield* Effect.die("Expected the thread's machine");
+      assert.equal(target.value.sandboxId, machineSandboxId);
+      // Opening a tab wakes the machine; this one has no record, so it never comes up.
+      assert.equal((yield* Effect.flip(target.value.host)).reason, "machine-unavailable");
+      assert.deepEqual(wakes, [threadId]);
+    }).pipe(Effect.scoped),
 );

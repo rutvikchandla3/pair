@@ -43,7 +43,7 @@ export class PreviewManager extends Context.Service<
         /** Runs before the `opened` event publishes, so subscribers find state keyed by the tab. */
         readonly beforePublish?: (snapshot: PreviewSessionSnapshot) => void;
       },
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError, PreviewMachine>;
     readonly reportStatus: (
       input: PreviewReportStatusInput & { readonly serverControlled?: boolean },
     ) => Effect.Effect<void, PreviewError>;
@@ -178,7 +178,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     );
   };
 
-  // Read per call: the machine reference is provided above this service, where callers run.
+  // Read per call: the machine lookup is built above this service, where its callers run.
   const opensOnMachine = Effect.fnUntraced(function* (input: PreviewOpenInput) {
     if (input.runtime !== undefined && input.runtime !== "server") return false;
     const machine = yield* PreviewMachine;

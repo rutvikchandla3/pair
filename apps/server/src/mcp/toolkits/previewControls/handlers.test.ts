@@ -20,6 +20,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as PreviewMachine from "../../../preview/PreviewMachine.ts";
 import * as PreviewControlsHandlers from "./handlers.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
 
@@ -61,7 +62,9 @@ it.effect.each([
           ),
         ),
       );
-      const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
+      const tab = yield* manager
+        .open({ threadId, url: "http://localhost:3000" })
+        .pipe(Effect.provide(PreviewMachine.layerNone));
       const layerDependencies = Layer.mergeAll(
         PreviewAutomationBroker.layer.pipe(
           Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),

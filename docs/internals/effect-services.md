@@ -121,6 +121,11 @@ runtimes. Don't create a managed or Atom runtime per feature to hand it out. Whe
 fail and callers need a fallback, keep the failure typed: an error on the operation or an explicit
 optional-service layer. Don't route around the layer with an imperative runtime.
 
+A layer given to the HTTP routes with `Layer.provide` reaches only their construction: requests run
+in the context `HttpRouter.serve` was built in. Anything a request reads belongs with the runtime
+services in `server.ts`. Prefer a service to a `Context.Reference` with a default there, so a missing
+provision fails to compile instead of silently answering the default.
+
 ## Errors
 
 - **Attributes.** Failures are `Schema.TaggedError` classes with structured attributes: the

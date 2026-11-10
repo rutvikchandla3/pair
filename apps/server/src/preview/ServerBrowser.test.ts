@@ -40,7 +40,7 @@ import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
-import { PreviewMachine } from "./PreviewMachine.ts";
+import { layerNone, PreviewMachine } from "./PreviewMachine.ts";
 import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
@@ -351,6 +351,7 @@ const asSession = (providerSessionId: string) => ({
   thread: { ...testThread, providerSessionId },
 });
 const dependencies = Layer.mergeAll(
+  layerNone,
   Broker.layer,
   Manager.layer,
   Layer.succeed(ServerEnvironment.ServerEnvironment, {
