@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the MCP proxy is a node:http server over forwarded bytes, and the broker is a node:net socket.
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
-import * as NodeStream from "node:stream";
 
 import type { SandboxId } from "@t3tools/contracts";
 import {
@@ -13,8 +12,6 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -31,6 +28,7 @@ import {
 import { GitCredentialService } from "../credentials/GitCredentialService.ts";
 import type { RunnerTcpConnection } from "./RunnerConnection.ts";
 import { RunnerHub, type RunnerUnavailableError } from "./RunnerHub.ts";
+import { toDuplex } from "./tcpDuplex.ts";
 
 const GIT_REQUEST_BYTES = 8 * 1024;
 const LINE_IDLE_MS = 5_000;
@@ -112,55 +110,6 @@ const withoutHopByHop = (headers: NodeHttp.IncomingHttpHeaders) => {
     if (value !== undefined && !HOP_BY_HOP.has(name)) kept[name] = value;
   }
   return kept;
-};
-
-/** A Node socket over a forwarded connection, for an `http.Server` that never listens. */
-const toDuplex = (
-  connection: RunnerTcpConnection,
-  runFork: <A, E>(
-    effect: Effect.Effect<A, E>,
-  ) => {
-    readonly addObserver: (observer: (exit: Exit.Exit<A, E>) => void) => unknown;
-  },
-  closed: Deferred.Deferred<void>,
-) => {
-  const wanted = Latch.makeUnsafe(true);
-  const settle =
-    (callback: (error?: Error | null) => void) => (exit: Exit.Exit<unknown, unknown>) =>
-      callback(Exit.isSuccess(exit) ? null : new Error("the forwarded connection failed"));
-  const duplex = new NodeStream.Duplex({
-    read: () => wanted.openUnsafe(),
-    write: (chunk: Buffer, _encoding, callback) => {
-      runFork(connection.write(chunk)).addObserver(settle(callback));
-    },
-    final: (callback) => {
-      runFork(connection.close).addObserver(settle(callback));
-    },
-    destroy: (error, callback) => {
-      Deferred.doneUnsafe(closed, Exit.void);
-      callback(error);
-    },
-  });
-  // node:http sets socket timeouts and options; the runner's socket owns them.
-  Object.assign(duplex, {
-    setTimeout: () => duplex,
-    setNoDelay: () => duplex,
-    setKeepAlive: () => duplex,
-  });
-  const pump = connection.read.pipe(
-    Stream.runForEach((chunk) =>
-      Effect.suspend(() => {
-        if (duplex.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))) {
-          return Effect.void;
-        }
-        wanted.closeUnsafe();
-        return wanted.await;
-      }),
-    ),
-    Effect.andThen(Effect.sync(() => duplex.push(null))),
-    Effect.catchCause(() => Effect.sync(() => duplex.destroy())),
-  );
-  return { duplex, pump };
 };
 
 export class RunnerForwards extends Context.Service<

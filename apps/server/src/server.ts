@@ -146,6 +146,7 @@ import * as SandboxProvisionTree from "./sandbox/image/SandboxProvisionTree.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
+import * as MachineBrowser from "./sandbox/browser/MachineBrowser.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
@@ -784,6 +785,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   TeamRemoval.layer,
   SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  // A machine's Chrome serves its Browser tabs; no other server runs one.
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const { cloudOnly } = yield* ServerConfig.ServerConfig;
+      return cloudOnly
+        ? MachineBrowser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))
+        : Layer.empty;
+    }),
+  ),
   // Above the orchestration layers: a git credential's audit event is dispatched through them.
   // Forwards also reach the broker, the hub below and the MCP registry provided at the root.
   RunnerForwards.layer.pipe(

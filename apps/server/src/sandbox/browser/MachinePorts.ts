@@ -3,6 +3,7 @@ import {
   type DiscoveredLocalServerList,
   PreviewStopLocalServerError,
   type PreviewStopLocalServerInput,
+  type SandboxId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -21,6 +22,7 @@ import { threadWorkspaceRoot } from "../../project/threadWorkspaceRoot.ts";
 import type { WorkspaceHost } from "../../workspaceHost/WorkspaceHost.ts";
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import { RunnerHub } from "../runnerHub/RunnerHub.ts";
+import { MachineBrowser } from "./MachineBrowser.ts";
 
 /**
  * The servers listening in a thread's machine, from the runner's own scan (07 §5, 7.5). Only a
@@ -61,6 +63,11 @@ export const make = Effect.fn("MachinePorts.make")(function* (
   const hub = yield* RunnerHub;
   const hosts = yield* WorkspaceHosts.WorkspaceHosts;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  // Only a cloud-only server runs machine browsers.
+  const browser = yield* Effect.serviceOption(MachineBrowser);
+  // The machine's Chrome is not a member's server: never listed, never stopped from here.
+  const browserPid = (sandboxId: SandboxId) =>
+    Option.isSome(browser) ? browser.value.processId(sandboxId) : Effect.undefined;
 
   const machineOf = Effect.fn("MachinePorts.machineOf")(function* (threadId: ThreadId) {
     const root = yield* workspaceRoot(threadId);
@@ -91,10 +98,14 @@ export const make = Effect.fn("MachinePorts.make")(function* (
     scannedAt: DateTime.formatIso(now),
   }));
 
-  const listenOnBoot = (root: string, threadId: ThreadId, configuredUrls: ReadonlyArray<string>) =>
+  const listenOnBoot = (
+    machine: { readonly root: string; readonly sandboxId: SandboxId },
+    threadId: ThreadId,
+    configuredUrls: ReadonlyArray<string>,
+  ) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const host = yield* hosts.forPath(root);
+        const host = yield* hosts.forPath(machine.root);
         if (host.invoke === undefined) return Stream.fromEffect(emptyList);
         const { runnerPid } = yield* processTable(host);
         // The runner leaves thread fields empty; a listener nobody claimed is the thread's.
@@ -104,12 +115,17 @@ export const make = Effect.fn("MachinePorts.make")(function* (
             : server;
         return host.invoke.portListeners(configuredUrls).pipe(
           Stream.mapEffect((servers) =>
-            Effect.map(DateTime.now, (now) => ({
-              // The runner's own listeners (its MCP forward) are not the agent's servers.
-              servers: servers.filter((server) => server.pid !== runnerPid).map(own),
-              scannedAt: DateTime.formatIso(now),
-              configuredUrlProbing: true as const,
-            })),
+            Effect.gen(function* () {
+              const chromePid = yield* browserPid(machine.sandboxId);
+              return {
+                // The runner's own listeners (its MCP forward) are not the agent's servers.
+                servers: servers
+                  .filter((server) => server.pid !== runnerPid && server.pid !== chromePid)
+                  .map(own),
+                scannedAt: DateTime.formatIso(yield* DateTime.now),
+                configuredUrlProbing: true as const,
+              };
+            }),
           ),
         );
       }),
@@ -132,7 +148,7 @@ export const make = Effect.fn("MachinePorts.make")(function* (
           Stream.filter((status) => status._tag !== "reconnecting"),
           Stream.switchMap((status) =>
             status._tag === "connected"
-              ? listenOnBoot(machine.root, threadId, configuredUrls)
+              ? listenOnBoot(machine, threadId, configuredUrls)
               : Stream.fromEffect(emptyList),
           ),
         );
@@ -144,6 +160,7 @@ export const make = Effect.fn("MachinePorts.make")(function* (
     if (machine === undefined) return yield* notFound();
     const host = yield* hosts.forPath(machine.root).pipe(Effect.mapError(notFound));
     if (host.invoke === undefined) return yield* notFound();
+    if (input.pid === (yield* browserPid(machine.sandboxId))) return yield* notFound();
     // The pid comes from a client: only a server the machine's own scan lists now is signaled.
     const listing = yield* Stream.runHead(host.invoke.portListeners([])).pipe(
       Effect.mapError(signalFailed),

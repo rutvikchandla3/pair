@@ -107,7 +107,7 @@ Each takes its proposal unless a maintainer says otherwise.
 - **Capability.** `machineBrowser: true` beside `serverBrowser: true` in the environment
   descriptor's capabilities.
 - **Errors.** `MachineBrowserError` with `reason: "not-installed" | "machine-unavailable" |
-  "launch-failed"`. `CloudOnlyRefusedError { operation: "preview.open" }` stays for a thread with
+  "runner-outdated" | "launch-failed"`. `CloudOnlyRefusedError { operation: "preview.open" }` stays for a thread with
   no machine and for a non-`server` runtime.
 
 ## PR specs
@@ -283,6 +283,17 @@ loopback that Playwright can attach to. Chrome starts on first use and stops wit
       Chrome that exits by itself drops the cache entry, so the next `endpoint` starts another.
   - `apps/server/src/server.ts`: one layer, built only when the server is cloud-only.
   - [07 §5](../07-access-and-data.md#5-previews-and-ports-m7): no change; it already describes this.
+- **As built:** `MachineBrowser` also has `processId(sandboxId)`, Chrome's pid while one runs:
+  `MachinePorts` (7.5) drops that pid's listeners from `listen` and refuses it in `stop` as
+  `not-found`. A boot is `hub.connection(sandboxId)` and its `ended`, not a `hub.boots`
+  subscription, so a runner that connected before the service started is covered too. The bridge
+  reads each socket's request line and passes only `GET /devtools/browser/<guid>`: Chrome's own
+  `/json` pages print the guid, so a plain byte pipe would hand it to any local process. Before
+  handing out the endpoint it dials Chrome once through the runner, so a runner older than
+  `tcp.connect` fails as the added `runner-outdated` ("Stop the machine and start it again")
+  rather than at the first tab. Chrome's environment is the host's base without its `GIT_*`
+  identity; a driver kind that cannot be read keeps Chrome's sandbox on. Its stderr is logged at
+  debug, except the DevTools line. `toDuplex` moved to `sandbox/runnerHub/tcpDuplex.ts`.
 - **Types and services:** `MachineBrowser`, `MachineBrowserError`.
 - **Commands and events:** none. Chrome is not part of the sandbox record: it is a process the
   server started, like a terminal. **Migrations:** none.
@@ -421,8 +432,8 @@ stops one. This is 02 §6 PR 8 and 07 §10 #26, without a `LayerMap`: the runner
       the agent's). The runner's own listeners (its MCP forward) are dropped. **As built:** the
       subscription follows `RunnerHub.status`: an empty list while the machine has no runner,
       and the new boot's listing after a wake, so one subscription outlives a sleep (6.13).
-    - Chrome's debugging listener: not dropped here, since `MachineBrowser` did not exist when
-      this landed. 7.3 or 7.4 drops its port in `MachinePorts` and refuses it in `stop`.
+    - Chrome's debugging listener is dropped by its pid (`MachineBrowser.processId`, 7.3) and
+      refused in `stop`.
     - `preview.stopLocalServer` on cloud-only: with a `threadId`, check the pid and port are in
       a fresh scan by that machine's runner, then read the machine's process table (`ps`, with
       the runner's pid as the shell's `$PPID`) and signal `stoppableProcessGroup`'s group with

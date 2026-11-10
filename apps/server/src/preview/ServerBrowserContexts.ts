@@ -29,6 +29,13 @@ interface Options {
   readonly onContextClose?: (context: BrowserContext) => void;
 }
 
+/** Chrome flags every preview browser starts with, on the server or on a machine. */
+export const PREVIEW_BROWSER_ARGS = [
+  "--disable-gpu",
+  "--force-device-scale-factor=2",
+  "--disable-blink-features=AutomationControlled",
+] as const;
+
 const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "macOS",
   linux: "Linux",
@@ -91,11 +98,7 @@ export class ServerBrowserContexts {
     return {
       executable,
       env,
-      args: [
-        "--disable-gpu",
-        "--force-device-scale-factor=2",
-        "--disable-blink-features=AutomationControlled",
-      ],
+      args: [...PREVIEW_BROWSER_ARGS],
       ignoreDefaultArgs: ["--enable-automation"],
       headless: true,
       // Only an explicit operator opt-out disables sandboxing. Launch errors never do.

@@ -25,6 +25,7 @@ import {
 import * as WorkspaceHosts from "../../workspaceHost/WorkspaceHosts.ts";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
 import { RunnerHub, type RunnerConnectionStatus } from "../runnerHub/RunnerHub.ts";
+import { MachineBrowser } from "./MachineBrowser.ts";
 import * as MachinePorts from "./MachinePorts.ts";
 
 const sandboxId = SandboxId.make("sbx_aaaaaaaaaaaaaaaaaaaa");
@@ -59,6 +60,8 @@ const terminalServer = server(3000, 200);
 const agentServer = server(3001, 301);
 const forkServer = server(5173, 400, { agent: { threadId: forkId } });
 const runnerForward = server(41000, RUNNER_PID);
+const CHROME_PID = 700;
+const chromeDebugging = server(40123, CHROME_PID, { processName: "chrome-headless-shell" });
 
 const unused = () => Effect.die("unused");
 
@@ -67,6 +70,9 @@ const setup = Effect.fnUntraced(function* () {
   const signals: Array<readonly [number, NodeJS.Signals]> = [];
   const layer = Layer.mergeAll(
     Layer.mock(RunnerHub)({ status: () => SubscriptionRef.changes(status) }),
+    Layer.mock(MachineBrowser)({
+      processId: (id) => Effect.succeed(id === sandboxId ? CHROME_PID : undefined),
+    }),
     Layer.succeed(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({
@@ -162,9 +168,15 @@ it.effect("lists a machine's servers in order, empty across a sleep, then the ne
     // No runner yet: an empty list, not an error.
     expect((yield* Queue.take(lists)).servers).toEqual([]);
 
-    const first = yield* boot("boot-1", [terminalServer, forkServer, runnerForward]);
+    const first = yield* boot("boot-1", [
+      terminalServer,
+      forkServer,
+      runnerForward,
+      chromeDebugging,
+    ]);
     const snapshot = yield* Queue.take(lists);
-    // The runner's own forward is dropped; an unclaimed listener becomes the thread's.
+    // The runner's own forward and the machine's browser are dropped; an unclaimed listener
+    // becomes the thread's.
     expect(snapshot.servers).toEqual([{ ...terminalServer, agent: { threadId } }, forkServer]);
     yield* SubscriptionRef.set(first.listing, [terminalServer, agentServer]);
     expect(ports(yield* Queue.take(lists))).toEqual([3000, 3001]);
@@ -199,7 +211,9 @@ it.effect("stops only a listed server, by its own group, never the runner or an 
     // Asleep, nothing is listed.
     expect(yield* reason(200, 3000)).toBe("not-found");
 
-    yield* boot("boot-1", [terminalServer, agentServer, runnerForward]);
+    yield* boot("boot-1", [terminalServer, agentServer, runnerForward, chromeDebugging]);
+    // The machine's browser is not a member's server, though the scan lists it.
+    expect(yield* reason(CHROME_PID, 40123)).toBe("not-found");
     // A pid or a port the machine's scan does not list.
     expect(yield* reason(100, 3000)).toBe("not-found");
     expect(yield* reason(200, 3001)).toBe("not-found");
