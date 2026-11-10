@@ -22,6 +22,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -131,6 +132,7 @@ import * as SandboxActivity from "./sandbox/lifecycle/SandboxActivity.ts";
 import * as SandboxRestoreMode from "./sandbox/lifecycle/SandboxRestoreMode.ts";
 import * as SandboxWake from "./sandbox/lifecycle/SandboxWake.ts";
 import * as DockerComputeDriver from "./sandbox/compute/DockerComputeDriver.ts";
+import * as GceComputeDriver from "./sandbox/compute/GceComputeDriver.ts";
 import * as GitCredentialService from "./sandbox/credentials/GitCredentialService.ts";
 import * as SandboxGitHooks from "./sandbox/credentials/SandboxGitHooks.ts";
 import * as GitHubAppInstallationTokens from "./sandbox/credentials/GitHubAppInstallationTokens.ts";
@@ -797,7 +799,18 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       SandboxRestoreMode.layer,
     ),
   ),
-  Layer.provideMerge(ComputeDriverRegistry.layer({ docker: DockerComputeDriver.make })),
+  Layer.provideMerge(
+    // Inference takes one factory's requirements; name both kinds'.
+    ComputeDriverRegistry.layer<
+      Exclude<
+        Effect.Services<ReturnType<typeof DockerComputeDriver.make | typeof GceComputeDriver.make>>,
+        Scope.Scope
+      >
+    >({
+      docker: DockerComputeDriver.make,
+      gce: GceComputeDriver.make,
+    }),
+  ),
   Layer.provideMerge(SandboxBootstrapSource.layer),
   Layer.provideMerge(SandboxCredentialRevocation.layer),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

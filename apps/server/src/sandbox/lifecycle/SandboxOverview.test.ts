@@ -10,6 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ComputeDriverError, type ComputeDriverHealth } from "../compute/ComputeDriver.ts";
 import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import { CheckpointMirror } from "../mirror/CheckpointMirror.ts";
 import * as SandboxOverview from "./SandboxOverview.ts";
@@ -37,6 +38,44 @@ const seed = Effect.fnUntraced(function* (
   `;
 });
 
+/** Reads the overview while the one driver answers its health check with `answer`. */
+const readOverview = Effect.fn("SandboxOverviewTest.read")(function* (
+  answer: (
+    reply: Deferred.Deferred<ComputeDriverHealth, ComputeDriverError>,
+  ) => Effect.Effect<unknown>,
+) {
+  const { driver, calls } = yield* FakeComputeDriver.make(driverId, { defaultRunningCap: 3 });
+  return yield* Effect.gen(function* () {
+    const reading = yield* SandboxOverview.SandboxOverview.use((service) => service.read).pipe(
+      Effect.forkChild,
+    );
+    const health = yield* Queue.take(calls);
+    if (health._tag !== "health") return yield* Effect.die(`Expected health, got ${health._tag}`);
+    yield* answer(health.reply);
+    return yield* Fiber.join(reading);
+  }).pipe(
+    Effect.provide(
+      SandboxOverview.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            FakeComputeDriver.layerRegistry(driver).pipe(
+              Layer.provideMerge(
+                // The admin's cap wins over the driver's default of 3.
+                ServerSettingsService.layerTest({
+                  sandbox: { drivers: [{ ...local, runningCap: 5 }] },
+                }),
+              ),
+            ),
+            ProjectionStore.layer,
+            Layer.mock(CheckpointMirror)({ gitDir: () => "", diskBytes: Effect.succeed(4096) }),
+            SandboxRestoreMode.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("counts machines by state and reads health, caps and the image from the drivers", () =>
   Effect.gen(function* () {
     yield* seed(1, "ready");
@@ -49,39 +88,12 @@ it.effect("counts machines by state and reads health, caps and the image from th
     yield* seed(7, "provisioning");
     yield* seed(8, "destroyed");
 
-    const { driver, calls } = yield* FakeComputeDriver.make(driverId, { defaultRunningCap: 3 });
-    const overview = yield* Effect.gen(function* () {
-      const reading = yield* SandboxOverview.SandboxOverview.use((service) => service.read).pipe(
-        Effect.forkChild,
-      );
-      const health = yield* Queue.take(calls);
-      if (health._tag !== "health") return yield* Effect.die(`Expected health, got ${health._tag}`);
-      yield* Deferred.succeed(health.reply, {
+    const overview = yield* readOverview((reply) =>
+      Deferred.succeed(reply, {
         isolation: "container",
         privateNetworkBlock: { applied: true },
         baseImage: { ref: "ghcr.io/pair/t3-sandbox:1.2.3", digest: "sha256:x", version: "1.2.3" },
-      });
-      return yield* Fiber.join(reading);
-    }).pipe(
-      Effect.provide(
-        SandboxOverview.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              FakeComputeDriver.layerRegistry(driver).pipe(
-                Layer.provideMerge(
-                  // The admin's cap wins over the driver's default of 3.
-                  ServerSettingsService.layerTest({
-                    sandbox: { drivers: [{ ...local, runningCap: 5 }] },
-                  }),
-                ),
-              ),
-              ProjectionStore.layer,
-              Layer.mock(CheckpointMirror)({ gitDir: () => "", diskBytes: Effect.succeed(4096) }),
-              SandboxRestoreMode.layer,
-            ),
-          ),
-        ),
-      ),
+      }),
     );
 
     assert.deepEqual(overview, {
@@ -91,6 +103,38 @@ it.effect("counts machines by state and reads health, caps and the image from th
       baseImage: { ref: "ghcr.io/pair/t3-sandbox:1.2.3", label: "Pair base 1.2.3" },
       mirrorBytes: 4096,
     });
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("reports a virtual machine driver, and an unsupported one's hint", () =>
+  Effect.gen(function* () {
+    const vm = yield* readOverview((reply) =>
+      Deferred.succeed(reply, {
+        isolation: "vm",
+        privateNetworkBlock: { applied: false, reason: "Set by your VPC's firewall rules." },
+        baseImage: null,
+      }),
+    );
+    assert.deepEqual(vm.drivers, [
+      { driverId, reachable: true, isolation: "unknown", vm: true, runningCap: 5 },
+    ]);
+
+    const setupHint = "The Google Cloud driver runs only on a Pair Cloud server.";
+    const unsupported = yield* readOverview((reply) =>
+      Deferred.fail(
+        reply,
+        new ComputeDriverError({
+          driverId,
+          operation: "health",
+          reason: "unsupported",
+          retryable: false,
+          setupHint,
+        }),
+      ),
+    );
+    assert.deepEqual(unsupported.drivers, [
+      { driverId, reachable: false, isolation: "unknown", runningCap: 5, message: setupHint },
+    ]);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

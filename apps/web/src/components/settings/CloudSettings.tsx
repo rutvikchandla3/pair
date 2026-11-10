@@ -18,7 +18,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   drainNoticeLabel,
-  SANDBOX_ISOLATION_LABELS,
+  sandboxIsolationLabel,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
 import { teamImageImageLine } from "@t3tools/client-runtime/team-image-presentation";
@@ -399,9 +399,7 @@ function CloudEnvironmentSettings({
                         ? "Checking…"
                         : (overview.error ?? "Status unknown.")
                       : [
-                          health.reachable
-                            ? SANDBOX_ISOLATION_LABELS[health.isolation]
-                            : "Unreachable",
+                          health.reachable ? sandboxIsolationLabel(health) : "Unreachable",
                           health.message,
                         ]
                           .filter(Boolean)

@@ -371,7 +371,8 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
   - Labels on GCE: `pair-install`, `pair-sandbox`, `pair-generation`, `pair-driver`
     (`toCloudLabels`, `fromCloudLabels`), and `pair-capacity-since` while a wake waits for
     capacity. Tags on EC2 keep the dots.
-  - Images: `pair-<install8>-base-<tree12>` in family `pair-<install8>-base`;
+  - Images: `pair-<install8>-base-<tree12>` in family `pair-<install8>-base`, whose description
+    holds `pair-version=<version>` (the driver reports it as the base image's `version`);
     `pair-<install8>-team-image-<n>` in family `pair-<install8>-team-image`, labelled
     `pair-team-image-build` and `pair-team-image-machine` as Docker's are (DockerComputeDriver.ts
     71–72). The base builder is `pair-<install8>-basebuild-<tree12>`; a zone move's snapshot is
@@ -459,7 +460,9 @@ Troubleshooter and the CI apply):
 What it must not hold: `iam.serviceAccounts.actAs` (no machine gets an identity),
 `compute.subnetworks.useExternalIp` (no machine gets a public address),
 `compute.instances.setServiceAccount`, `compute.firewalls.*`, `compute.networks.*` and anything in
-`iam.*` or `resourcemanager.*` that changes policy.
+`iam.*` or `resourcemanager.*` that changes policy. So 5.12 always sets `subnetwork`: the driver's
+fallback to `global/networks/default` needs `compute.networks.use`, which only a hand-made setup
+grants.
 
 ### Server seams (5.5, 5.19, 5.8, 5.20, 5.17, 5.13, 5.6)
 
@@ -951,12 +954,15 @@ run, and against a real project behind `T3_TEST_GCE=1`.
     token is cached in a `Ref` until 60 seconds before it expires and is held as `Redacted`.
   - New `apps/server/src/sandbox/compute/GceApi.ts`, shaped as `DockerEngineApi.ts` (a typed
     client over `HttpClient`, 3): `makeGceApi(client, metadata, project)` with
-    `instances.{insert,get,list,start,stop,delete,setMetadata,getGuestAttributes,getSerialPortOutput}`,
-    `disks.{get,createSnapshot,insert,delete}`, `snapshots.{get,delete}`,
+    `instances.{insert,get,list,start,stop,delete,setMetadata,setLabels,getGuestAttributes,getSerialPortOutput}`,
+    `disks.createSnapshot`, `snapshots.{get,delete}`,
     `images.{get,getFromFamily,list,insert,delete}`, and `waitZoneOperation`,
-    `waitGlobalOperation` (the API's own `wait` call, which long-polls). `insert` calls pass a
-    `requestId` derived from the resource name, so a resent request is the same request.
-    `mapGceError(operation, response | operationError)` builds `ComputeDriverError`:
+    `waitGlobalOperation` (the API's own `wait` call, which long-polls). Inserts pass no
+    `requestId`: Compute Engine answers a repeated one with the original operation for an hour,
+    so a create that met a stockout would keep failing. A replay looks first instead, and a 409
+    on insert means an earlier attempt landed. `GceApiError` keeps the endpoint template, the
+    status and the error reason, never a cause, since requests hold the bootstrap.
+    `mapGceError(error, { driverId, operation })` builds `ComputeDriverError`:
 
     | Compute Engine says                                         | `reason`          | `retryable` | Also                                                                                                                              |
     | ----------------------------------------------------------- | ----------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -970,10 +976,12 @@ run, and against a real project behind `T3_TEST_GCE=1`.
     | 5xx, a network error, an operation still running after 50 s | `unavailable`     | true        | `retryAfterMs: 5_000` for the last                                                                                                |
 
     `backendStatus` is the HTTP status. No response text goes into the error (ComputeDriver.ts 28).
+    A refused 503 may still have landed, so a create tries the next zone only when a finished
+    operation reports the stockout.
 
   - New `apps/server/src/sandbox/compute/GceComputeDriver.ts`:
     - `make(config: GceSandboxDriver)`, the registry factory, and `makeWithApi(config, installId,
-      api, server: { cloudOnly, region, zones })`, which tests call, as `DockerComputeDriver` has
+      api, server: { cloudOnly, project, zones, guest? })`, which tests call, as `DockerComputeDriver` has
       `make` and `makeWithEngine` (333, 1005–1021).
     - **Off cloud-only, nothing runs.** When `ServerConfig.cloudOnly` is false, `make` returns a
       driver whose every operation and `health` fail with `reason: "unsupported"`, not retryable,
@@ -999,7 +1007,8 @@ run, and against a real project behind `T3_TEST_GCE=1`.
         config.networkTags`;
       - one boot disk, `autoDelete: true`, `initializeParams` with the image, `diskSizeGb`
         (default 50), `pd-balanced`, the labels, and `diskEncryptionKey` when `kmsKey` is set;
-      - one interface on `config.subnetwork` with **no `accessConfigs`**;
+      - one interface on `config.subnetwork`, else on `global/networks/default` (an auto-mode
+        network has a subnet in every region, so the zone picks it), with **no `accessConfigs`**;
       - **`serviceAccounts: []`**;
       - metadata `pair-bootstrap`, `pair-generation`, `block-project-ssh-keys: TRUE`,
         `enable-oslogin: FALSE`, `serial-port-enable: FALSE`, and no `startup-script`;
@@ -1011,25 +1020,30 @@ run, and against a real project behind `T3_TEST_GCE=1`.
       return (a replay must not restart a healthy runner, as DockerComputeDriver.ts 615–619).
       Running with an older one: stop first. Then `setMetadata` (with the fingerprint from the
       read) for the two bootstrap keys, `instances.start`, wait, and remove the
-      `pair-capacity-since` label if it is there.
+      `pair-capacity-since` label if it is there. A replayed create that finds its instance
+      returns it, starting it first only if it is `TERMINATED`.
     - A start that fails `capacity` writes the label `pair-capacity-since=<epoch seconds>` if it
       is absent, and fails with `retryAfterMs: 60_000`, so the outbox tries again (2.4). A start
       that fails `capacity` when that label is at least 3 minutes old (the outbox's fourth
       attempt) moves the instance to the next configured zone instead: snapshot the disk as
-      `<instance>-move`, delete the instance, insert it in the next zone from the snapshot with
+      `<instance>-move` (labelled with the instance's labels, `pair-move-from` and
+      `pair-machine-type`, so the insert needs nothing else), delete the instance, insert it in the next zone from the snapshot with
       the same name, labels and metadata, delete the snapshot. Each step looks before it acts, and
       an instance that is missing while its `-move` snapshot exists resumes at the insert. With
       one zone configured there is nowhere to move, and the start keeps failing `capacity`.
       Whether an instance name is unique per project or per zone is not relied on: this order is
       safe either way.
-    - `stop`: `instances.stop`, wait until `TERMINATED`. Already stopped succeeds.
+    - `stop`: `instances.stop`, wait until `TERMINATED`; a `STOPPING` instance is read every 2
+      seconds instead. Already stopped succeeds.
     - `destroy`: `instances.delete`, wait; the disk goes with it. Also delete a leftover `-move`
       snapshot. Missing succeeds.
     - `status`: `PROVISIONING` and `STAGING` are `starting`; `RUNNING` and `STOPPING` are
-      `running`; `TERMINATED` and `SUSPENDED` are `stopped`; `REPAIRING` is `failed`; a 404 in
+      `running` (and `SUSPENDING`); `TERMINATED`, `STOPPED` and `SUSPENDED` are `stopped`;
+      `REPAIRING` and anything else is `failed`; a 404 in
       every zone is `missing`. `createdAt` is `creationTimestamp`.
     - `list(tags)`: per configured zone, `instances.list` filtered on each given tag's label and
-      on the presence of `pair-sandbox`, every page. `sandboxId` comes from
+      on the presence of `pair-sandbox`, every page, and always on this install's
+      `pair-install`. `sandboxId` comes from
       `parseSandboxTags(fromCloudLabels(labels))` (ComputeDriver.ts 227–248).
     - `snapshot(driverRef, name)`: the image is `teamImageName(installId, name)`
       (`t3-team-image:14` becomes `pair-<install8>-team-image-14`). `images.get` first: one with
@@ -1055,20 +1069,22 @@ run, and against a real project behind `T3_TEST_GCE=1`.
     (`[a-z]([-a-z0-9]{0,61}[a-z0-9])?`), label keys and values, `start` only from `TERMINATED`,
     `setMetadata` only with the current fingerprint, an image only from a stopped instance's disk.
   - `apps/server/src/sandbox/compute/computeDriverContract.ts`: `makeStandInRunnerServer`
-    (41–80) takes `{ listen: "unix" } | { listen: { host, port }, url }`; with the second,
-    `serverUrl` is `url`. `computeDriverContract(name, makeDriver, options?)` passes it through.
+    (41–80) takes `{ listen: "unix" } | { listen: { host, port }, url? }`; with the second,
+    `serverUrl` is `url`, else the bound address. `StandInRunnerServer` drops `socketPath`,
+    which nothing read. `computeDriverContract(name, makeDriver, options?)` passes it through.
     Docker's call is unchanged.
   - New `apps/server/src/sandbox/compute/GceComputeDriver.contract.test.ts`: the suite against
     `makeWithApi` and the fake, whose `onBoot` parses `pair-bootstrap` from the instance's
     metadata and posts the stand-in hello (`STAND_IN_RUNNER_HELLO_PATH`, ComputeDriverTesting.ts 39) with the marker it keeps per disk. With `T3_TEST_GCE=1` it runs against the real API
     instead, with `T3_TEST_GCE_SUBNETWORK`, `T3_TEST_GCE_ZONE` and `T3_TEST_RUNNER_URL` (an
     address of the test host the new VMs reach), booting Canonical's
-    `ubuntu-os-cloud/ubuntu-2404-lts-amd64` with
+    `ubuntu-os-cloud/ubuntu-2404-lts-amd64` (the family, so it is never a deprecated image) with
     `testdata/stand-in-runner/gce-startup.sh` as a test-only `startup-script` (a `makeWithApi`
     option, `guest`): it reads the two metadata keys, keeps the marker under
     `/t3-sandbox/<id>/contract-marker` and posts the hello with `curl`.
   - `apps/server/src/server.ts` 800: `ComputeDriverRegistry.layer({ docker:
-    DockerComputeDriver.make, gce: GceComputeDriver.make })`.
+    DockerComputeDriver.make, gce: GceComputeDriver.make })`, with the requirements of both
+    factories named as the type argument: inference takes only the first.
   - `packages/contracts/src/sandbox.ts`: `SandboxDriverHealth` (150–158) gains `vm:
     Schema.optionalKey(Schema.Boolean)`. `SandboxDriverIsolation` (147) does not change.
   - `apps/server/src/sandbox/lifecycle/SandboxOverview.ts`: `isolationOf` (36–47) still answers

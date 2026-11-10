@@ -1,4 +1,5 @@
 import {
+  type ComputeDriverKind,
   type SandboxDriverHealth,
   type SandboxBaseImageInfo,
   type SandboxDriverIsolation,
@@ -25,7 +26,7 @@ import { CheckpointMirror } from "../mirror/CheckpointMirror.ts";
 import { STARTS_PER_MINUTE } from "./SandboxAdmission.ts";
 import { SandboxRestoreMode } from "./SandboxRestoreMode.ts";
 
-/** A Docker host that does not answer must not hold the page. */
+/** A driver that does not answer must not hold the page. */
 const HEALTH_TIMEOUT = "10 seconds";
 
 export class SandboxOverview extends Context.Service<
@@ -47,7 +48,9 @@ const isolationOf = (isolation: ComputeCapabilities["isolation"]): SandboxDriver
 };
 
 // The driver's own message names its operation; this one says what to check, never the host.
-const unreachableMessage = (error: ComputeDriverError): string => {
+const unreachableMessage = (error: ComputeDriverError, kind: ComputeDriverKind): string => {
+  if (error.setupHint !== undefined) return error.setupHint;
+  if (kind !== "docker") return "This driver's cloud API is not reachable from this server.";
   switch (error.reason) {
     case "unsupported":
       return "This Docker host is not supported. Use a unix:// socket or tcp://.";
@@ -115,8 +118,8 @@ const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
       isolation: "unknown",
       message:
         health._tag === "Failure"
-          ? unreachableMessage(health.failure)
-          : "Docker did not answer in time.",
+          ? unreachableMessage(health.failure, driver.kind)
+          : "The driver did not answer in time.",
     };
     return { report, baseImage: null };
   }
@@ -126,6 +129,7 @@ const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
     ...base,
     reachable: true,
     isolation: isolationOf(isolation),
+    ...(isolation === "vm" ? { vm: true } : {}),
     ...(message === undefined ? {} : { message }),
   };
   return { report, baseImage: resolvedImage(baseImage) };

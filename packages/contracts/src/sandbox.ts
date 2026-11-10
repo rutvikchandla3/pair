@@ -154,6 +154,8 @@ export const SandboxDriverHealth = Schema.Struct({
   driverId: ComputeDriverId,
   reachable: Schema.Boolean,
   isolation: SandboxDriverIsolation,
+  /** Each machine is its own virtual machine; `isolation` then says nothing more. */
+  vm: Schema.optionalKey(Schema.Boolean),
   /** How many of its machines run at once before new ones wait; read only in M1 (D5). */
   runningCap: NonNegativeInt,
   /** Why it is unreachable, or what is wrong with its base image. Never names the host. */

@@ -69,13 +69,16 @@ export const SANDBOX_ACTION_FAILURE_TITLES: Readonly<Record<SandboxAction, strin
   discard: "Could not discard the machine",
 };
 
-export const SANDBOX_ISOLATION_LABELS: Readonly<Record<SandboxDriverHealth["isolation"], string>> =
-  {
-    rootless: "Rootless Docker",
-    gvisor: "gVisor",
-    runc: "Plain Docker (runc)",
-    unknown: "Isolation unknown",
-  };
+const SANDBOX_ISOLATION_LABELS: Readonly<Record<SandboxDriverHealth["isolation"], string>> = {
+  rootless: "Rootless Docker",
+  gvisor: "gVisor",
+  runc: "Plain Docker (runc)",
+  unknown: "Isolation unknown",
+};
+
+export function sandboxIsolationLabel(health: SandboxDriverHealth): string {
+  return health.vm === true ? "Virtual machine" : SANDBOX_ISOLATION_LABELS[health.isolation];
+}
 
 export function sandboxMachineCountsLabel(machines: SandboxOverview["machines"]): string {
   return `${machines.ready} running · ${machines.sleeping} asleep · ${machines.waiting} waiting · ${machines.failed} failed`;

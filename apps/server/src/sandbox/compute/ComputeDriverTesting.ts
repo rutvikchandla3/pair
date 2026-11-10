@@ -198,8 +198,8 @@ export const layerRegistry = (fake: ComputeDriver["Service"]) =>
 const socketPathOf = (serverUrl: string) =>
   serverUrl.startsWith("unix:") ? serverUrl.slice("unix:".length) : null;
 
-// `unix:<path>` dials that socket, as the stand-in runner does.
-const postStandInHello = Effect.fn("ComputeDriverTesting.postStandInHello")(
+/** Posts a stand-in hello; `unix:<path>` dials that socket, as the stand-in runner does. */
+export const postStandInHello = Effect.fn("ComputeDriverTesting.postStandInHello")(
   function* (serverUrl: string, hello: StandInRunnerHello) {
     const base = socketPathOf(serverUrl) === null ? serverUrl : "http://runner";
     const request = yield* HttpClientRequest.post(new URL(STAND_IN_RUNNER_HELLO_PATH, base)).pipe(

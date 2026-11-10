@@ -1,5 +1,5 @@
 import {
-  SANDBOX_ISOLATION_LABELS,
+  sandboxIsolationLabel,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
 import {
@@ -112,10 +112,7 @@ function MachinesSection(props: {
             description={
               health === undefined
                 ? pending
-                : [
-                    health.reachable ? SANDBOX_ISOLATION_LABELS[health.isolation] : "Unreachable",
-                    health.message,
-                  ]
+                : [health.reachable ? sandboxIsolationLabel(health) : "Unreachable", health.message]
                     .filter(Boolean)
                     .join(". ")
             }

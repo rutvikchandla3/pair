@@ -9,7 +9,7 @@ import { EnvironmentId, SandboxId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
@@ -24,9 +24,10 @@ import {
 import { STAND_IN_RUNNER_HELLO_PATH, StandInRunnerHello } from "./ComputeDriverTesting.ts";
 
 export interface StandInRunnerServer {
-  /** A Unix socket in its own temp directory, which a driver may bind-mount by directory. */
-  readonly socketPath: string;
-  /** `unix:<socketPath>`, passed as every bootstrap's `serverUrl`. */
+  /**
+   * Every bootstrap's `serverUrl`: `unix:<path>` for a socket in its own temp directory, which a
+   * driver may bind-mount by directory, or the URL a TCP listener is reached at.
+   */
   readonly serverUrl: string;
   readonly awaitHello: (
     sandboxId: SandboxId,
@@ -34,15 +35,23 @@ export interface StandInRunnerServer {
   ) => Effect.Effect<StandInRunnerHello>;
 }
 
+/** A VM cannot dial the test's socket: it reaches a TCP listener at `url` (default its address). */
+export type StandInRunnerListen =
+  | { readonly listen: "unix" }
+  | {
+      readonly listen: { readonly host: string; readonly port: number };
+      readonly url?: string;
+    };
+
 /**
  * Hello is plain HTTP, not the runner protocol: the contract image then needs only Node, and what
  * is under test is the mount and the bootstrap (1.7 owns the protocol).
  */
-const makeStandInRunnerServer = Effect.gen(function* () {
+const makeStandInRunnerServer = Effect.fn("computeDriverContract.standInRunnerServer")(function* (
+  options: StandInRunnerListen,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compute-contract-" });
-  const socketPath = path.join(directory, "runner.sock");
   const hellos = new Map<string, Deferred.Deferred<StandInRunnerHello>>();
   const helloFor = (sandboxId: SandboxId, generation: number) => {
     const key = `${sandboxId}:g${generation}`;
@@ -54,7 +63,15 @@ const makeStandInRunnerServer = Effect.gen(function* () {
     return hello;
   };
 
-  const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), { path: socketPath });
+  let socketPath: string | null = null;
+  if (options.listen === "unix") {
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compute-contract-" });
+    socketPath = path.join(directory, "runner.sock");
+  }
+  const server = yield* NodeHttpServer.make(
+    () => NodeHttp.createServer(),
+    options.listen === "unix" ? { path: socketPath! } : options.listen,
+  );
   yield* server.serve(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -67,13 +84,19 @@ const makeStandInRunnerServer = Effect.gen(function* () {
       return HttpServerResponse.empty({ status: 204 });
     }).pipe(Effect.catchCause(() => Effect.succeed(HttpServerResponse.empty({ status: 400 })))),
   );
-  // A sandbox's runner user is not the test's user.
-  yield* fs.chmod(directory, 0o755);
-  yield* fs.chmod(socketPath, 0o666);
+  let serverUrl: string;
+  if (socketPath !== null) {
+    // A sandbox's runner user is not the test's user.
+    yield* fs.chmod(path.dirname(socketPath), 0o755);
+    yield* fs.chmod(socketPath, 0o666);
+    serverUrl = `unix:${socketPath}`;
+  } else {
+    serverUrl =
+      ("url" in options ? options.url : undefined) ?? HttpServer.formatAddress(server.address);
+  }
 
   return {
-    socketPath,
-    serverUrl: `unix:${socketPath}`,
+    serverUrl,
     awaitHello: (sandboxId, generation) =>
       Effect.suspend(() => Deferred.await(helloFor(sandboxId, generation))),
   } satisfies StandInRunnerServer;
@@ -91,9 +114,13 @@ const randomSandboxId = () => SandboxId.make(`sbx_${NodeCrypto.randomBytes(10).t
  * Registers the suite every compute driver must pass. Each case uses fresh install and sandbox
  * ids and destroys what its install created, so a real backend can run it repeatedly.
  */
-export const computeDriverContract = (name: string, makeDriver: MakeContractDriver) => {
+export const computeDriverContract = (
+  name: string,
+  makeDriver: MakeContractDriver,
+  options: StandInRunnerListen = { listen: "unix" },
+) => {
   const setup = Effect.gen(function* () {
-    const runner = yield* makeStandInRunnerServer;
+    const runner = yield* makeStandInRunnerServer(options);
     const install = Effect.fn("computeDriverContract.install")(function* (
       installId: EnvironmentId,
     ) {
