@@ -146,6 +146,22 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
+  it("offers Team image only where a server builds team images", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: false,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const ids = (hasTeamImages: boolean) =>
+      filterAvailableSettingsSearchItems({ ...availability, hasTeamImages }).map((item) => item.id);
+    expect(ids(false)).not.toContain("cloud-team-image");
+    expect(ids(true)).toContain("cloud-team-image");
+  });
+
   it("finds linked environments on a remote host without local maintenance access", () => {
     const availability = {
       hasCloudPublicConfig: false,
@@ -208,6 +224,7 @@ describe("searchSettings", () => {
       ["Delete archived machines' disks", "cloud-disk-archived"],
       ["Delete unused machines' disks", "cloud-disk-inactive"],
       ["Environment variables", "cloud-env"],
+      ["Team image", "cloud-team-image"],
       ["Allow cloud threads", "project-cloud-allowed"],
       ["Cloud variables", "project-cloud-env"],
     ] as const) {
@@ -258,6 +275,7 @@ describe("settings search targets", () => {
       "cloud-disk-archived",
       "cloud-disk-inactive",
       "cloud-env",
+      "cloud-team-image",
       "cloud-test",
     ]) {
       for (const scopeKind of ["all", "environment", "project"] as const) {

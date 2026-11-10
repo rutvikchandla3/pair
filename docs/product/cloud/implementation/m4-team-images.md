@@ -1131,15 +1131,16 @@ shows which build it runs on.
     activeBuildId)` returns the row's status word ("Active", "Ready" for a succeeded agent build
     never activated, "Succeeded", "Building · install", "Failed", "Cancelled", "Image removed"),
     the requester line ("Alice", "agent, prompted by Alice") and the failure message per phase
-    (05 §8's table, with 4.15's leak message). Shared with mobile (4.21), so the words are
-    written once.
+    (05 §8's table, with 4.15's leak message; a clone or verify failure carries no repository or
+    command, so those two messages are generic and the log tail says which). Shared with mobile
+    (4.21), so the words are written once.
   - New `apps/web/src/components/settings/TeamImageSettings.tsx` and `TeamImageSettings.logic.ts`
     (diffs, editor state, the npm warning), rendered by `CloudSettings.tsx` after **Compute**
     (369–510) as a `SettingsSection` with `searchableSetting("cloud-team-image")`, only when the
     environment's capabilities include `teamImages`.
     - **Recipe.** Pre-cloned projects as a checklist of the environment's projects; the install
-      script in the code editor the settings already use for scripts (re-read how a project's
-      setup script is edited); build env and build secrets through `ProviderEnvironmentSection`
+      script in a monospace `Textarea` (the settings' script editors are plain textareas, so
+      `Textarea` gained `font="mono"`); build env and build secrets through `ProviderEnvironmentSection`
       (as **Environment variables**, 514–522, with `secretSources`), but secrets may only be
       references. Under the script, a warning when a line matches `npm config set
       …:_authToken <$VAR>`: "This writes the token into ~/.npmrc, and every machine gets it. Use
@@ -1165,7 +1166,9 @@ shows which build it runs on.
     the Team image section is not open, shows "Build 15 is ready. Activate it in Team image." (an
     agent build), "Build 15 is active." or "Build 15 failed at install." with a link to the
     section.
-  - `apps/web/src/components/sandbox/useSandboxThreadStatus.tsx`: the machine's detail gains
+  - `apps/web/src/components/sandbox/useSandboxThreadStatus.tsx` (web has no machine-details
+    view, so the asleep status line, the failure banner and a quiet line on a ready machine that
+    runs an older image carry it): the machine's detail gains
     `sandboxImageLabel(record)` ("Build 14", else "Pair base 0.1.7"), plus "New sessions use build
     15" when the snapshot's active build differs. Widen `sandboxImageLabel`'s `Pick` to
     `"baseImage" | "imageBuild"` if 4.12 did not.

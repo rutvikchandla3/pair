@@ -323,6 +323,14 @@
       "types": "./src/state/team.ts",
       "default": "./src/state/team.ts"
     },
+    "./state/team-image": {
+      "types": "./src/state/teamImage.ts",
+      "default": "./src/state/teamImage.ts"
+    },
+    "./team-image-presentation": {
+      "types": "./src/teamImagePresentation.ts",
+      "default": "./src/teamImagePresentation.ts"
+    },
     "./state/presence": {
       "types": "./src/state/presence.ts",
       "default": "./src/state/presence.ts"

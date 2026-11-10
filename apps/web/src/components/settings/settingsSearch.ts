@@ -77,6 +77,8 @@ export interface SettingsSearchItem {
   readonly sandboxOnly?: boolean;
   /** Settings → Cloud's rows that stay while a server that isn't cloud-only still has drivers. */
   readonly cloudSettingsOnly?: boolean;
+  /** Rows of a server that builds team images (`capabilities.teamImages`). */
+  readonly teamImagesOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -97,6 +99,7 @@ export interface SettingsSearchAvailability {
   readonly hasTeamGitHub?: boolean;
   readonly hasSandbox?: boolean;
   readonly hasCloudSettings?: boolean;
+  readonly hasTeamImages?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -1286,6 +1289,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     sandboxOnly: true,
   },
   {
+    id: "cloud-team-image",
+    title: "Team image",
+    to: "/settings/cloud",
+    searchTerms: [
+      "cloud machines build recipe install script pre-clone projects activate roll back rebuild keep succeeded builds log agent npm token",
+    ],
+    environmentOnly: true,
+    teamImagesOnly: true,
+  },
+  {
     id: "cloud-test",
     title: "Test a machine",
     to: "/settings/cloud",
@@ -1489,7 +1502,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.teamModeOnly || availability.isTeamMode === true) &&
       (!item.teamGitHubOnly || availability.hasTeamGitHub === true) &&
       (!item.sandboxOnly || availability.hasSandbox === true) &&
-      (!item.cloudSettingsOnly || availability.hasCloudSettings === true),
+      (!item.cloudSettingsOnly || availability.hasCloudSettings === true) &&
+      (!item.teamImagesOnly || availability.hasTeamImages === true),
   );
 }
 

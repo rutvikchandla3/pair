@@ -49,6 +49,10 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     ) === true;
   const hasCloudSettings =
     environments.some((environment) => cloudSettingsVisible(environment.serverConfig)) === true;
+  const hasTeamImages =
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.teamImages === true,
+    ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -87,5 +91,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasTeamGitHub,
     hasSandbox,
     hasCloudSettings,
+    hasTeamImages,
   });
 }

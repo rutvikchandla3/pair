@@ -71,6 +71,10 @@ github.com, from the branch you picked; with several Pair Clouds connected, the 
 work along, start the thread on your Mac and
 [continue it in cloud](#move-a-thread-between-your-mac-and-pair-cloud).
 
+When the machine starts from a [team image](./pair-cloud.md#build-a-team-image) that doesn't
+include the thread's project, the thread says "Not in the team image" and clones the project as
+usual.
+
 You can also run **New cloud thread** from the command palette. It has no default shortcut; bind
 `chat.newCloud` in [Keybindings](./keybindings.md). **New thread on branch** from a cloud thread
 opens another cloud thread.

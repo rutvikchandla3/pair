@@ -170,6 +170,57 @@ github.com, the workspace menu offers **Add to Pair Cloud**. After that, choosin
 starts the thread in Pair Cloud's matching project, from a branch they have pushed (see
 [Start a cloud thread](./cloud.md#start-a-cloud-thread)).
 
+## Build a team image
+
+Every cloud machine starts from Pair's base image, then runs the project's
+[setup script](./cloud.md#setup-scripts-in-cloud). A team image does the slow part once: an admin
+builds an image with the team's projects already cloned and its tools installed, and new sessions
+start from it. Sessions that are already running keep the build they started on, and a cloud thread
+says when its machine runs an older build than new sessions get.
+
+Admins edit the image in **Settings → Cloud → Team image** on the web or desktop app. Members see
+the active build and the history, read-only.
+
+### The recipe
+
+One recipe covers the whole team:
+
+- **Pre-cloned projects** are cloned into the image, so a session that opens one starts from a copy.
+- **Install script** is Bash, run as the agent's user from its home folder once the projects are
+  cloned. It works like a setup script, so `sudo` is available.
+- **Build variables** are set while the install script runs, and never in sessions. A secret is a
+  reference to a secret provider you set up in **Settings → Secrets**, such as a 1Password item. The recipe keeps the
+  reference, never the value.
+
+**Save** keeps the recipe. **Save and build** also starts a build of what you just saved. If another
+admin saved first, Pair refuses with "Someone saved the recipe since you opened it": copy your
+change, reload, and apply it again.
+
+Don't write a token into `~/.npmrc` from the install script, as in `npm config set
+//registry.npmjs.org/:_authToken $NPM_TOKEN`. Every machine would get the token. Put
+`_authToken=${NPM_TOKEN}` in the project's `.npmrc` instead, and list `NPM_TOKEN` as a build
+secret. A build that leaves a secret's value in the image fails, and the failure names the file.
+
+### Build, activate and roll back
+
+**Build** builds the saved recipe on the server's Docker driver and shows its log as it runs. You
+can leave the page. Only one build runs at a time, and it takes one machine slot, so with every
+slot in use Pair asks you to build when one frees up. When a build you started finishes, you get a
+notification unless Team image is open.
+
+A build you start on the page becomes active as soon as it succeeds. To go back, choose **Activate**
+on an older succeeded build; new sessions use it from then on. **Restore recipe** loads a build's
+recipe into the editor without saving it. Pair removes the image of old builds to save disk, keeping
+the active one, any a running machine uses, and the newest few others (**Keep succeeded builds**,
+5 by default). A build whose image was removed reads **Image removed** and can't be activated.
+
+A failed build never changes the active build, so nobody else notices. Its row shows the phase that
+failed and the last lines of its log. **Retry** builds the same recipe again, and **Fix with an
+agent** opens a cloud thread with the failure in its first message.
+
+**Edit with an agent** opens a new cloud thread on a project you choose, with a first message you
+can edit before sending.
+
 ## Set the team cap and disk retention
 
 In **Settings → Cloud → Compute** on the web or desktop app:

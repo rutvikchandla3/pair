@@ -15,7 +15,12 @@ import {
   type SandboxThreadMachine,
 } from "@t3tools/client-runtime/state/sandbox";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
-import type { OrchestrationV2Sandbox, SandboxId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  sandboxImageLabel,
+  type OrchestrationV2Sandbox,
+  type SandboxId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { CloudIcon, CloudOffIcon } from "lucide-react";
@@ -29,6 +34,7 @@ import { readLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { sandboxEnvironment } from "~/state/sandbox";
 import { serverEnvironment } from "~/state/server";
+import { activeTeamImageBuildNumberAtom } from "~/state/teamImage";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
 const NO_MACHINE_ATOM = Atom.make<SandboxThreadMachine | null>(null).pipe(
@@ -119,6 +125,30 @@ interface SandboxThreadStatusInput {
   readonly onStartNewMachine: () => void;
 }
 
+const NO_BUILD_NUMBER_ATOM = Atom.make<number | null>(null).pipe(
+  Atom.withLabel("team-image-active-build-number:none"),
+);
+
+/**
+ * Which build the machine runs, and that new sessions use a different one; null while the
+ * machine's record isn't loaded. There is no machine-details view on web, so this rides the
+ * status line and the failure banner.
+ */
+function machineImageNote(
+  sandbox: OrchestrationV2Sandbox | null | undefined,
+  sandboxId: SandboxId,
+  activeBuildNumber: number | null,
+): { readonly image: string; readonly newSessions: string | null } | null {
+  if (sandbox == null || sandbox.id !== sandboxId) return null;
+  return {
+    image: sandboxImageLabel(sandbox),
+    newSessions:
+      activeBuildNumber !== null && activeBuildNumber !== sandbox.imageBuild?.number
+        ? `New sessions use build ${activeBuildNumber}`
+        : null,
+  };
+}
+
 const NOT_DRAINING_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("server-draining-since:none"),
 );
@@ -152,13 +182,30 @@ export function useSandboxThreadStatus(input: SandboxThreadStatusInput): Sandbox
 function useMachineStatus(input: SandboxThreadStatusInput): SandboxThreadStatus {
   const { threadRef } = input;
   const machine = useSandboxThreadMachine(threadRef);
+  const activeBuildNumber = useAtomValue(
+    threadRef === null || machine === null
+      ? NO_BUILD_NUMBER_ATOM
+      : activeTeamImageBuildNumberAtom(threadRef.environmentId),
+  );
   const runAction = useSandboxActionRunner();
   const run = (action: SandboxAction) => {
     if (threadRef === null || machine === null || !machine.actions.includes(action)) return;
     void runAction(threadRef, machine.sandboxId, action);
   };
+  const imageNote =
+    machine === null ? null : machineImageNote(input.sandbox, machine.sandboxId, activeBuildNumber);
   if (machine === null || machine.presentation.label === null) {
-    return { badge: null, statusLine: null, bannerItems: NO_BANNER_ITEMS, run };
+    // A ready machine says nothing unless it runs an older image than new sessions get.
+    const behind =
+      machine?.state === "ready" && imageNote?.newSessions != null
+        ? `This machine runs ${imageNote.image}. ${imageNote.newSessions}.`
+        : null;
+    return {
+      badge: null,
+      statusLine: behind === null ? null : <ThreadStatusLine icon={<CloudIcon />} label={behind} />,
+      bannerItems: NO_BANNER_ITEMS,
+      run,
+    };
   }
   const { presentation, sandboxId } = machine;
   const label =
@@ -194,6 +241,13 @@ function useMachineStatus(input: SandboxThreadStatusInput): SandboxThreadStatus 
           group: "environment",
           icon: <CloudOffIcon />,
           title: message || label,
+          ...(imageNote === null
+            ? {}
+            : {
+                description: [imageNote.image, imageNote.newSessions]
+                  .filter((part) => part !== null)
+                  .join(" · "),
+              }),
           actions: (
             <>
               {actionButton("retry", "Retry")}
@@ -234,7 +288,13 @@ function useMachineStatus(input: SandboxThreadStatusInput): SandboxThreadStatus 
     statusLine: (
       <ThreadStatusLine
         icon={<CloudIcon />}
-        label={label}
+        label={
+          imageNote === null
+            ? label
+            : [label, imageNote.image, imageNote.newSessions]
+                .filter((part) => part !== null)
+                .join(" · ")
+        }
         {...(wake ? { actionLabel: "Wake", onAction: () => run("wake") } : {})}
       />
     ),

@@ -15,7 +15,7 @@ import { ComputeDriverId, SandboxBaseImageInfo, TeamImageBuildId } from "./sandb
 import { SecretReference } from "./secretReference.ts";
 
 const TEAM_IMAGE_MAX_PROJECTS = 50;
-const TEAM_IMAGE_INSTALL_MAX_CHARS = 64_000;
+export const TEAM_IMAGE_INSTALL_MAX_CHARS = 64_000;
 
 /** One member in M4: Pair's base for the server's version. An image base joins Later. */
 export const TeamImageBase = Schema.Union([Schema.Struct({ type: Schema.Literal("pair") })]);

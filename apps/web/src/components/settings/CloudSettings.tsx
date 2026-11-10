@@ -18,6 +18,7 @@ import {
   SANDBOX_ISOLATION_LABELS,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
+import { teamImageImageLine } from "@t3tools/client-runtime/team-image-presentation";
 import * as DateTime from "effect/DateTime";
 import { CheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
@@ -31,6 +32,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { sandboxEnvironment } from "~/state/sandbox";
 import { serverEnvironment } from "~/state/server";
+import { teamImageEnvironment } from "~/state/teamImage";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -53,6 +55,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsEnvironmentPicker } from "./SettingsEnvironmentPicker";
+import { TeamImageSettings } from "./TeamImageSettings";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 
 const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
@@ -150,6 +153,12 @@ function CloudEnvironmentSettings({
   const overview = useEnvironmentQuery(
     configured ? sandboxEnvironment.overview({ environmentId, input: {} }) : null,
   );
+  const teamImages = serverConfig.environment.capabilities.teamImages === true;
+  const teamImageSnapshot = useEnvironmentQuery(
+    teamImages && configured ? teamImageEnvironment.snapshot({ environmentId, input: {} }) : null,
+  ).data;
+  const activeBuild =
+    teamImageSnapshot?.builds.find((build) => build.id === teamImageSnapshot.activeBuildId) ?? null;
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const checkDriver = useAtomCommand(sandboxEnvironment.checkDriver, { reportFailure: false });
   const cancelDrain = useAtomCommand(sandboxEnvironment.cancelDrain, { reportFailure: false });
@@ -350,8 +359,12 @@ function CloudEnvironmentSettings({
               }
             />
             <SettingsRow
-              title="Base image"
-              description={overview.data?.baseImage.label ?? sandbox?.baseImage ?? "Pair base"}
+              title={activeBuild === null ? "Base image" : "Image"}
+              description={
+                activeBuild === null
+                  ? (overview.data?.baseImage.label ?? sandbox?.baseImage ?? "Pair base")
+                  : teamImageImageLine(activeBuild)
+              }
             />
             <SettingsRow
               title="Checkpoint mirror"
@@ -508,6 +521,10 @@ function CloudEnvironmentSettings({
             </>
           ) : null}
         </SettingsSection>
+      ) : null}
+
+      {teamImages ? (
+        <TeamImageSettings environmentId={environmentId} driversConfigured={configured} />
       ) : null}
 
       {canEdit && configured ? (
