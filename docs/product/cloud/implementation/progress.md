@@ -76,6 +76,12 @@ worker prompt is each row's scope. Landed: 6.1 (5bc3e5646), 6.5 (d9178ebd5), 6.2
 are prereleases. **The M6 pass passed on `.13` on 2026-11-10**: see
 [M6 on real hardware](#m6-on-real-hardware-2026-11-10-vm-provider-dev-releases-v11-to-v13).
 
+**M7 cloud browser, building since 2026-11-11 (maintainer's request):** specs in
+[m7-cloud-browser.md](./m7-cloud-browser.md), written by another session before the M5 slice and
+M6 landed, so each worker's prompt carries what changed (VM images, private threads, per-boot
+forwards). Workers are Opus at medium effort. Landed: 7.1 (a6de84ca5), 7.5 (ad9a88cff) and 7.2
+(1621691f9).
+
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
 machine, driven from Pair Cloud over a new `tcp.connect` on the runner's socket. Nothing is built.
@@ -2875,6 +2881,45 @@ Each item had a failing test first, except the two that needed no code.
   the 90 methods the output walk flags); `deviceStateForViewer`.
 - **6.14 (c9f5ab7a8):** `AuthenticatedSession.storedScopes`; the RPC, preview and device sockets
   watch the session row with it. `docs/internals/environment-auth.md` says why.
+
+## 7.1 Chrome in the machine image (landed a6de84ca5)
+
+- `versions.env` pins `CHROME_VERSION` to `PreviewBrowser.ts`'s release (`previewBrowserRelease`;
+  a test keeps them equal). `provision.sh` installs Chrome's libraries and three font packages,
+  downloads the zip by hash to `/opt/pair-chrome/<v>/`, links `/usr/local/bin/pair-chrome`, and
+  starts it once as `t3`. `/etc/pair-image.json` gains a top-level `browser` key, beside
+  `providers` (every `providers` entry is read as a provider).
+- `vm/install-vm.sh` writes and loads the AppArmor profile `pair-chrome` and starts Chrome with
+  its sandbox on. The Docker image has no profile.
+- A dry run of "Pair Cloud release" on `feat/pair` built the image on amd64 and arm64 and passed
+  its smoke (it published the image tag `0.1.7-pair.900`). The VM path is unproven until a GCE
+  base rebuild; the provision tree's hash changed, so the base image gets a new name.
+- The tree is about 14.5 KB as base64. Chrome is a 127 MB download.
+
+## 7.5 list and stop a machine's servers (landed ad9a88cff)
+
+- `subscribeDiscoveredLocalServers` and `preview.stopLocalServer` take an optional `threadId`,
+  are in `RPC_THREAD_TARGETS`, and reach `sandbox/browser/MachinePorts.ts` only on a cloud-only
+  server with a thread. Any other call is unchanged.
+- The subscription follows `RunnerHub.status`: empty while the machine has no runner, the new
+  boot's listing after a wake.
+- Stop confirms the pid and port in a fresh runner scan, then signals the server's process group
+  with SIGTERM; a group that holds the runner, an agent or a terminal shell is refused as
+  `shared-group`. No SIGKILL. The runner's own listeners are left out of the list.
+- An unclaimed listener is credited to the requesting thread, so a terminal-started server shows
+  as "Agent".
+- For 7.7: pass the open thread's `threadId` from `client-runtime/state/preview.ts`.
+
+## 7.2 TCP connections to a machine's loopback (landed 1621691f9)
+
+- `RUNNER_METHODS.tcpConnect` (`{ port, host?: "127.0.0.1" | "::1" }`), `RunnerUnsupportedError`
+  for a runner that predates it, `RunnerConnection.connectTcp`, and `host.ports?.connect` on a
+  sandbox host (absent on local). The runner's decode refuses any other host and its handle table
+  checks again; `169.254.169.254`, `localhost` and the mapped form are tested.
+- A read fails with `RunnerLostError` when the boot ends; a stalled reader pauses the source.
+- `ECONNREFUSED` maps to `NotFound`, which is what "Chrome is not listening yet" looks like.
+- `handlers.test` "signals a ready watch, then reports events in batches" fails 2 of 3 runs on
+  this Mac on `feat/pair` (fs.watch timing).
 
 ## Open follow-ups and risks
 
