@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  isUnknownUnionMember,
   type ComputeDriverId,
   MemberId,
   SandboxId,
@@ -149,6 +150,8 @@ export interface TeamImageState {
   readonly proposal: TeamImageProposal | null;
   /** Whether the file command's thread has an open proposal already. */
   readonly threadHasOpenProposal: boolean;
+  /** Build secrets with a value on the server; read only for a recipe save. */
+  readonly storedSecretNames: ReadonlySet<string>;
 }
 
 export interface TeamImageDecision {
@@ -164,7 +167,7 @@ export const isLiveTeamImageBuild = (status: TeamImageBuildStatus) =>
   status === "queued" || status === "launching" || status === "running" || status === "capturing";
 
 // Names the server sets itself on the build's process.
-const isReservedBuildName = (name: string) =>
+export const isReservedBuildName = (name: string) =>
   name === "HOME" || name === "PATH" || /^(T3CODE_|T3_CLONE_TOKEN_)/.test(name);
 
 /** Past this many waiting for an admin, an agent is told to wait, not to file more. */
@@ -233,6 +236,17 @@ export function decideTeamImageCommand(
         "recipe-changed",
         "Someone saved the recipe since you opened it. Reload to see their change.",
       );
+    }
+    for (const [name, source] of Object.entries(command.recipe.buildSecrets)) {
+      if (isUnknownUnionMember(source)) {
+        return refuse("invalid-recipe", `This server can't read ${name}'s secret source.`);
+      }
+      if ("kind" in source && !state.storedSecretNames.has(name)) {
+        return refuse(
+          "secret-not-set",
+          `An admin must add ${name}'s value on the Team image page first.`,
+        );
+      }
     }
     return Result.succeed({
       events: [

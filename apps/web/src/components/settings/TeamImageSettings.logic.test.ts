@@ -48,7 +48,40 @@ describe("npmTokenWarning", () => {
 
 describe("the recipe and its draft", () => {
   it("round-trips a recipe", () => {
-    expect(recipeFromDraft(draftFromRecipe(recipe))).toEqual({ ok: true, recipe });
+    expect(recipeFromDraft(draftFromRecipe(recipe))).toEqual({
+      ok: true,
+      recipe,
+      secretValues: {},
+    });
+  });
+
+  it("keeps a typed secret's value out of the recipe, and a saved one stays saved", () => {
+    const held: TeamImageRecipe = {
+      ...recipe,
+      buildSecrets: { ...recipe.buildSecrets, GH_TOKEN: { kind: "server" } },
+    };
+    const draft = draftFromRecipe(held, new Set(["GH_TOKEN"]));
+    expect(draft.environment).toContainEqual({
+      name: "GH_TOKEN",
+      value: "",
+      sensitive: true,
+      valueRedacted: true,
+    });
+    expect(recipeFromDraft(draft)).toEqual({ ok: true, recipe: held, secretValues: {} });
+
+    const typed = recipeFromDraft({
+      ...draft,
+      environment: [
+        ...draft.environment.filter((variable) => variable.name !== "GH_TOKEN"),
+        { name: "GH_TOKEN", value: "ghp_fake_value", sensitive: true, valueRedacted: false },
+      ],
+    });
+    expect(typed).toEqual({ ok: true, recipe: held, secretValues: { GH_TOKEN: "ghp_fake_value" } });
+    if (!typed.ok) return;
+    expect(JSON.stringify(typed.recipe)).not.toContain("ghp_fake_value");
+    expect(recipeChanges(held, typed.recipe, projectName, typed.secretValues)).toEqual([
+      "Build secrets: changed GH_TOKEN",
+    ]);
   });
 
   it.each<{
@@ -57,16 +90,15 @@ describe("the recipe and its draft", () => {
     error: string;
   }>([
     {
-      name: "a secret typed in as a value",
-      environment: [{ name: "TOKEN", value: "hunter2", sensitive: true }],
-      error:
-        "TOKEN is a secret. Pick where it comes from; a recipe holds references, never values.",
-    },
-    {
       name: "a secret with no value yet",
       environment: [{ name: "TOKEN", value: "", sensitive: true }],
-      error:
-        "TOKEN is a secret. Pick where it comes from; a recipe holds references, never values.",
+      error: "Enter a value for TOKEN.",
+    },
+    {
+      // A restored revision names a value removed since.
+      name: "a server-held secret whose value is gone",
+      environment: [{ name: "TOKEN", value: "", sensitive: true, valueRedacted: false }],
+      error: "Enter a value for TOKEN.",
     },
     {
       name: "a name set twice",

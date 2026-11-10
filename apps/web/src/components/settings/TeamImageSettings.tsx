@@ -22,6 +22,7 @@ import {
   type TeamImageRecipe,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Redacted from "effect/Redacted";
 import { AsyncResult } from "effect/reactivity";
 import { useNavigate } from "@tanstack/react-router";
 import { InfoIcon, TriangleAlertIcon } from "lucide-react";
@@ -140,6 +141,8 @@ export function TeamImageSettings({
   const dismissProposal = useAtomCommand(teamImageEnvironment.dismissProposal, {
     reportFailure: false,
   });
+  const setSecret = useAtomCommand(teamImageEnvironment.setSecret, { reportFailure: false });
+  const removeSecret = useAtomCommand(teamImageEnvironment.removeSecret, { reportFailure: false });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
   const [edit, setEdit] = useState<Edit | null>(null);
@@ -163,6 +166,7 @@ export function TeamImageSettings({
   const saved = snapshot?.recipe ?? null;
   const savedRevision = saved?.revision ?? null;
   const savedRecipe = saved?.recipe ?? EMPTY_RECIPE;
+  const storedSecrets = new Set(snapshot?.storedSecrets?.map((stored) => stored.name));
   const builds = snapshot?.builds ?? [];
   const proposals = snapshot?.proposals ?? [];
   const accepting = proposals.find((proposal) => proposal.id === edit?.acceptsProposalId) ?? null;
@@ -182,11 +186,13 @@ export function TeamImageSettings({
 
   const parsed = edit === null ? null : recipeFromDraft(edit.draft);
   const changes =
-    parsed?.ok === true ? recipeChanges(savedRecipe, parsed.recipe, projectName) : null;
+    parsed?.ok === true
+      ? recipeChanges(savedRecipe, parsed.recipe, projectName, parsed.secretValues)
+      : null;
   // An edit equal to what is saved, such as after Save and build refused the build, is no edit.
   const dirty = edit !== null && (parsed?.ok !== true || (changes?.length ?? 0) > 0);
   const stale = dirty && edit.baseRevision !== savedRevision;
-  const draft = edit?.draft ?? draftFromRecipe(savedRecipe);
+  const draft = edit?.draft ?? draftFromRecipe(savedRecipe, storedSecrets);
 
   const buildBlocker = !driversConfigured
     ? "Add a Docker driver under Compute first."
@@ -243,24 +249,62 @@ export function TeamImageSettings({
 
   const submit = async (andBuild: boolean) => {
     if (edit === null || parsed?.ok !== true) return;
+    const { recipe, secretValues } = parsed;
+    setBusy(true);
+    // Values first, so the save that names them finds them on the server.
+    for (const [name, value] of Object.entries(secretValues)) {
+      const stored = await setSecret({
+        environmentId,
+        input: { name, value: Redacted.make(value) },
+      });
+      if (stored._tag !== "Success") {
+        setBusy(false);
+        toastCommandFailure("Secret not saved", stored);
+        return;
+      }
+    }
+    // Only new values: the saved recipe already names them, so there is no revision to add.
+    if (savedRevision !== null && recipeChanges(savedRecipe, recipe, projectName).length === 0) {
+      setEdit(null);
+      setConflict(false);
+      if (andBuild) {
+        const result = await startBuild({
+          environmentId,
+          input: { recipeRevision: savedRevision },
+        });
+        toastCommandFailure("Build not started", result);
+        if (result._tag === "Success") setOpenLog(result.value.id);
+      }
+      setBusy(false);
+      return;
+    }
     const input = {
       baseRevision: edit.baseRevision,
-      recipe: parsed.recipe,
+      recipe,
       ...(edit.acceptsProposalId === undefined
         ? {}
         : { acceptsProposalId: edit.acceptsProposalId }),
     };
-    setBusy(true);
     const result = andBuild
       ? await saveAndBuild({ environmentId, input })
       : await saveRecipe({ environmentId, input });
-    setBusy(false);
     if (result._tag === "Success") {
       setEdit(null);
       setConflict(false);
       if (andBuild && "id" in result.value) setOpenLog(result.value.id);
+      // A value the saved recipe no longer names has no use left on the server.
+      for (const name of storedSecrets) {
+        const source = recipe.buildSecrets[name];
+        if (source !== undefined && "kind" in source) continue;
+        toastCommandFailure(
+          "Old secret not removed",
+          await removeSecret({ environmentId, input: { name } }),
+        );
+      }
+      setBusy(false);
       return;
     }
+    setBusy(false);
     if (isRecipeChangedFailure(result)) setConflict(true);
     else
       toastCommandFailure(
@@ -281,7 +325,10 @@ export function TeamImageSettings({
       readRecipe({ environmentId, input: { revision: build.recipeRevision } }),
     );
     if (result._tag !== "Success") return;
-    setEdit({ baseRevision: savedRevision, draft: draftFromRecipe(result.value.recipe) });
+    setEdit({
+      baseRevision: savedRevision,
+      draft: draftFromRecipe(result.value.recipe, storedSecrets),
+    });
     setConflict(false);
     toastManager.add(
       stackedThreadToast({
@@ -954,7 +1001,7 @@ function RecipeEditor({
       </SettingsRow>
       <ProviderEnvironmentSection
         title="Build variables"
-        description="Set while the install script runs, never in sessions. Mark a variable as a secret to read it from a secret provider; the recipe keeps the reference, never the value."
+        description="Set while the install script runs, never in sessions. A secret's value is kept on the server, or read from a secret provider; the recipe only names it, and the value can't be read back."
         environment={draft.environment}
         invalidName={reservedBuildName}
         secretSources={secretSources}

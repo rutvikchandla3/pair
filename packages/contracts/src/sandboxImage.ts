@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ForwardCompatibleNullable,
+  ForwardCompatibleUnion,
   MemberId,
   NonNegativeInt,
   PositiveInt,
@@ -33,6 +34,17 @@ export const TeamImageRequester = Schema.Union([
 ]);
 export type TeamImageRequester = typeof TeamImageRequester.Type;
 
+/** The value is in the server's secret store under the variable's name, set from the Team image page. */
+export const TeamImageServerSecret = Schema.Struct({ kind: Schema.Literal("server") });
+export type TeamImageServerSecret = typeof TeamImageServerSecret.Type;
+
+/** A secret provider's reference, or a server-held value. A newer server's kind decodes as unknown. */
+export const TeamImageBuildSecretSource = Schema.Union([
+  SecretReference,
+  ForwardCompatibleUnion([TeamImageServerSecret], "kind"),
+]);
+export type TeamImageBuildSecretSource = typeof TeamImageBuildSecretSource.Type;
+
 /** One per team. Secrets are references, never values. */
 export const TeamImageRecipe = Schema.Struct({
   base: TeamImageBase,
@@ -42,7 +54,7 @@ export const TeamImageRecipe = Schema.Struct({
     Schema.isUnique(),
   ),
   buildEnv: Schema.Record(ProviderInstanceEnvironmentVariableName, Schema.String),
-  buildSecrets: Schema.Record(ProviderInstanceEnvironmentVariableName, SecretReference),
+  buildSecrets: Schema.Record(ProviderInstanceEnvironmentVariableName, TeamImageBuildSecretSource),
   /** Bash, run as `t3` from `$HOME`. */
   install: Schema.String.check(Schema.isMaxLength(TEAM_IMAGE_INSTALL_MAX_CHARS)),
 }).check(
@@ -163,6 +175,13 @@ export const TeamImageCurrentBase = Schema.Struct({
 });
 export type TeamImageCurrentBase = typeof TeamImageCurrentBase.Type;
 
+/** A server-held build secret; its value never leaves the server. */
+export const TeamImageStoredSecret = Schema.Struct({
+  name: ProviderInstanceEnvironmentVariableName,
+  setAt: Schema.DateTimeUtc,
+});
+export type TeamImageStoredSecret = typeof TeamImageStoredSecret.Type;
+
 export const TeamImageSnapshot = Schema.Struct({
   recipe: Schema.NullOr(TeamImageRecipeRevision),
   activeBuildId: Schema.NullOr(TeamImageBuildId),
@@ -173,6 +192,8 @@ export const TeamImageSnapshot = Schema.Struct({
   keepSucceeded: PositiveInt,
   /** The base a rebuild would use now; absent until the server reports it. */
   currentBase: Schema.optionalKey(TeamImageCurrentBase),
+  /** Admins only: which build secrets have a value on the server. */
+  storedSecrets: Schema.optionalKey(Schema.Array(TeamImageStoredSecret)),
 });
 export type TeamImageSnapshot = typeof TeamImageSnapshot.Type;
 
@@ -189,6 +210,7 @@ export const TeamImageErrorReason = Schema.Literals([
   "image-deleted",
   "proposal-open",
   "too-many-proposals",
+  "secret-not-set",
 ]);
 export type TeamImageErrorReason = typeof TeamImageErrorReason.Type;
 
@@ -224,3 +246,15 @@ export type TeamImageBuildLogChunk = typeof TeamImageBuildLogChunk.Type;
 
 export const TeamImageDismissProposalInput = Schema.Struct({ proposalId: TeamImageProposalId });
 export type TeamImageDismissProposalInput = typeof TeamImageDismissProposalInput.Type;
+
+export const TeamImageSetSecretInput = Schema.Struct({
+  name: ProviderInstanceEnvironmentVariableName,
+  // No checks on the value: a failed check would print it. The server checks its length.
+  value: Schema.Redacted(Schema.String),
+});
+export type TeamImageSetSecretInput = typeof TeamImageSetSecretInput.Type;
+
+export const TeamImageRemoveSecretInput = Schema.Struct({
+  name: ProviderInstanceEnvironmentVariableName,
+});
+export type TeamImageRemoveSecretInput = typeof TeamImageRemoveSecretInput.Type;

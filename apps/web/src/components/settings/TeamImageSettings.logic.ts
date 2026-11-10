@@ -1,10 +1,11 @@
 import {
   isReservedSandboxEnvName,
+  isUnknownUnionMember,
   TEAM_IMAGE_INSTALL_MAX_CHARS,
   type ProjectId,
   type ProviderInstanceEnvironmentVariable,
-  type SecretReference,
   type TeamImageBuild,
+  type TeamImageBuildSecretSource,
   type TeamImageRecipe,
 } from "@t3tools/contracts";
 import { teamImageFailureMessage } from "@t3tools/client-runtime/team-image-presentation";
@@ -40,7 +41,11 @@ export function npmTokenWarning(install: string): string | null {
   return writesToken ? NPM_TOKEN_WARNING : null;
 }
 
-export function draftFromRecipe(recipe: TeamImageRecipe): TeamImageDraft {
+/** `storedSecrets`: the build secrets whose value the server holds, which show as saved. */
+export function draftFromRecipe(
+  recipe: TeamImageRecipe,
+  storedSecrets: ReadonlySet<string> = new Set(),
+): TeamImageDraft {
   return {
     projectIds: recipe.projectIds,
     install: recipe.install,
@@ -50,36 +55,44 @@ export function draftFromRecipe(recipe: TeamImageRecipe): TeamImageDraft {
         value,
         sensitive: false,
       })),
-      ...Object.entries(recipe.buildSecrets).map(([name, secret]) => ({
-        name,
-        value: secret,
-        sensitive: true,
-      })),
+      ...Object.entries(recipe.buildSecrets).map(([name, secret]) =>
+        isUnknownUnionMember(secret) || "kind" in secret
+          ? { name, value: "", sensitive: true, valueRedacted: storedSecrets.has(name) }
+          : { name, value: secret, sensitive: true },
+      ),
     ],
   };
 }
 
 export type RecipeFromDraft =
-  | { readonly ok: true; readonly recipe: TeamImageRecipe }
+  | {
+      readonly ok: true;
+      readonly recipe: TeamImageRecipe;
+      /** Typed-in secret values, for the server's store before the save; never in the recipe. */
+      readonly secretValues: Readonly<Record<string, string>>;
+    }
   | { readonly ok: false; readonly error: string };
 
-/** A build secret is a reference; a typed-in value never reaches the recipe. */
+/** A typed-in secret becomes a server-held one: the recipe names it, the server keeps the value. */
 export function recipeFromDraft(draft: TeamImageDraft): RecipeFromDraft {
   const buildEnv: Record<string, string> = {};
-  const buildSecrets: Record<string, SecretReference> = {};
+  const buildSecrets: Record<string, TeamImageBuildSecretSource> = {};
+  const secretValues: Record<string, string> = {};
   const seen = new Set<string>();
   for (const variable of draft.environment) {
     if (seen.has(variable.name)) return { ok: false, error: `${variable.name} is set twice.` };
     seen.add(variable.name);
     if (!variable.sensitive) {
       buildEnv[variable.name] = typeof variable.value === "string" ? variable.value : "";
-    } else if (typeof variable.value === "string") {
-      return {
-        ok: false,
-        error: `${variable.name} is a secret. Pick where it comes from; a recipe holds references, never values.`,
-      };
-    } else {
+    } else if (typeof variable.value !== "string") {
       buildSecrets[variable.name] = variable.value;
+    } else if (variable.value !== "") {
+      buildSecrets[variable.name] = { kind: "server" };
+      secretValues[variable.name] = variable.value;
+    } else if (variable.valueRedacted === true) {
+      buildSecrets[variable.name] = { kind: "server" };
+    } else {
+      return { ok: false, error: `Enter a value for ${variable.name}.` };
     }
   }
   if (draft.install.length > TEAM_IMAGE_INSTALL_MAX_CHARS) {
@@ -97,6 +110,7 @@ export function recipeFromDraft(draft: TeamImageDraft): RecipeFromDraft {
       buildSecrets,
       install: draft.install,
     },
+    secretValues,
   };
 }
 
@@ -196,7 +210,12 @@ export function installDiff(from: string, to: string): ReadonlyArray<InstallDiff
   ];
 }
 
-const secretKey = (secret: SecretReference) => `${secret.provider}:${secret.reference}`;
+const secretKey = (secret: TeamImageBuildSecretSource) =>
+  isUnknownUnionMember(secret)
+    ? `unknown:${secret.value}`
+    : "kind" in secret
+      ? secret.kind
+      : `${secret.provider}:${secret.reference}`;
 
 function nameChanges(
   label: string,
@@ -222,6 +241,8 @@ export function recipeChanges(
   from: TeamImageRecipe,
   to: TeamImageRecipe,
   projectName: (projectId: ProjectId) => string,
+  /** Values typed in for `to`'s secrets; each counts as a change. */
+  secretValues: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<string> {
   const lines: string[] = [];
   const addedProjects = to.projectIds.filter((id) => !from.projectIds.includes(id));
@@ -251,7 +272,12 @@ export function recipeChanges(
   const secrets = nameChanges(
     "Build secrets",
     Object.fromEntries(Object.entries(from.buildSecrets).map(([n, s]) => [n, secretKey(s)])),
-    Object.fromEntries(Object.entries(to.buildSecrets).map(([n, s]) => [n, secretKey(s)])),
+    Object.fromEntries(
+      Object.entries(to.buildSecrets).map(([n, s]) => [
+        n,
+        n in secretValues ? "new value" : secretKey(s),
+      ]),
+    ),
   );
   if (secrets !== null) lines.push(secrets);
   return lines;

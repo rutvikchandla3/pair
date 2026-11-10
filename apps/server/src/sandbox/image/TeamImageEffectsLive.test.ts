@@ -29,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
@@ -84,6 +85,11 @@ const NPM_SECRET = "npm-secret-value";
 const secretRecipe: TeamImageRecipe = {
   ...recipe,
   buildSecrets: { NPM_TOKEN: { provider: SecretProviderId.make("vault"), reference: "npm" } },
+};
+
+const serverSecretRecipe: TeamImageRecipe = {
+  ...recipe,
+  buildSecrets: { NPM_TOKEN: { kind: "server" } },
 };
 
 const memberRecord: Members.MemberRecord = {
@@ -281,6 +287,7 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
     Layer.mock(SecretResolver.SecretResolver)({
       read: (references) => Effect.succeed(references.map(() => input.secretValue)),
     }),
+    ServerSecretStore.layerMemory(),
     Layer.mock(ProjectService)({ getById: () => Effect.succeedSome(project) }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       readRemoteUrl: () => Effect.succeed("git@github.com:acme/web.git"),
@@ -379,23 +386,26 @@ const awaitStatus = Effect.fn("TeamImageEffectsLive.test.awaitStatus")(function*
   status: TeamImageBuildStatus,
 ) {
   const service = yield* TeamImageService.TeamImageService;
-  yield* service.changes.pipe(
+  yield* service.changes({ withStoredSecrets: false }).pipe(
     Stream.filter((snapshot) => snapshot.builds[0]?.status === status),
     Stream.runHead,
   );
 });
 
-/** Requests a build, launches it, boots its runner and starts its program. */
+/** Saves `target` (or takes a saved revision), requests its build, boots it and starts its program. */
 const startProgram = Effect.fn("TeamImageEffectsLive.test.startProgram")(function* (
   world: World,
-  buildRecipe: TeamImageRecipe = recipe,
+  target: TeamImageRecipe | { readonly revision: number } = recipe,
 ) {
   const service = yield* TeamImageService.TeamImageService;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-  const { revision } = yield* service.saveRecipe({
-    by: { kind: "member", memberId: admin },
-    input: { baseRevision: null, recipe: buildRecipe },
-  });
+  const { revision } =
+    "revision" in target
+      ? target
+      : yield* service.saveRecipe({
+          by: { kind: "member", memberId: admin },
+          input: { baseRevision: null, recipe: target },
+        });
   const build = yield* service.startBuild({
     by: { kind: "member", memberId: admin },
     input: { recipeRevision: revision },
@@ -641,6 +651,75 @@ describe("TeamImageEffectsLive", () => {
         assert.deepStrictEqual(result.build?.failure, {
           phase: "install",
           detail: "NPM_TOKEN is too short to keep out of the log.",
+          logTail: [],
+        });
+        assert.isFalse(world.files.has("/home/t3/.t3-build/t3-build.sh"));
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "a server-held build secret reaches the program's env and shows as *** in the log",
+    () =>
+      Effect.gen(function* () {
+        const world = yield* makeWorld({
+          program: { ...succeeding, lines: [...succeeding.lines, `npm used ${NPM_SECRET}`] },
+          snapshot: "succeed",
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* TeamImageService.TeamImageService;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const buildLog = yield* TeamImageBuildLog.TeamImageBuildLog;
+          yield* service.setBuildSecret({
+            actorId: admin,
+            name: "NPM_TOKEN",
+            value: Redacted.make(NPM_SECRET),
+          });
+          const { build } = yield* startProgram(world, serverSecretRecipe);
+          yield* awaitStatus("capturing");
+          yield* worker.drain();
+
+          const command = yield* Deferred.await(world.spawned);
+          const npmToken = command.options.env?.["NPM_TOKEN"];
+          assert.strictEqual(
+            Redacted.isRedacted(npmToken) ? Redacted.value(npmToken) : npmToken,
+            NPM_SECRET,
+          );
+          const result = yield* finished(build);
+          assert.strictEqual(result.build?.status, "succeeded");
+          assert.notInclude(JSON.stringify(result.build), NPM_SECRET);
+          const [log] = yield* Stream.runCollect(buildLog.read(1));
+          assert.include(log?.text, "npm used ***");
+          assert.notInclude(log?.text, NPM_SECRET);
+        }).pipe(Effect.provide(layerTest(world)));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("an older revision whose server-held secret was removed fails at install", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({ program: succeeding, snapshot: "succeed" });
+      yield* Effect.gen(function* () {
+        const service = yield* TeamImageService.TeamImageService;
+        const by = { kind: "member", memberId: admin } as const;
+        yield* service.setBuildSecret({
+          actorId: admin,
+          name: "NPM_TOKEN",
+          value: Redacted.make(NPM_SECRET),
+        });
+        yield* service.saveRecipe({
+          by,
+          input: { baseRevision: null, recipe: serverSecretRecipe },
+        });
+        yield* service.saveRecipe({ by, input: { baseRevision: 1, recipe } });
+        yield* service.removeBuildSecret({ actorId: admin, name: "NPM_TOKEN" });
+        const { build } = yield* startProgram(world, { revision: 1 });
+        yield* awaitStatus("failed");
+
+        const result = yield* finished(build);
+        assert.deepStrictEqual(result.build?.failure, {
+          phase: "install",
+          detail:
+            "NPM_TOKEN has no saved value. An admin must add it on the Team image page, then build again.",
           logTail: [],
         });
         assert.isFalse(world.files.has("/home/t3/.t3-build/t3-build.sh"));

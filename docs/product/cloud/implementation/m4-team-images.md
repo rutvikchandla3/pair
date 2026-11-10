@@ -1435,6 +1435,61 @@ server's runner at boot). The provider additions 3.13 also carried stay Later.
   (a pinned override must not nag). Surfaces: web and desktop; the words live in client-runtime,
   so mobile can show them later without new copy.
 
+### 4.24 `feat(contracts,server,client-runtime,web): keep a team image's build secrets on the server`
+
+**Critical.** An admin can save a build secret without a secret provider: they type `NPM_TOKEN`'s
+value once on the Team image page, the server keeps it in its own secret store, and the recipe
+names it as `{ kind: "server" }`. Nobody reads a value back. 1Password references still work
+where a provider is set up. Before this row, a secret build variable could not be saved without
+1Password and the `secretReferences` capability.
+
+- **Needs:** 4.15, 4.18, 4.19. **Unblocks:** G4 step 1's step 3 on a server without 1Password.
+- **Files:**
+  - `packages/contracts/src/sandboxImage.ts`: `TeamImageBuildSecretSource` is `SecretReference`
+    or a forward-compatible union of `TeamImageServerSecret`, so a newer server's kind decodes as
+    unknown. The snapshot's optional `storedSecrets` (name, `setAt`) is for admins. New reason
+    `secret-not-set`; `TeamImageSetSecretInput` carries the value as `Redacted` with no checks (a
+    failed check would print it). `rpc.ts`, `clientRpcPermissions.ts`: `teamImage.setSecret` and
+    `teamImage.removeSecret` need settings-write, so members never reach them.
+  - `apps/server/src/sandbox/image/TeamImageBuildSecrets.ts`: every value in one `ServerSecretStore`
+    entry, `team-image-build-secrets`, a JSON map of name to value and `setAtMs`. A decode error
+    names nothing from the bytes.
+  - `TeamImageService.ts`: `setBuildSecret` (admin, with `ensureAdmin` behind the scope; refuses
+    reserved names and a trimmed value under 4 characters, which 4.15 could not redact) and
+    `removeBuildSecret` (refused while the latest recipe names it as a server secret). Both
+    serialize on the aggregate's lock and bump the snapshot version. `changes({ withStoredSecrets })`
+    adds names and times when the session has settings-write. `ws.ts` and `RpcInstrumentation.ts`
+    wire the two methods.
+  - `TeamImageCommands.ts`: a save naming a server secret with no value is refused with
+    `secret-not-set`, "An admin must add NPM_TOKEN's value on the Team image page first." The
+    same refusal reaches `t3_team_image_recipe_update`, whose save keeps the recipe's secrets.
+  - `TeamImageEffectsLive.ts` `resolveSecrets`: reads the map once, only when a server secret is
+    named. An older revision whose value was removed fails at `install`, "NPM_TOKEN has no saved
+    value. An admin must add it on the Team image page, then build again." The 4.15 redaction and
+    leak check get the value like any other secret.
+  - `packages/client-runtime/src/state/teamImage.ts`: `setSecret`, `removeSecret` commands.
+  - `TeamImageSettings.logic.ts`, `TeamImageSettings.tsx`: a typed secret goes to `setSecret`, and
+    the recipe gets `{ kind: "server" }`; a saved one shows the stored-secret field from provider
+    environment variables (password input, "enter a new value to replace", remove). The page sets
+    values first, then saves, then removes values the saved recipe dropped. A values-only change
+    saves no revision. Mobile shows nothing new.
+- **Types and services:** `TeamImageBuildSecretSource`, `TeamImageStoredSecret`;
+  `TeamImageService.setBuildSecret`, `removeBuildSecret`; `ServerSecretStore.layerMemory` for tests.
+- **Commands and events, Migrations:** none. Values live outside the event log, so no event or
+  projection carries one.
+- **Tests:** `TeamImageCommands.test.ts` (missing, stored and unknown kinds);
+  `TeamImageService.test.ts` (set, replace, member refused, too short, reserved, remove refused
+  while used, value absent from snapshots, errors and every table; a restored recipe refused; an
+  agent's install change refused while a value is missing); `TeamImageEffectsLive.test.ts` (the
+  value reaches the build and the log shows `***`; an old revision fails at install);
+  `RpcAuthorization.test.ts`, `commandPermissions.test.ts`; `TeamImageSettings.logic.test.ts`.
+- **Verify:** the tests; on the VM, G4 step 1's step 3 with a server-held `NPM_TOKEN`: a script
+  that writes `$NPM_TOKEN` into `.npmrc` fails at `leak` naming `NPM_TOKEN` and `.npmrc`, the log
+  shows `***`, and `docker image inspect` shows no secret in `Config.Env`.
+- **Reviewer checks:** no value in the recipe, an event, the snapshot, a log, a span attribute or
+  an error. Members learn only the recipe's names. No MCP tool sets, reads or lists values, and
+  tool descriptions are unchanged. Surfaces: web and desktop; mobile has no recipe editor.
+
 ## M4 integrated pass
 
 One run of [G4](../10-delivery-plan.md#g4-after-m4-and-m5) step 1 after the last M4 wave, by the

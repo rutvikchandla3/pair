@@ -107,7 +107,7 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets members read Cloud's overview, hold a viewer lease and move a thread to cloud, and keeps the driver check, which boots a machine, and team image activation and proposal review admin only", () => {
+  it("lets members read Cloud's overview, hold a viewer lease and move a thread to cloud, and keeps the driver check, which boots a machine, and team image activation, proposal review and build secrets admin only", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver)).toBe(AuthSettingsWriteScope);
     expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
     expect(ADMIN_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxCheckDriver));
@@ -129,6 +129,10 @@ describe("RPC authorization scopes", () => {
     expect(MEMBER_SCOPES).not.toContain(
       requiredScopeForRpcMethod(WS_METHODS.teamImageDismissProposal),
     );
+    for (const method of [WS_METHODS.teamImageSetSecret, WS_METHODS.teamImageRemoveSecret]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+      expect(MEMBER_SCOPES).not.toContain(requiredScopeForRpcMethod(method));
+    }
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxOverview));
     expect(MEMBER_SCOPES).toContain(requiredScopeForRpcMethod(WS_METHODS.sandboxViewing));
     expect(requiredScopeForRpcMethod(WS_METHODS.threadMovePreview)).toBe(

@@ -144,14 +144,21 @@ export const TeamImageRecipe = Schema.Struct({
   base: TeamImageBase,
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(50)), // repos, by Pair Cloud project
   buildEnv: Schema.Record(EnvVarName, Schema.String), // install script only, never runtime
-  buildSecrets: Schema.Record(EnvVarName, SecretReference), // references only, never values
+  buildSecrets: Schema.Record(EnvVarName, TeamImageBuildSecretSource), // references only, never values
   install: Schema.String.check(Schema.isMaxLength(64_000)), // bash -euo pipefail, as t3, from $HOME
 });
 ```
 
-`SecretReference` names a secret held by a secret provider (`SettingsSecretValue` also takes a literal,
-which a recipe must not store; [settingsSecretValue.ts](../../../packages/contracts/src/settingsSecretValue.ts),
-[resolver](../../../apps/server/src/secrets/settingsSecretValue.ts)), so the recipe adds no secret store.
+A build secret's source is either a `SecretReference` to a secret provider such as 1Password, or
+`{ kind: "server" }`: an admin typed the value on the Team image page and the server keeps it in its
+own secret store under the variable's name
+([TeamImageBuildSecrets.ts](../../../apps/server/src/sandbox/image/TeamImageBuildSecrets.ts)). Teams
+without a secret provider still need a registry token, so a provider can't be required. Either way the
+recipe, its events and the snapshot hold a reference, never a value (`SettingsSecretValue`'s literal
+form is not accepted). Values are write-only: admins see which names have one and when it was set, and
+nobody can read one back. A save that names a server value nobody has set is refused, and removing a
+value the latest recipe still names is refused, so only an older revision can lack one; its build
+fails at install, naming the variable.
 Repos are Pair Cloud projects, resolved through
 [RepositoryIdentityResolver.ts](../../../apps/server/src/project/RepositoryIdentityResolver.ts), not
 free-form URLs. That keeps one list of repos and lets session start map a project to its clone.
@@ -468,7 +475,7 @@ in the build.
 |         | Build secrets                                                           | Runtime secrets                                                           |
 | ------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Example | A token for a private npm registry or apt repo the install script reads | `DATABASE_URL`, or a registry token `pnpm install` needs at session start |
-| Set in  | Recipe → **Build secrets**, as `SecretReference`s                       | Team or project cloud env ([06](./06-credentials-and-security.md))        |
+| Set in  | Recipe → **Build secrets**, a server-held value or a `SecretReference`  | Team or project cloud env ([06](./06-credentials-and-security.md))        |
 | Seen by | The install script, during one build                                    | Processes in one sandbox, injected at start                               |
 
 How a build keeps secrets out of what it captures (README decision 10):

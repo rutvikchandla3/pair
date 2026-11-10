@@ -193,9 +193,15 @@ One recipe covers the whole team:
 - **Pre-cloned projects** are cloned into the image, so a session that opens one starts from a copy.
 - **Install script** is Bash, run as the agent's user from its home folder once the projects are
   cloned. It works like a setup script, so `sudo` is available.
-- **Build variables** are set while the install script runs, and never in sessions. A secret is a
-  reference to a secret provider you set up in **Settings → Secrets**, such as a 1Password item. The recipe keeps the
-  reference, never the value.
+- **Build variables** are set while the install script runs, and never in sessions. A locked
+  variable is a secret, for a token or password; new variables start locked.
+
+To add a build secret, choose **Add variable**, name it (for example `NPM_TOKEN`), leave it locked,
+type its value and save. Pair keeps the value on the server and the recipe only names it.
+Nobody can read the value back, admins included: the field shows that a value is stored, and you can
+type a new one to replace it, or remove the variable and save to delete it. The value must be at
+least 4 characters, so Pair can hide it in the build log. If a secret provider such as 1Password is
+set up in **Settings → Secrets**, you can pick it as the secret's source instead.
 
 **Save** keeps the recipe. **Save and build** also starts a build of what you just saved. If another
 admin saved first, Pair refuses with "Someone saved the recipe since you opened it": copy your

@@ -117,6 +117,17 @@ export function createTeamImageAtoms<R, E>(runtime: Atom.AtomRuntime<Environment
       label: "environment-data:team-image:dismiss-proposal",
       tag: WS_METHODS.teamImageDismissProposal,
     }),
+    /** Write-only: the value never comes back, only its name in an admin's snapshot. */
+    setSecret: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team-image:set-secret",
+      tag: WS_METHODS.teamImageSetSecret,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    removeSecret: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team-image:remove-secret",
+      tag: WS_METHODS.teamImageRemoveSecret,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     /** A saved revision, for Restore recipe; open to anyone who can read the page. */
     readRecipe: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team-image:read-recipe",

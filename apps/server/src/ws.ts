@@ -2925,7 +2925,10 @@ export const layerWsRpc = (
         [WS_METHODS.sandboxViewing]: ({ threadId }) =>
           sandboxWake.viewed({ threadId, actorId: currentSession.memberId }),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
-        [WS_METHODS.teamImageSubscribe]: (_input) => teamImages.changes,
+        [WS_METHODS.teamImageSubscribe]: (_input) =>
+          teamImages.changes({
+            withStoredSecrets: currentSession.scopes.includes(AuthSettingsWriteScope),
+          }),
         [WS_METHODS.teamImageSaveRecipe]: (input) =>
           teamImages.saveRecipe({
             by: { kind: "member", memberId: currentSession.memberId },
@@ -2946,6 +2949,10 @@ export const layerWsRpc = (
           teamImages.activateBuild({ actorId: currentSession.memberId, imageBuildId }),
         [WS_METHODS.teamImageDismissProposal]: ({ proposalId }) =>
           teamImages.dismissProposal({ actorId: currentSession.memberId, proposalId }),
+        [WS_METHODS.teamImageSetSecret]: ({ name, value }) =>
+          teamImages.setBuildSecret({ actorId: currentSession.memberId, name, value }),
+        [WS_METHODS.teamImageRemoveSecret]: ({ name }) =>
+          teamImages.removeBuildSecret({ actorId: currentSession.memberId, name }),
         [WS_METHODS.teamImageReadRecipe]: ({ revision }) => teamImages.readRecipeRevision(revision),
         [WS_METHODS.teamImageSubscribeBuildLog]: ({ imageBuildId }) =>
           teamImages.subscribeBuildLog(imageBuildId),

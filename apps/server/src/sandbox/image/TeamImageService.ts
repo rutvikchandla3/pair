@@ -4,6 +4,7 @@ import {
   EventId,
   type MemberId,
   type ProjectId,
+  type ProviderInstanceEnvironmentVariableName,
   SandboxId,
   type TeamImageBuild,
   TeamImageBuildId,
@@ -28,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import packageJson from "../../../package.json" with { type: "json" };
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
@@ -48,16 +51,22 @@ import * as LiveTeamImageBuild from "./LiveTeamImageBuild.ts";
 import {
   decideTeamImageCommand,
   isLiveTeamImageBuild,
+  isReservedBuildName,
   type TeamImageCommand,
   TeamImageEvent,
   type TeamImageState,
 } from "./TeamImageCommands.ts";
 import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
+import * as TeamImageBuildSecrets from "./TeamImageBuildSecrets.ts";
 import { DEFAULT_KEEP_SUCCEEDED } from "./TeamImageCollection.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
+import { isRedactableSecret } from "./teamImageBuildProgram.ts";
 
 /** The snapshot's history: the newest builds, plus the active one when it is older. */
 const RECENT_BUILDS = 20;
+
+/** Linux refuses a single environment string past 128 KiB; this stays well under it. */
+const MAX_BUILD_SECRET_CHARS = 64_000;
 
 /** An unresolved base (a driver still pulling, or unreachable) is looked up again after this. */
 const UNRESOLVED_BASE_TTL_MS = 60_000;
@@ -83,8 +92,10 @@ export class TeamImageService extends Context.Service<
       command: TeamImageCommand,
     ) => Effect.Effect<ReadonlyArray<TeamImageEvent>, TeamImageDispatchError>;
     readonly snapshot: Effect.Effect<TeamImageSnapshot, TeamImageError>;
-    /** The snapshot, then a new one after each committed command. */
-    readonly changes: Stream.Stream<TeamImageSnapshot, TeamImageError>;
+    /** The snapshot, then a new one after each change; stored secret names only for an admin. */
+    readonly changes: (options: {
+      readonly withStoredSecrets: boolean;
+    }) => Stream.Stream<TeamImageSnapshot, TeamImageError>;
     /** `by` is a person on the page, or an agent whose run's authors are all admins (4.19). */
     readonly saveRecipe: (input: {
       readonly by: TeamImageRequester;
@@ -126,6 +137,17 @@ export class TeamImageService extends Context.Service<
     readonly dismissProposal: (input: {
       readonly actorId: MemberId;
       readonly proposalId: TeamImageProposalId;
+    }) => Effect.Effect<void, TeamImageError>;
+    /** Write-only: nothing returns a stored value. A build reads it into its process env. */
+    readonly setBuildSecret: (input: {
+      readonly actorId: MemberId;
+      readonly name: ProviderInstanceEnvironmentVariableName;
+      readonly value: Redacted.Redacted<string>;
+    }) => Effect.Effect<void, TeamImageError>;
+    /** Refused while the latest recipe still uses it; removing a name with no value does nothing. */
+    readonly removeBuildSecret: (input: {
+      readonly actorId: MemberId;
+      readonly name: ProviderInstanceEnvironmentVariableName;
     }) => Effect.Effect<void, TeamImageError>;
     readonly readRecipeRevision: (
       revision: number,
@@ -185,6 +207,7 @@ const make = Effect.gen(function* () {
   const teamState = yield* TeamState.TeamState;
   const random = yield* SecureRandom.SecureRandom;
   const buildLog = yield* TeamImageBuildLog.TeamImageBuildLog;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const lock = yield* Semaphore.make(1);
   const version = yield* SubscriptionRef.make(0);
@@ -225,6 +248,11 @@ const make = Effect.gen(function* () {
       threadHasOpenProposal:
         command.type === "team-image.proposal.file" &&
         open.some((proposal) => proposal.threadId === command.threadId),
+      storedSecretNames: new Set(
+        command.type === "team-image.recipe.save"
+          ? Object.keys(yield* TeamImageBuildSecrets.read(secretStore).pipe(Effect.orDie))
+          : [],
+      ),
     } satisfies TeamImageState;
   });
 
@@ -377,7 +405,7 @@ const make = Effect.gen(function* () {
     return base;
   });
 
-  const snapshot = Effect.gen(function* () {
+  const snapshotFor = Effect.fnUntraced(function* (withStoredSecrets: boolean) {
     yield* ensureAvailable;
     const { activeBuildId } = yield* store.state;
     const recent = yield* store.recentBuilds(RECENT_BUILDS);
@@ -394,8 +422,23 @@ const make = Effect.gen(function* () {
       keepSucceeded:
         (yield* settingsNow).sandbox?.teamImage?.keepSucceeded ?? DEFAULT_KEEP_SUCCEEDED,
       ...(Option.isNone(driverId) ? {} : { currentBase: yield* currentBase(driverId.value) }),
+      ...(withStoredSecrets
+        ? {
+            storedSecrets: Object.entries(
+              yield* TeamImageBuildSecrets.read(secretStore).pipe(Effect.orDie),
+            ).map(([name, stored]) => ({
+              name: name as ProviderInstanceEnvironmentVariableName,
+              setAt: DateTime.makeUnsafe(stored.setAtMs),
+            })),
+          }
+        : {}),
     } satisfies TeamImageSnapshot;
-  }).pipe(onlyTeamImageErrors, Effect.withSpan("TeamImageService.snapshot"));
+  });
+  const snapshotWith = (withStoredSecrets: boolean) =>
+    snapshotFor(withStoredSecrets).pipe(
+      onlyTeamImageErrors,
+      Effect.withSpan("TeamImageService.snapshot"),
+    );
 
   const saveRecipe: TeamImageService["Service"]["saveRecipe"] = Effect.fn(
     "TeamImageService.saveRecipe",
@@ -533,6 +576,71 @@ const make = Effect.gen(function* () {
     });
   }, onlyTeamImageErrors);
 
+  const setBuildSecret: TeamImageService["Service"]["setBuildSecret"] = Effect.fn(
+    "TeamImageService.setBuildSecret",
+  )(
+    function* ({ actorId, name, value }) {
+      yield* ensureAvailable;
+      yield* ensureAdmin({ kind: "member", memberId: actorId });
+      if (isReservedBuildName(name)) {
+        return yield* refusal("invalid-recipe", `${name} is reserved for Pair Cloud's own use.`);
+      }
+      const trimmed = Redacted.value(value).trim();
+      // 4.15's redactor and leak check skip shorter values, so one would reach the log and the image.
+      if (!isRedactableSecret(trimmed)) {
+        return yield* refusal(
+          "invalid-recipe",
+          `${name}'s value is too short to keep out of the build log. Use at least 4 characters.`,
+        );
+      }
+      if (trimmed.length > MAX_BUILD_SECRET_CHARS) {
+        return yield* refusal(
+          "invalid-recipe",
+          `${name}'s value is longer than 64,000 characters.`,
+        );
+      }
+      const setAtMs = yield* Clock.currentTimeMillis;
+      yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const stored = yield* TeamImageBuildSecrets.read(secretStore);
+          yield* TeamImageBuildSecrets.write(secretStore, {
+            ...stored,
+            [name]: { value: trimmed, setAtMs },
+          });
+        }),
+      );
+      yield* SubscriptionRef.update(version, (current) => current + 1);
+    },
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, Effect.die),
+  );
+
+  const removeBuildSecret: TeamImageService["Service"]["removeBuildSecret"] = Effect.fn(
+    "TeamImageService.removeBuildSecret",
+  )(
+    function* ({ actorId, name }) {
+      yield* ensureAvailable;
+      yield* ensureAdmin({ kind: "member", memberId: actorId });
+      const removed = yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const latest = yield* store.latestRevision.pipe(Effect.orDie);
+          const source = latest?.recipe.buildSecrets[name];
+          if (source !== undefined && "kind" in source) {
+            return yield* refusal(
+              "wrong-state",
+              `The saved recipe still uses ${name}. Remove it from the recipe and save first.`,
+            );
+          }
+          const { [name]: dropped, ...kept } = yield* TeamImageBuildSecrets.read(secretStore);
+          if (dropped === undefined) return false;
+          yield* TeamImageBuildSecrets.write(secretStore, kept);
+          return true;
+        }),
+      );
+      if (removed) yield* SubscriptionRef.update(version, (current) => current + 1);
+    },
+    Effect.catchIf(ServerSecretStore.isSecretStoreError, Effect.die),
+  );
+
   const readRecipeRevision: TeamImageService["Service"]["readRecipeRevision"] = Effect.fn(
     "TeamImageService.readRecipeRevision",
   )(function* (revision) {
@@ -597,8 +705,11 @@ const make = Effect.gen(function* () {
 
   return TeamImageService.of({
     dispatch: lockedDispatch,
-    snapshot,
-    changes: SubscriptionRef.changes(version).pipe(Stream.mapEffect(() => snapshot)),
+    snapshot: snapshotWith(false),
+    changes: ({ withStoredSecrets }) =>
+      SubscriptionRef.changes(version).pipe(
+        Stream.mapEffect(() => snapshotWith(withStoredSecrets)),
+      ),
     saveRecipe,
     saveInstall,
     startBuild,
@@ -607,6 +718,8 @@ const make = Effect.gen(function* () {
     buildFinished: Stream.fromPubSub(finished),
     fileProposal,
     dismissProposal,
+    setBuildSecret,
+    removeBuildSecret,
     readRecipeRevision,
     readBuildLog,
     subscribeBuildLog,

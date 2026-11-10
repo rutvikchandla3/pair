@@ -1,6 +1,7 @@
 import {
   CommandId,
   isProviderDriverKind,
+  isUnknownUnionMember,
   type MemberId,
   type ProjectId,
   type SandboxId,
@@ -24,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 
 import packageJson from "../../../package.json" with { type: "json" };
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import type { TeamImageEffectV2 } from "../../orchestration-v2/EffectOutbox.ts";
@@ -51,6 +53,7 @@ import { RunnerHub } from "../runnerHub/RunnerHub.ts";
 import * as LiveTeamImageBuild from "./LiveTeamImageBuild.ts";
 import type { TeamImageBuildRecord, TeamImageCommand } from "./TeamImageCommands.ts";
 import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
+import * as TeamImageBuildSecrets from "./TeamImageBuildSecrets.ts";
 import { TeamImageEffects } from "./TeamImageEffects.ts";
 import { TeamImageService } from "./TeamImageService.ts";
 import * as TeamImageStore from "./TeamImageStore.ts";
@@ -113,6 +116,7 @@ const make = Effect.gen(function* () {
   const tokens = yield* GitHubAppInstallationTokens;
   const memberGitHub = yield* MemberGitHub;
   const secrets = yield* SecretResolver.SecretResolver;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const projects = yield* ProjectService;
   const git = yield* GitWorkflow.GitWorkflowService;
   const scope = yield* Effect.scope;
@@ -254,17 +258,37 @@ const make = Effect.gen(function* () {
   });
 
   const resolveSecrets = Effect.fnUntraced(function* (recipe: TeamImageRecipe) {
+    const unreadable = (name: string) =>
+      new BuildStopped({
+        phase: "install",
+        detail: `Pair Cloud could not read the build secret ${name}.`,
+      });
+    const sources = Object.entries(recipe.buildSecrets);
+    const held = sources.some(([, source]) => "kind" in source)
+      ? yield* TeamImageBuildSecrets.read(secretStore).pipe(
+          Effect.mapError(() => unreadable("values")),
+        )
+      : {};
     const env: Record<string, Redacted.Redacted<string>> = {};
-    for (const [name, reference] of Object.entries(recipe.buildSecrets)) {
-      const value = yield* requireSettingsSecret(secrets, reference).pipe(
-        Effect.mapError(
-          () =>
-            new BuildStopped({
-              phase: "install",
-              detail: `Pair Cloud could not read the build secret ${name}.`,
-            }),
-        ),
-      );
+    for (const [name, source] of sources) {
+      let value: string;
+      if (isUnknownUnionMember(source)) {
+        return yield* unreadable(name);
+      } else if ("kind" in source) {
+        const stored = held[name];
+        // An older revision can name a value removed since; saving it again is refused instead.
+        if (stored === undefined) {
+          return yield* new BuildStopped({
+            phase: "install",
+            detail: `${name} has no saved value. An admin must add it on the Team image page, then build again.`,
+          });
+        }
+        value = stored.value;
+      } else {
+        value = yield* requireSettingsSecret(secrets, source).pipe(
+          Effect.mapError(() => unreadable(name)),
+        );
+      }
       if (!isRedactableSecret(value)) {
         return yield* new BuildStopped({
           phase: "install",

@@ -22,7 +22,9 @@ import {
   TeamImageError,
   TeamImageReadRecipeInput,
   TeamImageRecipeRevision,
+  TeamImageRemoveSecretInput,
   TeamImageSaveRecipeInput,
+  TeamImageSetSecretInput,
   TeamImageSnapshot,
   TeamImageStartBuildInput,
 } from "./sandboxImage.ts";
@@ -599,6 +601,8 @@ export const WS_METHODS = {
   teamImageActivateBuild: "teamImage.activateBuild",
   teamImageReadRecipe: "teamImage.readRecipe",
   teamImageDismissProposal: "teamImage.dismissProposal",
+  teamImageSetSecret: "teamImage.setSecret",
+  teamImageRemoveSecret: "teamImage.removeSecret",
   teamImageSubscribeBuildLog: "teamImage.subscribeBuildLog",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
@@ -1131,6 +1135,18 @@ const WsTeamImageReadRecipeRpc = Rpc.make(WS_METHODS.teamImageReadRecipe, {
 
 const WsTeamImageDismissProposalRpc = Rpc.make(WS_METHODS.teamImageDismissProposal, {
   payload: TeamImageDismissProposalInput,
+  success: Schema.Void,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageSetSecretRpc = Rpc.make(WS_METHODS.teamImageSetSecret, {
+  payload: TeamImageSetSecretInput,
+  success: Schema.Void,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageRemoveSecretRpc = Rpc.make(WS_METHODS.teamImageRemoveSecret, {
+  payload: TeamImageRemoveSecretInput,
   success: Schema.Void,
   error: TeamImageRpcError,
 });
@@ -2400,6 +2416,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamImageActivateBuildRpc,
   WsTeamImageReadRecipeRpc,
   WsTeamImageDismissProposalRpc,
+  WsTeamImageSetSecretRpc,
+  WsTeamImageRemoveSecretRpc,
   WsTeamImageSubscribeBuildLogRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

@@ -329,3 +329,27 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ServerSecretStore, make);
+
+/** For tests: a store that lives in memory. */
+export const layerMemory = () => {
+  const entries = new Map<string, Uint8Array>();
+  const put = Effect.fn("ServerSecretStore.set")(function (name: string, value: Uint8Array) {
+    return Effect.sync(() => void entries.set(name, value));
+  });
+  return Layer.succeed(
+    ServerSecretStore,
+    ServerSecretStore.of({
+      get: Effect.fn("ServerSecretStore.get")(function (name) {
+        return Effect.sync(() => Option.fromUndefinedOr(entries.get(name)));
+      }),
+      set: put,
+      create: put,
+      getOrCreateRandom: Effect.fn("ServerSecretStore.getOrCreateRandom")(function () {
+        return Effect.die("The memory store makes no random secrets.");
+      }),
+      remove: Effect.fn("ServerSecretStore.remove")(function (name) {
+        return Effect.sync(() => void entries.delete(name));
+      }),
+    }),
+  );
+};

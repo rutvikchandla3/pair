@@ -15,6 +15,7 @@ import {
   type TeamImageRequester,
   ProjectId,
   ThreadId,
+  UnknownUnionMember,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
@@ -90,6 +91,7 @@ const state = (status: TeamImageBuildStatus | null): TeamImageState => {
     openProposals: 0,
     proposal: null,
     threadHasOpenProposal: false,
+    storedSecretNames: new Set(),
   };
 };
 
@@ -200,6 +202,26 @@ describe("decideTeamImageCommand", () => {
         },
       },
     ]);
+  });
+
+  it("refuses a save naming a server-held secret with no value on the server", () => {
+    const save = (buildSecrets: TeamImageRecipe["buildSecrets"]): TeamImageCommand => ({
+      type: "team-image.recipe.save",
+      commandId,
+      baseRevision: 1,
+      recipe: { ...recipe, buildSecrets },
+      savedBy: { kind: "member", memberId: admin },
+    });
+    const missing = decide(state(null), save({ NPM_TOKEN: { kind: "server" } }));
+    assert.deepInclude(Result.isFailure(missing) ? missing.failure : null, {
+      reason: "secret-not-set",
+      message: "An admin must add NPM_TOKEN's value on the Team image page first.",
+    });
+    const stored = { ...state(null), storedSecretNames: new Set(["NPM_TOKEN"]) };
+    decided(decide(stored, save({ NPM_TOKEN: { kind: "server" }, GH_TOKEN: secret })));
+    // A newer client's kind would fail to encode into the event.
+    const unknown = save({ NPM_TOKEN: new UnknownUnionMember("kind", "vault") });
+    assert.strictEqual(refused(decide(stored, unknown)), "invalid-recipe");
   });
 
   it("requests a build only when no build is live and the revision exists", () => {
