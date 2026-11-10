@@ -57,7 +57,7 @@ base). 5.8 and 5.13 are left out: 5.11 writes no proxy or CA fields and there ar
 metrics. The pass runs in project `vm-provider-dev` (the maintainer's choice: about 30 instances
 against about 770 in `vm-provider`), on a clone of `pair-cloud-pass`, with the project's default
 compute service account, since the maintainer is Editor and cannot bind a custom role. Landed:
-5.5 (8ceeb1d83), 5.7a (02918c225), 5.19 (eab83d688) and 5.11 (809e7c416).
+5.5 (8ceeb1d83), 5.7a (02918c225), 5.19 (eab83d688), 5.11 (809e7c416) and 5.7b (e41121cbb). Release `0.1.7-pair.9` (V9) carries them.
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2449,6 +2449,26 @@ Built without 5.8's proxy and CA fields and without 5.13's metrics.
   `images.insert` from an attached disk; a PENDING image; `archiveSizeBytes` as a string; the
   guest attributes shape; metadata for an instance with no service account; a shielded VM and UEFI.
 - `docs/user/pair-cloud.md` still lists only the Docker isolation labels.
+
+## 5.7b the gce driver builds its base image (landed e41121cbb)
+
+- The GCE side of `VmBaseImageCloud` in `GceComputeDriver.ts`. The builder is stock Ubuntu 24.04,
+  the `small` machine type and a 20 GB disk, with no service account, no external address, no
+  bootstrap and no `pair-sandbox` label. Its result is the `pair/provision` guest attribute, or
+  for a stopped builder with none, the last `pair-provision-result=` line on the serial console.
+- A fiber in the driver's scope steps the build every 30 seconds and logs once per change.
+  `health` and `create` report the state; a create while building fails retryable with
+  `image.state: "building"`. `make` requires `SandboxProvisionTree`, which `server.ts` provides.
+- Every delete reads the resource and checks the install label; a same-named resource from
+  another install is a conflict and is left alone.
+- Deviations: the failure hint reads "The base image build failed at `<step>`. The builder's
+  last console lines are in this server's log. Choose Refresh to build it again.", because the
+  state machine deletes a failed builder and the driver logs its last 20 `pair-base-build:` lines
+  first (lead: accepted). `health` after a failure reports it, then starts the next build in the
+  background. The image description is `pair-version=… provision-sha256=…` text, the format 5.11
+  parses.
+- The reconciler calls `health` every 10 minutes, so a build that keeps failing relaunches every
+  10 to 40 minutes. The step inside the guest shows only on the builder's serial console.
 
 ## Open follow-ups and risks
 
