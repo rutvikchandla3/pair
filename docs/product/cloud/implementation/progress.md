@@ -69,7 +69,8 @@ members. It holds the UX, the access model, where the server enforces it and row
 reverses "everyone sees every thread" on Pair Cloud. The maintainer said to build it (2026-11-10),
 with the doc's open questions answered as proposed. Rows have no per-row spec page: the lead's
 worker prompt is each row's scope. Landed: 6.1 (5bc3e5646), 6.5 (d9178ebd5), 6.2 (fb41bbbd5),
-6.6 (31f9befd8), 6.3 (0edf33475, dace0d081, edc976924) and 6.4 (4cbcc7c05, 45269cd73).
+6.6 (31f9befd8), 6.3 (0edf33475, dace0d081, edc976924), 6.4 (4cbcc7c05, 45269cd73), 6.7
+(2a200651f), 6.8 (9bb619610) and fix row 6.10 (c1934d16f, a63300772, 062dc2835, b5694b98f).
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
@@ -2716,6 +2717,66 @@ Built without 5.8's proxy and CA fields and without 5.13's metrics.
 - Left: a thread with no machine and no owner, when assigned, leaves a stale row for other members
   until reload; an open archive page keeps a row just lost; children made through
   `peer/RemoteDelegation.ts` do not inherit access.
+
+## 6.7 hand over a member's cloud threads, owner-only Assign (landed 2a200651f)
+
+- Intake: `assertMayAssign` and the reason `not_owner_to_assign` ("Only the owner can assign this
+  thread."): on a cloud-only server, `thread.owner.set` on a thread with a machine needs the
+  owner, or an admin acting for an owner who is no longer active.
+- `team/TeamRemoval.ts` (`preview`, `remove`), the RPCs `team.removalPreview` and
+  `sandbox.stopById`, `TeamRemoveInput.cloudThreads` (give or delete) and the TeamError reason
+  `owns-cloud-threads`. Removal cleans the member out of every machine's `memberIds` by
+  dispatching `sandbox.access.set` as the machine's owner.
+- `sandbox.stopById` exists because `sandbox.sleep` and `sandbox.discard` need a `threadId` an
+  admin does not have for a private machine. The owner or an admin may use it; anyone else is
+  answered as for a missing machine.
+- `SandboxOverview.machineList` (optional) and web's **All machines** rows, "Private · `<owner>`".
+- Web: `RemoveMemberDialog`, Assign disabled for a non-owner in the menus, sidebar, palette and
+  keybinding. Mobile: Assign disabled. CLI: `t3 member remove --give-cloud-threads-to` and
+  `--delete-cloud-threads`.
+- Delete counts side chats, not subagent threads, and discards machines the member owns that
+  deletion leaves behind, best effort. Mobile's Cloud screen is read-only and has no machine rows.
+
+## 6.8 share a scheduled task's runs (landed 9bb619610)
+
+- `ScheduledTask.access` and `createdByMemberId`; `ScheduledTaskUpsertInput.access` (absent keeps
+  the stored value); `SandboxAccessGrant`; `sandbox.provision` takes an optional `access`.
+  Migration `098_ScheduledTaskAccess` (`access_json`, NULL reads as `team`).
+- New tasks are private. Only the creator changes `access` (with no recorded creator, the server
+  owner). A run launches with the task's access through the decider's `inheritedAccess`.
+- MCP: `scheduleTask` takes no access argument and inherits its thread's session;
+  `updateScheduledTask` cannot change it. `t3` has no scheduled-task command.
+- Web: **Share runs with** in the editor (`ScheduledTaskRunShare.tsx`), hidden for a task bound to
+  a thread, which starts no machine.
+- Owed: mobile's editor has no control (it re-saves without `access`, which keeps it).
+- `access.memberIds` and `createdByMemberId` are visible to everyone who can list tasks. An
+  inherited list holding a since-removed member makes an agent's `schedule_task` fail with "only
+  active members".
+
+## 6.10 the remaining paths to a private thread (landed c1934d16f..b5694b98f)
+
+Each item had a failing test first, except the two that needed no code.
+
+- **The RPC walk** skipped schema node kinds it did not know. It now throws on one, and a new case
+  requires `RpcThreadAccess` on every WebSocket method.
+- **SQL parity:** one table runs through `threadAllowsSql` and the in-memory rule. It found the
+  SQL let an unknown member open an ownerless thread.
+- **Machine list:** sent to admins only.
+- **A removed member:** `/ws` already closed on removal; the preview and device sockets did not.
+  Both now end with the session (`whenSessionEnds` in `auth/http.ts`).
+- **Viewing leases** count only while their member can open the machine.
+- **Guest links** on a `members` machine need the owner.
+- **ACP registry:** a cloud-only server lists and deletes no host sessions (they carry thread ids
+  and titles).
+- **Moves:** `ThreadAccess` publishes a move when a known thread's owner or machine changes. The
+  RPC guard re-checks, the shell sends `thread.removed` only to members who lost the thread, and
+  presence re-checks.
+- **No code:** a thread mention is the sender's text and grants nothing (the agent's read follows
+  the reach rule); a remote delegation's child belongs to the link's member on the other server,
+  where a new machine starts private; `t3` over `/ws` uses only the host-local credential.
+- Open: `DeviceHubProxy.stream.test.ts` "closes an upstream socket that is still connecting…"
+  times out on `feat/pair` too. A remote delegation sends the parent thread's title to the other
+  server.
 
 ## Open follow-ups and risks
 
