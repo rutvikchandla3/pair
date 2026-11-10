@@ -285,7 +285,7 @@ thread using the sandbox:
 | Terminal input or output (a sleeping terminal can be viewed without waking) | [terminal manager](../../../apps/server/src/terminal/Manager.ts) via the workspace host | Within the window (a logging dev server keeps it awake, as on Conductor) |
 | Viewer lease                                                                | new, in memory                                                                          | Within the window                                                        |
 | Scheduled task due within the window                                        | scheduled task rows                                                                     | Yes                                                                      |
-| Watched preview (Later, with previews)                                      | [preview manager](../../../apps/server/src/preview/Manager.ts)                          | While a client streams it                                                |
+| Watched browser tab (M7, 7.6)                                               | [preview manager](../../../apps/server/src/preview/Manager.ts)                          | While a client streams it                                                |
 
 Viewers cannot come from Presence: clients report it only while another member is connected
 ([presenceReporting.ts](../../../packages/client-runtime/src/presenceReporting.ts)), so a solo user
@@ -319,8 +319,8 @@ the mirror's latest checkpoint and terminals show exited.
 that is neither settled nor archived (one `sandbox.wake` on a new viewer lease), typing in a
 sleeping terminal or pressing its **Wake** (viewing it does not wake), MCP or `t3 thread` CLI calls
 that send messages (through the prompt path), scheduled tasks, and checkpoint restore, which waits
-for `ready` for at most 10 minutes (decision 11). A settled thread's reads come from the snapshot. Opening a preview
-wakes once previews land (Later). Never: the sidebar, the shell stream, search, push, mirror diffs,
+for `ready` for at most 10 minutes (decision 11). A settled thread's reads come from the snapshot. Opening a browser
+tab wakes from M7 (7.6); listing tabs does not. Never: the sidebar, the shell stream, search, push, mirror diffs,
 `subscribeThread`, or MCP lists.
 
 **Avoiding wake storms.** A wake is always an explicit command, never a side effect of a

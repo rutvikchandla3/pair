@@ -43,6 +43,7 @@ review and verification included. They exclude waiting on vendors or terms. Trea
 | M3 Continue in cloud                    | Sessions move between a member's Mac and Pair Cloud, and local agents reach Pair Cloud.                     | **Continue in cloud** moves a local thread with unpushed commits, uncommitted files and its conversation. **Continue locally** brings a session back, and a non-owner gets a copy. A local agent's `delegate_task` starts a cloud session.                                                                                                                                                                                                                                                                                                                       | M, 8–10 weeks  | ICs who share before pushing        |
 | M4 Team images                          | Admins own the machine.                                                                                     | An admin builds, activates and rolls back a team image, and an agent's build waits for **Activate**.                                                                                                                                                                                                                                                                                                                                                                                                                                                             | L, 10–12 weeks | AMI builds in M5                    |
 | M5 BYOC                                 | Pair Cloud and its machines run in the customer's own cloud account, Google Cloud first.                    | `terraform apply` in a fresh Google Cloud project gives a Pair Cloud server whose cloud sessions run on Compute Engine VMs, reached over VPN or Tailscale, in under two hours. AWS follows with the same kit shape.                                                                                                                                                                                                                                                                                                                                              | L, 9–12 weeks  | BYOC customers                      |
+| M7 Cloud browser                        | A cloud session has a Browser tab on every client, backed by Chrome on its machine.                         | From the Mac app, a phone or the web, open `localhost:3000` in a cloud session's Browser tab and see the agent's server; the agent uses the same tab; the tab closes when the machine sleeps and opening one wakes it.                                                                                                                                                                                                                                                                                                                                           |
 | Later, by demand                        | Unscheduled rows at the end of section 2.                                                                   | Built when a team asks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —              | —                                   |
 
 ## 2. Pull request plan
@@ -68,7 +69,7 @@ takes.
 Landed: 0.1–0.9 and 0.11, with 0.10 folded into 1.11. 0.12 and 0.13 were dropped before they
 started: settings gate Cloud, and `cloudAvailability` landed with its first consumer in 1.37. The
 specs are in [m0-seam.md](./implementation/m0-seam.md). Per-host port discovery (02 §6 PR 8) was not
-built; it waits for previews (Later).
+built; M7's 7.5 reads a machine's ports from its runner instead.
 
 ### M1 Cloud threads on Docker
 
@@ -270,39 +271,54 @@ Needs the tables leave out: settings land before drivers (5.5 before 5.11 and 5.
 needs the runner listener (5.19) and the CA and proxy fields (5.8), and 5.5, 5.7 and 5.18 each
 have a Google Cloud PR and an AWS PR under one number.
 
+### M7 Cloud browser
+
+The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the machine over a
+browser on Pair Cloud's server (2026-11-10; [07 §5](./07-access-and-data.md#5-previews-and-ports-m7)).
+The full specs are in [m7-cloud-browser.md](./implementation/m7-cloud-browser.md). 7.2 is the old
+Later row 2.10 without port discovery, and 7.3, 7.4 and 7.6 replace 2.11. M7 needs nothing from M6.
+
+| #   | Title                                                                                             | Owner                  | Needs         | Parallel |
+| --- | ------------------------------------------------------------------------------------------------- | ---------------------- | ------------- | -------- |
+| 7.1 | `build(sandbox-image): add headless Chrome to the machine image`                                  | 05 §1; 07 §5           | none          | Yes      |
+| 7.2 | `feat(contracts,server): open TCP connections from Pair Cloud to a machine's loopback` (was 2.10) | 03 §11 #10; 02 §2      | none          | Yes      |
+| 7.3 | `feat(server): run a machine's Chrome and attach to it over the runner`                           | 07 §5, §10 #27         | 7.1, 7.2      | Critical |
+| 7.4 | `feat(server): open a cloud session's browser tabs on its machine` (was 2.11; spike first)        | 07 §5, §10 #27; 06 §10 | 7.3           | Critical |
+| 7.5 | `feat(contracts,server): list and stop a machine's servers`                                       | 07 §10 #26; 02 §6 PR 8 | none          | Yes      |
+| 7.6 | `feat(server): browser tabs wake a machine and keep it awake while watched`                       | 04 §2                  | 7.4           | Yes      |
+| 7.7 | `feat(contracts,server,web,mobile): turn on the Browser tab for cloud sessions`                   | 08 §9; 07 §5           | 7.4, 7.5, 7.6 | Critical |
+
 ### Later, by demand
 
 Not scheduled. Each row keeps its title and its spec in
 [m2-m5.md](./implementation/m2-m5.md#later-by-demand), so it can be picked up when a team asks.
 
-| #    | Title                                                                                                  | Owner                      | Waits for                                     |
-| ---- | ------------------------------------------------------------------------------------------------------ | -------------------------- | --------------------------------------------- |
-| 2.3  | `feat(server): recycle sandboxes before a vendor's session limit`                                      | 04 §3, §10 #13             | A hosted vendor                               |
-| 2.5  | `feat(server): add the Vercel Sandbox compute driver` (or E2B)                                         | 04 §7, §8, §10 #14; 06 §11 | A team that wants no Docker host              |
-| 2.6  | `feat(server): pick hosted runner URLs and rotate sandbox tokens daily`                                | 03 §11 #11                 | A hosted vendor                               |
-| 3.6  | `feat(server): build team images on the hosted driver`                                                 | 05 §9; 04 §10 #17          | 2.5 and M4                                    |
-| 5.16 | `docs: run the E2B driver against an Embed node`                                                       | 04 §10 #19; 09 §3          | 2.5 choosing E2B                              |
-| 2.10 | `feat(server): tunnel TCP to sandbox ports over the runner` (with per-host port discovery, 02 §6 PR 8) | 03 §11 #10                 | Previews or SSH                               |
-| 2.11 | `feat(server): preview cloud sessions through per-sandbox browser contexts`                            | 07 §5, §10 #26, #27; 08 §9 | 2.10                                          |
-| 2.14 | `feat(server): fork a cloud session to a new machine`                                                  | 07 §2, §10 #28             | A team that asks                              |
-| 2.15 | `feat(server): proxy API-key model calls through Pair Cloud` (opt-in)                                  | 06 §4                      | Company API keys a team won't put in machines |
-| 4.10 | `feat(server): proxy every API-key account in cloud-only mode`                                         | 06 §4                      | 2.15                                          |
-| 2.16 | `feat(server): add member cloud env and mask injected secrets`                                         | 06 §6                      | A team that asks                              |
-| 2.17 | `feat(web,mobile): add an optional member cap and show sandbox hours`                                  | 04 §4, §10 #15; 08 §9      | A team that outgrows the defaults             |
-| 2.19 | `feat(server): mirror provider session files`                                                          | 04                         | Native resume after a rebuild                 |
-| 2.20 | `feat(contracts,web,mobile): choose a machine size at launch`                                          | 08 §9                      | A driver with several sizes                   |
-| 3.13 | `build(sandbox-image): add OpenCode, Grok and Kiro`                                                    | 05 §9                      | A team on those providers                     |
-| 3.14 | `feat(server): run ACP agents on sandbox hosts with API keys` (Grok, Kiro)                             | 02 §4; 06 §3               | 3.13                                          |
-| 3.15 | `feat(server): run OpenCode on sandbox hosts`                                                          | 02 §4; 06 §3               | 2.10, 3.13                                    |
-| 3.16 | `feat(server,web,mobile): stage attachments, check rollback and mark new providers cloud-ready`        | 07 §10 #29; 08 §9          | 3.14, 3.15                                    |
-| 3.17 | `feat(server): push other git hosts through the server's git proxy`                                    | 06 §5                      | A GitLab or GitHub Enterprise customer        |
-| 3.18 | `feat(server): enforce egress allowlists on Docker`                                                    | 06 §8                      | A team that asks                              |
-| 4.1  | `feat(server,web): register member SSH keys` (and SSH device credentials)                              | 07 §7, §10 #30; 08 §9      | A team that asks                              |
-| 4.2  | `feat(server): tunnel SSH to sandboxes through Pair Cloud`                                             | 07 §10 #31; 03 §11 #16     | 4.1, 2.10                                     |
-| 4.3  | `feat(web,desktop): open a cloud machine in VS Code, Cursor, Zed or JetBrains`                         | 07 §10 #32; 08 §9          | 4.2                                           |
-| 5.15 | `feat(server): proxy Claude to Bedrock with the server's role`                                         | 09 §8                      | 2.15 and a BYOC customer who asks             |
-| —    | Continuous replication of Pair Cloud's database                                                        | README decision 18; D11    | A customer who needs less than an hour of RPO |
-| —    | A local project that defaults to Cloud                                                                 | D4                         | A team that asks                              |
+| #    | Title                                                                                           | Owner                      | Waits for                                     |
+| ---- | ----------------------------------------------------------------------------------------------- | -------------------------- | --------------------------------------------- |
+| 2.3  | `feat(server): recycle sandboxes before a vendor's session limit`                               | 04 §3, §10 #13             | A hosted vendor                               |
+| 2.5  | `feat(server): add the Vercel Sandbox compute driver` (or E2B)                                  | 04 §7, §8, §10 #14; 06 §11 | A team that wants no Docker host              |
+| 2.6  | `feat(server): pick hosted runner URLs and rotate sandbox tokens daily`                         | 03 §11 #11                 | A hosted vendor                               |
+| 3.6  | `feat(server): build team images on the hosted driver`                                          | 05 §9; 04 §10 #17          | 2.5 and M4                                    |
+| 5.16 | `docs: run the E2B driver against an Embed node`                                                | 04 §10 #19; 09 §3          | 2.5 choosing E2B                              |
+| 2.14 | `feat(server): fork a cloud session to a new machine`                                           | 07 §2, §10 #28             | A team that asks                              |
+| 2.15 | `feat(server): proxy API-key model calls through Pair Cloud` (opt-in)                           | 06 §4                      | Company API keys a team won't put in machines |
+| 4.10 | `feat(server): proxy every API-key account in cloud-only mode`                                  | 06 §4                      | 2.15                                          |
+| 2.16 | `feat(server): add member cloud env and mask injected secrets`                                  | 06 §6                      | A team that asks                              |
+| 2.17 | `feat(web,mobile): add an optional member cap and show sandbox hours`                           | 04 §4, §10 #15; 08 §9      | A team that outgrows the defaults             |
+| 2.19 | `feat(server): mirror provider session files`                                                   | 04                         | Native resume after a rebuild                 |
+| 2.20 | `feat(contracts,web,mobile): choose a machine size at launch`                                   | 08 §9                      | A driver with several sizes                   |
+| 3.13 | `build(sandbox-image): add OpenCode, Grok and Kiro`                                             | 05 §9                      | A team on those providers                     |
+| 3.14 | `feat(server): run ACP agents on sandbox hosts with API keys` (Grok, Kiro)                      | 02 §4; 06 §3               | 3.13                                          |
+| 3.15 | `feat(server): run OpenCode on sandbox hosts`                                                   | 02 §4; 06 §3               | 7.2 , 3.13                                    |
+| 3.16 | `feat(server,web,mobile): stage attachments, check rollback and mark new providers cloud-ready` | 07 §10 #29; 08 §9          | 3.14, 3.15                                    |
+| 3.17 | `feat(server): push other git hosts through the server's git proxy`                             | 06 §5                      | A GitLab or GitHub Enterprise customer        |
+| 3.18 | `feat(server): enforce egress allowlists on Docker`                                             | 06 §8                      | A team that asks                              |
+| 4.1  | `feat(server,web): register member SSH keys` (and SSH device credentials)                       | 07 §7, §10 #30; 08 §9      | A team that asks                              |
+| 4.2  | `feat(server): tunnel SSH to sandboxes through Pair Cloud`                                      | 07 §10 #31; 03 §11 #16     | 4.1, 7.2                                      |
+| 4.3  | `feat(web,desktop): open a cloud machine in VS Code, Cursor, Zed or JetBrains`                  | 07 §10 #32; 08 §9          | 4.2                                           |
+| 5.15 | `feat(server): proxy Claude to Bedrock with the server's role`                                  | 09 §8                      | 2.15 and a BYOC customer who asks             |
+| —    | Continuous replication of Pair Cloud's database                                                 | README decision 18; D11    | A customer who needs less than an hour of RPO |
+| —    | A local project that defaults to Cloud                                                          | D4                         | A team that asks                              |
 
 ## 3. Dependency graph
 
@@ -723,7 +739,7 @@ are decided as written. Still open, the earliest first:
 | 13  | One cloud account per team in the kit                                                         | Dedicated by default; shared                                                                                                                                | Dedicated by default, shared documented (09 open question 3)                                                                                                                                                                                                   | 5.12, 5.9               |
 
 Decisions tied to Later rows (the hosted vendor, the model proxy's default, whether members see a
-cost estimate, mirroring provider session files, previews on a cloud-only server, SSH's default)
+cost estimate, mirroring provider session files, SSH's default)
 wait until their row is scheduled; the analysis stays in the owning docs. Packaging is settled by
 the plan: Pair Cloud is self-hosted, and a Pair-hosted control plane is rejected
 ([09 §7](./09-byoc.md#7-rejected-a-pair-hosted-control-plane)).
@@ -756,7 +772,7 @@ From 01 §10, 02, 04, 05, 06, 07, 09 and the 2026-11-08 architecture:
 - A per-project default driver; the server-wide `sandbox.defaultDriverId` picks.
 - A runner-versus-server compatibility matrix; the runner never comes from npm (decision 5).
 - Dev Container features or Compose as the recipe format; several images per team; scheduled
-  rebuilds; Chrome in the base image before previews need it.
+  rebuilds.
 - Transcript import from Conductor.
 - `cloud` in persisted fields older clients decode strictly, or in the committed project file,
   before upstream T3 Code reads it (README decision 7; 08 §2). Scheduled tasks never take `cloud`.

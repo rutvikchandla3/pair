@@ -6,8 +6,8 @@ Read the [plan](./README.md) first.
 This page covers what people and agents do with a cloud session's data on Pair Cloud: the Pair
 Cloud project and its mirror, checkpoints and diffs, restore and fork, pull requests, terminals,
 files, moving a session between a member's Mac and Pair Cloud, and what happens to all of it when a
-thread ends. It also covers what stays readable while the machine sleeps. Previews, SSH and open in
-editor are Later; their designs stay here for when they are picked up. The runner's wire protocol
+thread ends. It also covers what stays readable while the machine sleeps. Previews are M7. SSH and
+open in editor are Later; their designs stay here for when they are picked up. The runner's wire protocol
 is [03](./03-runner.md). Sandbox states, sleep and wake are [04](./04-sandbox-lifecycle.md).
 Credentials are [06](./06-credentials-and-security.md). Contract shapes are
 [08](./08-clients-and-contracts.md).
@@ -23,7 +23,8 @@ Statements marked (inferred) are our reading, not something verified in code or 
 - Git runs in the machine and forge calls run on Pair Cloud. PR discovery never wakes a machine.
 - Terminals keep their history on Pair Cloud.
 - Moving a session between a member's Mac and Pair Cloud (M3) carries a seed (bundle plus snapshot commit) and a context export, and creates a linked thread on the other server.
-- Previews, SSH, open in editor and fork to a new machine are Later.
+- Previews are M7: the browser runs in the machine. SSH, open in editor and fork to a new machine
+  are Later.
 
 ## 1. Checkpoints and the mirror
 
@@ -335,55 +336,58 @@ and never goes to the shell, which keeps the replay rule in
 doesn't wake it. Typing or pressing **Wake** does. Opening the thread itself wakes the machine
 ([04](./04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers)).
 
-## 5. Previews and ports (Later)
+## 5. Previews and ports (M7)
 
-Previews are not scheduled. Until they land, Pair Cloud's server browser loads no agent-served page
-([06](./06-credentials-and-security.md) section 10). This is the design for when they are picked up.
+Specified in [M7](./implementation/m7-cloud-browser.md); not built. Until it lands, Pair Cloud
+refuses to open a browser tab and its server browser loads no agent-served page
+([06](./06-credentials-and-security.md) section 10).
 
-Today [PortScanner.ts](../../../apps/server/src/preview/PortScanner.ts) polls listeners on the
-server's host every 3 seconds with `lsof` or `/proc`. It credits each listener to a thread through
-the `T3CODE_THREAD_ID` variable in the process environment. Remote clients see previews by streaming
-the server's own headless browser ([ServerBrowser.ts](../../../apps/server/src/preview/ServerBrowser.ts),
-[remote access](../../user/remote-access.md#browser-on-a-remote-environment)). The desktop app draws
-its own environment's tabs in an Electron view over CDP
+On a local server, [PortScanner.ts](../../../apps/server/src/preview/PortScanner.ts) polls the
+server's own listeners and credits each to a thread through `T3CODE_THREAD_ID`. Remote clients see
+tabs by streaming the server's headless browser ([ServerBrowser.ts](../../../apps/server/src/preview/ServerBrowser.ts),
+[remote access](../../user/remote-access.md#browser-on-a-remote-environment)), and the desktop app
+draws its own environment's tabs in an Electron view over CDP
 ([DesktopBrowserChannel.ts](../../../apps/server/src/preview/DesktopBrowserChannel.ts)).
 
-**Decide first.** Pair Cloud's server browser would load agent-served pages on the machine that
-holds every member's credentials and the mirror. Whether it may, or whether the browser itself must
-run in a machine, is the first decision when previews are picked up.
+**The browser runs in the machine** (maintainer, 2026-11-10). Each machine runs one headless
+Chrome as the agent user, from the image. Pair Cloud drives it with the code that drives its own
+browser on a local server, attached over CDP instead of launched. The alternative, Pair Cloud's
+browser with a loopback proxy into the machine, was rejected: it would run agent-served pages on
+the machine that holds every member's credentials and the mirror, put every team's tabs in the
+server's memory, and depend on a Chromium proxy bypass nobody had proven.
+
+```
+ Clients            Pair Cloud                               Machine
+ streamed tab  ◄──  ServerBrowser ── CDP ──► loopback bridge ══ tcp.connect ══► Chrome ──► localhost:3000
+```
+
+- **`localhost` is the machine.** A tab's `http://localhost:3000` reaches the agent's server with
+  the Host header and origin the app expects, so OAuth callbacks registered for localhost work.
+  External pages load from the machine's network, under its egress rules.
+- **Clients never connect to a machine, and a machine never connects to a client.** The only bytes
+  tunnelled are CDP, on the runner's own outbound connection (decision 4), to a loopback port in
+  the machine. Clients see Pair Cloud's origin and the stream route they use today. That holds over
+  a VPN, Tailscale and the optional public listener alike.
+- **Every client streams.** The desktop app shows a cloud session's tabs the way a phone does. Its
+  own webview cannot reach a machine, so it is not offered for them.
+- **One profile per machine,** on the machine's kept disk. Agent and incognito tabs get their own
+  context, as on a local server. Named profiles and cookie import stay local.
+- **Agents get the same tabs** through the existing MCP preview tools, with no cloud-specific
+  code. An agent's own `curl localhost:3000` runs inside the machine and needs nothing at all.
 
 **Detection.** Port listing (`ports.listeners`) is a coarse runner operation that landed in M1
-(decision 2). The runner pushes listener changes (port, pid, command) on a watch channel, so an idle
+(decision 2). The runner pushes listener changes (port, pid, command) on a stream, so an idle
 machine sends nothing. Every listener in a machine belongs to that machine's threads, so the
 environment-variable trick isn't needed there. Stopping a listed server signals its process group
-through the runner. A sleeping machine lists no ports. A preview that was open shows "Stopped while
-asleep" with **Restart**, which wakes the machine and reruns the project script that started it.
+through the runner. A sleeping machine lists no ports.
 
-**Reaching the port. Clients never connect to a machine, and the machine never connects to a
-client.** Tunnel bytes ride the runner's own outbound connection to Pair Cloud (decision 4), and
-clients see only Pair Cloud's origin. That holds over a VPN, Tailscale and the optional public
-listener alike.
+**Sleep.** A sleeping machine has no browser, so its tabs close with it. Opening a tab wakes the
+machine, and a tab somebody is watching holds off idle sleep
+([04](./04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers)). Remembering tabs across sleep,
+and a **Restart** that reruns the project script, wait for a team that asks.
 
-1. Pair Cloud runs a loopback HTTP proxy that accepts plain requests and `CONNECT`. Requests to
-   `localhost`, `127.0.0.1` or `[::1]` open a runner TCP tunnel to the same port inside the machine.
-   Other hosts go direct from the server.
-2. A cloud thread's tabs use a browser context with `proxy: { server, bypass: "<-loopback>" }`.
-   Playwright supports a proxy per context ([Playwright](https://playwright.dev/docs/api/class-browser#browser-new-context-option-proxy)).
-   Chromium skips the proxy for loopback unless the bypass list includes `<-loopback>`
-   ([Chromium proxy docs](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md)).
-   The page keeps `http://localhost:3000` as its URL, so the app sees the Host header and origin it
-   expects. OAuth callbacks registered for localhost keep working.
-3. Persistent contexts are per profile, but `contextFor(profileId, isolationKey)` already creates
-   isolated, non-persistent contexts ([ServerBrowserContexts.ts](../../../apps/server/src/preview/ServerBrowserContexts.ts),
-   used by [ServerBrowser.ts](../../../apps/server/src/preview/ServerBrowser.ts) per tab today).
-   Cloud tabs pass the `sandboxId` as the isolation key, and `createContext` adds the proxy option
-   for them. Seeding that context from the profile's storage state is optional (inferred workable;
-   try it in a spike first).
-4. The desktop app shows cloud tabs the way other devices do: streamed from Pair Cloud's browser. A
-   per-partition proxy in Electron could come later. It isn't needed for parity.
-
-Agents get the same tabs through the existing MCP preview tools, so they need no cloud-specific
-code. An agent's own `curl localhost:3000` runs inside the machine and needs nothing at all.
+**Older images.** A machine whose image predates Chrome in the base shows "This machine's image
+has no browser. Rebuild the team image, then start a new session."
 
 **Ports on a member's own computer** (Conductor's "forward ports") would come with SSH (section 7):
 `ssh -L 3000:localhost:3000 t3-<thread>`, or the editor's port forwarding. There are no public
@@ -709,8 +713,8 @@ Each row is about one pull request.
 | 23  | M3         | Continue in cloud from the Mac: preview with exclusions, seed, export, launch, the "Continued in cloud" row.                                                                                                                                                                                                |
 | 24  | M3         | Continue locally: the bundle and export download, import into the matching local project, the owner's move and everyone else's copy.                                                                                                                                                                        |
 | 25  | M5         | Measure sync, seed and rebuild times on the AWS kit's network, and tune the bundle size cap. No new mechanism.                                                                                                                                                                                              |
-| 26  | Later      | Stopping listed servers through the runner, and preview tabs from `ports.listeners`.                                                                                                                                                                                                                        |
-| 27  | Later      | The loopback preview proxy, per-machine browser contexts, and desktop cloud tabs streamed. Spike first: `<-loopback>` through Playwright's context proxy, and seeding storage state.                                                                                                                        |
+| 26  | M7         | Stopping listed servers through the runner, and the Browser's server list from `ports.listeners` (7.5).                                                                                                                                                                                                     |
+| 27  | M7         | Chrome in the machine image, `tcp.connect`, the machine browser attached over CDP, tabs that wake and close with the machine, and the tab turned on for every client (7.1–7.4, 7.6, 7.7).                                                                                                                   |
 | 28  | Later      | Fork to a new machine.                                                                                                                                                                                                                                                                                      |
 | 29  | Later      | Each newly supported provider (OpenCode, Grok, Kiro): an attachment-path decision and a check that its rollback works in a machine.                                                                                                                                                                         |
 | 30  | Later      | SSH keys on Pair Cloud, and the SSH-scoped device credential.                                                                                                                                                                                                                                               |
@@ -736,9 +740,8 @@ Each row is about one pull request.
 4. **Offboarding is manual until a GitHub org-membership check lands.** The access check runs only
    when a project is added, so a member who leaves the GitHub organization still reads every project
    on Pair Cloud until an admin removes them.
-5. **(Later, previews) A shared browser profile or a context per machine for cloud tabs?** Recommend
-   a context per machine seeded from the profile, with no write-back. Revisit if people complain
-   about losing logins.
+5. **(M7) Should a cloud tab start with a member's logins?** No: one profile per machine, on its
+   own disk, shared by everyone on the session. Revisit if people complain about signing in again.
 6. **(Later, SSH) Keys checked live, or certificates?** Recommend registered keys with
    `AuthorizedKeysCommand`. It gives live revocation with no CA and no per-computer signing.
 7. **(Later, SSH) Which credential does `t3 ssh proxy` use?** API tokens are `/mcp` only
@@ -767,8 +770,6 @@ and side chats (decision 6), a server pull into the mirror (decision 11), coarse
 ## Sources
 
 - [git-bundle](https://git-scm.com/docs/git-bundle): `create -` writes to stdout, prerequisites, `verify`.
-- [Playwright `browser.newContext` proxy option](https://playwright.dev/docs/api/class-browser#browser-new-context-option-proxy)
-- [Chromium proxy settings, implicit bypass and `<-loopback>`](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md)
 - [`gh codespace ssh` manual](https://cli.github.com/manual/gh_codespace_ssh): `--config`, an SSH server is required, and keys are created in `~/.ssh`.
 - [Using GitHub Codespaces with GitHub CLI](https://docs.github.com/en/codespaces/developing-in-a-codespace/using-github-codespaces-with-github-cli): the `sshd` feature requirement.
 - [ssh-keygen(1), CERTIFICATES](https://man.openbsd.org/ssh-keygen#CERTIFICATES): the certificate alternative we considered.

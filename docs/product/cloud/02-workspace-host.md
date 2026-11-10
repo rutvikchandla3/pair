@@ -103,8 +103,8 @@ abstraction), HTML render and the server browser (`htmlRender/*`, `preview/Serve
 `relayClient.ts`, and 25 provider probe and install files (`*/status.ts`, `*/driver.ts`,
 `provider/Drivers/*`, `providerMaintenanceRunner.ts`, `snapshotProbe.ts`). Probes report the
 server's CLI install. A cloud thread uses the team image's CLI; keeping the two in step is
-[05](./05-team-images.md)'s job. The server browser stays local and will reach sandbox ports
-through `host.ports.connect` once previews land (Later). The terminal manager's history logs, the
+[05](./05-team-images.md)'s job. A cloud session's browser runs in its machine, and the server reaches its debugging port
+through `host.ports.connect` (M7). The terminal manager's history logs, the
 database, settings and attachments stay local. On Pair Cloud, this list, the mirror and git in the
 project checkout (PR views, the review guide, repository identity;
 [07](./07-access-and-data.md)) are all that `LocalWorkspaceHost` serves.
@@ -323,14 +323,14 @@ flowchart LR
 
 Where each subsystem resolves:
 
-| Subsystem                  | Today's cwd source                                                        | Resolution point                                                                                                                                |
-| -------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider sessions          | `input.runtimePolicy.cwd` in `openSession`                                | Once per session, in the adapter's `open`. The host lives as long as the session.                                                               |
-| Git and checkpoints        | `cwd` on every `VcsProcess.run` and `CheckpointStore` call                | Per call in `VcsProcess.run` and `GitVcsDriverCore.executeRaw`; the checkpoint's temp-index file ops use the same host.                         |
-| Terminals                  | `session.cwd`                                                             | At PTY spawn and in `assertValidCwd`. Logs stay local.                                                                                          |
-| Workspace files and search | `input.cwd`                                                               | Per call in `WorkspaceFileSystem` and `WorkspaceEntries`; per host in `WorkspaceSearchIndex`'s `LayerMap` key.                                  |
-| Port discovery             | none; machine-wide                                                        | One `PortDiscovery` per host (`LayerMap` by host id), with previews (Later). M1 keeps discovery on the local host and ships the coarse listing. |
-| Disk checks                | `worktreePath` on rollback, PR discovery, restore safety, storage cleanup | Per call through `forPath`.                                                                                                                     |
+| Subsystem                  | Today's cwd source                                                        | Resolution point                                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider sessions          | `input.runtimePolicy.cwd` in `openSession`                                | Once per session, in the adapter's `open`. The host lives as long as the session.                                                           |
+| Git and checkpoints        | `cwd` on every `VcsProcess.run` and `CheckpointStore` call                | Per call in `VcsProcess.run` and `GitVcsDriverCore.executeRaw`; the checkpoint's temp-index file ops use the same host.                     |
+| Terminals                  | `session.cwd`                                                             | At PTY spawn and in `assertValidCwd`. Logs stay local.                                                                                      |
+| Workspace files and search | `input.cwd`                                                               | Per call in `WorkspaceFileSystem` and `WorkspaceEntries`; per host in `WorkspaceSearchIndex`'s `LayerMap` key.                              |
+| Port discovery             | none; machine-wide                                                        | The local host keeps its `PortDiscovery`. A machine's list is its runner's `ports.listeners`, read per thread from M7 (7.5); no `LayerMap`. |
+| Disk checks                | `worktreePath` on rollback, PR discovery, restore safety, storage cleanup | Per call through `forPath`.                                                                                                                 |
 
 The cost of a lookup is one prefix test and a `Map` get. No parameter is threaded through call
 sites.
@@ -423,7 +423,7 @@ Coarse operations for M1 (README decision 2):
 | ----------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `search.entries`, `search.contents`, `entries.browse` | `WorkspaceSearchIndex`, `WorkspaceEntries.list/browse` | Native index; recursive `readdir`. Structural.                                                                                                                   |
 | `processes.table`                                     | `ps` polling in the terminal manager                   | PIDs are host-local. Structural. Better as a stream the runner pushes on change.                                                                                 |
-| `ports.listeners`                                     | `PortScanner` scan                                     | `/proc` and PIDs. Structural. Built in M1; `PortScanner` still scans only the local host, and per-host discovery and previews use it later.                      |
+| `ports.listeners`                                     | `PortScanner` scan                                     | `/proc` and PIDs. Structural. Built in M1; `PortScanner` still scans only the local host, and M7's server list reads it (7.5).                                   |
 | `checkpoint.capture`                                  | ~24 trips, ~40 with files changed                      | Sequential chain. Run as `CheckpointServiceV2.capture`, it covers files changed and turn end drops to about 6 trips; the driver's capture alone leaves about 25. |
 
 `vcs.localStatus` is the first candidate to join later: the loopback host with injected latency
@@ -448,7 +448,7 @@ files. New code goes in `apps/server/src/workspaceHost/` and a new lint rule fil
 | 6   | Replay, then Codex, then Claude adapters: resolve at session open from `runtimePolicy.cwd`; `spawnClaudeProcessGroup` moves into `LocalWorkspaceHost` verbatim; in-process history calls go through a host-aware helper; `exposeServerEndpoint` for MCP and the token broker (local host returns today's URL). | `Adapters/*`, `provider-testing`                                                |
 | 7   | Base env: `makeClaudeEnvironment`, `codexLaunchArgs` and `instanceEnvironment` take their base from `host.info.environment`; the local spawner's `extendEnv` reads it too. Session open `stat`, attachment path resolution, investigate-mode text generation, `ClaudeTaskOutputTail`, `workflowFileRead`.      | small edits                                                                     |
 | 7b  | Disk checks: restore safety `realPath`, rollback `exists`, PR discovery `.git` check, `storageCleanup` worktree walk, all through `forPath`.                                                                                                                                                                   | `orchestration-v2/*`, `storageCleanup.ts`                                       |
-| 8   | `PortDiscovery` per host behind `LayerMap` (still one local host). Waits for previews (Later).                                                                                                                                                                                                                 | `preview/PortScanner.ts`                                                        |
+| 8   | A machine's ports read from its runner's `ports.listeners`, per thread (M7, 7.5). The `LayerMap` was not needed.                                                                                                                                                                                               | `preview/PortScanner.ts`                                                        |
 
 Each PR is reviewable alone and leaves every other caller on the old path. PRs 3–7b are
 independent after PR 2; land them in any order. ACP and OpenCode keep their lint disables until

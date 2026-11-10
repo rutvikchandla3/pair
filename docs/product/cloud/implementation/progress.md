@@ -70,6 +70,11 @@ reverses "everyone sees every thread" on Pair Cloud. The maintainer said to buil
 with the doc's open questions answered as proposed. Rows have no per-row spec page: the lead's
 worker prompt is each row's scope. Landed: 6.1 (5bc3e5646).
 
+**M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
+7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
+machine, driven from Pair Cloud over a new `tcp.connect` on the runner's socket. Nothing is built.
+Its six open questions take their proposals; 7.4 starts with a spike whose results belong here.
+
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
