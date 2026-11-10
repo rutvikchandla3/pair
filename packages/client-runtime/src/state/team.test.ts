@@ -131,6 +131,18 @@ describe("team state", () => {
     expect(can(team, other.id, null)).toBe(false);
     expect(can(solo, ownerId, null)).toBe(true);
     expect(can(team, null, guestId)).toBe(true);
+    // The server owner is an admin even when their stored role says member.
+    const roleless = member(ownerId, { isOwner: true });
+    expect(
+      can(
+        new Map([
+          [ownerId, roleless],
+          [guestId, guest],
+        ]),
+        ownerId,
+        guestId,
+      ),
+    ).toBe(true);
   });
 
   it("a cloud thread is assigned by its owner, or by an admin once the owner has left", () => {

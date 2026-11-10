@@ -427,9 +427,19 @@ describe("cloudMachineRow", () => {
     createdAt: DateTime.makeUnsafe("2036-04-07T00:00:00.000Z"),
     ...fields,
   });
-  const row = (fields: Partial<SandboxOverviewMachine>) =>
+  const admin = MemberId.make("member-admin");
+  const other = MemberId.make("member-other");
+  const team: TeamMembers = new Map([
+    ...members,
+    ...(["admin", "member"] as const).map((role) => {
+      const id = role === "admin" ? admin : other;
+      return [id, { ...members.get(owner), id, name: id, role } as TeamMember] as const;
+    }),
+  ]);
+  const row = (fields: Partial<SandboxOverviewMachine>, viewer: MemberId | null = admin) =>
     cloudMachineRow(machine(fields), {
-      members,
+      members: team,
+      memberId: viewer,
       driverLabel: "Docker",
       sizeLabel: "Default",
       age: "3h ago",
@@ -469,6 +479,15 @@ describe("cloudMachineRow", () => {
     ["waking", []],
   ] as const)("offers %s machines %j", (state, actions) => {
     expect(row({ state }).actions).toEqual(actions);
+  });
+
+  it.each([
+    ["an admin", admin, true],
+    ["the machine's owner", owner, true],
+    ["another member", other, false],
+  ] as const)("lets %s act on a private machine: %s", (_who, viewer, allowed) => {
+    expect(row({}, viewer).allowed).toBe(allowed);
+    expect(row({}, viewer).actions).toEqual(["sleep", "discard"]);
   });
 });
 

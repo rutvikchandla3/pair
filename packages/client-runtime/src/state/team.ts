@@ -42,15 +42,20 @@ export function isTeamModeMembers(members: TeamMembers): boolean {
   return activeTeamMembers(members).length > 1;
 }
 
-/** The server's delete rule, so clients can disable Delete up front: owner or admin, in team mode. */
+/**
+ * The server's delete rule, so clients can disable Delete up front: owner or admin, in team mode.
+ * The server counts its own owner as an admin whatever their role says.
+ */
 export function canMemberDeleteThread(input: {
   readonly members: TeamMembers;
   readonly memberId: MemberId | null;
   readonly ownerId: MemberId | null | undefined;
 }): boolean {
   if (input.memberId === null || !isTeamModeMembers(input.members)) return true;
+  const member = input.members.get(input.memberId);
   return (
-    input.members.get(input.memberId)?.role === "admin" ||
+    member?.role === "admin" ||
+    member?.isOwner === true ||
     (input.ownerId != null && input.ownerId === input.memberId)
   );
 }
@@ -148,7 +153,7 @@ export const FORMER_MEMBER = { name: FORMER_MEMBER_NAME, color: "#6b7280" } as c
 export function teamOwnerOf(
   viewer: TeamViewer,
   ownerId: MemberId | null | undefined,
-): Pick<TeamMember, "name" | "color"> | null {
+): (Pick<TeamMember, "name" | "color"> & { readonly id?: MemberId }) | null {
   const effectiveOwnerId = ownerId ?? viewer.ownerId;
   if (effectiveOwnerId === null || effectiveOwnerId === viewer.memberId) return null;
   return viewer.members.get(effectiveOwnerId) ?? FORMER_MEMBER;

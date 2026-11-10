@@ -24,6 +24,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type MemberId,
   type ScopedThreadRef,
   type TeamMember,
 } from "@t3tools/contracts";
@@ -90,6 +91,7 @@ import {
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   setFileDragActive,
+  viewersBesidesOwner,
 } from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
@@ -564,7 +566,7 @@ type SidebarThreadRowProps = {
   pinningSupported: boolean;
   isPinned: boolean;
   /** Team mode only: the member who owns a thread that is not the viewer's. */
-  owner?: Pick<TeamMember, "name" | "color"> | null | undefined;
+  owner?: (Pick<TeamMember, "name" | "color"> & { readonly id?: MemberId }) | null | undefined;
   /** Team mode only: other members with this thread open right now. */
   viewers?: ReadonlyArray<PresentMember> | undefined;
   /** The viewer's own shared cloud thread: who else can open it. */
@@ -1233,7 +1235,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     );
   const viewersStack =
     props.viewers === undefined ? null : (
-      <MemberAvatarStack members={props.viewers} max={2} size="sm" />
+      <MemberAvatarStack
+        members={viewersBesidesOwner(props.viewers, props.owner?.id)}
+        max={2}
+        size="sm"
+      />
     );
   const titleLineIcons = metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">

@@ -38,6 +38,7 @@ import {
   buildSidebarOwnerScopeItems,
   resolveSidebarThreadSection,
   reuseThreadViewers,
+  viewersBesidesOwner,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1812,6 +1813,18 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("viewersBesidesOwner", () => {
+  const ada = { id: MemberId.make("ada"), name: "Ada", color: "#111111", away: false };
+  const bob = { id: MemberId.make("bob"), name: "Bob", color: "#222222", away: false };
+
+  it("drops the owner, whose avatar the row already shows, and keeps the same array otherwise", () => {
+    expect(viewersBesidesOwner([ada, bob], ada.id)).toEqual([bob]);
+    const viewers = [ada, bob];
+    expect(viewersBesidesOwner(viewers, undefined)).toBe(viewers);
+    expect(viewersBesidesOwner(viewers, MemberId.make("carol"))).toBe(viewers);
   });
 });
 

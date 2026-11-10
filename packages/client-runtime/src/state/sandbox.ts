@@ -109,14 +109,17 @@ export interface CloudMachineRow {
   readonly ownerId: MemberId | null;
   readonly ownerName: string;
   readonly discardConfirmation: string;
-  /** Before the owner-or-admin check. */
+  /** What the machine's state allows, before the viewer check; a private machine gets them too. */
   readonly actions: ReadonlyArray<"sleep" | "discard">;
+  /** The server's owner-or-admin rule for the viewer; a denied one is shown disabled, not hidden. */
+  readonly allowed: boolean;
 }
 
 export function cloudMachineRow(
   machine: SandboxOverviewMachine,
   input: {
     readonly members: TeamMembers;
+    readonly memberId: MemberId | null;
     readonly driverLabel: string;
     readonly sizeLabel: string;
     /** "3h ago", from the machine's `createdAt`. */
@@ -154,6 +157,11 @@ export function cloudMachineRow(
         : machine.state === "sleeping" || machine.state === "failed"
           ? ["discard"]
           : [],
+    allowed: canMemberDeleteThread({
+      members: input.members,
+      memberId: input.memberId,
+      ownerId: machine.ownerMemberId,
+    }),
   };
 }
 

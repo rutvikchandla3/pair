@@ -1464,6 +1464,16 @@ export type ThreadViewers = ReadonlyMap<string, ReadonlyArray<PresentMember>>;
 
 const NO_THREAD_VIEWERS: ThreadViewers = new Map();
 
+/** A row that shows its owner's avatar does not show the same person again as a viewer. */
+export function viewersBesidesOwner(
+  viewers: ReadonlyArray<PresentMember>,
+  ownerId: MemberId | undefined,
+): ReadonlyArray<PresentMember> {
+  return ownerId !== undefined && viewers.some((viewer) => viewer.id === ownerId)
+    ? viewers.filter((viewer) => viewer.id !== ownerId)
+    : viewers;
+}
+
 const samePresentMembers = (
   left: ReadonlyArray<PresentMember>,
   right: ReadonlyArray<PresentMember>,

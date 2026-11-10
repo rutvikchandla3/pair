@@ -4,9 +4,9 @@ import {
   cloudMachineRow,
   SANDBOX_ACTION_FAILURE_TITLES,
   SANDBOX_ACTION_MENU_LABELS,
+  SANDBOX_OWNER_ONLY_REASON,
   type CloudMachineRow,
 } from "@t3tools/client-runtime/state/sandbox";
-import { canMemberDeleteThread } from "@t3tools/client-runtime/state/team";
 import type {
   EnvironmentId,
   SandboxDriverInstance,
@@ -70,15 +70,13 @@ export function CloudMachines({
   return machines.map((machine) => {
     const row = cloudMachineRow(machine, {
       members,
+      memberId,
       driverLabel:
         drivers.find((driver) => driver.id === machine.driverId)?.label ?? machine.driverId,
       sizeLabel: SIZE_LABELS[machine.size],
       age: formatRelativeTimeLabel(DateTime.formatIso(machine.createdAt)),
     });
-    const allowed =
-      canOperate &&
-      row.actions.length > 0 &&
-      canMemberDeleteThread({ members, memberId, ownerId: row.ownerId });
+    const hasMenu = canOperate && row.actions.length > 0;
     return (
       <SettingsRow
         key={row.sandboxId}
@@ -97,7 +95,7 @@ export function CloudMachines({
         }
         description={row.details}
         control={
-          allowed ? (
+          hasMenu ? (
             <Menu>
               <MenuTrigger
                 render={
@@ -111,6 +109,8 @@ export function CloudMachines({
                   <MenuItem
                     key={action}
                     variant={action === "discard" ? "destructive" : "default"}
+                    disabled={!row.allowed}
+                    title={row.allowed ? undefined : SANDBOX_OWNER_ONLY_REASON}
                     onClick={() => void stop(row, action)}
                   >
                     {SANDBOX_ACTION_MENU_LABELS[action]}
