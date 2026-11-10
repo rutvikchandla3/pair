@@ -30,11 +30,13 @@ export class Presence extends Context.Service<
     /**
      * Registers the connection for the scope. Updates never include the caller's own member, nor
      * who views or types in a thread `mayOpen` refuses (an in-memory check; absent, every thread).
+     * Each item of `accessChanges` re-checks what the connection was sent.
      */
     readonly subscribe: (connection: {
       readonly connectionId: string;
       readonly memberId: MemberId;
       readonly mayOpen?: (threadId: ThreadId) => boolean;
+      readonly accessChanges?: Stream.Stream<unknown>;
     }) => Effect.Effect<Stream.Stream<PresenceUpdate>, never, Scope.Scope>;
     /** Ignored for a connection that has not subscribed. */
     readonly report: (connectionId: string, input: PresenceReportInput) => Effect.Effect<void>;
@@ -198,6 +200,7 @@ const make = Effect.gen(function* () {
     readonly connectionId: string;
     readonly memberId: MemberId;
     readonly mayOpen?: (threadId: ThreadId) => boolean;
+    readonly accessChanges?: Stream.Stream<unknown>;
   }) {
     const queue = yield* Queue.unbounded<PresenceUpdate>();
     const replaced = connections.get(input.connectionId);
@@ -226,6 +229,18 @@ const make = Effect.gen(function* () {
         yield* scheduleFlush;
       }),
     );
+    if (input.accessChanges !== undefined) {
+      yield* input.accessChanges.pipe(
+        Stream.runForEach(() =>
+          Effect.suspend(() => {
+            const threadId = connection.viewingThreadId;
+            if (threadId !== null) sendTyping(connection, threadId, typingIn(threadId));
+            return scheduleFlush;
+          }),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+    }
     yield* scheduleFlush;
     return Stream.fromQueue(queue);
   });

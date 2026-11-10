@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { type MemberId, SandboxId, type ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,6 +7,7 @@ import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ThreadAccess from "../../team/ThreadAccess.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import type { IdleInput } from "./SandboxDecisions.ts";
 
@@ -18,33 +19,62 @@ const VIEWED_AT_RETENTION_MS = 24 * 60 * 60_000;
 export class SandboxActivity extends Context.Service<
   SandboxActivity,
   {
-    /** Renews this thread's lease; true when no live lease covered it (2.2 wakes on that). */
-    readonly view: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /**
+     * Renews this thread's lease, held by `memberId` when a member's client asks; true when no
+     * live lease covered it (2.2 wakes on that).
+     */
+    readonly view: (threadId: ThreadId, memberId?: MemberId) => Effect.Effect<boolean>;
     readonly read: (threadIds: ReadonlyArray<ThreadId>) => Effect.Effect<IdleInput["activity"]>;
   }
 >()("t3/sandbox/lifecycle/SandboxActivity") {}
 
-/** In memory: after a restart the record and thread activity anchor the idle clock. */
-const makeLeases = () => {
-  const renewedAt = new Map<ThreadId, number>();
+interface Lease {
+  readonly at: number;
+  readonly sandboxId: SandboxId;
+}
+
+/**
+ * In memory: after a restart the record and thread activity anchor the idle clock. A member's
+ * lease counts only while `holds` says they can still open its machine, so one who is removed or
+ * loses access stops keeping it awake.
+ */
+const makeLeases = (holds: (memberId: MemberId, sandboxId: SandboxId) => boolean) => {
+  const leases = new Map<ThreadId, Map<MemberId | null, Lease>>();
+  const latest = (threadId: ThreadId) => {
+    let at: number | null = null;
+    for (const [memberId, lease] of leases.get(threadId) ?? []) {
+      if (memberId !== null && !holds(memberId, lease.sandboxId)) continue;
+      if (at === null || lease.at > at) at = lease.at;
+    }
+    return at;
+  };
   return {
-    renew: (threadId: ThreadId) =>
+    renew: (threadId: ThreadId, sandboxId: SandboxId, memberId: MemberId | null) =>
       Effect.map(Clock.currentTimeMillis, (nowMs) => {
-        const previous = renewedAt.get(threadId);
-        renewedAt.set(threadId, nowMs);
-        return previous === undefined || nowMs - previous >= VIEWER_LEASE_MS;
+        const previous = latest(threadId);
+        const held = leases.get(threadId) ?? new Map<MemberId | null, Lease>();
+        leases.set(threadId, held.set(memberId, { at: nowMs, sandboxId }));
+        return previous === null || nowMs - previous >= VIEWER_LEASE_MS;
       }),
     viewedAt: (threadIds: ReadonlyArray<ThreadId>) =>
       Effect.map(Clock.currentTimeMillis, (nowMs) => {
-        for (const [threadId, at] of renewedAt) {
-          if (nowMs - at >= VIEWED_AT_RETENTION_MS) renewedAt.delete(threadId);
+        for (const [threadId, held] of leases) {
+          for (const [memberId, lease] of held) {
+            if (
+              nowMs - lease.at >= VIEWED_AT_RETENTION_MS ||
+              (memberId !== null && !holds(memberId, lease.sandboxId))
+            ) {
+              held.delete(memberId);
+            }
+          }
+          if (held.size === 0) leases.delete(threadId);
         }
-        let latest: number | null = null;
+        let viewed: number | null = null;
         for (const threadId of threadIds) {
-          const at = renewedAt.get(threadId);
-          if (at !== undefined && (latest === null || at > latest)) latest = at;
+          const at = latest(threadId);
+          if (at !== null && (viewed === null || at > viewed)) viewed = at;
         }
-        return latest;
+        return viewed;
       }),
   };
 };
@@ -55,7 +85,10 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const terminals = yield* TerminalManager.TerminalManager;
     const sql = yield* SqlClient.SqlClient;
-    const leases = makeLeases();
+    const access = yield* ThreadAccess.ThreadAccess;
+    const leases = makeLeases(
+      (memberId, sandboxId) => !access.enforced || access.allowsSandbox(memberId, sandboxId),
+    );
 
     const nextScheduledAt = Effect.fn("SandboxActivity.nextScheduledAt")(function* (
       threadIds: ReadonlyArray<ThreadId>,
@@ -72,7 +105,7 @@ export const layer = Layer.effect(
     });
 
     return SandboxActivity.of({
-      view: Effect.fn("SandboxActivity.view")(function* (threadId) {
+      view: Effect.fn("SandboxActivity.view")(function* (threadId, memberId) {
         const shell = yield* projections
           .getThreadShell(threadId)
           .pipe(
@@ -83,7 +116,7 @@ export const layer = Layer.effect(
             ),
           );
         if (shell?.sandboxId === undefined) return false;
-        return yield* leases.renew(threadId);
+        return yield* leases.renew(threadId, shell.sandboxId, memberId ?? null);
       }),
       read: Effect.fn("SandboxActivity.read")(function* (threadIds) {
         return {
@@ -102,13 +135,17 @@ export const layer = Layer.effect(
   }),
 );
 
+const TEST_SANDBOX_ID = SandboxId.make("sbx_00000000000000000000");
+
 /** Real leases over the test clock; terminal and schedule activity come from these refs. */
 export const makeTest = Effect.gen(function* () {
   const terminalAt = yield* Ref.make<number | null>(null);
   const nextScheduledAt = yield* Ref.make<number | null>(null);
-  const leases = makeLeases();
+  const leases = makeLeases(() => true);
   const service = SandboxActivity.of({
-    view: leases.renew,
+    view: Effect.fn("SandboxActivityTest.view")(function* (threadId) {
+      return yield* leases.renew(threadId, TEST_SANDBOX_ID, null);
+    }),
     read: Effect.fn("SandboxActivityTest.read")(function* (threadIds) {
       return {
         viewedAt: yield* leases.viewedAt(threadIds),

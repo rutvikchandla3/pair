@@ -13,6 +13,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import {
   makeTest as makeThreadAccess,
@@ -124,6 +125,8 @@ const accessTo = (opens: ReadonlyArray<SandboxId>): ViewerAccess => {
     mayAllowThreadId: () => true,
     sandboxOf: () => undefined,
     affectedBy: () => true,
+    lostAt: () => false,
+    accessChanges: Stream.empty,
     caughtUp: Effect.void,
     assertThread: () => Effect.void,
     subscribeChanges: Effect.die("unused"),

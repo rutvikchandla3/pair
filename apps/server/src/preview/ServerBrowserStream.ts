@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -22,7 +23,7 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, whenSessionEnds } from "../auth/http.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
@@ -56,7 +57,7 @@ const parseMessage = (chunk: Uint8Array | string): unknown => {
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 
-/** A thread the member cannot open gets what a missing tab gets (11 §4). Checked on connect only. */
+/** A thread the member cannot open gets what a missing tab gets (11 §4). */
 const canOpenThread = Effect.fnUntraced(function* (memberId: MemberId, threadId: string) {
   const id = decodeThreadId(threadId);
   if (Option.isNone(id)) return true;
@@ -67,6 +68,21 @@ const canOpenThread = Effect.fnUntraced(function* (memberId: MemberId, threadId:
       Effect.as(true),
       Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
     );
+});
+
+/** Completes once the member can no longer open the thread; never where access is not enforced. */
+const awaitThreadLost = Effect.fnUntraced(function* (memberId: MemberId, threadId: string) {
+  const id = decodeThreadId(threadId);
+  const access = yield* ThreadAccess.ThreadAccess;
+  if (!access.enforced || Option.isNone(id)) return yield* Effect.never;
+  // Subscribed before the first check, so a change between the two still ends it.
+  const changes = yield* access.subscribeChanges;
+  const moves = yield* access.subscribeMoves;
+  const opens = () => {
+    const target = access.threadTarget(id.value);
+    return target !== undefined && access.allowsThread(memberId, target);
+  };
+  while (opens()) yield* Effect.raceFirst(PubSub.take(changes), PubSub.take(moves));
 });
 
 // Request middleware owns tracing, including long-lived WebSocket sessions.
@@ -223,7 +239,13 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       const receiveInput = reader.pull.pipe(
         Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
       );
-      return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput));
+      yield* Effect.raceAllFirst([
+        Effect.forever(sendOutput),
+        Effect.forever(receiveInput),
+        yield* whenSessionEnds(session),
+        awaitThreadLost(session.memberId, threadId).pipe(Effect.andThen(gone)),
+      ]);
+      return HttpServerResponse.empty();
     }),
   ).pipe(
     Effect.catchTags({

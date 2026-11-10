@@ -11,6 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import type * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as TeamState from "../team/TeamState.ts";
@@ -57,6 +58,10 @@ export interface ViewerAccess {
   readonly sandboxOf: (threadId: ThreadId) => SandboxId | undefined;
   /** The change may have given or taken this member's access. */
   readonly affectedBy: (change: SandboxAccessChange) => boolean;
+  /** This event moved the thread from this member's reach to elsewhere. */
+  readonly lostAt: (sequence: number, threadId: ThreadId) => boolean;
+  /** One item per machine audience change or thread move. */
+  readonly accessChanges: Stream.Stream<unknown>;
   readonly caughtUp: Effect.Effect<void>;
   readonly assertThread: (
     threadId: ThreadId,
@@ -90,6 +95,11 @@ export function viewerAccessOf(
       change.audienceChanged ||
       change.added.includes(memberId) ||
       change.removed.includes(memberId),
+    lostAt: (sequence, threadId) => {
+      const move = access.movedAt(threadId, sequence);
+      return move !== undefined && allows(move.before) && !allows(move.after);
+    },
+    accessChanges: Stream.merge(access.changes, access.moves),
     caughtUp: access.caughtUp,
     assertThread: (threadId) => access.assertThread(memberId, threadId),
     subscribeChanges: access.subscribeChanges,

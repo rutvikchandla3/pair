@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -14,11 +15,13 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
-it.effect("preserves binary input and admission frames through the real socket proxy", () =>
+it.effect("preserves binary frames through the real socket proxy until the session ends", () =>
   Effect.gen(function* () {
+    const sessionEnd = yield* Deferred.make<void>();
     const hub = yield* Effect.acquireRelease(
       Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
       (server) =>
@@ -61,6 +64,13 @@ it.effect("preserves binary input and admission frames through the real socket p
               }),
           } as DeviceService.DeviceService["Service"]),
         ),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore)({
+            cookieName: "t3_session",
+            legacyCookieName: undefined,
+            awaitInvalidation: () => Deferred.await(sessionEnd),
+          }),
+        ),
       ),
     );
     const origin = HttpServer.formatAddress(
@@ -88,6 +98,13 @@ it.effect("preserves binary input and admission frames through the real socket p
     });
     yield* Effect.promise(() => received.promise);
     expect(frames).toEqual([[0x83], [0x03, 1], [0x03, 2]]);
+
+    // A removed member's session is revoked; their device socket closes with it.
+    const closed = new Promise<void>((resolve) =>
+      client.addEventListener("close", () => resolve()),
+    );
+    yield* Deferred.succeed(sessionEnd, undefined);
+    yield* Effect.promise(() => closed);
   }),
 );
 

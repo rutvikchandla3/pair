@@ -2,6 +2,7 @@ import { MemberId, type PresenceReportInput, ThreadId } from "@t3tools/contracts
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -20,11 +21,17 @@ const connect = Effect.fnUntraced(function* (
   connectionId: string,
   memberId: MemberId,
   mayOpen?: (threadId: ThreadId) => boolean,
+  accessChanges?: Stream.Stream<unknown>,
 ) {
   const presence = yield* Presence.Presence;
   const scope = yield* Scope.fork(yield* Effect.scope);
   const updates = yield* presence
-    .subscribe({ connectionId, memberId, ...(mayOpen === undefined ? {} : { mayOpen }) })
+    .subscribe({
+      connectionId,
+      memberId,
+      ...(mayOpen === undefined ? {} : { mayOpen }),
+      ...(accessChanges === undefined ? {} : { accessChanges }),
+    })
     .pipe(Effect.flatMap(Stream.toQueue({ capacity: "unbounded" })), Scope.provide(scope));
   return {
     updates,
@@ -142,6 +149,35 @@ describe("Presence", () => {
         viewers: [{ threadId: threadY, memberIds: [alice] }],
       });
       expect(yield* sizesAfter(0, c)).toEqual([0]);
+    }).pipe(Effect.scoped, Effect.provide(Presence.layer)),
+  );
+
+  it.effect("takes back who views or types in a thread once the member loses it", () =>
+    Effect.gen(function* () {
+      const opens = new Set([threadX]);
+      const changes = yield* PubSub.unbounded<void>();
+      const a = yield* connect("a", alice);
+      const c = yield* connect("c", carol, (id) => opens.has(id), Stream.fromPubSub(changes));
+      yield* a.report({ viewingThreadId: threadX });
+      yield* c.report({ viewingThreadId: threadX });
+      yield* a.report({ typing: true });
+      yield* TestClock.adjust(1_000);
+      yield* drain(a);
+      expect(yield* Queue.takeAll(c.updates)).toEqual([
+        { typing: { threadId: threadX, memberIds: [alice] } },
+        { members: [online(alice)], viewers: [{ threadId: threadX, memberIds: [alice] }] },
+      ]);
+
+      opens.delete(threadX);
+      yield* PubSub.publish(changes, undefined);
+      expect(yield* Queue.take(c.updates)).toEqual({
+        typing: { threadId: threadX, memberIds: [] },
+      });
+      yield* TestClock.adjust(1_000);
+      expect(yield* Queue.take(c.updates)).toEqual({
+        viewers: [{ threadId: threadX, memberIds: [] }],
+      });
+      expect(yield* sizesAfter(0, a)).toEqual([0]);
     }).pipe(Effect.scoped, Effect.provide(Presence.layer)),
   );
 

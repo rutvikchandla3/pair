@@ -269,6 +269,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
           mayInviteGuest: () => true,
           agentReaches: () => true,
           threadTarget: () => undefined,
+          movedAt: () => undefined,
         }),
       ),
     ),

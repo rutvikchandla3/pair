@@ -10,18 +10,22 @@ import {
   MemberId,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
+  ThreadId,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
@@ -32,6 +36,10 @@ const platformLayer = NodeHttpPlatform.layer.pipe(Layer.provideMerge(NodeService
 const makeAuth = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   error?: EnvironmentAuth.ServerAuthCredentialError,
+  live: {
+    readonly sessionEnd?: Effect.Effect<void>;
+    readonly access?: ThreadAccess.ThreadAccess["Service"];
+  } = {},
 ) => {
   const requests: string[] = [];
   const layer = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
@@ -48,8 +56,14 @@ const makeAuth = (
           });
     },
   });
+  const sessions = Layer.mock(SessionStore.SessionStore)({
+    cookieName: "t3_session",
+    legacyCookieName: undefined,
+    awaitInvalidation: () => live.sessionEnd ?? Effect.never,
+  });
   // Thread access is the route's to ask, not these tests' to deny.
-  return { layer: Layer.merge(layer, ThreadAccess.layerTest()), requests };
+  const access = Layer.succeed(ThreadAccess.ThreadAccess)(live.access ?? ThreadAccess.makeTest());
+  return { layer: Layer.mergeAll(layer, sessions, access), requests };
 };
 
 const mutations = [
@@ -435,4 +449,65 @@ it.effect.each([
       command: "sudo t3 browser setup",
     });
   }).pipe(Effect.scoped),
+);
+
+it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
+  "closes a live stream when its $ends ends",
+  ({ ends }) =>
+    Effect.gen(function* () {
+      const member = MemberId.make("member-test");
+      const threadId = ThreadId.make("thread");
+      const sessionEnd = yield* Deferred.make<void>();
+      const moves = yield* PubSub.unbounded<ThreadAccess.ThreadAccessMove>();
+      const threads = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
+        [threadId, { ownerId: member }],
+      ]);
+      const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
+      yield* Queue.offer(output, { _tag: "viewport", width: 1280, height: 800 });
+      const browser = ServerBrowser.ServerBrowser.of({
+        clearProfile: () => Effect.void,
+        profileReporter: Effect.succeed(() => Effect.void),
+        openDownload: () => Effect.succeedNone,
+        answerFileChooser: () => Effect.succeed(false),
+        attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
+      });
+      const auth = makeAuth([AuthOrchestrationReadScope], undefined, {
+        sessionEnd: Deferred.await(sessionEnd),
+        access: ThreadAccess.makeTest({ serverOwnerId: member, threads, moves }),
+      });
+      const services = yield* Layer.build(
+        HttpRouter.serve(
+          routeLayer.pipe(
+            Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+            Layer.provide(platformLayer),
+          ),
+          { disableListenLog: true },
+        ).pipe(Layer.provideMerge(NodeHttpServer.layerTest), Layer.provide(auth.layer)),
+      );
+      const server = Context.get(services, HttpServer.HttpServer);
+      const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+      const opened = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<number>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const socket = new WebSocket(
+            `${origin}/api/preview-stream/ws?threadId=${threadId}&tabId=tab&wsTicket=one-use-ticket`,
+          );
+          socket.addEventListener("message", () => opened.resolve());
+          socket.addEventListener("close", (event) => closed.resolve(event.code));
+          return socket;
+        }),
+        (socket) => Effect.sync(() => socket.close()),
+      );
+      yield* Effect.promise(() => opened.promise);
+      if (ends === "session") {
+        yield* Deferred.succeed(sessionEnd, undefined);
+      } else {
+        const after = { ownerId: MemberId.make("member-other") };
+        threads.set(threadId, after);
+        yield* PubSub.publish(moves, { sequence: 1, threadId, before: { ownerId: member }, after });
+      }
+      const code = yield* Effect.promise(() => closed.promise);
+      if (ends === "access") expect(code).toBe(4404);
+    }).pipe(Effect.scoped),
 );

@@ -16,7 +16,7 @@ import {
 import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, whenSessionEnds } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -97,6 +97,7 @@ export const upstreamWebSocketConstructor = Layer.effect(
 
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
+  sessionEnd: Effect.Effect<void>,
   upstreamUrl: string,
   protocols: ReadonlyArray<string> = [],
   headers: Readonly<Record<string, string>> = {},
@@ -111,10 +112,11 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
-      return yield* Effect.raceFirst(
+      return yield* Effect.raceAllFirst([
         pumpFrames(upstream, writeToClient),
         pumpFrames(client, writeToUpstream),
-      );
+        sessionEnd,
+      ]);
     }),
   ).pipe(Effect.ignoreCause);
   return HttpServerResponse.empty();
@@ -200,7 +202,7 @@ const handler = Effect.gen(function* () {
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
+  const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
   const devices = yield* DeviceService.DeviceService;
@@ -222,6 +224,7 @@ const handler = Effect.gen(function* () {
   if (upgrade) {
     return yield* proxyWebSocket(
       request,
+      yield* whenSessionEnds(session),
       upstreamUrl.replace(/^http/, "ws"),
       routed?.protocols,
       routed?.headers,

@@ -733,6 +733,9 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// One instance: SandboxActivity reads the access the EventSink's index keeps.
+const layerThreadAccess = ThreadAccess.layer.pipe(Layer.provide(ProjectionStoreV2.layer));
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   Layer.effectDiscard(
@@ -799,9 +802,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(
     Layer.mergeAll(
       CheckpointMirror.layer,
-      SandboxActivity.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+      SandboxActivity.layer.pipe(
+        Layer.provide(Layer.merge(ProjectionStoreV2.layer, layerThreadAccess)),
+      ),
       SandboxRestoreMode.layer,
-      ThreadAccess.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+      layerThreadAccess,
     ),
   ),
   Layer.provideMerge(

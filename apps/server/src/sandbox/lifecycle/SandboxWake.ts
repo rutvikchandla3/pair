@@ -52,7 +52,7 @@ export const layer = Layer.effect(
         yield* wakeThread(threadId, actorId, false);
       }),
       viewed: Effect.fn("SandboxWake.viewed")(function* ({ threadId, actorId }) {
-        if (!(yield* activity.view(threadId))) return;
+        if (!(yield* activity.view(threadId, actorId))) return;
         yield* wakeThread(threadId, actorId, true);
       }),
     });

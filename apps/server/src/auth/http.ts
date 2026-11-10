@@ -188,6 +188,22 @@ export const authenticateMediaRequest =
     return session;
   });
 
+/**
+ * An effect that completes when a media socket's session is revoked (a removed member's are),
+ * narrowed or expires, as `/ws` does. A session it cannot read ends the socket too.
+ */
+export const whenSessionEnds = Effect.fn("http.whenSessionEnds")(function* (
+  session: Pick<
+    EnvironmentAuth.AuthenticatedSession,
+    "sessionId" | "proofKeyThumbprint" | "scopes"
+  >,
+) {
+  const sessions = yield* SessionStore.SessionStore;
+  return sessions
+    .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+    .pipe(Effect.ignore);
+});
+
 export const failEnvironmentInternal =
   /* Request instrumentation already owns the span; keep this helper in that context. */
   Effect.fnUntraced(function* (reason: EnvironmentInternalErrorReason, error?: unknown) {

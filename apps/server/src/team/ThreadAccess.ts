@@ -52,6 +52,14 @@ export interface ThreadAccessTarget {
   readonly ownerId?: MemberId | null | undefined;
 }
 
+/** A committed thread event that changed the thread's machine or owner. */
+export interface ThreadAccessMove {
+  readonly sequence: number;
+  readonly threadId: ThreadId;
+  readonly before: ThreadAccessTarget;
+  readonly after: ThreadAccessTarget;
+}
+
 /**
  * Whether a member can open a machine's threads. No role is in the rule: an admin or the
  * server's owner gets only what they were given. Off a cloud-only server it is not consulted.
@@ -162,6 +170,14 @@ export class ThreadAccessIndex extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Each thread's latest move, once `trackThreads` has run. */
+    readonly lastMoves: ReadonlyMap<ThreadId, ThreadAccessMove>;
+    readonly moves: Stream.Stream<ThreadAccessMove>;
+    readonly subscribeMoves: Effect.Effect<
+      PubSub.Subscription<ThreadAccessMove>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/team/ThreadAccess/ThreadAccessIndex") {}
 
@@ -176,6 +192,8 @@ export const layerIndex = Layer.effect(
     const threads = new Map<ThreadId, ThreadAccessTarget>();
     let tracking = false;
     const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+    const lastMoves = new Map<ThreadId, ThreadAccessMove>();
+    const moves = yield* PubSub.unbounded<ThreadAccessMove>();
     return ThreadAccessIndex.of({
       entries,
       threads,
@@ -204,7 +222,7 @@ export const layerIndex = Layer.effect(
       lane: yield* Semaphore.make(1),
       // Runs on every commit; the commit that calls it owns the span.
       observeCommitted: Effect.fnUntraced(function* (events) {
-        for (const { event } of events) {
+        for (const { event, sequence } of events) {
           if (event.type === "sandbox.updated") {
             entries.set(event.payload.id, entryOf(event.payload));
           } else if (event.type === "sandbox.access-changed") {
@@ -212,18 +230,25 @@ export const layerIndex = Layer.effect(
           } else if (tracking && isThreadPayloadEvent(event)) {
             const { id, sandboxId, ownerId } = event.payload;
             const known = threads.get(id);
-            if (
-              known === undefined ||
+            if (known === undefined) {
+              threads.set(id, { sandboxId, ownerId });
+            } else if (
               known.sandboxId !== sandboxId ||
               (known.ownerId ?? null) !== (ownerId ?? null)
             ) {
-              threads.set(id, { sandboxId, ownerId });
+              const move = { sequence, threadId: id, before: known, after: { sandboxId, ownerId } };
+              threads.set(id, move.after);
+              lastMoves.set(id, move);
+              yield* PubSub.publish(moves, move);
             }
           }
         }
       }),
       changes: Stream.fromPubSub(changes),
       subscribeChanges: PubSub.subscribe(changes),
+      lastMoves,
+      moves: Stream.fromPubSub(moves),
+      subscribeMoves: PubSub.subscribe(moves),
     });
   }),
 );
@@ -261,6 +286,15 @@ export class ThreadAccess extends Context.Service<
     readonly changes: Stream.Stream<SandboxAccessChange>;
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<SandboxAccessChange>,
+      never,
+      Scope.Scope
+    >;
+    /** The move this event made, when it is the thread's latest one. */
+    readonly movedAt: (threadId: ThreadId, sequence: number) => ThreadAccessMove | undefined;
+    /** One item per committed move, after `threadTarget` reflects it. */
+    readonly moves: Stream.Stream<ThreadAccessMove>;
+    readonly subscribeMoves: Effect.Effect<
+      PubSub.Subscription<ThreadAccessMove>,
       never,
       Scope.Scope
     >;
@@ -356,6 +390,12 @@ export const layer = Layer.effect(
       caughtUp,
       changes: index.changes,
       subscribeChanges: index.subscribeChanges,
+      movedAt: (threadId, sequence) => {
+        const move = index.lastMoves.get(threadId);
+        return move?.sequence === sequence ? move : undefined;
+      },
+      moves: index.moves,
+      subscribeMoves: index.subscribeMoves,
     });
   }),
 ).pipe(Layer.provide(layerIndex));
@@ -379,6 +419,7 @@ export interface ThreadAccessTestOptions {
   readonly machines?: ReadonlyMap<SandboxId, SandboxAccessEntry>;
   readonly threads?: ReadonlyMap<ThreadId, ThreadAccessTarget>;
   readonly changes?: PubSub.PubSub<SandboxAccessChange>;
+  readonly moves?: PubSub.PubSub<ThreadAccessMove>;
 }
 
 /**
@@ -399,9 +440,12 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       caughtUp: Effect.void,
       changes: Stream.empty,
       subscribeChanges: Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe),
+      movedAt: () => undefined,
+      moves: Stream.empty,
+      subscribeMoves: Effect.flatMap(PubSub.unbounded<ThreadAccessMove>(), PubSub.subscribe),
     };
   }
-  const { machines = new Map(), threads = new Map(), changes } = options;
+  const { machines = new Map(), threads = new Map(), changes, moves } = options;
   const roster: ThreadAccessRoster = {
     cloudOnly: true,
     serverOwnerId: options.serverOwnerId,
@@ -444,6 +488,12 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       changes === undefined
         ? Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe)
         : PubSub.subscribe(changes),
+    movedAt: () => undefined,
+    moves: moves === undefined ? Stream.empty : Stream.fromPubSub(moves),
+    subscribeMoves:
+      moves === undefined
+        ? Effect.flatMap(PubSub.unbounded<ThreadAccessMove>(), PubSub.subscribe)
+        : PubSub.subscribe(moves),
   };
 };
 

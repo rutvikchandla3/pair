@@ -546,6 +546,36 @@ describe("ThreadAccess", () => {
     }).pipe(Effect.provide(makeLayer([]))),
   );
 
+  it.effect("records a thread's move to another owner or machine and publishes it", () =>
+    Effect.gen(function* () {
+      const access = yield* ThreadAccess.ThreadAccess;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* seed;
+      const moves = yield* access.moves.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const update = (id: string, payload: typeof thread) =>
+        sink.write({ events: [{ ...at(id), type: "thread.metadata-updated", payload }] });
+      yield* update("rename", { ...thread, title: "Renamed" });
+      yield* update("assign", { ...thread, ownerId: bob });
+      yield* update("move", { ...thread, ownerId: bob, sandboxId: legacyId });
+      const [assigned, moved] = yield* Fiber.join(moves);
+      if (assigned === undefined || moved === undefined) return yield* Effect.die("no moves");
+      assert.deepStrictEqual(
+        [assigned.before, assigned.after],
+        [
+          { sandboxId, ownerId: alice },
+          { sandboxId, ownerId: bob },
+        ],
+      );
+      assert.deepStrictEqual(moved.after, { sandboxId: legacyId, ownerId: bob });
+      assert.strictEqual(access.movedAt(ownerThreadId, moved.sequence), moved);
+      assert.isUndefined(access.movedAt(ownerThreadId, assigned.sequence));
+    }).pipe(Effect.provide(makeLayer([]))),
+  );
+
   it.effect("fails closed on a cloud-only server that leaves it out", () =>
     Effect.gen(function* () {
       const exit = yield* ThreadAccess.optional.pipe(Effect.provide(layerConfig), Effect.exit);

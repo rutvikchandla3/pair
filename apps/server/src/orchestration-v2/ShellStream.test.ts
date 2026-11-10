@@ -147,7 +147,8 @@ describe("shell events for a member on a cloud-only server", () => {
     memberId: MemberId,
     audience: "members" | "team",
     memberIds: ReadonlyArray<MemberId>,
-    localOwner = carol,
+    localOwner: MemberId | null = carol,
+    moves: ReadonlyArray<ThreadAccess.ThreadAccessMove> = [],
   ) => {
     const roster = { cloudOnly: true, serverOwnerId: alice, isActive: () => true };
     const entry = { ownerMemberId: alice, audience, memberIds: new Set(memberIds) };
@@ -178,6 +179,10 @@ describe("shell events for a member on a cloud-only server", () => {
         caughtUp: Effect.void,
         changes: Stream.empty,
         subscribeChanges: Effect.die("unused"),
+        movedAt: (threadId, sequence) =>
+          moves.find((move) => move.threadId === threadId && move.sequence === sequence),
+        moves: Stream.empty,
+        subscribeMoves: Effect.die("unused"),
       },
       memberId,
     );
@@ -206,7 +211,9 @@ describe("shell events for a member on a cloud-only server", () => {
     read = shells,
   ) => {
     const expanded = expandSandboxShellEvents(
-      events.filter((event) => mayShowShellEvent(event, access)).map(toShellApplicationEvent),
+      events
+        .filter((event) => mayShowShellEvent(event, access))
+        .map((event) => toShellApplicationEvent(event, access)),
       new Map([
         [
           sandboxId,
@@ -303,6 +310,52 @@ describe("shell events for a member on a cloud-only server", () => {
       );
     expect(sentTo(carol)).toEqual([["thread.removed", localId]]);
     expect(sentTo(bob)).toEqual([["thread.updated", localId]]);
+  });
+
+  it("removes a thread from members it moved out of reach of, and from no one else", () => {
+    const assigned = { id: localId, ownerId: bob };
+    const toMachine = { id: forkId, ownerId: alice, sandboxId };
+    const events = [
+      stored(8, { threadId: localId, type: "thread.metadata-updated", payload: assigned }),
+      stored(9, { threadId: forkId, type: "thread.metadata-updated", payload: toMachine }),
+    ];
+    const assign: ThreadAccess.ThreadAccessMove = {
+      sequence: 8,
+      threadId: localId,
+      before: { ownerId: null },
+      after: assigned,
+    };
+    const move: ThreadAccess.ThreadAccessMove = {
+      sequence: 9,
+      threadId: forkId,
+      before: { ownerId: null },
+      after: toMachine,
+    };
+    const moves = [assign, move];
+    const read = new Map([
+      ...shells,
+      [localId, shellFixture(assigned)],
+      [forkId, shellFixture(toMachine)],
+    ]);
+    // Every member opened both while they had no owner; Alice's machine is hers alone.
+    const sentTo = (memberId: MemberId, known = moves) =>
+      sent(accessOf(memberId, "members", [], bob, known), events, read);
+    expect(sentTo(carol)).toEqual([
+      ["thread.removed", localId],
+      ["thread.removed", forkId],
+    ]);
+    expect(sentTo(bob)).toEqual([
+      ["thread.updated", localId],
+      ["thread.removed", forkId],
+    ]);
+    expect(sentTo(alice)).toEqual([
+      ["thread.removed", localId],
+      ["thread.updated", forkId],
+    ]);
+    // A thread Carol never opened is not named to her.
+    expect(sentTo(carol, [assign, { ...move, before: { ownerId: alice } }])).toEqual([
+      ["thread.removed", localId],
+    ]);
   });
 
   it.effect("counts and trims only the threads the member can open", () =>

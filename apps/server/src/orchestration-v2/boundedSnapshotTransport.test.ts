@@ -701,6 +701,8 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         mayAllowThreadId: () => state.open,
         sandboxOf: () => undefined,
         affectedBy: (change) => change.removed.includes(member) || change.added.includes(member),
+        lostAt: () => false,
+        accessChanges: Stream.empty,
         caughtUp: Effect.void,
         assertThread: (threadId) => (state.open ? Effect.void : notFound(threadId)),
         subscribeChanges: PubSub.subscribe(changes),
@@ -831,6 +833,9 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
               caughtUp: Effect.void,
               changes: Stream.empty,
               subscribeChanges: Effect.die("unused"),
+              movedAt: () => undefined,
+              moves: Stream.empty,
+              subscribeMoves: Effect.die("unused"),
             });
           }),
         ),

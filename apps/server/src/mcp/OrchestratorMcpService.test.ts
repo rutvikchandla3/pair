@@ -95,6 +95,7 @@ const layerOpenAccess = Layer.mock(ThreadAccess.ThreadAccess)({
   mayInviteGuest: () => true,
   agentReaches: () => true,
   threadTarget: () => undefined,
+  movedAt: () => undefined,
 });
 
 const orchestratorService = (cloudOnly = false) =>

@@ -470,8 +470,8 @@ export type ShellApplicationEvent =
         /** Set on `sandbox.updated`, whose summary every thread sharing the machine shows. */
         readonly sandboxId?: SandboxId;
         /**
-         * Set on `sandbox.access-changed` and on an event naming one member: a thread the viewer
-         * can no longer open is removed.
+         * Set on `sandbox.access-changed`, on an event naming one member and on a move out of the
+         * viewer's reach: a thread the viewer can no longer open is removed.
          */
         readonly accessChanged?: true;
       };
@@ -527,13 +527,17 @@ export function mayShowShellEvent(stored: ApplicationStoredEvent, access: Viewer
   // Names this viewer (`isOtherMembersShellEvent` drops the rest), who knew the thread: an owner
   // change demotes the old owner this way, and the read removes a thread they lost.
   if (isMemberThreadEvent(event)) return true;
+  // A move out of the viewer's reach names no one, so the viewer is told the thread is gone.
   return isThreadPayloadEvent(event)
-    ? access.allows(event.payload)
+    ? access.allows(event.payload) || access.lostAt(stored.sequence, event.threadId)
     : access.mayAllowThreadId(event.threadId);
 }
 
 /** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
-export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
+export function toShellApplicationEvent(
+  stored: ApplicationStoredEvent,
+  access?: ViewerAccess,
+): ShellApplicationEvent {
   if ("aggregateKind" in stored) {
     return {
       aggregateKind: stored.aggregateKind,
@@ -550,7 +554,7 @@ export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellAp
         ? { threadId: event.threadId, sandboxId: event.payload.id }
         : event.type === "sandbox.access-changed"
           ? { threadId: event.threadId, sandboxId: event.payload.sandboxId, accessChanged: true }
-          : isMemberThreadEvent(event)
+          : isMemberThreadEvent(event) || access?.lostAt(stored.sequence, event.threadId) === true
             ? { threadId: event.threadId, accessChanged: true }
             : { threadId: event.threadId },
   };

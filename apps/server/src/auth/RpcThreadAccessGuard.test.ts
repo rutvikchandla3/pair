@@ -31,15 +31,26 @@ const setup = Effect.fnUntraced(function* (options: { readonly enforced?: boolea
     [PRIVATE_SANDBOX, { ownerMemberId: bob, audience: "members", memberIds: new Set() }],
     [SHARED_SANDBOX, { ownerMemberId: bob, audience: "team", memberIds: new Set() }],
   ]);
-  const threads = new Map([
+  const threads = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
     [ThreadId.make("thread-private"), { ownerId: bob, sandboxId: PRIVATE_SANDBOX }],
     [ThreadId.make("thread-shared"), { ownerId: bob, sandboxId: SHARED_SANDBOX }],
+    [ThreadId.make("thread-unassigned"), { ownerId: null }],
   ]);
   const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+  const moves = yield* PubSub.unbounded<ThreadAccess.ThreadAccessMove>();
+  /** Commits a thread's new owner or machine, as the index does. */
+  const move = (threadId: string, after: ThreadAccess.ThreadAccessTarget) => {
+    const id = ThreadId.make(threadId);
+    const before = threads.get(id) ?? {};
+    threads.set(id, after);
+    return PubSub.publish(moves, { sequence: 1, threadId: id, before, after });
+  };
   const layer = RpcThreadAccessGuard.layer(carol).pipe(
     Layer.provide(
       ThreadAccess.layerTest(
-        options.enforced === false ? undefined : { serverOwnerId: bob, machines, threads, changes },
+        options.enforced === false
+          ? undefined
+          : { serverOwnerId: bob, machines, threads, changes, moves },
       ),
     ),
   );
@@ -63,7 +74,7 @@ const setup = Effect.fnUntraced(function* (options: { readonly enforced?: boolea
       );
       return { result, ran };
     }).pipe(Effect.provide(layer));
-  return { call, machines, changes };
+  return { call, machines, changes, move };
 });
 
 /** Every field the table reads, all pointing at one thread and one machine. */
@@ -178,4 +189,32 @@ it.effect("ends a stream when the member loses its machine", () =>
     yield* PubSub.publish(changes, change(SHARED_SANDBOX));
     expect(yield* Fiber.join(attach)).toEqual({ result: "missing", ran: true });
   }),
+);
+
+it.effect(
+  "ends a stream when its thread gets an owner or moves to a machine the member lacks",
+  () =>
+    Effect.gen(function* () {
+      const { call, move } = yield* setup();
+      const attach = Effect.fnUntraced(function* (threadId: string) {
+        const started = yield* Deferred.make<void>();
+        const fiber = yield* call(
+          WS_METHODS.terminalAttach,
+          { threadId, terminalId: "default" },
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        return fiber;
+      });
+
+      // Every member opens a thread with no owner and no machine, until someone is given it.
+      const unassigned = yield* attach("thread-unassigned");
+      yield* move("thread-shared", { ownerId: carol, sandboxId: SHARED_SANDBOX });
+      yield* move("thread-unassigned", { ownerId: bob });
+      expect(yield* Fiber.join(unassigned)).toEqual({ result: "missing", ran: true });
+
+      const shared = yield* attach("thread-shared");
+      yield* move("thread-shared", { ownerId: carol, sandboxId: PRIVATE_SANDBOX });
+      expect(yield* Fiber.join(shared)).toEqual({ result: "missing", ran: true });
+    }),
 );

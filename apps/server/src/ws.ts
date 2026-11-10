@@ -1413,7 +1413,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         toShellStream(
           applicationEvents.streamProjectedApplicationEvents({
             afterSequence,
-            project: toShellApplicationEvent,
+            project: (stored) => toShellApplicationEvent(stored, access),
             filter: filterSubagentTranscript,
           }),
         ),
@@ -2683,7 +2683,10 @@ export const layerWsRpc = (
               memberId: currentSession.memberId,
               ...(threadViewer?.access === undefined
                 ? {}
-                : { mayOpen: threadViewer.access.allowsThreadId }),
+                : {
+                    mayOpen: threadViewer.access.allowsThreadId,
+                    accessChanges: threadViewer.access.accessChanges,
+                  }),
             }),
           ),
         [WS_METHODS.presenceReport]: (input, metadata) =>
@@ -3098,7 +3101,8 @@ export const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.sandboxOverview]: (_input) => sandboxOverview.read(currentSession.memberId),
-        // Every member sees every team thread, as with presence; `view` skips local threads.
+        // The access table guards the thread, and a lease counts only while its member can open the
+        // machine; `view` skips local threads.
         [WS_METHODS.sandboxViewing]: ({ threadId }) =>
           sandboxWake.viewed({ threadId, actorId: currentSession.memberId }),
         [WS_METHODS.sandboxStopById]: (input) =>

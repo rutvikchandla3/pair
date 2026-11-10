@@ -22,7 +22,6 @@ const isSandboxId = Schema.is(SandboxId);
 
 interface Verdict {
   readonly allowed: boolean;
-  /** The machine whose access can later change under a stream that was allowed. */
   readonly sandboxId: SandboxId | undefined;
 }
 
@@ -54,24 +53,30 @@ export const layer = (memberId: MemberId) =>
         sandboxId: target.sandboxId,
       });
 
-      const verdict = (target: RpcThreadTarget): Effect.Effect<Verdict> => {
+      /** Undefined when only the index after a catch-up can answer. */
+      const knownVerdict = (target: RpcThreadTarget): Verdict | undefined => {
         if ("path" in target) {
           const sandboxId = sandboxOfPath(target.path);
-          if (sandboxId === "local") return Effect.succeed(ALLOWED);
-          return Effect.succeed(sandboxId === undefined ? REFUSED : machine(sandboxId));
+          if (sandboxId === "local") return ALLOWED;
+          return sandboxId === undefined ? REFUSED : machine(sandboxId);
         }
-        if ("sandboxId" in target) return Effect.succeed(machine(target.sandboxId));
+        if ("sandboxId" in target) return machine(target.sandboxId);
         if ("newThreadId" in target) {
           const threadId = decodeThreadId(target.newThreadId);
           // A member learns a thread id only once it is published, by when the index has it.
           const known = Option.isSome(threadId) ? access.threadTarget(threadId.value) : undefined;
-          return Effect.succeed(known === undefined ? ALLOWED : thread(known));
+          return known === undefined ? ALLOWED : thread(known);
         }
         const threadId = decodeThreadId(target.threadId);
-        if (Option.isNone(threadId)) return Effect.succeed(REFUSED);
-        return Effect.map(ThreadAccess.resolveThreadTarget(access, threadId.value), (known) =>
-          known === undefined ? REFUSED : thread(known),
-        );
+        if (Option.isNone(threadId)) return REFUSED;
+        const known = access.threadTarget(threadId.value);
+        return known === undefined ? undefined : thread(known);
+      };
+
+      const verdict = (target: RpcThreadTarget): Effect.Effect<Verdict> => {
+        const known = knownVerdict(target);
+        if (known !== undefined || !("threadId" in target)) return Effect.succeed(known ?? REFUSED);
+        return Effect.map(access.caughtUp, () => knownVerdict(target) ?? REFUSED);
       };
 
       const refuse = (
@@ -87,28 +92,28 @@ export const layer = (memberId: MemberId) =>
         const targets = rpcThreadTargets(rpc._tag, payload);
         if (targets === undefined || targets.length === 0) return effect;
         return Effect.gen(function* () {
-          const watched = new Set<SandboxId>();
           // Subscribed before the checks run: a change that lands between the two still ends it.
-          const changes = RpcSchema.isStreamSchema(rpc.successSchema)
-            ? yield* access.subscribeChanges
-            : undefined;
+          const streaming = RpcSchema.isStreamSchema(rpc.successSchema);
+          const changes = streaming ? yield* access.subscribeChanges : undefined;
+          const moves = streaming ? yield* access.subscribeMoves : undefined;
           for (const target of targets) {
             const { allowed, sandboxId } = yield* verdict(target);
             if (!allowed) return yield* refuse(rpc._tag, target, sandboxId);
-            if (sandboxId !== undefined) watched.add(sandboxId);
           }
-          if (changes === undefined || watched.size === 0) return yield* effect;
-          const revoked = Effect.gen(function* () {
-            while (true) {
-              const change = yield* PubSub.take(changes);
-              if (
-                watched.has(change.sandboxId) &&
-                !access.allowsSandbox(memberId, change.sandboxId)
-              ) {
-                return yield* refuse(rpc._tag, undefined, change.sandboxId);
-              }
+          if (changes === undefined || moves === undefined) return yield* effect;
+          // A machine's audience, a thread's owner or a thread's machine can each take a target
+          // away; every target is re-read from memory on any of them.
+          const recheck = Effect.suspend(() => {
+            for (const target of targets) {
+              const { allowed, sandboxId } = knownVerdict(target) ?? REFUSED;
+              if (!allowed) return refuse(rpc._tag, target, sandboxId);
             }
+            return Effect.void;
           });
+          const revoked = Effect.raceFirst(
+            Effect.forever(PubSub.take(changes).pipe(Effect.andThen(recheck))),
+            Effect.forever(PubSub.take(moves).pipe(Effect.andThen(recheck))),
+          );
           return yield* Effect.raceFirst(effect, revoked);
         });
       });

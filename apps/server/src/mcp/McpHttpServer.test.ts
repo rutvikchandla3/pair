@@ -1248,6 +1248,7 @@ it.effect("lets an agent read another session only when everyone who can open it
           );
         },
         threadTarget: (threadId) => targets.get(threadId),
+        movedAt: () => undefined,
         caughtUp: Effect.void,
       });
       const scopeFor = (threadId: ThreadId): McpInvocationContext.McpThreadInvocationScope => ({
