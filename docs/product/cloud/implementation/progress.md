@@ -36,14 +36,13 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (7 of 12), specs written 2026-11-10:** full specs in
+**M4 (8 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557) and 4.17 (0cac39638) landed too. The run stopped at the account's usage limit on
-2026-11-10 with 4.18 in flight in `../pair-wt/4.18` (branch `wt/4.18`, `wip:` commits; finish or
-restart it). Next: 4.18 (small), 4.19 (critical), wave 6 (4.20, 4.21, 4.22, all small), a release
-with M4, and the M4 integrated pass (G4 step 1).
+(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too. In flight: 4.19 (critical),
+4.21 and 4.22 (small); 4.20 follows 4.19. Then a release with M4 and the M4 integrated pass (G4
+step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -457,7 +456,8 @@ Findings:
 - The live evals (Sonnet 5.5 and Opus 5.5, nine cloud cases, `m3-sonnet/`, `m3-opus/`): seven pass
   on both, including both Continue in cloud cases. `agent-link-laptop-can-sleep` failed 0 of 2 on
   both (the launch left out `projectId`) and `agent-link-vps-stays-vps` failed on a missing mock.
-  Fixed by 3.27 (529fd4920), in V5; its two cases are still to re-run live.
+  Fixed by 3.27 (529fd4920), in V5. Re-run live on the fixed text: all four `agent-link-*` cases
+  pass 2 of 2 on Sonnet 5.5 and Opus 5.5 (`m3-rerun-sonnet/`, `m3-rerun-opus/`).
 
 ## How to resume
 
@@ -2120,6 +2120,26 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   the checkout span has `checkout.clone_source`.
 - Owes, with the M4 pass's step 2: a session from `t3-team-image:1`, `psql` and `PATH` in its
   terminal, a copy and a fetch in the trace, and the five-run copy median against 30 s on gVisor.
+
+## 4.18 Team image page (landed 1637e447c)
+
+- client-runtime: `createTeamImageAtoms` (`./state/team-image`: `snapshot`, `buildLog`,
+  `activeBuildNumberAtom`, and the commands `saveRecipe`, `startBuild`, `saveAndBuild`,
+  `cancelBuild`, `activateBuild`, `readRecipe`) and `./team-image-presentation`
+  (`teamImageBuildPresentation`, `teamImageFailureMessage`, `teamImageFinishedMessage`,
+  `teamImageImageLine`). `rpc/client.ts` now lists the two `teamImage` subscriptions.
+- Web: `TeamImageSettings.tsx` and `.logic.ts` (the editor state is `Edit { baseRevision, draft }`;
+  `recipeChanges` makes the diff lines; `EDIT_WITH_AGENT_PROMPT`, `fixWithAgentPrompt`),
+  `TeamImageBuildToasts.tsx` in `__root.tsx`, the `cloud-team-image` search entry, `Textarea
+  font="mono"`. The toast watches the snapshot (no server stream), fires for admins only and not
+  while `/settings/cloud` is open.
+- "Ready" is a succeeded build with `activateOnSuccess` false that is newer than the active one,
+  so a rollback can make an earlier activated agent build read "Ready".
+- Docs: **Build a team image** in `docs/user/pair-cloud.md`; 4.19 adds `### Let an agent change it`.
+- The page has not been rendered: the worker's smoke test couldn't mock its modules. Owes the
+  whole `test-t3-app` pass and captures (admin and member views, a failed build's tail, the log
+  streaming, the stale-edit alert, rollback, the toast, a thread's older-build line), with the M4
+  pass.
 
 ## Open follow-ups and risks
 
