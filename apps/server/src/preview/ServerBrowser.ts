@@ -239,6 +239,8 @@ export type ServerBrowserViewerOutput =
 export interface ServerBrowserViewer {
   readonly output: Queue.Dequeue<ServerBrowserViewerOutput>;
   readonly input: (message: unknown) => Effect.Effect<void>;
+  /** The tab runs on its thread's machine, which a member watching it keeps awake. */
+  readonly onMachine?: boolean;
 }
 
 export type ProfileReporter = (input: PreviewReportProfilesInput) => Effect.Effect<void>;
@@ -2949,6 +2951,7 @@ const make = Effect.gen(function* () {
     if (!screencastStarted) yield* Effect.promise(pushStill);
     return {
       output,
+      onMachine: tab.machine !== null,
       input: (raw: unknown) =>
         Effect.promise(async () => {
           if (!viewer.canOperate) return;

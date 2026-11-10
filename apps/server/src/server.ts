@@ -646,18 +646,31 @@ const layerMirrorSync = MirrorSyncWorker.layer.pipe(
   Layer.provide(ProjectionStoreV2.layer),
 );
 
+// A machine's Chrome serves its Browser tabs; no other server runs one. One instance, by
+// memoization, for the runtime core and the sleep hooks.
+const layerMachineBrowser = Layer.unwrap(
+  Effect.gen(function* () {
+    const { cloudOnly } = yield* ServerConfig.ServerConfig;
+    return cloudOnly
+      ? MachineBrowser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))
+      : Layer.empty;
+  }),
+);
+
 // SandboxEffects reads the hooks at construction; the terminal manager comes from below.
 const layerSandboxSleepHooks = Layer.effect(
   SandboxEffects.SandboxSleepHooks,
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;
+    const browser = yield* Effect.serviceOption(MachineBrowser.MachineBrowser);
     return {
       beforeSleep: Effect.fn("SandboxSleepHooks.beforeSleep")(function* ({ sandboxId, at }) {
+        if (Option.isSome(browser)) yield* browser.value.stopForSleep(sandboxId);
         yield* terminals.stopForSleep({ sandboxId, at: DateTime.formatIso(at) });
       }),
     };
   }),
-);
+).pipe(Layer.provide(layerMachineBrowser));
 
 const layerPairCloudProjects = PairCloudProjects.layer.pipe(
   Layer.provide(RuntimeLayer.layerProjectService),
@@ -786,15 +799,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   TeamRemoval.layer,
   SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
-  // A machine's Chrome serves its Browser tabs; no other server runs one.
-  Layer.unwrap(
-    Effect.gen(function* () {
-      const { cloudOnly } = yield* ServerConfig.ServerConfig;
-      return cloudOnly
-        ? MachineBrowser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))
-        : Layer.empty;
-    }),
-  ),
+  layerMachineBrowser,
   // Above the orchestration layers: a git credential's audit event is dispatched through them.
   // Forwards also reach the broker, the hub below and the MCP registry provided at the root.
   RunnerForwards.layer.pipe(

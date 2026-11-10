@@ -26,11 +26,13 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { MachineBrowserError } from "../sandbox/browser/MachineBrowser.ts";
+import { SandboxWake } from "../sandbox/lifecycle/SandboxWakeService.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
@@ -470,12 +472,17 @@ it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
       ]);
       const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
       yield* Queue.offer(output, { _tag: "viewport", width: 1280, height: 800 });
+      const views = yield* Queue.unbounded<unknown>();
+      const detached = yield* Deferred.make<void>();
       const browser = ServerBrowser.ServerBrowser.of({
         clearProfile: () => Effect.void,
         profileReporter: Effect.succeed(() => Effect.void),
         openDownload: () => Effect.succeedNone,
         answerFileChooser: () => Effect.succeed(false),
-        attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
+        attachViewer: () =>
+          Effect.addFinalizer(() => Deferred.succeed(detached, undefined)).pipe(
+            Effect.as({ output, input: () => Effect.void, onMachine: true }),
+          ),
       });
       const auth = makeAuth([AuthOrchestrationReadScope], undefined, {
         sessionEnd: Deferred.await(sessionEnd),
@@ -485,6 +492,9 @@ it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
         HttpRouter.serve(
           routeLayer.pipe(
             Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+            Layer.provide(
+              Layer.mock(SandboxWake)({ viewed: (input) => Queue.offer(views, input) }),
+            ),
             Layer.provide(platformLayer),
           ),
           { disableListenLog: true },
@@ -506,6 +516,7 @@ it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
         (socket) => Effect.sync(() => socket.close()),
       );
       yield* Effect.promise(() => opened.promise);
+      yield* Queue.take(views);
       if (ends === "session") {
         yield* Deferred.succeed(sessionEnd, undefined);
       } else {
@@ -515,7 +526,73 @@ it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
       }
       const code = yield* Effect.promise(() => closed.promise);
       if (ends === "access") expect(code).toBe(4404);
+      // Nor does the machine stay awake for them: their lease is no longer renewed.
+      yield* Deferred.await(detached);
+      yield* TestClock.adjust("5 minutes");
+      expect(yield* Queue.size(views)).toBe(0);
     }).pipe(Effect.scoped),
+);
+
+it.effect("renews a watcher's lease on a machine tab every 5 minutes until they leave", () =>
+  Effect.gen(function* () {
+    const views = yield* Queue.unbounded<{ threadId: ThreadId; actorId?: MemberId }>();
+    const detached = yield* Queue.unbounded<string>();
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
+      openDownload: () => Effect.succeedNone,
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: (input) =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => Queue.offer(detached, input.tabId));
+          const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
+          yield* Queue.offer(output, { _tag: "viewport", width: 1280, height: 800 });
+          return { output, input: () => Effect.void, onMachine: input.tabId === "machine" };
+        }),
+    });
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        routeLayer.pipe(
+          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+          Layer.provide(Layer.mock(SandboxWake)({ viewed: (input) => Queue.offer(views, input) })),
+          Layer.provide(platformLayer),
+        ),
+        { disableListenLog: true },
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+      ),
+    );
+    const server = Context.get(services, HttpServer.HttpServer);
+    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+    const watch = (tabId: string) =>
+      Effect.gen(function* () {
+        const opened = Promise.withResolvers<void>();
+        const socket = new WebSocket(
+          `${origin}/api/preview-stream/ws?threadId=thread&tabId=${tabId}&wsTicket=one-use-ticket`,
+        );
+        socket.addEventListener("message", () => opened.resolve());
+        yield* Effect.promise(() => opened.promise);
+        return socket;
+      });
+    const lease = { threadId: ThreadId.make("thread"), actorId: MemberId.make("member-test") };
+
+    const machine = yield* watch("machine");
+    expect(yield* Queue.take(views)).toEqual(lease);
+    yield* TestClock.adjust("5 minutes");
+    expect(yield* Queue.take(views)).toEqual(lease);
+    machine.close();
+    expect(yield* Queue.take(detached)).toBe("machine");
+    yield* TestClock.adjust("5 minutes");
+    expect(yield* Queue.size(views)).toBe(0);
+
+    // The server's own browser has no machine to keep awake.
+    const local = yield* watch("local");
+    yield* TestClock.adjust("5 minutes");
+    local.close();
+    expect(yield* Queue.take(detached)).toBe("local");
+    expect(yield* Queue.size(views)).toBe(0);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("tells viewers when the thread's machine has no browser, without naming it", () =>

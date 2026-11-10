@@ -63,6 +63,8 @@ interface FakeChrome {
   readonly exit: Deferred.Deferred<ChildProcessSpawner.ExitCode>;
   /** The spawn's scope closed: on a machine, the runner kills the group. */
   readonly killed: Deferred.Deferred<void>;
+  /** Signals sent through the handle's `kill`, which then waits for the exit. */
+  readonly signals: Queue.Queue<string>;
 }
 
 const devtoolsLine = (chrome: FakeChrome) =>
@@ -116,6 +118,7 @@ const setup = Effect.fnUntraced(function* (
           stderr: yield* Queue.unbounded<string, Cause.Done>(),
           exit: yield* Deferred.make<ChildProcessSpawner.ExitCode>(),
           killed: yield* Deferred.make<void>(),
+          signals: yield* Queue.unbounded<string>(),
         };
         yield* Effect.addFinalizer(() => Deferred.succeed(chrome.killed, undefined));
         if (options.auto !== false) {
@@ -126,7 +129,11 @@ const setup = Effect.fnUntraced(function* (
           pid: ChildProcessSpawner.ProcessId(chrome.pid),
           exitCode: Deferred.await(chrome.exit),
           isRunning: Effect.map(Deferred.isDone(chrome.exit), (done) => !done),
-          kill: () => Effect.void,
+          kill: (killOptions) =>
+            Queue.offer(chrome.signals, String(killOptions?.killSignal ?? "SIGTERM")).pipe(
+              Effect.andThen(Deferred.await(chrome.exit)),
+              Effect.asVoid,
+            ),
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
           stdout: Stream.empty,
@@ -342,6 +349,34 @@ it.live("a sleep kills Chrome and closes the bridge; the next boot gets a fresh 
     expect(yield* exchange(portOf(after), upgrade(pathOf(after)))).toBe(
       `${sandboxA}|${upgrade(pathOf(after))}`,
     );
+  }),
+);
+
+it.effect("before a sleep, sends Chrome SIGTERM and waits at most 2 seconds for it", () =>
+  Effect.gen(function* () {
+    const { browser, boot, spawned } = yield* setup();
+    // Without a Chrome there is nothing to stop, and none starts.
+    yield* browser.stopForSleep(sandboxA);
+    yield* boot(sandboxA);
+    yield* boot(sandboxB);
+    yield* browser.stopForSleep(sandboxA);
+    expect(yield* Queue.size(spawned)).toBe(0);
+
+    yield* browser.endpoint(sandboxA);
+    const clean = yield* Queue.take(spawned);
+    const stopping = yield* browser.stopForSleep(sandboxA).pipe(Effect.forkChild);
+    expect(yield* Queue.take(clean.signals)).toBe("SIGTERM");
+    yield* Deferred.succeed(clean.exit, ChildProcessSpawner.ExitCode(0));
+    yield* Fiber.join(stopping);
+
+    // A Chrome that ignores SIGTERM holds the sleep back for 2 seconds, no longer.
+    yield* browser.endpoint(sandboxB);
+    const stuck = yield* Queue.take(spawned);
+    const waiting = yield* browser.stopForSleep(sandboxB).pipe(Effect.forkChild);
+    expect(yield* Queue.take(stuck.signals)).toBe("SIGTERM");
+    yield* TestClock.adjust("2 seconds");
+    yield* Fiber.join(waiting);
+    expect(yield* Queue.size(stuck.signals)).toBe(0);
   }),
 );
 

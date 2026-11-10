@@ -24,6 +24,7 @@ import {
 import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest, whenSessionEnds } from "../auth/http.ts";
+import { SandboxWake } from "../sandbox/lifecycle/SandboxWakeService.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
@@ -35,6 +36,8 @@ const PREVIEW_STREAM_ROUTE_PREFIX = "/api/preview-stream";
 const TAB_GONE_CODE = 4404;
 
 const DEFAULT_QUALITY = 70;
+// Clients renew a thread's viewer lease at this pace while they show it (04 §2).
+const VIEWER_LEASE_RENEWAL = "5 minutes";
 const MAX_SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
 const textDecoder = new TextDecoder();
 
@@ -86,8 +89,27 @@ const awaitThreadLost = Effect.fnUntraced(function* (memberId: MemberId, threadI
   while (opens()) yield* Effect.raceFirst(PubSub.take(changes), PubSub.take(moves));
 });
 
+/**
+ * While a member watches a machine tab, renews their lease on the thread so the machine stays
+ * awake. It counts only while they can still open the machine; an unwatched tab holds nothing.
+ */
+const holdMachine = (
+  wake: Option.Option<SandboxWake["Service"]>,
+  memberId: MemberId,
+  threadId: string,
+) => {
+  const id = decodeThreadId(threadId);
+  if (Option.isNone(wake) || Option.isNone(id)) return Effect.never;
+  return wake.value
+    .viewed({ threadId: id.value, actorId: memberId })
+    .pipe(Effect.andThen(Effect.sleep(VIEWER_LEASE_RENEWAL)), Effect.forever);
+};
+
 // Request middleware owns tracing, including long-lived WebSocket sessions.
-const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBrowser["Service"]) {
+const makeHandler = Effect.fnUntraced(function* (
+  browser: ServerBrowser.ServerBrowser["Service"],
+  wake: Option.Option<SandboxWake["Service"]>,
+) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = requestUrl(request);
   if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
@@ -245,6 +267,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
         Effect.forever(receiveInput),
         yield* whenSessionEnds(session),
         awaitThreadLost(session.memberId, threadId).pipe(Effect.andThen(gone)),
+        viewer.onMachine === true ? holdMachine(wake, session.memberId, threadId) : Effect.never,
       ]);
       return HttpServerResponse.empty();
     }),
@@ -348,10 +371,12 @@ const receiveUpload = Effect.fnUntraced(
 export const routeLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const browser = yield* ServerBrowser.ServerBrowser;
+    // Every server builds it; read optionally so the route needs no lifecycle in tests.
+    const wake = yield* Effect.serviceOption(SandboxWake);
     const platform = yield* Effect.context<
       HttpPlatform.HttpPlatform | FileSystem.FileSystem | Path.Path
     >();
-    const handler = makeHandler(browser).pipe(Effect.provideContext(platform));
+    const handler = makeHandler(browser, wake).pipe(Effect.provideContext(platform));
     yield* router.add("GET", `${PREVIEW_STREAM_ROUTE_PREFIX}/*`, handler);
     yield* router.add("POST", `${PREVIEW_STREAM_ROUTE_PREFIX}/upload`, handler);
   }),

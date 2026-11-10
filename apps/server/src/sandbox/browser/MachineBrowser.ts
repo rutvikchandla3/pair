@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -46,7 +47,7 @@ export class MachineBrowserError extends Schema.TaggedError<MachineBrowserError>
       case "not-installed":
         return "This machine's image has no browser. Rebuild the team image, then start a new session.";
       case "machine-unavailable":
-        return "This thread's machine is not running.";
+        return "The machine did not wake. Try again.";
       case "runner-outdated":
         return "This machine's runner is too old for the browser. Stop the machine and start it again.";
       case "launch-failed":
@@ -68,6 +69,11 @@ export class MachineBrowser extends Context.Service<
     readonly endpoint: (sandboxId: SandboxId) => Effect.Effect<string, MachineBrowserError>;
     /** The machine's Chrome while one runs, so port listings and stop can leave it out. */
     readonly processId: (sandboxId: SandboxId) => Effect.Effect<number | undefined>;
+    /**
+     * SIGTERM to a running Chrome, waiting up to 2 seconds for it to exit, so a machine that
+     * sleeps keeps its profile's cookies. Starts nothing and never fails.
+     */
+    readonly stopForSleep: (sandboxId: SandboxId) => Effect.Effect<void>;
   }
 >()("t3/sandbox/browser/MachineBrowser") {}
 
@@ -77,6 +83,8 @@ const START_TIMEOUT = Duration.seconds(30);
 const STDERR_TAIL_LINES = 20;
 // After Chrome exits, its last stderr lines may still be on their way.
 const EXIT_STDERR_GRACE = Duration.seconds(1);
+// A SIGKILLed Chrome loses the cookies it had not yet written to its profile.
+const SLEEP_STOP_GRACE = Duration.seconds(2);
 const REQUEST_HEAD_BYTES = 8 * 1024;
 const REQUEST_HEAD_IDLE_MS = 10_000;
 const NOT_FOUND = "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
@@ -88,6 +96,7 @@ interface Entry {
   readonly scope: Scope.Closeable;
   readonly started: Deferred.Deferred<string, MachineBrowserError>;
   pid: number | undefined;
+  terminate: Effect.Effect<void, PlatformError.PlatformError> | undefined;
 }
 
 /** The machine's base environment without the server's git identity: Chrome commits nothing. */
@@ -250,6 +259,7 @@ export const make = Effect.fn("MachineBrowser.make")(function* (
       )
       .pipe(Effect.mapError(platformFailure));
     entry.pid = child.pid;
+    entry.terminate = child.kill({ killSignal: "SIGTERM" });
 
     const tail: Array<string> = [];
     const exited = () => fail("launch-failed", tail.join("\n") || "it exited before it listened");
@@ -330,6 +340,7 @@ export const make = Effect.fn("MachineBrowser.make")(function* (
       scope: yield* Scope.fork(layerScope),
       started: yield* Deferred.make<string, MachineBrowserError>(),
       pid: undefined,
+      terminate: undefined,
     };
     entries.set(sandboxId, entry);
     // Closing the boot's scope kills Chrome's group and closes the bridge.
@@ -374,7 +385,26 @@ export const make = Effect.fn("MachineBrowser.make")(function* (
   const processId: MachineBrowser["Service"]["processId"] = (sandboxId) =>
     Effect.sync(() => entries.get(sandboxId)?.pid);
 
-  return MachineBrowser.of({ endpoint, processId });
+  const stopForSleep: MachineBrowser["Service"]["stopForSleep"] = Effect.fn(
+    "MachineBrowser.stopForSleep",
+  )(function* (sandboxId) {
+    const terminate = entries.get(sandboxId)?.terminate;
+    if (terminate === undefined) return;
+    const stopped = yield* terminate.pipe(
+      Effect.timeoutOption(SLEEP_STOP_GRACE),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not stop the machine browser before sleep", {
+          sandboxId,
+          cause,
+        }).pipe(Effect.as(Option.some(undefined))),
+      ),
+    );
+    if (Option.isNone(stopped)) {
+      yield* Effect.logWarning("the machine browser did not stop before sleep", { sandboxId });
+    }
+  });
+
+  return MachineBrowser.of({ endpoint, processId, stopForSleep });
 });
 
 /** Only a cloud-only server builds this: no other server runs a machine's browser. */

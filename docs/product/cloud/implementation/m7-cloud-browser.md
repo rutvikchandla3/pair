@@ -520,8 +520,8 @@ the machine sleeps, its tabs close.
   - No new idle input. An agent using a tab is inside a running turn, which already counts as
     busy (`SandboxDecisions.ts` 221–270). A tab nobody watches and no agent uses does not hold a
     machine awake (Q3).
-  - Sleep needs no code: the runner goes, the CDP connection drops, and 7.4's `onContextClose`
-    path closes the tabs. Confirm it in the test below rather than adding a second path.
+  - Closing tabs on sleep needs no code: the runner goes, the CDP connection drops, and 7.4's
+    `onContextClose` path closes the tabs. Confirm it in the test below rather than adding a second path.
   - [04 §2](../04-sandbox-lifecycle.md#2-idle-policy-and-wake-triggers): add the two triggers to
     its table.
 - **Types and services:** none new. **Commands and events:** the existing `sandbox.wake`.
@@ -536,9 +536,26 @@ the machine sleeps, its tabs close.
 - **Verify:** on Docker with a short idle window: watch a tab past the window and the machine
   stays up; close the viewer and it sleeps; the tab is gone; open a new tab and the machine wakes.
 - **Reviewer checks:** viewing a thread's tab list never wakes a machine, only opening a tab or
-  attaching to one does; a settled or archived thread's machine is not woken (the rule
-  `SandboxWake.viewed` already has); no timer runs for local tabs. Reverse state: detaching lets
-  the machine sleep.
+  attaching to one does; watching a settled or archived thread's tab does not wake its machine
+  (the rule `SandboxWake.viewed` already has), though opening one does, as typing in a sleeping
+  terminal does; no timer runs for local tabs. Reverse state: detaching lets the machine sleep.
+- **As built:** the wake is in `PreviewMachineTarget.host`, which tab setup reads before
+  `endpoint`, so a context that reconnects never wakes a machine. It waits for `RunnerHub.status`
+  to report the woken generation connected. After 120 s it keeps waiting only while the record is
+  still `provisioning` or `waking`: an admission wait, which has no deadline and which the thread
+  shows as "Waiting for a machine", or a slow or capacity-retried boot, which the lifecycle fails
+  at its 5-minute boot deadline. Anything else fails with `machine-unavailable`, whose message is
+  now "The machine did not wake. Try again." Meanwhile the tab shows its loading state. Access: a
+  member reaches a tab only through the guarded `preview.open` or a stream that passes
+  `canOpenThread`, and an agent's preview tools act only on their own thread.
+  `ServerBrowserViewer.onMachine` tells the stream to renew the lease. A lease counts only while
+  its member can open the machine (6.10), so losing access stops it at once, and the stream also
+  closes. Sleep needs one step after all: SIGKILL loses the cookies Chrome has not written, so
+  `SandboxSleepHooks.beforeSleep` calls `MachineBrowser.stopForSleep`, which sends a running
+  Chrome SIGTERM and waits at most 2 s, starts nothing and never fails. It runs on every
+  `sandbox.stop` that leaves the machine `sleeping`: manual sleep and auto-sleep for idle, cap
+  pressure, settled and archived. It does not run on discard, expiry, a `discardOnSettle` settle,
+  a boot-deadline failure or a lost runner.
 
 ### 7.7 `feat(contracts,server,web,mobile): turn on the Browser tab for cloud sessions`
 

@@ -1802,6 +1802,25 @@ it.live("a machine tab records in its machine's Chrome, never the server's", () 
   ).pipe(Effect.provide(machineLayer)),
 );
 
+it.live("a machine tab whose runner is lost closes for its viewers and its thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      expect(viewer.onMachine).toBe(true);
+      // ServerBrowserContexts closes a machine's contexts when its connection drops.
+      yield* Effect.promise(() => contexts[0]!.close());
+      let event = yield* PubSub.take(events);
+      while (event.type !== "closed") event = yield* PubSub.take(events);
+      expect(event).toMatchObject({ threadId: scope.thread.threadId, tabId });
+      let output = yield* Queue.take(viewer.output);
+      while (output._tag !== "gone") output = yield* Queue.take(viewer.output);
+    }),
+  ).pipe(Effect.provide(machineLayer)),
+);
+
 it.live("a page's file picker goes to the controller and takes its uploaded files", () =>
   Effect.scoped(
     Effect.gen(function* () {
