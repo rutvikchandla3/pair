@@ -1,3 +1,5 @@
+import { TEAM_IMAGE_DEEP_LINK } from "@t3tools/shared/threadNotificationRouting";
+
 function dataFromNotificationResponse(response: unknown): Record<string, unknown> | null {
   if (typeof response !== "object" || response === null) {
     return null;
@@ -81,13 +83,13 @@ export function threadDeepLinkOnScreen(pathname: string): string | null {
   return `/threads/${match[1]}/${match[2]}`;
 }
 
-// A team server's archive push opens Archived threads, since an archived thread has no route.
+// Pushes not tied to a live thread: archive opens Archived threads, a team image build opens Machines.
 const ARCHIVED_THREADS_DEEP_LINK = "/settings/archive";
 
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
-  if (deepLink === ARCHIVED_THREADS_DEEP_LINK) {
+  if (deepLink === ARCHIVED_THREADS_DEEP_LINK || deepLink === TEAM_IMAGE_DEEP_LINK) {
     return deepLink;
   }
   if (typeof deepLink === "string") {

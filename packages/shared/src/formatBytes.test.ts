@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatBytes } from "./formatBytes";
+import { formatBytes } from "./formatBytes.ts";
 
 describe("formatBytes", () => {
   it.each([

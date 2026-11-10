@@ -206,7 +206,8 @@ secret. A build that leaves a secret's value in the image fails, and the failure
 **Build** builds the saved recipe on the server's Docker driver and shows its log as it runs. You
 can leave the page. Only one build runs at a time, and it takes one machine slot, so with every
 slot in use Pair asks you to build when one frees up. When a build you started finishes, you get a
-notification unless Team image is open.
+notification on web and desktop unless Team image is open, and a push on your phone, which opens
+**Settings → Machines** where the active build and the last build's status are shown.
 
 A build you start on the page becomes active as soon as it succeeds. To go back, choose **Activate**
 on an older succeeded build; new sessions use it from then on. **Restore recipe** loads a build's

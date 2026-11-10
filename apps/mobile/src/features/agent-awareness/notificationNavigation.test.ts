@@ -103,6 +103,12 @@ describe("extractAgentNotificationDeepLink", () => {
     expect(extractAgentNotificationDeepLink({})).toBeNull();
   });
 
+  it("opens Machines from a team image build push", () => {
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/settings/machines" })),
+    ).toBe("/settings/machines");
+  });
+
   it("opens Archived threads from a team archive push", () => {
     expect(
       extractAgentNotificationDeepLink(responseWithData({ deepLink: "/settings/archive" })),

@@ -12,6 +12,9 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  type TeamImageBuild,
+  TeamImageBuildId,
+  ComputeDriverId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -27,6 +30,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import type { MemberRecord } from "../persistence/Members.ts";
 import * as MemberPushDevices from "../team/MemberPushDevices.ts";
@@ -221,6 +225,8 @@ const makeHarness = Effect.fnUntraced(function* (options: {
 
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const pulls = yield* Queue.unbounded<void>();
+  const builds = yield* Queue.unbounded<TeamImageService.TeamImageBuildFinished>();
+  const buildPulls = yield* Queue.unbounded<void>();
   const currentShell = options.shell ?? shell();
   const notifier = yield* MemberPushNotifier.make.pipe(
     Effect.provide(
@@ -243,6 +249,11 @@ const makeHarness = Effect.fnUntraced(function* (options: {
             Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
           ),
         }),
+        Layer.mock(TeamImageService.TeamImageService)({
+          buildFinished: Stream.fromEffectRepeat(
+            Queue.offer(buildPulls, undefined).pipe(Effect.andThen(Queue.take(builds))),
+          ),
+        }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(ENVIRONMENT_ID),
         }),
@@ -256,19 +267,43 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   );
   yield* notifier.start();
   yield* Queue.take(pulls);
+  yield* Queue.take(buildPulls);
   const emit = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
     yield* Queue.offer(events, event);
     yield* Queue.take(pulls);
+    yield* notifier.drain;
+  });
+  const emitBuild = Effect.fnUntraced(function* (
+    finished: TeamImageService.TeamImageBuildFinished,
+  ) {
+    yield* Queue.offer(builds, finished);
+    yield* Queue.take(buildPulls);
     yield* notifier.drain;
   });
   const recipients = () => requests.flatMap((batch) => batch.map((message) => message.to));
   const deviceRows = sql<{ readonly device_id: string }>`
     SELECT device_id FROM member_push_devices ORDER BY device_id
   `.pipe(Effect.map((rows) => rows.map((row) => row.device_id)));
-  return { emit, requests, urls, recipients, shellReads, deviceRows, sql };
+  return { emit, emitBuild, requests, urls, recipients, shellReads, deviceRows, sql };
 });
 
 const token = (record: MemberRecord) => `ExponentPushToken[${record.id}]`;
+
+const finishedBuild = (change: Partial<TeamImageBuild>): TeamImageBuild => ({
+  id: TeamImageBuildId.make("tib_00000000000000000015"),
+  number: 15,
+  status: "succeeded",
+  phase: null,
+  recipeRevision: 1,
+  driverId: ComputeDriverId.make("docker"),
+  requestedBy: { kind: "member", memberId: ALICE.id },
+  activateOnSuccess: true,
+  requestedAt: DateTime.makeUnsafe(NOW),
+  startedAt: DateTime.makeUnsafe(NOW),
+  finishedAt: DateTime.makeUnsafe(NOW),
+  imageDeletedAt: null,
+  ...change,
+});
 
 const layer = Layer.mergeAll(MemberPushDevices.layer, Presence.layer).pipe(
   Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
@@ -437,6 +472,43 @@ describe("MemberPushNotifier", () => {
 
       assert.deepStrictEqual(harness.recipients(), recipients);
       assert.deepStrictEqual(harness.shellReads, cloudOnly ? [THREAD_ID] : []);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes a finished build to its recipients with the machines link, not to others", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({});
+      yield* harness.emitBuild({
+        build: finishedBuild({
+          status: "failed",
+          failure: { phase: "install", detail: "boom", logTail: ["secret-ish"] },
+        }),
+        recipients: [ALICE.id, BOB.id],
+      });
+
+      assert.deepStrictEqual(
+        harness.requests.flat().map(({ to, title, body, data }) => ({ to, title, body, data })),
+        [ALICE, BOB].map((record) => ({
+          to: token(record),
+          title: "Team image",
+          body: "Build 15 failed at install.",
+          data: { deepLink: "/settings/machines" },
+        })),
+      );
+      assert.deepStrictEqual(harness.shellReads, []);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes nothing for a cancelled build or a build nobody hears of", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({});
+      yield* harness.emitBuild({
+        build: finishedBuild({ status: "cancelled" }),
+        recipients: [ALICE.id],
+      });
+      yield* harness.emitBuild({ build: finishedBuild({}), recipients: [] });
+
+      assert.deepStrictEqual(harness.requests, []);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

@@ -136,29 +136,7 @@ export function teamImageBuildPresentation(
   }
 }
 
-/** A build reached an end state; the line its requester is told, or null when there is nothing to say. */
-export function teamImageFinishedMessage(
-  build: TeamImageBuild,
-  activeBuildId: TeamImageBuildId | null,
-): string | null {
-  const label = `Build ${build.number}`;
-  switch (build.status) {
-    case "succeeded":
-      return build.id === activeBuildId
-        ? `${label} is active.`
-        : `${label} is ready. Activate it in Team image.`;
-    case "failed": {
-      const phase = build.failure?.phase;
-      if (phase === undefined) return `${label} failed.`;
-      if (phase === "interrupted") return `${label} was interrupted by a restart.`;
-      if (phase === "timed-out") return `${label} ran past 45 minutes.`;
-      if (phase === "leak") return `${label} failed: a secret was found in the image.`;
-      return `${label} failed at ${PHASE_WORDS[phase]}.`;
-    }
-    default:
-      return null;
-  }
-}
+export { teamImageFinishedMessage } from "@t3tools/shared/teamImageBuildMessage";
 
 /** "Build 14 · Pair base 0.1.7": the image line of the active build, as Overview shows it. */
 export function teamImageImageLine(build: Pick<TeamImageBuild, "number" | "manifest">): string {

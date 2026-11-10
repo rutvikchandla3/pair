@@ -8,6 +8,8 @@ import {
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import {
   shouldNotifyMember,
+  TEAM_IMAGE_DEEP_LINK,
+  teamImageBuildNotification,
   type ThreadNotificationEvent,
   threadNotificationTitle,
 } from "@t3tools/shared/threadNotificationRouting";
@@ -26,6 +28,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { holderOf, isMemberThreadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as TeamImageService from "../sandbox/image/TeamImageService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as MemberPushDevices from "../team/MemberPushDevices.ts";
 import * as Presence from "../team/Presence.ts";
@@ -40,7 +43,8 @@ export const MemberPushEndpoint = Context.Reference<string>("t3/notifications/Me
 
 /**
  * Sends a team server's thread notifications to its members' phones through Expo, routed as web
- * routes them. A single-member server sends nothing unless it is cloud-only.
+ * routes them, and tells a finished team image build's recipients. A single-member server sends
+ * nothing unless it is cloud-only.
  */
 export class MemberPushNotifier extends Context.Service<
   MemberPushNotifier,
@@ -54,6 +58,10 @@ interface Notification extends ThreadNotificationEvent {
   readonly threadId: ThreadId;
   readonly threadTitle: string;
 }
+
+type WorkItem =
+  | { readonly type: "event"; readonly event: OrchestrationV2DomainEvent }
+  | { readonly type: "build"; readonly finished: TeamImageService.TeamImageBuildFinished };
 
 const ExpoPushResponse = Schema.Struct({
   data: Schema.Array(
@@ -75,6 +83,7 @@ export const make = Effect.gen(function* () {
   const team = yield* TeamState.TeamState;
   const presence = yield* Presence.Presence;
   const devices = yield* MemberPushDevices.MemberPushDevices;
+  const teamImages = yield* TeamImageService.TeamImageService;
   const http = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
@@ -246,31 +255,18 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const send = Effect.fn("MemberPushNotifier.send")(function* (notification: Notification) {
+  /** One message to every live device of each member, however it was chosen. */
+  const sendToMembers = Effect.fn("MemberPushNotifier.sendToMembers")(function* (
+    memberIds: ReadonlySet<MemberId>,
+    message: { readonly title: string; readonly body: string; readonly deepLink: string },
+  ) {
     const live = yield* devices.listLive;
-    if (live.length === 0) return;
-    const recipients = new Set<MemberId>();
-    for (const memberId of new Set(live.map((device) => device.memberId))) {
-      if (!shouldNotifyMember(notification, { memberId, teamMode: true })) continue;
-      if (yield* presence.isViewing(memberId, notification.threadId)) continue;
-      recipients.add(memberId);
-    }
-    if (recipients.size === 0) return;
-    const environmentId = yield* environment.getEnvironmentId;
-    const archiverName =
-      notification.kind === "archived" && notification.actorId !== null
-        ? ((yield* Ref.get(team.members)).get(notification.actorId)?.name ?? "Former member")
-        : null;
-    const deepLink =
-      notification.kind === "archived"
-        ? ARCHIVE_DEEP_LINK
-        : `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(notification.threadId)}`;
-    const tokens = live.filter((device) => recipients.has(device.memberId)).map((d) => d.token);
+    const tokens = live.filter((device) => memberIds.has(device.memberId)).map((d) => d.token);
     const messages = tokens.map((to) => ({
       to,
-      title: threadNotificationTitle(notification.kind, archiverName),
-      body: notification.threadTitle,
-      data: { deepLink },
+      title: message.title,
+      body: message.body,
+      data: { deepLink: message.deepLink },
       sound: "default",
       channelId: "agent-alerts",
       priority: "high",
@@ -308,7 +304,50 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const handle = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+  const send = Effect.fn("MemberPushNotifier.send")(function* (notification: Notification) {
+    const live = yield* devices.listLive;
+    if (live.length === 0) return;
+    const recipients = new Set<MemberId>();
+    for (const memberId of new Set(live.map((device) => device.memberId))) {
+      if (!shouldNotifyMember(notification, { memberId, teamMode: true })) continue;
+      if (yield* presence.isViewing(memberId, notification.threadId)) continue;
+      recipients.add(memberId);
+    }
+    if (recipients.size === 0) return;
+    const environmentId = yield* environment.getEnvironmentId;
+    const archiverName =
+      notification.kind === "archived" && notification.actorId !== null
+        ? ((yield* Ref.get(team.members)).get(notification.actorId)?.name ?? "Former member")
+        : null;
+    const deepLink =
+      notification.kind === "archived"
+        ? ARCHIVE_DEEP_LINK
+        : `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(notification.threadId)}`;
+    yield* sendToMembers(recipients, {
+      title: threadNotificationTitle(notification.kind, archiverName),
+      body: notification.threadTitle,
+      deepLink,
+    });
+  });
+
+  // A build has no thread to view, and its recipients are already chosen.
+  const sendBuild = Effect.fn("MemberPushNotifier.sendBuild")(function* (
+    finished: TeamImageService.TeamImageBuildFinished,
+  ) {
+    const message = teamImageBuildNotification(finished.build);
+    if (message === null || finished.recipients.length === 0) return;
+    yield* sendToMembers(new Set(finished.recipients), {
+      ...message,
+      deepLink: TEAM_IMAGE_DEEP_LINK,
+    });
+  });
+
+  const handle = Effect.fnUntraced(function* (item: WorkItem) {
+    if (item.type === "build") {
+      if (yield* pushes) yield* sendBuild(item.finished);
+      return;
+    }
+    const event = item.event;
     if (isMemberThreadEvent(event)) return;
     if (!(yield* pushes)) {
       // Holders go stale while solo; reseed if a second member joins.
@@ -329,7 +368,16 @@ export const make = Effect.gen(function* () {
     function* () {
       yield* forkParked(
         Effect.when(seedHolders, pushes).pipe(
-          Effect.andThen(Stream.runForEach(threads.streamDomainEvents, worker.enqueue)),
+          Effect.andThen(
+            Stream.runForEach(threads.streamDomainEvents, (event) =>
+              worker.enqueue({ type: "event", event }),
+            ),
+          ),
+        ),
+      );
+      yield* forkParked(
+        Stream.runForEach(teamImages.buildFinished, (finished) =>
+          worker.enqueue({ type: "build", finished }),
         ),
       );
       if (Option.isSome(sessions)) {

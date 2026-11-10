@@ -175,6 +175,10 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./formatBytes": {
+      "types": "./src/formatBytes.ts",
+      "import": "./src/formatBytes.ts"
+    },
     "./sandbox": {
       "types": "./src/sandbox.ts",
       "import": "./src/sandbox.ts"
@@ -294,6 +298,10 @@
     "./threadNotificationRouting": {
       "types": "./src/threadNotificationRouting.ts",
       "import": "./src/threadNotificationRouting.ts"
+    },
+    "./teamImageBuildMessage": {
+      "types": "./src/teamImageBuildMessage.ts",
+      "import": "./src/teamImageBuildMessage.ts"
     },
     "./threadCollaboration": {
       "types": "./src/threadCollaboration.ts",

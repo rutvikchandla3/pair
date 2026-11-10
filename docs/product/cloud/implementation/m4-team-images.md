@@ -255,8 +255,10 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
   `TeamImageAuthority.forCaller`, `ProjectionStore.listRunUserMessages`, the tools
   `t3_team_image_read`, `t3_team_image_build_log`, `t3_team_image_recipe_update`,
   `t3_team_image_build_start`, `t3_team_image_build_cancel`, `t3_team_image_propose` (4.20).
-- **Notifications (4.21).** `@t3tools/shared` `teamImageBuildNotification` and
-  `TEAM_IMAGE_DEEP_LINK`, and `MemberPushNotifier.sendToMembers`.
+- **Notifications (4.21).** `@t3tools/shared` `teamImageBuildNotification(build)` and
+  `TEAM_IMAGE_DEEP_LINK`, and `MemberPushNotifier.sendToMembers`. The server cannot import
+  client-runtime, so `teamImageFinishedMessage` (the copy of the web toast and the push body) lives
+  in `@t3tools/shared/teamImageBuildMessage` and client-runtime re-exports it.
 
 ## Track notes
 
@@ -1344,8 +1346,8 @@ This is the first push not tied to a thread.
   `teamImageBuildPresentation`). **Unblocks:** nothing.
 - **Files:**
   - `packages/shared/src/threadNotificationRouting.ts` (88 lines): beside the thread kinds, a
-    `teamImageBuildNotification({ number, status, failurePhase, agent })` returning `{ title,
-    body }`, and `TEAM_IMAGE_DEEP_LINK = "/settings/machines"` (the mobile route's linking path,
+    `teamImageBuildNotification(build)` returning `{ title: "Team image", body }` (the body is
+    `teamImageFinishedMessage`; null for a cancel), and `TEAM_IMAGE_DEEP_LINK = "/settings/machines"` (the mobile route's linking path,
     Stack.tsx 361–363). A build push skips `shouldNotifyMember`'s thread rules: its recipients
     are already chosen.
   - `apps/server/src/notifications/MemberPushNotifier.ts`: `start` (328–343) also forks a fiber

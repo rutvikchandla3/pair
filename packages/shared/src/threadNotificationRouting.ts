@@ -1,4 +1,6 @@
-import type { MemberId } from "@t3tools/contracts";
+import type { MemberId, TeamImageBuild } from "@t3tools/contracts";
+
+import { teamImageFinishedMessage } from "./teamImageBuildMessage.ts";
 
 /** Agent events from a run, then actions another member took on the thread. */
 export type ThreadNotificationKind =
@@ -85,4 +87,18 @@ export function threadNotificationTitle(
     case "archived":
       return `Archived by ${archiverName ?? "another member"}`;
   }
+}
+
+/** The machines screen on mobile (its linking path), where a build push opens. */
+export const TEAM_IMAGE_DEEP_LINK = "/settings/machines";
+
+/**
+ * A finished build's push, or null for a build that was only cancelled. Its recipients are chosen
+ * by the server, so it skips `shouldNotifyMember`; it carries the number and phase, never log text.
+ */
+export function teamImageBuildNotification(
+  build: Pick<TeamImageBuild, "id" | "number" | "status" | "failure" | "activateOnSuccess">,
+): { readonly title: string; readonly body: string } | null {
+  const body = teamImageFinishedMessage(build, build.activateOnSuccess ? build.id : null);
+  return body === null ? null : { title: "Team image", body };
 }

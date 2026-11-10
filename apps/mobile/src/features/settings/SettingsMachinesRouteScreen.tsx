@@ -2,11 +2,17 @@ import {
   SANDBOX_ISOLATION_LABELS,
   sandboxMachineCountsLabel,
 } from "@t3tools/client-runtime/state/sandbox";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  teamImageBuildPresentation,
+  teamImageImageLine,
+} from "@t3tools/client-runtime/team-image-presentation";
+import type { EnvironmentId, TeamImageBuild } from "@t3tools/contracts";
+import { formatBytes } from "@t3tools/shared/formatBytes";
 import * as DateTime from "effect/DateTime";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
@@ -14,9 +20,13 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { sandboxEnvironment, useCloudEnvironmentIds } from "../../state/sandbox";
+import { teamImageEnvironment } from "../../state/teamImage";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+
+const TEAM_IMAGE_FOOTER =
+  "Manage drivers and cloud variables, and edit the team image, on the web.";
 
 function InfoRow(props: { readonly label: string; readonly description: string }) {
   return (
@@ -24,6 +34,14 @@ function InfoRow(props: { readonly label: string; readonly description: string }
       <ListRowLayout label={props.label} description={props.description} />
     </View>
   );
+}
+
+/** "Build 14 · Pair base 0.1.7 · 6.1 GB". */
+function activeBuildLine(build: TeamImageBuild): string {
+  const size = build.manifest?.sizeBytes;
+  return [teamImageImageLine(build), size == null ? null : formatBytes(size)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function MachinesSection(props: {
@@ -37,13 +55,33 @@ function MachinesSection(props: {
     sandboxEnvironment.overview({ environmentId: props.environmentId, input: {} }),
   );
   const drivers = config?.settings.sandbox?.drivers ?? [];
+  const teamImages = config?.environment.capabilities.teamImages === true;
+  const snapshot = useEnvironmentQuery(
+    teamImages
+      ? teamImageEnvironment.snapshot({ environmentId: props.environmentId, input: {} })
+      : null,
+  ).data;
+  const builds = snapshot?.builds ?? [];
+  const activeBuild = builds.find((build) => build.id === snapshot?.activeBuildId) ?? null;
+  // The snapshot also holds an older active build after the newest ones.
+  const lastBuild = builds.reduce<TeamImageBuild | null>(
+    (latest, build) => (latest === null || build.number > latest.number ? build : latest),
+    null,
+  );
+  const last =
+    lastBuild === null
+      ? null
+      : teamImageBuildPresentation(lastBuild, snapshot?.activeBuildId ?? null, {
+          activeBuildNumber: activeBuild?.number ?? null,
+        });
+  const failureTail = lastBuild?.status === "failed" ? (lastBuild.failure?.logTail ?? []) : [];
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
   const pending = overview.isPending ? "Checking…" : (overview.error ?? "Status unknown.");
   const restoreModeSince = config?.settings.sandbox?.restoreModeSince;
   return (
     <SettingsSection
       title={props.title}
-      footer={props.footer}
+      footer={props.footer === undefined || !teamImages ? props.footer : TEAM_IMAGE_FOOTER}
       trailing={
         <Button
           label="Refresh"
@@ -89,11 +127,28 @@ function MachinesSection(props: {
         description={overview.data ? sandboxMachineCountsLabel(overview.data.machines) : pending}
       />
       <InfoRow
-        label="Base image"
+        label={teamImages ? "Team image" : "Base image"}
         description={
-          overview.data?.baseImage.label ?? config?.settings.sandbox?.baseImage ?? "Pair base"
+          activeBuild === null
+            ? (overview.data?.baseImage.label ?? config?.settings.sandbox?.baseImage ?? "Pair base")
+            : activeBuildLine(activeBuild)
         }
       />
+      {lastBuild === null || last === null ? null : (
+        <InfoRow
+          label="Last build"
+          description={[`Build ${lastBuild.number} · ${last.status}`, last.failure]
+            .filter(Boolean)
+            .join("\n")}
+        />
+      )}
+      {failureTail.length === 0 ? null : (
+        <View className="bg-grouped-card px-4 pb-3">
+          <Text selectable className="font-mono text-xs text-foreground-muted">
+            {failureTail.join("\n")}
+          </Text>
+        </View>
+      )}
       <InfoRow
         label="Limits"
         description={[

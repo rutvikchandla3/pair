@@ -12,7 +12,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   teamImageBuildPresentation,
   teamImageFailureMessage,
-  teamImageFinishedMessage,
   teamImageImageLine,
 } from "./teamImagePresentation.ts";
 
@@ -183,30 +182,6 @@ describe("teamImageFailureMessage", () => {
     { phase: "capture", detail: " ", message: "The build failed during capture." },
   ] as const)("reads a $phase failure", ({ message, ...failure }) => {
     expect(teamImageFailureMessage({ ...failure, logTail: [] })).toBe(message);
-  });
-});
-
-describe("teamImageFinishedMessage", () => {
-  it.each([
-    { name: "a page build", subject: build(15), active: 15, message: "Build 15 is active." },
-    {
-      name: "an agent build",
-      subject: build(15, { requestedBy: agent, activateOnSuccess: false }),
-      active: 14,
-      message: "Build 15 is ready. Activate it in Team image.",
-    },
-    {
-      name: "a failed install",
-      subject: build(15, {
-        status: "failed",
-        failure: { phase: "install", detail: "", logTail: [] },
-      }),
-      active: 14,
-      message: "Build 15 failed at install.",
-    },
-    { name: "a cancel", subject: build(15, { status: "cancelled" }), active: 14, message: null },
-  ])("tells $name", ({ subject, active, message }) => {
-    expect(teamImageFinishedMessage(subject, idFor(active))).toBe(message);
   });
 });
 

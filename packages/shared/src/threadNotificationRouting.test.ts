@@ -1,8 +1,17 @@
-import { MemberId } from "@t3tools/contracts";
+import {
+  ComputeDriverId,
+  MemberId,
+  RunId,
+  TeamImageBuildId,
+  ThreadId,
+  type TeamImageBuild,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   shouldNotifyMember,
+  teamImageBuildNotification,
   threadNotificationTitle,
   type ThreadNotificationEvent,
   type ThreadNotificationKind,
@@ -136,5 +145,53 @@ describe("threadNotificationTitle", () => {
       "Assigned to you",
       "Archived by Alice",
     ]);
+  });
+});
+
+describe("teamImageBuildNotification", () => {
+  const at = DateTime.makeUnsafe("2026-11-10T10:00:00Z");
+  const build = (change: Partial<TeamImageBuild>): TeamImageBuild => ({
+    id: TeamImageBuildId.make("tib_00000000000000000015"),
+    number: 15,
+    status: "succeeded",
+    phase: null,
+    recipeRevision: 1,
+    driverId: ComputeDriverId.make("docker"),
+    requestedBy: { kind: "member", memberId: alice },
+    activateOnSuccess: true,
+    requestedAt: at,
+    startedAt: at,
+    finishedAt: at,
+    imageDeletedAt: null,
+    ...change,
+  });
+  const agentBuild = {
+    requestedBy: {
+      kind: "agent",
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+      authorIds: [alice],
+    },
+    activateOnSuccess: false,
+  } as const;
+
+  it.each([
+    { row: "a page build", subject: build({}), body: "Build 15 is active." },
+    {
+      row: "an agent build",
+      subject: build(agentBuild),
+      body: "Build 15 is ready. Activate it in Team image.",
+    },
+    {
+      row: "a failed install",
+      subject: build({ status: "failed", failure: { phase: "install", detail: "", logTail: [] } }),
+      body: "Build 15 failed at install.",
+    },
+  ])("tells $row", ({ subject, body }) => {
+    expect(teamImageBuildNotification(subject)).toEqual({ title: "Team image", body });
+  });
+
+  it("says nothing of a cancelled build", () => {
+    expect(teamImageBuildNotification(build({ status: "cancelled" }))).toBeNull();
   });
 });
