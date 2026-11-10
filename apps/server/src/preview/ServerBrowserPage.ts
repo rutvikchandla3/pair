@@ -863,6 +863,12 @@ export const setInputFiles = async (page: Page, input: PreviewAutomationUploadIn
   return true;
 };
 
+/** The file input an upload names, for a browser that must not get paths through Playwright. */
+export const fileInput = async (page: Page, input: PreviewAutomationUploadInput) =>
+  (await targetLocator(page, input)?.elementHandle({
+    timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  })) ?? null;
+
 export const press = async (page: Page, input: PreviewAutomationPressInput) => {
   await page.keyboard.press([...(input.modifiers ?? []), input.key].join("+"));
 };

@@ -322,28 +322,33 @@ Streaming, input, control, the agent's `preview_*` tools and `t3_preview_*` tool
 through the code that serves a local server's tabs today. Threads without a machine are still
 refused. No client offers the tab until 7.7.
 
-**Spike first, in the PR's first commit or before it.** With 7.3's endpoint on a Docker machine,
-prove each item with Playwright attached over CDP, and record the result in the PR. The plan
-assumes all pass; a failure changes the Files list below, and the PR says how.
+**Spike, done 2026-11-10** on the test server: the image's Chrome 156 in a Docker container (runc
+and gVisor, which behaves the same about 15% slower), Playwright 1.60 over `connectOverCDP`.
 
-| #   | Check                                                                                      | If it fails                                                                    |
-| --- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| 1   | `browser.contexts()[0]` exists and `newPage()` on it works (the persistent profile).       | Use `browser.newContext()` for every tab and drop Q2's persistence.            |
-| 2   | `browser.newContext()` gives an isolated context (agent and incognito tabs).               | Blocks the row.                                                                |
-| 3   | `Page.startScreencast` frames arrive and input events land (`ServerBrowser.ts` 2548–2740). | Blocks the row.                                                                |
-| 4   | A download: where the file lands and whether `download.saveAs` works over CDP.             | Expected to fail: see Downloads below.                                         |
-| 5   | A file chooser: `setFiles` with a path on the server.                                      | Expected to fail: see Uploads below.                                           |
-| 6   | `preview_recording_start` and `stop`.                                                      | Refuse recording on a machine tab with a clear message; note it in 7.7's docs. |
-| 7   | PDF navigation (`installPdfDocumentNavigation`) and `presentAsChrome`.                     | Fix in place; both are CDP-only.                                               |
-| 8   | Frame rate and latency at 1280×800 over the kit's network, with a provider turn streaming. | Lower the screencast quality for machine tabs; record the numbers.             |
+| #   | Check                                                       | Result                                                                                                                                                                                                                                                                                             |
+| --- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `browser.contexts()[0]` exists and `newPage()` on it works. | Pass. A persistent cookie survives closing every page, reconnecting and a SIGTERM restart. A cookie set in the ~30 s before a SIGKILL is lost; session cookies drop on restart.                                                                                                                    |
+| 2   | `browser.newContext()` gives an isolated context.           | Pass, isolated both ways.                                                                                                                                                                                                                                                                          |
+| 3   | Screencast frames arrive and input lands.                   | Pass: first frame in 91 ms; clicks, typing (non-ASCII too) and wheel.                                                                                                                                                                                                                              |
+| 4   | A download: where it lands, and `download.saveAs` over CDP. | By default it lands in the container under `/tmp/playwright-artifacts-…`, and `saveAs` to a server path fails (ENOENT). `Browser.setDownloadBehavior` with a folder in the machine works per context, but Playwright resets it on connect and on each `newContext()`.                              |
+| 5   | A file chooser: `setFiles` with a path.                     | **Unsafe.** Given a path, Playwright reads the file on the server's host and injects its bytes, so an agent could upload any server file. Bytes payloads are superlinear (1 MiB 0.4 s, 8 MiB 5.4 s, 15 MiB 16 s); CDP `DOM.setFileInputFiles` with a path in the machine takes 161 ms for 100 MiB. |
+| 6   | `preview_recording_start` and `stop`.                       | Works, but the encoder page launched the server's Chromium; with the encoder in a scratch context of the machine's Chrome it made a valid 8 s mp4.                                                                                                                                                 |
+| 7   | PDF navigation and `presentAsChrome`.                       | Pass. `http://localhost:<port>` inside the machine loads with the right Host header.                                                                                                                                                                                                               |
+| 8   | Frame rate and latency at 1280×800.                         | Same host, jpeg q70, maxWidth 1280: 15 fps on runc and 12.6 on gVisor, ~141 KiB a frame (~2 MB/s) on a busy page, input to frame 55–66 ms idle and 160–230 ms busy, Chrome at 1.5–1.75 cores. Acks paced at 100 ms do not limit it. The real tunnel is slower.                                     |
+
+Also seen: without `--no-sandbox` Docker fails with "No usable sandbox!" (Q1). `--disable-gpu` still
+starts a GPU process, and dbus errors on stderr are noise, not a failed launch. Chrome takes about
+0.58 GB with no tabs and 60 MiB more for three light tabs.
 
 - **Needs:** 7.3. **Unblocks:** 7.6, 7.7.
 - **Files:**
   - New `apps/server/src/preview/PreviewMachine.ts`: a `Context.Reference` with a no-op default.
-    - `forThread(threadId): Effect<Option<{ sandboxId, endpoint: Effect<string, …>, host }>>`.
-      The default answers `none`, so a local server's behaviour is bit for bit today's.
-    - The sandbox layer's implementation reads the thread shell's `sandboxId` from the projection
-      (README P6: callers needing sandbox state read the projection) and returns
+    - `forThread(threadId): Effect<Option<{ sandboxId, endpoint: Effect<string, …>, host: Effect<WorkspaceHost, …> }>>`.
+      The default answers `none`, so a local server's behaviour is bit for bit today's. `host` is
+      an effect, read per tab, since a machine that slept has none until it wakes.
+    - The sandbox layer's implementation (`sandbox/browser/PreviewMachineLive.ts`, provided in
+      `server.ts` only when `MachineBrowser` exists) reads the thread shell's `sandboxId` from the
+      projection (README P6: callers needing sandbox state read the projection) and returns
       `MachineBrowser.endpoint` and the sandbox's workspace host.
   - `apps/server/src/preview/Manager.ts` (`open`, 179–183): replace the unconditional refusal.
     On a cloud-only server, refuse unless `PreviewMachine.forThread` answers `some` and
@@ -351,15 +356,18 @@ assumes all pass; a failure changes the Files list below, and the PR says how.
     check is unchanged. The comment becomes one line saying a cloud-only server's tabs live on
     machines.
   - `apps/server/src/preview/ServerBrowserContexts.ts`:
-    - `Options.machineEndpoint?: (sandboxId: string) => Promise<string>`.
-    - `machineBrowser(sandboxId)`: one `chromium.connectOverCDP(endpoint)` per sandbox, cached as
-      `sharedBrowser` is (119–137) and dropped on `disconnected`.
+    - `MachineTarget { sandboxId, endpoint: () => Promise<string> }`, passed per call.
+    - `machineBrowser(machine)`: one `chromium.connectOverCDP(endpoint)` per sandbox, cached as
+      `sharedBrowser` is and dropped on `disconnected` or a failed attach. A failed attach throws
+      its own message: Playwright's quotes the endpoint, which is a secret.
     - `contextFor(profileId, isolationKey, machine?)`: with a machine, the cache key gains the
-      sandbox id; an isolation key or the incognito profile gives `browser.newContext(...)`,
-      anything else gives `browser.contexts()[0]` (Q2). Never `launchPersistentContext`, never a
-      local profile directory.
-    - `clearProfile` and `scratchPage` stay local. `close` also closes machine browsers (the
-      connection only; Chrome belongs to `MachineBrowser`).
+      sandbox id and every named profile collapses to the default; an isolation key or the
+      incognito profile gives `browser.newContext(...)`, anything else gives
+      `browser.contexts()[0]` (Q2). Never `launchPersistentContext`, never a local profile
+      directory.
+    - `clearProfile` stays local. `scratchPage(machine?)` makes a machine tab's recording encoder
+      page in the machine's Chrome. `close` also closes machine browsers (the connection only;
+      Chrome belongs to `MachineBrowser`).
   - `apps/server/src/preview/ServerBrowser.ts`:
     - `setUpTab` (807–835): resolve `PreviewMachine.forThread(snapshot.threadId)` first. With a
       machine, skip the desktop branch and pass the machine to `contextFor`. `presentAsChrome`
@@ -368,14 +376,24 @@ assumes all pass; a failure changes the Files list below, and the PR says how.
     - `onContextClose` (526–530) already drops tabs when a context closes; confirm a lost
       connection reaches it, and that dropped tabs publish `closed` through the manager so
       clients do not keep a dead tab.
-    - **Downloads** (`saveDownload`, 1088–1136): for a machine tab, set the browser's download
-      directory to `/t3-sandbox/<id>/browser/downloads/<tab>` over CDP
-      (`Browser.setDownloadBehavior`), and serve a finished download by reading that path through
-      `host.fileSystem` instead of `NodeFSP`. The `/api/preview-stream/download` route keeps its
-      shape. Removing a tab's downloads goes through the host too.
-    - **Uploads** (the file chooser offer and `POST /api/preview-stream/upload`): for a machine
-      tab, hand Playwright the file as `{ name, mimeType, buffer }`, which it injects through the
-      page, not as a server path the machine cannot read. Re-read the upload size cap and keep it.
+    - **Downloads** (`saveDownload`): for a machine tab, set the context's download directory to
+      `/t3-sandbox/<id>/browser/downloads` over CDP (`Browser.setDownloadBehavior` with
+      `allowAndName`; the setting is per context, so the folder is per machine and files are named
+      by Chrome's download guid). Playwright resets it on connect and on every `newContext()`, so
+      each new tab sets it again for every context that machine's tabs use. Never `saveAs` or
+      `delete` a machine tab's download: both act on the server's disk. Serve a finished download
+      by streaming its path through `host.fileSystem` instead of `NodeFSP`. The
+      `/api/preview-stream/download` route keeps its shape. Removing a tab's downloads goes
+      through the host too, file by file.
+    - **Uploads**: a path must never reach Playwright for a machine tab (spike 5). An agent's
+      `preview_upload` paths are resolved and refused unless they are under
+      `/t3-sandbox/<that sandbox id>/`, checked before the host sees them (the host routes any
+      other path to the server's disk), then confirmed as files through the machine's host. A
+      member's files (`POST /api/preview-stream/upload`) are written into the tab's folder under
+      `/t3-sandbox/<id>/browser/uploads/`, kept until the tab closes since Chrome reads a chosen
+      file only when the page does. Either way Chrome gets the paths through CDP
+      `DOM.setFileInputFiles` on the input, found by a one-use attribute and `DOM.performSearch`
+      on the frame's session.
     - `resolveNavigationUrl` (1665–1672) needs no change: `localhost:<port>` is now correct by
       construction. Say so in a one-line comment there, since it is the invariant the design
       rests on.
@@ -390,6 +408,25 @@ assumes all pass; a failure changes the Files list below, and the PR says how.
     run is owed; if the spike forces a wording change (recording, row 6), run the evals
     [evals/README.md](../../../../evals/README.md) names first.
   - [06 §10](../06-credentials-and-security.md): the Preview tools row, as landed.
+- **As built:** `MachineBrowserError.reason` is `PreviewMachineBrowserReason` in contracts, and
+  `PreviewStreamHostSetup` gained `need: "machine"` with `command: ""` and an optional `reason`;
+  `preview/` matches the error structurally (`isPreviewMachineError`) so it imports no sandbox
+  code. Clients still decode only `sandbox` and `libraries` and fall back for anything else:
+  7.7 teaches `decodeHostSetup` and `previewStreamHostSetupMessage` in
+  `packages/client-runtime/src/preview/serverBrowserStream.ts` the machine case. The tab's
+  machine is read once when the tab is set up and kept on the tab, so the screencast and input
+  paths do no lookup. `presentAsChrome` takes the machine's platform and architecture and a fixed
+  kernel version (`MACHINE_PLATFORM_VERSION`), never the server's. Recording runs its encoder page
+  in a scratch context of the machine's Chrome (`MACHINE_RECORDING_ALLOWED`), so the server's
+  Chromium never starts for a cloud thread; the finished file is an attachment and lands on the
+  server like every attachment. The download's guid comes from the name in Playwright's
+  `download.path()`, a string that is never read. Machine screencasts keep the server's limits
+  for now, in `MACHINE_SCREENCAST`. Making a sleep stop Chrome with SIGTERM and a short grace
+  is 7.6's: 7.3 already sends SIGTERM with a 5 s force-kill, but only once the boot has ended,
+  when the runner is gone. The spike-dependent choices sit in one place each:
+  `ServerBrowserContexts.createMachineContext` (spike 1, 2), `ServerBrowser.routeMachineDownloads`
+  and `machineDownloadPath` (4), `ServerBrowser.machineFilePaths`, `writeMachineUploads` and
+  `setMachineFiles` (5), `MACHINE_RECORDING_ALLOWED` (6) and `MACHINE_SCREENCAST` (8).
 - **Types and services:** `PreviewMachine`. **Commands and events:** none. **Migrations:** none.
 - **Tests:**
   - `Manager.test.ts`, the cloud-only cases: a thread with a machine opens with
@@ -397,8 +434,16 @@ assumes all pass; a failure changes the Files list below, and the PR says how.
   - `ServerBrowserContexts.test.ts`: with a machine, a non-isolated tab takes the default context
     and an isolated one a new context, both from the connected browser; two machines never share
     a browser; a disconnect drops the cache; no local profile directory is created.
-  - `ServerBrowser.test.ts`: extend the existing download and upload cases with a machine row
-    (the file is read through the host; the chooser gets a buffer).
+  - `ServerBrowser.test.ts`, machine cases beside the download and upload ones: the download is
+    named by its guid in the machine's folder, never `saveAs`, served and removed through the
+    host; an agent upload hands Chrome a path in its machine, and the server's database,
+    `/etc/passwd`, another machine's root and a `..` escape are refused without a lookup; a
+    member's upload is written into the machine; recording asks for the machine's Chrome; two
+    threads' tabs open in their own machines, and an agent never reaches the other thread's tab.
+  - `ServerBrowserContexts.test.ts`: nothing on a machine tab's path, recording included, asks
+    for the server's Chromium.
+  - `ServerBrowserStream.test.ts`: a machine error closes with 4503 and `need: "machine"`
+    without the sandbox id; a machine download streams through the host's file system.
   - Do not re-test streaming or input for machine tabs; they are the same code.
 - **Verify:** a dev cloud-only server with the Docker driver and the Replay provider. From a
   script or the WS client: `preview.open` on a cloud thread with `http://localhost:<port>`, attach

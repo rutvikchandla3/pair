@@ -4,16 +4,18 @@ import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 
 const launches = vi.hoisted(() => ({
   launch: vi.fn<BrowserType["launch"]>(),
   persistent: vi.fn<BrowserType["launchPersistentContext"]>(),
+  connect: vi.fn<BrowserType["connectOverCDP"]>(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
 }));
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
+vi.spyOn(chromium, "connectOverCDP").mockImplementation(launches.connect);
 vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
 
 const makeContext = () => {
@@ -49,6 +51,23 @@ const makeBrowser = () => {
   };
 };
 
+/** Chrome on a machine: Playwright attaches to it, and its default context is its one profile. */
+const makeMachineBrowser = () => {
+  const browser = makeBrowser();
+  const profile = makeContext();
+  return Object.assign(browser, {
+    profile,
+    contexts: vi.fn(() => [profile]),
+    created: browser.contexts,
+    disconnect: () => browser.on.mock.calls.find(([event]) => event === "disconnected")?.[1](),
+  });
+};
+
+const machine = (sandboxId: string) => ({
+  sandboxId,
+  endpoint: vi.fn(async () => `ws://127.0.0.1:1/devtools/browser/${sandboxId}-secret`),
+});
+
 const options = () => ({
   profilesDir: "/test/profiles",
   executable: vi.fn(async () => "/test/chromium"),
@@ -69,6 +88,7 @@ const withLauncher = () => {
 beforeEach(() => {
   launches.launch.mockReset();
   launches.persistent.mockReset();
+  launches.connect.mockReset();
   launches.mkdir.mockClear();
   launches.rm.mockClear();
 });
@@ -292,5 +312,83 @@ describe("ServerBrowserContexts", () => {
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.contexts[0]?.close).toHaveBeenCalled();
+  });
+
+  it("runs a machine's tabs in its own Chrome, with one profile and no local storage", async () => {
+    const browsers = new Map([
+      ["a", makeMachineBrowser()],
+      ["b", makeMachineBrowser()],
+    ]);
+    launches.connect.mockImplementation(
+      async (endpoint) =>
+        browsers.get(String(endpoint).includes("/a-") ? "a" : "b") as unknown as Browser,
+    );
+    const local = options();
+    const pool = new ServerBrowserContexts(local);
+    const a = machine("a");
+    const b = machine("b");
+    const [profile, again, named] = await Promise.all([
+      pool.contextFor("default", undefined, a),
+      pool.contextFor("default", undefined, a),
+      // Named profiles are local-only: a machine has its one.
+      pool.contextFor("work", undefined, a),
+    ]);
+    expect(profile).toBe(browsers.get("a")!.profile);
+    expect(again).toBe(profile);
+    expect(named).toBe(profile);
+    const isolated = await pool.contextFor("default", "agent", a);
+    const incognito = await pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID, undefined, a);
+    expect(browsers.get("a")!.created).toEqual([isolated, incognito]);
+    expect(await pool.contextFor("default", undefined, b)).toBe(browsers.get("b")!.profile);
+    expect(a.endpoint).toHaveBeenCalledTimes(1);
+    expect(launches.connect).toHaveBeenCalledTimes(2);
+    await pool.scratchPage(a).catch(() => undefined);
+    expect(browsers.get("a")!.newContext).toHaveBeenCalledTimes(3);
+    // Nothing on a machine tab's path starts, or even looks for, this server's Chromium.
+    expect(local.executable).not.toHaveBeenCalled();
+    expect(launches.launch).not.toHaveBeenCalled();
+    expect(launches.persistent).not.toHaveBeenCalled();
+    expect(launches.mkdir).not.toHaveBeenCalled();
+
+    // A lost connection reconnects from a fresh endpoint; a new boot's Chrome is a new browser.
+    const lost = browsers.get("a")!;
+    lost.disconnect();
+    lost.profile.close();
+    browsers.set("a", makeMachineBrowser());
+    expect(await pool.contextFor("default", undefined, a)).toBe(browsers.get("a")!.profile);
+    expect(a.endpoint).toHaveBeenCalledTimes(2);
+
+    await pool.close();
+    expect(browsers.get("a")!.close).toHaveBeenCalled();
+    expect(browsers.get("b")!.close).toHaveBeenCalled();
+  });
+
+  it("presents a machine tab with the kernel version it is given", async () => {
+    const send = vi.fn(async (method: string, _params?: unknown) =>
+      method === "Browser.getVersion"
+        ? { userAgent: "Mozilla/5.0 HeadlessChrome/156.0.1.2 Safari/537.36" }
+        : {},
+    );
+    await presentAsChrome({ send } as never, {
+      platform: "linux",
+      arch: "arm64",
+      release: "6.8.0",
+    });
+    expect(send).toHaveBeenCalledWith(
+      "Emulation.setUserAgentOverride",
+      expect.objectContaining({
+        userAgentMetadata: expect.objectContaining({ platform: "Linux", platformVersion: "6.8.0" }),
+      }),
+    );
+  });
+
+  it("keeps a machine's endpoint out of a failed attach's error", async () => {
+    launches.connect.mockRejectedValue(
+      new Error("connect ECONNREFUSED ws://127.0.0.1:1/devtools/browser/a-secret"),
+    );
+    const pool = new ServerBrowserContexts(options());
+    const error = await pool.contextFor("default", undefined, machine("a")).catch((e) => e);
+    expect(String(error.message)).not.toContain("secret");
+    await pool.close();
   });
 });

@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 
-import { type ComputeDriverKind, SandboxId } from "@t3tools/contracts";
+import { type ComputeDriverKind, PreviewMachineBrowserReason, SandboxId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -36,12 +36,7 @@ export class MachineBrowserError extends Schema.TaggedError<MachineBrowserError>
   "MachineBrowserError",
   {
     sandboxId: SandboxId,
-    reason: Schema.Literals([
-      "not-installed",
-      "machine-unavailable",
-      "runner-outdated",
-      "launch-failed",
-    ]),
+    reason: PreviewMachineBrowserReason,
     /** launch-failed: Chrome's last stderr lines. */
     detail: Schema.optionalKey(Schema.String),
   },

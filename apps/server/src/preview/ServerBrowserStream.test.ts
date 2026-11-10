@@ -10,22 +10,27 @@ import {
   MemberId,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
+  SandboxId,
   ThreadId,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
+import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { MachineBrowserError } from "../sandbox/browser/MachineBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
@@ -511,4 +516,108 @@ it.effect.each([{ ends: "session" }, { ends: "access" }] as const)(
       const code = yield* Effect.promise(() => closed.promise);
       if (ends === "access") expect(code).toBe(4404);
     }).pipe(Effect.scoped),
+);
+
+it.effect("tells viewers when the thread's machine has no browser, without naming it", () =>
+  Effect.gen(function* () {
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
+      openDownload: () => Effect.succeedNone,
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: () =>
+        Effect.fail(
+          new ServerBrowser.ServerBrowserLaunchError({
+            cause: new MachineBrowserError({
+              sandboxId: SandboxId.make("sbx_5ec7e75ec7e75ec7e75e"),
+              reason: "not-installed",
+            }),
+          }),
+        ),
+    });
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        routeLayer.pipe(
+          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+          Layer.provide(platformLayer),
+        ),
+        { disableListenLog: true },
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+      ),
+    );
+    const server = Context.get(services, HttpServer.HttpServer);
+    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const socket = new WebSocket(
+          `${origin}/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket`,
+        );
+        socket.addEventListener("close", (event) =>
+          closed.resolve({ code: event.code, reason: event.reason }),
+        );
+        return socket;
+      }),
+      (socket) => Effect.sync(() => socket.close()),
+    );
+    const { code, reason } = yield* Effect.promise(() => closed.promise);
+    expect(code).toBe(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE);
+    expect(yield* decodeHostSetup(reason)).toEqual({
+      need: "machine",
+      command: "",
+      reason: "not-installed",
+    });
+    expect(reason).not.toContain("sbx_");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("streams a machine tab's download from its machine's file system", () =>
+  Effect.gen(function* () {
+    const path = "/t3-sandbox/sandbox-a/browser/downloads/guid-1";
+    const read: Array<string> = [];
+    const fileSystem = FileSystem.makeNoop({
+      stat: (statPath) =>
+        statPath === path
+          ? Effect.succeed({ size: ByteSize.bytes(15) } as FileSystem.File.Info)
+          : Effect.fail(
+              PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "stat" }),
+            ),
+      stream: (streamPath) => {
+        read.push(streamPath);
+        return Stream.make(new TextEncoder().encode("report contents"));
+      },
+    });
+    let download = Option.some({ path, fileName: "report.csv", fileSystem });
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
+      openDownload: () => Effect.sync(() => download),
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: () => Effect.die("unused"),
+    });
+    const handler = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          routeLayer.pipe(
+            Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+            Layer.provide(platformLayer),
+            Layer.provideMerge(makeAuth([AuthOrchestrationReadScope]).layer),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      ({ dispose }) => Effect.promise(dispose),
+    );
+    const url = "http://t3.test/api/preview-stream/download?threadId=thread&tabId=tab&id=d";
+    const response = yield* Effect.promise(() => handler.handler(new Request(url)));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe("15");
+    expect(yield* Effect.promise(() => response.text())).toBe("report contents");
+    expect(read).toEqual([path]);
+    // A machine that went to sleep has no file to serve.
+    download = Option.some({ path: `${path}-gone`, fileName: "report.csv", fileSystem });
+    expect((yield* Effect.promise(() => handler.handler(new Request(url)))).status).toBe(404);
+  }).pipe(Effect.scoped),
 );

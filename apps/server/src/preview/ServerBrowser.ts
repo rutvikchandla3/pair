@@ -59,6 +59,7 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
+import type * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -67,6 +68,7 @@ import type {
   CDPSession,
   Dialog,
   Download,
+  ElementHandle,
   FileChooser,
   Frame,
   Page,
@@ -83,7 +85,13 @@ import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
-import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { PreviewMachine } from "./PreviewMachine.ts";
+import {
+  type MachineTarget,
+  presentAsChrome,
+  ServerBrowserContexts,
+} from "./ServerBrowserContexts.ts";
+import { SANDBOX_ROOT, type WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
@@ -99,6 +107,20 @@ const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
+/**
+ * A machine tab's screencast limits (m7-cloud-browser.md 7.4, spike 8): the server's own today,
+ * the stream route's caps. Lower them here if machine tabs stream too slowly over the tunnel.
+ */
+const MACHINE_SCREENCAST = { maxQuality: 100, maxWidth: 7680, maxHeight: 4320 } as const;
+/** Spike 6: a machine tab records through an encoder page in the machine's own Chrome. */
+const MACHINE_RECORDING_ALLOWED = true;
+/** Pages see a fixed Linux version, never the kernel of the server or the machine's host. */
+const MACHINE_PLATFORM_VERSION = "6.8.0";
+const machineFileRefused = (path: string) =>
+  new ServerBrowserPage.ServerBrowserOperationError({
+    tag: "PreviewAutomationExecutionError",
+    message: `${path} is not a file in this session's machine.`,
+  });
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
@@ -251,7 +273,14 @@ export class ServerBrowser extends Context.Service<
       readonly threadId: string;
       readonly tabId: string;
       readonly downloadId: string;
-    }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
+    }) => Effect.Effect<
+      Option.Option<{
+        readonly path: string;
+        readonly fileName: string;
+        /** A machine tab's download is on the machine, read through its host. */
+        readonly fileSystem?: FileSystem.FileSystem;
+      }>
+    >;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
 
@@ -308,6 +337,7 @@ interface ServerTab {
   readonly isolatedContext: boolean;
 
   readonly desktop: { readonly close: () => Promise<void> } | null;
+  readonly machine: TabMachine | null;
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
 
@@ -342,6 +372,22 @@ interface ServerTab {
   recordingStart: Promise<Recording> | null;
   captureLock: Promise<void>;
   capturing: number;
+}
+
+/** The thread's machine, for a tab whose Chrome runs there (Pair Cloud). */
+interface TabMachine {
+  readonly target: MachineTarget;
+  readonly host: WorkspaceHost;
+  readonly platform: {
+    readonly platform: NodeJS.Platform;
+    readonly arch: string;
+    readonly release: string;
+  };
+  readonly downloadsDir: string;
+  /** Files a member hands this tab, written into the machine; removed with the tab. */
+  readonly uploadsDir: string;
+  /** Chrome's id for the tab's context, which its download folder is set for. */
+  browserContextId: string | undefined;
 }
 
 interface ServerDownload {
@@ -474,6 +520,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+  const previewMachine = yield* PreviewMachine;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -754,7 +801,7 @@ const make = Effect.gen(function* () {
     else void tab.page.close().catch(constVoid);
     if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
-    void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
+    void removeDownloads(tab);
     reportLiveTabs();
     if (closeSession) {
       runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
@@ -793,6 +840,27 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // Decided from the thread's own record on the server, never from client input.
+  const resolveMachine = async (snapshot: PreviewSessionSnapshot): Promise<TabMachine | null> => {
+    const found = await runPromise(previewMachine.forThread(ThreadId.make(snapshot.threadId)));
+    if (Option.isNone(found)) return null;
+    const { sandboxId, endpoint, host: machineHost } = found.value;
+    const workspaceHost = await runPromise(machineHost);
+    const info = await runPromise(workspaceHost.info);
+    return {
+      target: { sandboxId, endpoint: () => runPromise(endpoint) },
+      host: workspaceHost,
+      platform: {
+        platform: info.platform,
+        arch: info.architecture,
+        release: MACHINE_PLATFORM_VERSION,
+      },
+      downloadsDir: `${SANDBOX_ROOT}/${sandboxId}/browser/downloads`,
+      uploadsDir: `${SANDBOX_ROOT}/${sandboxId}/browser/uploads/${NodeCrypto.randomUUID()}`,
+      browserContextId: undefined,
+    };
+  };
+
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const opened: Array<() => Promise<void>> = [];
     try {
@@ -810,8 +878,9 @@ const make = Effect.gen(function* () {
   ): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
     adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const machine = await resolveMachine(snapshot);
     const desktop =
-      adopted === undefined && (await desktopRenders(snapshot))
+      adopted === undefined && machine === null && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
         : null;
     if (desktop) opened.push(desktop.close);
@@ -834,6 +903,7 @@ const make = Effect.gen(function* () {
       (await contexts.contextFor(
         snapshot.profileId ?? "default",
         isolatedContext ? tabKey(snapshot.threadId, snapshot.tabId) : undefined,
+        machine?.target,
       ));
     if (isolatedContext) opened.push(() => context.close());
     if (adopted?.page.isClosed()) throw new Error("The popup closed before it opened.");
@@ -844,7 +914,8 @@ const make = Effect.gen(function* () {
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
-    if (!desktop) await presentAsChrome(cdp, host);
+    if (!desktop) await presentAsChrome(cdp, machine?.platform ?? host);
+    if (machine) await routeMachineDownloads(cdp, machine);
     if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
@@ -874,6 +945,7 @@ const make = Effect.gen(function* () {
       },
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
+      machine,
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
       downloads: [],
@@ -1085,24 +1157,80 @@ const make = Effect.gen(function* () {
     });
   };
 
+  // Spike 4 (m7-cloud-browser.md 7.4): `saveAs` and `path()` resolve on this server, so a machine's
+  // Chrome saves into the machine, each file named by its download guid. Playwright resets the
+  // folder on connect and on every `newContext()`, so each new tab sets it for the machine's contexts.
+  const routeMachineDownloads = async (cdp: CDPSession, machine: TabMachine) => {
+    await runPromise(
+      machine.host.fileSystem.makeDirectory(machine.downloadsDir, { recursive: true }),
+    );
+    const { targetInfo } = await cdp.send("Target.getTargetInfo");
+    machine.browserContextId = targetInfo?.browserContextId;
+    const route = (session: CDPSession, browserContextId: string | undefined) =>
+      session.send("Browser.setDownloadBehavior", {
+        behavior: "allowAndName",
+        downloadPath: machine.downloadsDir,
+        eventsEnabled: true,
+        ...(browserContextId === undefined ? {} : { browserContextId }),
+      });
+    await route(cdp, machine.browserContextId);
+    const others = new Map<string | undefined, CDPSession>();
+    for (const other of tabs.values()) {
+      if (other.machine?.target.sandboxId !== machine.target.sandboxId) continue;
+      if (other.machine.browserContextId === machine.browserContextId) continue;
+      others.set(other.machine.browserContextId, other.cdp);
+    }
+    await Promise.all([...others].map(([id, session]) => route(session, id).catch(constVoid)));
+  };
+  // Playwright's path only names the guid; the file it names is never read on this server.
+  const machineDownloadPath = async (machine: TabMachine, download: Download) =>
+    `${machine.downloadsDir}/${NodePath.basename(await download.path())}`;
+
+  const removeDownload = (tab: ServerTab, path: string) =>
+    tab.machine === null
+      ? NodeFSP.rm(path, { force: true })
+      : runPromise(tab.machine.host.fileSystem.remove(path, { force: true }));
+
+  const removeDownloads = (tab: ServerTab) =>
+    (tab.machine === null
+      ? NodeFSP.rm(downloadDir(tab), { recursive: true, force: true })
+      : Promise.all([
+          ...tab.downloads.map((saved) => removeDownload(tab, saved.path)),
+          runPromise(
+            tab.machine.host.fileSystem.remove(tab.machine.uploadsDir, {
+              recursive: true,
+              force: true,
+            }),
+          ),
+        ])
+    ).catch(constVoid);
+
   const saveDownload = async (tab: ServerTab, download: Download) => {
     const id = NodeCrypto.randomUUID();
-    const path = NodePath.join(downloadDir(tab), id);
+    let path: string | null = null;
     const navigation =
       download.url() === tab.abortedNavigation?.url ? tab.abortedNavigation.generation : null;
     if (navigation !== null) clearAbortedNavigation(tab);
     let offered: { readonly id: string; readonly fileName: string } | undefined;
     try {
       if (await download.failure()) return;
-      await NodeFSP.mkdir(downloadDir(tab), { recursive: true, mode: 0o700 });
-      // mkdir leaves the mode of a folder that already exists, such as one an older build made.
-      await NodeFSP.chmod(downloadDir(tab), 0o700);
-      await download.saveAs(path);
-      // saveAs copies with the process umask; a download should stay readable by its owner only.
-      await NodeFSP.chmod(path, 0o600);
-      const { size } = await NodeFSP.stat(path);
+      let size: number;
+      if (tab.machine === null) {
+        const local = NodePath.join(downloadDir(tab), id);
+        path = local;
+        await NodeFSP.mkdir(downloadDir(tab), { recursive: true, mode: 0o700 });
+        // mkdir leaves the mode of a folder that already exists, such as one an older build made.
+        await NodeFSP.chmod(downloadDir(tab), 0o700);
+        await download.saveAs(local);
+        // saveAs copies with the process umask; a download should stay readable by its owner only.
+        await NodeFSP.chmod(local, 0o600);
+        size = (await NodeFSP.stat(local)).size;
+      } else {
+        path = await machineDownloadPath(tab.machine, download);
+        size = Number((await runPromise(tab.machine.host.fileSystem.stat(path))).size);
+      }
       if (tab.closing || size > DOWNLOAD_MAX_BYTES) {
-        await NodeFSP.rm(path, { force: true });
+        await removeDownload(tab, path);
         return;
       }
       const saved: ServerDownload = {
@@ -1115,7 +1243,7 @@ const make = Effect.gen(function* () {
       };
       tab.downloads.push(saved);
       for (const evicted of tab.downloads.splice(0, tab.downloads.length - DOWNLOAD_LIMIT)) {
-        await NodeFSP.rm(evicted.path, { force: true }).catch(constVoid);
+        await removeDownload(tab, evicted.path).catch(constVoid);
       }
       offered = { id, fileName: saved.fileName };
       const shownInTab =
@@ -1129,14 +1257,14 @@ const make = Effect.gen(function* () {
         sizeBytes: saved.sizeBytes,
       });
     } catch (cause) {
-      await NodeFSP.rm(path, { force: true }).catch(constVoid);
+      if (path !== null) await removeDownload(tab, path).catch(constVoid);
       runFork(Effect.logWarning("server preview download failed", { cause }));
     } finally {
       if (navigation !== null && !tab.closing) {
         settleAbortedNavigation(tab, navigation, download.url(), offered);
       }
       // saveAs copies the artifact; cached profile contexts otherwise retain the original.
-      await download.delete().catch(constVoid);
+      if (tab.machine === null) await download.delete().catch(constVoid);
     }
   };
 
@@ -1213,9 +1341,12 @@ const make = Effect.gen(function* () {
     )
       return false;
     if (input.files.length > 0) {
-      await open.chooser.setFiles(
-        open.chooser.isMultiple() ? [...input.files] : input.files.slice(0, 1),
-      );
+      const files = open.chooser.isMultiple() ? [...input.files] : input.files.slice(0, 1);
+      if (tab.machine === null) await open.chooser.setFiles(files);
+      else {
+        const paths = await writeMachineUploads(tab.machine, files);
+        await setMachineFiles(tab, open.chooser.element(), paths);
+      }
     }
     if (tab.fileChooser === open) closeFileChooser(tab);
     return true;
@@ -1227,7 +1358,21 @@ const make = Effect.gen(function* () {
         tag: "PreviewAutomationExecutionError",
         message: `Upload paths must be absolute: ${relative}`,
       });
-    if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
+    const machinePaths =
+      tab.machine === null ? null : await machineFilePaths(tab.machine, input.paths);
+    if (machinePaths === null) {
+      if (await ServerBrowserPage.setInputFiles(tab.page, input)) return undefined;
+    } else {
+      const element = await ServerBrowserPage.fileInput(tab.page, input);
+      if (element !== null) {
+        try {
+          await setMachineFiles(tab, element, machinePaths);
+        } finally {
+          await element.dispose().catch(constVoid);
+        }
+        return undefined;
+      }
+    }
     const open = tab.fileChooser;
     if (!open)
       throw new ServerBrowserPage.ServerBrowserOperationError({
@@ -1240,12 +1385,119 @@ const make = Effect.gen(function* () {
         tag: "PreviewAutomationExecutionError",
         message: "This file picker accepts one file.",
       });
-    if (input.paths.length > 0)
-      await open.chooser.setFiles([...input.paths], {
-        timeout: input.timeoutMs ?? NAVIGATION_TIMEOUT_MS,
-      });
+    if (input.paths.length > 0) {
+      if (machinePaths === null)
+        await open.chooser.setFiles([...input.paths], {
+          timeout: input.timeoutMs ?? NAVIGATION_TIMEOUT_MS,
+        });
+      else await setMachineFiles(tab, open.chooser.element(), machinePaths);
+    }
     if (tab.fileChooser === open) closeFileChooser(tab);
     return undefined;
+  };
+
+  // Spike 5 (m7-cloud-browser.md 7.4): given a path, Playwright reads it on this server, and bytes
+  // are slow past a few MiB. A machine tab's files reach its Chrome as paths in the machine, over CDP.
+  const machineFilePaths = async (machine: TabMachine, paths: ReadonlyArray<string>) => {
+    const root = `${SANDBOX_ROOT}/${machine.target.sandboxId}/`;
+    const resolved: Array<string> = [];
+    for (const path of paths) {
+      const inMachine = NodePath.posix.resolve(path);
+      // Checked before the host sees it: a path outside the machine's root reads this server's disk.
+      if (!inMachine.startsWith(root)) throw machineFileRefused(path);
+      const info = await runPromise(Effect.option(machine.host.fileSystem.stat(inMachine)));
+      if (Option.isNone(info) || info.value.type !== "File") throw machineFileRefused(path);
+      resolved.push(inMachine);
+    }
+    return resolved;
+  };
+
+  // A member's files are written into the machine and kept until the tab closes, since Chrome
+  // reads a chosen file only when the page does.
+  const writeMachineUploads = async (
+    machine: TabMachine,
+    files: ReadonlyArray<{ readonly name: string; readonly buffer: Uint8Array }>,
+  ) => {
+    const dir = `${machine.uploadsDir}/${NodeCrypto.randomUUID()}`;
+    return Promise.all(
+      files.map(async (file, index) => {
+        const name = NodePath.posix.basename(file.name.replaceAll("\\", "/")).replaceAll("\0", "");
+        const path = `${dir}/${index}/${name === "" || name === ".." ? "upload" : name}`;
+        await runPromise(
+          machine.host.fileSystem.makeDirectory(`${dir}/${index}`, { recursive: true }),
+        );
+        await runPromise(machine.host.fileSystem.writeFile(path, file.buffer));
+        return path;
+      }),
+    );
+  };
+
+  const UPLOAD_MARK = "data-t3-upload";
+  const setMachineFiles = async (
+    tab: ServerTab,
+    element: ElementHandle,
+    paths: ReadonlyArray<string>,
+  ) => {
+    const mark = NodeCrypto.randomUUID();
+    const target = await element.evaluate(
+      (node, [name, value]) => {
+        const input = node as unknown as {
+          readonly tagName: string;
+          readonly type: string;
+          readonly multiple: boolean;
+          setAttribute(name: string, value: string): void;
+        };
+        input.setAttribute(name, value);
+        return {
+          file: input.tagName === "INPUT" && input.type === "file",
+          multiple: input.multiple,
+        };
+      },
+      [UPLOAD_MARK, mark] as const,
+    );
+    try {
+      if (!target.file)
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: "The upload target is not a file input.",
+        });
+      if (paths.length > 1 && !target.multiple)
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: "This file picker accepts one file.",
+        });
+      const frame = await element.ownerFrame();
+      const cdp = (frame && tab.frameSessions.get(frame)) ?? tab.cdp;
+      await cdp.send("DOM.getDocument", { depth: 0 });
+      const search = await cdp.send("DOM.performSearch", { query: `[${UPLOAD_MARK}="${mark}"]` });
+      try {
+        const { nodeIds } =
+          search.resultCount === 1
+            ? await cdp.send("DOM.getSearchResults", {
+                searchId: search.searchId,
+                fromIndex: 0,
+                toIndex: 1,
+              })
+            : { nodeIds: [] };
+        const nodeId = nodeIds[0];
+        if (nodeId === undefined)
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: "The file input left the page.",
+          });
+        await cdp.send("DOM.setFileInputFiles", { files: [...paths], nodeId });
+      } finally {
+        await cdp.send("DOM.discardSearchResults", { searchId: search.searchId }).catch(constVoid);
+      }
+    } finally {
+      await element
+        .evaluate(
+          (node, name) =>
+            (node as unknown as { removeAttribute(name: string): void }).removeAttribute(name),
+          UPLOAD_MARK,
+        )
+        .catch(constVoid);
+    }
   };
 
   const answerFileChooser: ServerBrowser["Service"]["answerFileChooser"] = (input) =>
@@ -1253,12 +1505,15 @@ const make = Effect.gen(function* () {
 
   const openDownload: ServerBrowser["Service"]["openDownload"] = (input) =>
     Effect.sync(() => {
-      const download = tabs
-        .get(tabKey(input.threadId, input.tabId))
-        ?.downloads.find((candidate) => candidate.id === input.downloadId);
+      const tab = tabs.get(tabKey(input.threadId, input.tabId));
+      const download = tab?.downloads.find((candidate) => candidate.id === input.downloadId);
       return download === undefined
         ? Option.none()
-        : Option.some({ path: download.path, fileName: download.fileName });
+        : Option.some({
+            path: download.path,
+            fileName: download.fileName,
+            ...(tab?.machine ? { fileSystem: tab.machine.host.fileSystem } : {}),
+          });
     });
 
   const preparedContexts = new WeakSet<BrowserContext>();
@@ -1475,6 +1730,7 @@ const make = Effect.gen(function* () {
             },
           })
           .pipe(
+            Effect.provideService(PreviewMachine, previewMachine),
             Effect.flatMap((snapshot) =>
               Effect.tryPromise({
                 try: () => ensureTab(snapshot),
@@ -1668,6 +1924,7 @@ const make = Effect.gen(function* () {
     if (target.kind === "url") return normalizePreviewUrl(target.url);
 
     const path = target.path ?? "";
+    // localhost is the tab's own machine: Chrome runs where the agent's server does (07 §5).
     return `${target.protocol ?? "http"}://localhost:${target.port}${path.startsWith("/") || path === "" ? path : `/${path}`}`;
   };
 
@@ -1720,7 +1977,13 @@ const make = Effect.gen(function* () {
   const startRecording = (tab: ServerTab): Promise<Recording> => {
     const started = withCaptureLock(tab, async () => {
       if (tab.recording) return tab.recording;
-      const encoder = await contexts.scratchPage();
+      if (tab.machine && !MACHINE_RECORDING_ALLOWED) {
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationExecutionError",
+          message: "Recording is not available for a cloud session's browser.",
+        });
+      }
+      const encoder = await contexts.scratchPage(tab.machine?.target);
       let session: CDPSession | null = null;
       try {
         await encoder.evaluate(ServerBrowserPage.recordingEncoderScript(recordingFrameRate));
@@ -2539,7 +2802,10 @@ const make = Effect.gen(function* () {
             .catch(constVoid),
         ),
     );
-    const quality = Math.min(100, Math.max(1, Math.round(input.quality)));
+    const limits = tab.machine ? MACHINE_SCREENCAST : null;
+    const quality = Math.min(limits?.maxQuality ?? 100, Math.max(1, Math.round(input.quality)));
+    const maxWidth = Math.min(limits?.maxWidth ?? Infinity, input.maxWidth);
+    const maxHeight = Math.min(limits?.maxHeight ?? Infinity, input.maxHeight);
     // Chromium may drop the final frame during a burst; send a still when it settles.
     let framesInFlight = 0;
     let mayHaveDropped = false;
@@ -2556,8 +2822,8 @@ const make = Effect.gen(function* () {
           .send("Page.startScreencast", {
             format: "jpeg",
             quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
-            maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
-            maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
+            maxWidth: Math.max(1, Math.round(maxWidth * screencastScale)),
+            maxHeight: Math.max(1, Math.round(maxHeight * screencastScale)),
           })
           .catch(constVoid);
       });

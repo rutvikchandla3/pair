@@ -141,10 +141,21 @@ export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
 
+/** Why a Pair Cloud thread's machine has no browser for its tab. */
+export const PreviewMachineBrowserReason = Schema.Literals([
+  "not-installed",
+  "machine-unavailable",
+  "runner-outdated",
+  "launch-failed",
+]);
+export type PreviewMachineBrowserReason = typeof PreviewMachineBrowserReason.Type;
+
 /** JSON reason for preview stream close code 4503; must fit the 123-byte close-reason limit. */
 export const PreviewStreamHostSetup = Schema.Struct({
-  need: Schema.Literals(["sandbox", "libraries"]),
+  /** `machine`: the thread's machine, not this server's host; `command` is empty. */
+  need: Schema.Literals(["sandbox", "libraries", "machine"]),
   command: Schema.String,
+  reason: Schema.optionalKey(PreviewMachineBrowserReason),
 });
 export type PreviewStreamHostSetup = typeof PreviewStreamHostSetup.Type;
 export const PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE = 4503;

@@ -24,6 +24,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -31,6 +32,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { PreviewControlRequiredError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import { PreviewMachine } from "./PreviewMachine.ts";
 
 export class PreviewManager extends Context.Service<
   PreviewManager,
@@ -176,11 +178,20 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     );
   };
 
+  // Read per call: the machine reference is provided above this service, where callers run.
+  const opensOnMachine = Effect.fnUntraced(function* (input: PreviewOpenInput) {
+    if (input.runtime !== undefined && input.runtime !== "server") return false;
+    const machine = yield* PreviewMachine;
+    return Option.isSome(yield* machine.forThread(input.threadId));
+  });
+
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
     function* (input) {
-      // Previews of agent-served pages wait for machines to serve them (06 §10).
-      if (cloudOnly) return yield* new CloudOnlyRefusedError({ operation: "preview.open" });
-      const runtime = input.runtime;
+      // A cloud-only server's tabs live on each thread's machine, never in its own browser.
+      if (cloudOnly && !(yield* opensOnMachine(input))) {
+        return yield* new CloudOnlyRefusedError({ operation: "preview.open" });
+      }
+      const runtime = cloudOnly ? "server" : input.runtime;
       // Persisted client surfaces must not bind to a different tab after a server restart.
       const tabId = `${newPreviewTabId()}${runtime === "server" ? `_${serverEpoch}` : ""}`;
       const updatedAt = yield* currentIsoTimestamp;

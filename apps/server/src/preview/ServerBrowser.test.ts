@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -39,16 +40,19 @@ import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
+import { PreviewMachine } from "./PreviewMachine.ts";
+import type { WorkspaceHost } from "../workspaceHost/WorkspaceHost.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
-  presentAsChrome: async () => {},
+  presentAsChrome: async (_cdp: unknown, host: unknown) => void presentedAs.push(host),
   ServerBrowserContexts: class {
     private readonly onClose: ((context: BrowserContext) => void) | undefined;
     constructor(options: { onContextClose?: (context: BrowserContext) => void }) {
       this.onClose = options.onContextClose;
     }
-    async contextFor(profileId: string, isolationKey?: string) {
+    async contextFor(profileId: string, isolationKey?: string, machine?: { sandboxId: string }) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
+      machineRequests.push(machine?.sandboxId ?? null);
       if (contextFailure) throw contextFailure;
       await contextGate?.promise;
       const context = makeContext(this.onClose);
@@ -61,7 +65,8 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       contexts.push(context);
       return context as unknown as BrowserContext;
     }
-    async scratchPage() {
+    async scratchPage(machine?: { sandboxId: string }) {
+      scratchRequests.push(machine?.sandboxId ?? null);
       return makeEncoderPage() as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
@@ -299,6 +304,9 @@ function makeEncoderPage() {
 const contexts: ReturnType<typeof makeContext>[] = [];
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
+const machineRequests: Array<string | null> = [];
+const scratchRequests: Array<string | null> = [];
+const presentedAs: Array<unknown> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
@@ -398,6 +406,90 @@ const dependencies = Layer.mergeAll(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
+
+/** Files in the fake machine, by their path there. */
+const machineFiles = new Map<string, string | Uint8Array>();
+const machineStats: Array<string> = [];
+const machineRemoved: Array<string> = [];
+let machineRemovals = { expected: 1, done: Promise.withResolvers<void>() };
+const machineHost = {
+  info: Effect.succeed({ platform: "linux", architecture: "arm64" }),
+  fileSystem: {
+    makeDirectory: () => Effect.void,
+    writeFile: (path: string, data: Uint8Array) =>
+      Effect.sync(() => void machineFiles.set(path, data)),
+    stat: (path: string) => {
+      machineStats.push(path);
+      const file = machineFiles.get(path);
+      return file === undefined
+        ? Effect.fail(
+            PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "stat" }),
+          )
+        : Effect.succeed({ type: "File", size: BigInt(file.length) });
+    },
+    remove: (path: string) =>
+      Effect.sync(() => {
+        machineRemoved.push(path);
+        if (machineRemoved.length >= machineRemovals.expected) machineRemovals.done.resolve();
+      }),
+  },
+} as unknown as WorkspaceHost;
+/** A file input in a machine tab's page, set through CDP the way Chrome would. */
+const machineFileInput = (multiple = false) => {
+  const attributes = new Map<string, string>();
+  const node = {
+    tagName: "INPUT",
+    type: "file",
+    multiple,
+    setAttribute: (name: string, value: string) => void attributes.set(name, value),
+    removeAttribute: (name: string) => void attributes.delete(name),
+  };
+  return {
+    attributes,
+    handle: {
+      evaluate: vi.fn(async (probe: (node: unknown, arg: unknown) => unknown, arg?: unknown) =>
+        probe(node, arg),
+      ),
+      ownerFrame: async () => contexts[0]!.page,
+      dispose: vi.fn(async () => {}),
+      getAttribute: async () => "",
+    },
+  };
+};
+/** Answers the DOM search an upload makes, and records the files Chrome was handed. */
+const routeMachineDom = (session: ReturnType<typeof makeSession>) => {
+  const setFiles: Array<unknown> = [];
+  const original = session.send.getMockImplementation()!;
+  session.send.mockImplementation(async (method: string, params?: unknown) => {
+    if (method === "DOM.performSearch") return { searchId: "search", resultCount: 1 };
+    if (method === "DOM.getSearchResults") return { nodeIds: [7] };
+    if (method === "DOM.setFileInputFiles") setFiles.push(params);
+    return original(method, params);
+  });
+  return setFiles;
+};
+const threadB = ThreadId.make("browser-test-thread-b");
+const scopeB = { ...scope, thread: { ...testThread, threadId: threadB, providerSessionId: "b" } };
+const sandboxes: Record<string, string> = { [testThread.threadId]: "sandbox-a", [threadB]: "b" };
+const machineLayer = ServerBrowser.layer.pipe(
+  Layer.provide(
+    Layer.succeed(PreviewMachine, {
+      forThread: (threadId) => {
+        const sandboxId = sandboxes[threadId];
+        return Effect.succeed(
+          sandboxId === undefined
+            ? Option.none()
+            : Option.some({
+                sandboxId,
+                endpoint: Effect.succeed(`ws://${sandboxId}-secret`),
+                host: Effect.succeed(machineHost),
+              }),
+        );
+      },
+    }),
+  ),
+  Layer.provideMerge(dependencies),
+);
 const ready = Effect.gen(function* () {
   const browser = yield* ServerBrowser.ServerBrowser;
   const broker = yield* Broker.PreviewAutomationBroker;
@@ -450,6 +542,13 @@ beforeEach(() => {
   contexts.length = 0;
   encoderStreams.length = 0;
   contextRequests.length = 0;
+  machineRequests.length = 0;
+  scratchRequests.length = 0;
+  presentedAs.length = 0;
+  machineFiles.clear();
+  machineStats.length = 0;
+  machineRemoved.length = 0;
+  machineRemovals = { expected: 1, done: Promise.withResolvers<void>() };
   contextGate = null;
   contextFailure = null;
   pageSetupFailure = null;
@@ -1506,6 +1605,201 @@ it.live("a restarted server removes the previous run's downloads and keeps its p
       expect(yield* fs.readFileString(path.join(profile, "Preferences"))).toBe("{}");
     }),
   ).pipe(Effect.provide(dependencies)),
+);
+
+it.live("each thread's tabs open in its own machine, and an agent reaches only its thread's", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: scopeB,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      expect(machineRequests).toEqual(["sandbox-a", "b"]);
+      // The machine's platform, with a fixed kernel version rather than this server's.
+      expect(presentedAs).toEqual([
+        { platform: "linux", arch: "arm64", release: "6.8.0" },
+        { platform: "linux", arch: "arm64", release: "6.8.0" },
+      ]);
+      const tabB = PreviewTabId.make(opened.tabId!);
+      for (const [from, target] of [
+        [scope, tabB],
+        [scopeB, tabId],
+      ] as const) {
+        const error = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope: from,
+            tabId: target,
+            operation: "open",
+            input: { show: false },
+          })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "PreviewAutomationTabNotFoundError" });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: from,
+          tabId: target,
+          operation: "status",
+          input: {},
+        });
+        expect(status).toMatchObject({ available: false, tabId: null });
+      }
+    }),
+  ).pipe(Effect.provide(machineLayer)),
+);
+
+it.live("a machine tab's download stays on the machine and is served through its host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const path = "/t3-sandbox/sandbox-a/browser/downloads/guid-1";
+      machineFiles.set(path, "a,b");
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const saveAs = vi.fn(async (_path: string) => {});
+      const remove = vi.fn(async () => {});
+      contexts[0]!.page.emit("download", {
+        failure: async () => null,
+        path: async () => "/tmp/playwright-artifacts-1/guid-1",
+        delete: remove,
+        saveAs,
+        suggestedFilename: () => "report.csv",
+        url: () => "http://localhost:5173/report.csv",
+      });
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
+      // Both act on this server's disk: Playwright's copy of the file is not there.
+      expect(saveAs).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+      expect(contexts[0]!.sessions.flatMap((session) => session.send.mock.calls)).toContainEqual([
+        "Browser.setDownloadBehavior",
+        expect.objectContaining({
+          behavior: "allowAndName",
+          downloadPath: "/t3-sandbox/sandbox-a/browser/downloads",
+        }),
+      ]);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.downloads).toEqual([
+        expect.objectContaining({ fileName: "report.csv", path, sizeBytes: 3 }),
+      ]);
+      const served = yield* browser.openDownload({
+        threadId: scope.thread.threadId,
+        tabId,
+        downloadId: offered.id,
+      });
+      expect(Option.getOrThrow(served)).toMatchObject({ path, fileSystem: machineHost.fileSystem });
+      yield* viewer.input({ type: "releaseControl" });
+      machineRemovals.expected = 2;
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      yield* Effect.promise(() => machineRemovals.done.promise);
+      expect(machineRemoved).toEqual([
+        path,
+        expect.stringMatching(/^\/t3-sandbox\/sandbox-a\/browser\/uploads\/[\w-]+$/),
+      ]);
+    }),
+  ).pipe(Effect.provide(machineLayer)),
+);
+
+it.live("an agent's upload to a machine tab hands Chrome paths in that machine only", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const setFiles = routeMachineDom(contexts[0]!.sessions[0]!);
+      const input = machineFileInput();
+      const setInputFiles = vi.fn();
+      page.locator.mockImplementation((() => ({
+        elementHandle: async () => input.handle,
+        setInputFiles,
+      })) as never);
+      const inMachine = "/t3-sandbox/sandbox-a/work/a.csv";
+      machineFiles.set(inMachine, "a,b");
+      const upload = (path: string) =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "upload",
+          input: { paths: [path], locator: "#file" },
+        });
+      yield* upload("/t3-sandbox/sandbox-a/work/../work/a.csv");
+      expect(setFiles).toEqual([{ files: [inMachine], nodeId: 7 }]);
+      expect(input.attributes.size).toBe(0);
+      expect(machineStats).toEqual([inMachine]);
+
+      const serverDatabase = `${(yield* ServerConfig.ServerConfig).stateDir}/statev2.sqlite`;
+      for (const refused of [
+        "/etc/passwd",
+        serverDatabase,
+        "/t3-sandbox/b/work/a.csv",
+        "/t3-sandbox/sandbox-a/../b/work/a.csv",
+        "/t3-sandbox/sandbox-a/work/missing.csv",
+      ]) {
+        const error = yield* upload(refused).pipe(Effect.flip);
+        expect(error.message).toContain("is not a file in this session's machine");
+      }
+      // Only the last path is in this machine; nothing else was looked up anywhere.
+      expect(machineStats).toEqual([inMachine, "/t3-sandbox/sandbox-a/work/missing.csv"]);
+      expect(setFiles).toHaveLength(1);
+      expect(setInputFiles).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(machineLayer)),
+);
+
+it.live("a member's upload to a machine tab is written into the machine and set by path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const setFiles = routeMachineDom(contexts[0]!.sessions[0]!);
+      const input = machineFileInput(true);
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const chooserFiles = vi.fn(async (_files: unknown) => {});
+      page.emit("filechooser", {
+        isMultiple: () => true,
+        element: () => input.handle,
+        setFiles: chooserFiles,
+      });
+      let offered = yield* Queue.take(viewer.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(viewer.output);
+      const file = (name: string) => ({ name, mimeType: "text/csv", buffer: Buffer.from(name) });
+      expect(
+        yield* browser.answerFileChooser({
+          threadId: scope.thread.threadId,
+          tabId,
+          chooserId: offered.id,
+          files: [file("a.csv"), file("a.csv"), file("../../escape.csv")],
+        }),
+      ).toBe(true);
+      expect(chooserFiles).not.toHaveBeenCalled();
+      const [set] = setFiles as Array<{ files: Array<string> }>;
+      expect(set!.files).toHaveLength(3);
+      for (const [index, path] of set!.files.entries()) {
+        expect(path).toMatch(
+          new RegExp(
+            `^/t3-sandbox/sandbox-a/browser/uploads/[\\w-]+/[\\w-]+/${index}/(a|escape)\\.csv$`,
+          ),
+        );
+        expect(machineFiles.get(path)).toBeDefined();
+      }
+    }),
+  ).pipe(Effect.provide(machineLayer)),
+);
+
+it.live("a machine tab records in its machine's Chrome, never the server's", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      expect(scratchRequests).toEqual(["sandbox-a"]);
+      expect(machineRequests).toEqual(["sandbox-a"]);
+    }),
+  ).pipe(Effect.provide(machineLayer)),
 );
 
 it.live("a page's file picker goes to the controller and takes its uploaded files", () =>

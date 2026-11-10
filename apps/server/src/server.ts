@@ -147,6 +147,7 @@ import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
 import * as MachineBrowser from "./sandbox/browser/MachineBrowser.ts";
+import * as PreviewMachineLive from "./sandbox/browser/PreviewMachineLive.ts";
 import * as RunnerHub from "./sandbox/runnerHub/RunnerHub.ts";
 import * as RunnerRoute from "./sandbox/runnerHub/RunnerRoute.ts";
 import * as CloudMoveClient from "./cloudMove/CloudMoveClient.ts";
@@ -1002,6 +1003,8 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
     ),
   ),
+  // A cloud-only server's tabs open in each thread's machine; read by the browser and `preview.open`.
+  Layer.provide(PreviewMachineLive.layer),
   Layer.provide(PreviewBrowser.layer),
   // Links to other environments, shared by Settings (WebSocket), agents (/mcp) and moves.
   Layer.provide(

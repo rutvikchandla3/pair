@@ -4,11 +4,13 @@ import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as PreviewManager from "./Manager.ts";
+import { PreviewMachine } from "./PreviewMachine.ts";
 
 const DRAIN_LIMIT = 100;
 
@@ -80,6 +82,49 @@ it.layer(layer)("PreviewManager", (it) => {
         expect(error).toMatchObject({ _tag: "CloudOnlyRefusedError", operation: "preview.open" });
       }
       expect((yield* manager.list({ threadId })).sessions).toEqual([]);
+    }),
+  );
+
+  it.effect("opens a cloud-only server's tabs on the thread's machine only", () =>
+    Effect.gen(function* () {
+      const manager = yield* PreviewManager.make.pipe(
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({
+          ...config,
+          cloudOnly: true,
+        })),
+        Effect.provide(Layer.merge(layerConfig, NodeCrypto.layer)),
+      );
+      const onMachine = freshThreadId();
+      const noMachine = freshThreadId();
+      const machine = {
+        forThread: (threadId: ThreadId) =>
+          Effect.succeed(
+            threadId === onMachine
+              ? Option.some({ sandboxId: "sandbox-a", endpoint: Effect.never, host: Effect.never })
+              : Option.none(),
+          ),
+      };
+      const open = (input: Parameters<typeof manager.open>[0]) =>
+        manager.open(input).pipe(Effect.provideService(PreviewMachine, machine));
+
+      for (const runtime of ["server", undefined] as const) {
+        const opened = yield* open({
+          threadId: onMachine,
+          url: "localhost:5173",
+          ...(runtime ? { runtime } : {}),
+        });
+        expect(opened.runtime).toBe("server");
+      }
+      for (const input of [
+        { threadId: onMachine, runtime: "desktop" as const },
+        { threadId: noMachine },
+        { threadId: noMachine, runtime: "server" as const },
+      ]) {
+        const error = yield* open(input).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "CloudOnlyRefusedError", operation: "preview.open" });
+      }
+      expect((yield* manager.list({ threadId: onMachine })).sessions).toHaveLength(2);
+      expect((yield* manager.list({ threadId: noMachine })).sessions).toEqual([]);
     }),
   );
 

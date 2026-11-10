@@ -27,6 +27,7 @@ import { authenticateMediaRequest, whenSessionEnds } from "../auth/http.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
+import { isPreviewMachineError } from "./PreviewMachine.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { requestUrl } from "../requestUrl.ts";
 
@@ -259,11 +260,13 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
 });
 
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
-  isSandboxError(cause)
-    ? { need: "sandbox", command: cause.setupCommand }
-    : isLibrariesError(cause)
-      ? { need: "libraries", command: cause.setupCommand }
-      : undefined;
+  isPreviewMachineError(cause)
+    ? { need: "machine", command: "", reason: cause.reason }
+    : isSandboxError(cause)
+      ? { need: "sandbox", command: cause.setupCommand }
+      : isLibrariesError(cause)
+        ? { need: "libraries", command: cause.setupCommand }
+        : undefined;
 const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
@@ -283,11 +286,15 @@ const serveDownload = Effect.fnUntraced(function* (
     downloadId: params.get("id") ?? "",
   });
   if (Option.isNone(download)) return HttpServerResponse.text("Not Found", { status: 404 });
-  return yield* HttpServerResponse.file(download.value.path, {
-    headers: assetResponseHeaders(download.value.path, {
-      download: true,
-      fileName: download.value.fileName,
-    }),
+  const { path, fileName, fileSystem } = download.value;
+  const headers = assetResponseHeaders(path, { download: true, fileName });
+  if (fileSystem === undefined) return yield* HttpServerResponse.file(path, { headers });
+  // A machine tab's file is on its machine, which may have gone to sleep.
+  const info = yield* Effect.option(fileSystem.stat(path));
+  if (Option.isNone(info)) return HttpServerResponse.text("Not Found", { status: 404 });
+  return HttpServerResponse.stream(fileSystem.stream(path), {
+    headers,
+    contentLength: Number(info.value.size),
   });
 });
 

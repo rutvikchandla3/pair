@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Owns Playwright resources outside the Effect runtime.
-import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+import { DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
@@ -72,12 +72,25 @@ const chromeIdentity = (
   };
 };
 
+/**
+ * A thread's machine (Pair Cloud): its Chrome runs there and the server attaches over CDP.
+ * `endpoint` is a secret and is never logged.
+ */
+export interface MachineTarget {
+  readonly sandboxId: string;
+  readonly endpoint: () => Promise<string>;
+}
+
+/** `release` defaults to this server's kernel; a machine tab passes a fixed one. */
 export const presentAsChrome = async (
   cdp: CDPSession,
-  host: { readonly platform: NodeJS.Platform; readonly arch: string },
+  host: { readonly platform: NodeJS.Platform; readonly arch: string; readonly release?: string },
 ) => {
   const { userAgent } = await cdp.send("Browser.getVersion");
-  const identity = chromeIdentity(userAgent, { ...host, release: NodeOS.release() });
+  const identity = chromeIdentity(userAgent, {
+    ...host,
+    release: host.release ?? NodeOS.release(),
+  });
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
@@ -85,6 +98,7 @@ export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
   private readonly clearing = new Map<string, Promise<void>>();
+  private readonly machines = new Map<string, Promise<Browser>>();
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
 
@@ -139,14 +153,62 @@ export class ServerBrowserContexts {
     return this.browser;
   }
 
-  contextFor(profileId: string, isolationKey?: string): Promise<BrowserContext> {
+  /** One connection per machine; Chrome itself belongs to the machine and outlives it. */
+  private machineBrowser(machine: MachineTarget) {
+    const cached = this.machines.get(machine.sandboxId);
+    if (cached) return cached;
+    const connected = machine.endpoint().then(async (endpoint) => {
+      const { chromium } = loadPlaywright();
+      const browser = await chromium
+        .connectOverCDP(endpoint, { timeout: 15_000 })
+        .catch((cause: unknown) => {
+          // Playwright's message quotes the endpoint, which is a secret.
+          throw new Error("Could not attach to the machine's browser.", {
+            cause: cause instanceof Error ? cause.name : undefined,
+          });
+        });
+      browser.on("disconnected", () => {
+        if (this.machines.get(machine.sandboxId) === connected) {
+          this.machines.delete(machine.sandboxId);
+        }
+      });
+      return browser;
+    });
+    this.machines.set(machine.sandboxId, connected);
+    void connected.catch(() => {
+      if (this.machines.get(machine.sandboxId) === connected)
+        this.machines.delete(machine.sandboxId);
+    });
+    return connected;
+  }
+
+  contextFor(
+    profileId: string,
+    isolationKey?: string,
+    machine?: MachineTarget,
+  ): Promise<BrowserContext> {
     if (this.closing) return Promise.reject(new Error("The preview browser is closed."));
-    const key = JSON.stringify([profileId, isolationKey ?? null]);
+    const key = JSON.stringify(
+      machine === undefined
+        ? [profileId, isolationKey ?? null]
+        : // Named profiles are local-only (Q2): every other tab shares the machine's one profile.
+          [
+            isolationKey === undefined && profileId !== INCOGNITO_BROWSER_PROFILE_ID
+              ? DEFAULT_BROWSER_PROFILE_ID
+              : profileId,
+            isolationKey ?? null,
+            machine.sandboxId,
+          ],
+    );
     const cached = this.contexts.get(key);
     if (cached) return cached;
     const cleared = this.clearing.get(key)?.catch(constVoid) ?? Promise.resolve();
     const pending = cleared
-      .then(() => this.createContext(profileId, isolationKey))
+      .then(() =>
+        machine === undefined
+          ? this.createContext(profileId, isolationKey)
+          : this.createMachineContext(machine, profileId, isolationKey),
+      )
       .then(async (context) => {
         context.on("close", () => {
           if (this.contexts.get(key) === pending) this.contexts.delete(key);
@@ -185,6 +247,24 @@ export class ServerBrowserContexts {
     );
   }
 
+  /**
+   * Q2: a machine has one persistent profile, Chrome's default context. Agent and incognito tabs
+   * get their own context as on a server. Spike #1 and #2 (m7-cloud-browser.md 7.4).
+   */
+  private async createMachineContext(
+    machine: MachineTarget,
+    profileId: string,
+    isolationKey: string | undefined,
+  ) {
+    const browser = await this.machineBrowser(machine);
+    if (isolationKey !== undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID) {
+      return browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+    }
+    const context = browser.contexts()[0];
+    if (!context) throw new Error("The machine's browser has no default context.");
+    return context;
+  }
+
   private profileDirectory(profileId: string) {
     const encoded = encodeURIComponent(profileId);
     return NodePath.join(
@@ -193,9 +273,13 @@ export class ServerBrowserContexts {
     );
   }
 
-  async scratchPage() {
+  /** A machine tab's scratch page runs on its machine, so the server's Chromium never starts. */
+  async scratchPage(machine?: MachineTarget) {
     if (this.closing) throw new Error("The preview browser is closed.");
-    const context = await (await this.sharedBrowser()).newContext();
+    const browser = await (machine === undefined
+      ? this.sharedBrowser()
+      : this.machineBrowser(machine));
+    const context = await browser.newContext();
     const page = await context.newPage();
     page.once("close", () => void context.close().catch(constVoid));
     return page;
@@ -245,6 +329,11 @@ export class ServerBrowserContexts {
     );
     const browser = await this.browser?.catch(() => undefined);
     await browser?.close().catch(constVoid);
+    // Disconnects only: a browser Playwright attached to keeps running.
+    await Promise.allSettled(
+      [...this.machines.values()].map(async (pending) => (await pending).close()),
+    );
+    this.machines.clear();
     this.contexts.clear();
   }
 }
