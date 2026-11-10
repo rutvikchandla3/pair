@@ -62,6 +62,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
   readonly expectRunner: boolean;
+  readonly expectSandboxImage: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -101,6 +102,8 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const bundledLibatomic = path.join(contentDir, "lib/libatomic.so.1");
   // A Pair Cloud release. runner-release-smoke.ts serves and attaches it; serve here has no driver.
   const runnerDir = path.join(contentDir, "runner");
+  // What a VM driver's base image build sends its builder (SandboxProvisionTree).
+  const sandboxImageDir = path.join(contentDir, "sandbox-image");
   for (const required of [
     executable,
     path.join(contentDir, "client/index.html"),
@@ -116,6 +119,11 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
             "pty.node",
           ),
         ]
+      : []),
+    ...(input.expectSandboxImage
+      ? ["provision.sh", "versions.env", "codex.env", "vm/pair-runner.service"].map((name) =>
+          path.join(sandboxImageDir, name),
+        )
       : []),
   ]) {
     if (!(yield* fs.exists(required))) {
@@ -216,6 +224,10 @@ const command = Command.make(
     expectVersion: Flag.String("expect-version"),
     expectRunner: Flag.Boolean("expect-runner").pipe(
       Flag.withDescription("Require the runner/ tree a Pair Cloud release carries."),
+      Flag.withDefault(false),
+    ),
+    expectSandboxImage: Flag.Boolean("expect-sandbox-image").pipe(
+      Flag.withDescription("Require the sandbox-image/ tree a Pair Cloud release carries."),
       Flag.withDefault(false),
     ),
   },

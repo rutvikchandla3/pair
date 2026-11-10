@@ -14,21 +14,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import packageJson from "../package.json" with { type: "json" };
-import { CODEX_RELEASES, type CodexReleaseAsset } from "../src/provider/codexReleases.ts";
+import { CODEX_RELEASES } from "../src/provider/codexReleases.ts";
 import { BUNDLED_MODEL_MANIFEST } from "../src/provider/ModelManifest.ts";
 import {
   resolveProviderCompatibility,
   type ProviderCompatibilityPolicy,
 } from "../src/provider/providerCompatibility.ts";
-
-export class SandboxImageCodexReleaseError extends Schema.TaggedError<SandboxImageCodexReleaseError>()(
-  "SandboxImageCodexReleaseError",
-  { detail: Schema.String },
-) {
-  override get message(): string {
-    return this.detail;
-  }
-}
+import { codexEnv } from "../src/sandbox/image/SandboxProvisionTree.ts";
 
 export class SandboxImageDockerError extends Schema.TaggedError<SandboxImageDockerError>()(
   "SandboxImageDockerError",
@@ -56,41 +48,6 @@ export class SandboxImageReleaseError extends Schema.TaggedError<SandboxImageRel
     return this.detail;
   }
 }
-
-const LINUX_RELEASES = [
-  { key: "linux-x64", suffix: "AMD64" },
-  { key: "linux-arm64", suffix: "ARM64" },
-] as const;
-
-/** The `codex.env` that provision.sh reads, from the table managed Codex installs from. */
-export const codexEnv = Effect.fn("sandboxImage.codexEnv")(function* (
-  releases: Readonly<Record<string, CodexReleaseAsset>>,
-) {
-  const assets: Array<{ suffix: string; asset: CodexReleaseAsset }> = [];
-  for (const { key, suffix } of LINUX_RELEASES) {
-    const asset = releases[key];
-    if (asset === undefined) {
-      return yield* new SandboxImageCodexReleaseError({
-        detail: `CODEX_RELEASES has no ${key} entry.`,
-      });
-    }
-    assets.push({ suffix, asset });
-  }
-  const [{ asset: first }, { asset: second }] = assets as [(typeof assets)[0], (typeof assets)[0]];
-  if (first.version !== second.version) {
-    return yield* new SandboxImageCodexReleaseError({
-      detail: "CODEX_RELEASES lists different versions for linux-x64 and linux-arm64.",
-    });
-  }
-  return [
-    `CODEX_VERSION=${first.version}`,
-    ...assets.flatMap(({ suffix, asset }) => [
-      `CODEX_URL_${suffix}=${asset.url}`,
-      `CODEX_SHA256_${suffix}=${asset.sha256}`,
-    ]),
-    "",
-  ].join("\n");
-});
 
 const imageSourceDir = Effect.fn("sandboxImage.imageSourceDir")(function* () {
   const path = yield* Path.Path;

@@ -22,6 +22,7 @@ on:
       - infra/sandbox-image/**
       - apps/server/src/provider/codexReleases.ts
       - apps/server/scripts/sandbox-image.ts
+      - apps/server/src/sandbox/image/SandboxProvisionTree.ts
       - .github/workflows/sandbox-image.yml
 
 permissions:
@@ -407,6 +408,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/runner"
           tar -C "$RUNNER_TEMP/runner" -xf "$RUNNER_TEMP/bundle/runner.tar"
 
+      # The tree a VM driver's base image build runs: the image's build context, codex.env included.
+      - name: Assemble the provision tree
+        run: node apps/server/scripts/sandbox-image.ts context "$RUNNER_TEMP/sandbox-image"
+
       - name: Build server archive
         run: |
           node scripts/build-cli-archive.ts \
@@ -415,10 +420,11 @@ jobs:
             --version "$VERSION" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
             --runner-dir "$RUNNER_TEMP/runner" \
+            --sandbox-image-dir "$RUNNER_TEMP/sandbox-image" \
             --output-dir release-cli
 
       - name: Smoke-test server archive
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION" --expect-runner
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION" --expect-runner --expect-sandbox-image
 
       # The archive's own tree, served by the real route and hub and attached from its download.
       - name: Smoke-test the archive's runner

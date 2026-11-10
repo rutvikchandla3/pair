@@ -498,6 +498,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
   readonly runnerDir: Option.Option<string>;
+  readonly sandboxImageDir: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -540,6 +541,13 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
       "Pass a tree built by `node apps/server/scripts/cli.ts build-runner`.",
     );
   }
+  const sandboxImageDir = Option.getOrUndefined(input.sandboxImageDir);
+  if (sandboxImageDir !== undefined) {
+    yield* requireInput(
+      path.join(sandboxImageDir, "codex.env"),
+      "Pass a tree written by `node apps/server/scripts/sandbox-image.ts context`.",
+    );
+  }
 
   const stem = cliArchiveStem(input.version, input.platform, input.arch);
   const stageRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-archive-" });
@@ -553,6 +561,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   if (runnerDir !== undefined) {
     // Beside the executable, where a Pair Cloud server serves it to machines (RunnerBundle.layer).
     yield* fs.copy(runnerDir, path.join(contentDir, "runner"));
+  }
+  if (sandboxImageDir !== undefined) {
+    // What a VM driver's base image build runs (SandboxProvisionTree.layer).
+    yield* fs.copy(sandboxImageDir, path.join(contentDir, "sandbox-image"));
   }
   yield* stageRuntimeExternals({
     repoRoot,
@@ -641,6 +653,12 @@ const command = Command.make(
     runnerDir: Flag.String("runner-dir").pipe(
       Flag.withDescription(
         "A runner tree from `cli.ts build-runner`, shipped as runner/ for Pair Cloud releases.",
+      ),
+      Flag.optional,
+    ),
+    sandboxImageDir: Flag.String("sandbox-image-dir").pipe(
+      Flag.withDescription(
+        "A provision tree from `sandbox-image.ts context`, shipped as sandbox-image/ for Pair Cloud releases.",
       ),
       Flag.optional,
     ),

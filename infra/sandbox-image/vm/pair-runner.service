@@ -1,0 +1,26 @@
+# The runner of a Pair VM, as the Docker image's entrypoint runs it: pair-bootstrap as root, which
+# runs `t3 runner`, which runs agents as t3. Installed by install-vm.sh.
+[Unit]
+Description=Pair runner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStartPre=/usr/local/bin/pair-vm-boot
+# The container's environment and nothing of systemd's: the runner hands its own environment to
+# every agent process (RunnerConfig.imageEnvironmentFrom).
+ExecStart=/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root HOSTNAME=%H /usr/local/bin/pair-bootstrap
+WorkingDirectory=/
+# Docker's tmpfs at /run/pair-runner: traversable, not listable, gone when the runner stops.
+RuntimeDirectory=pair-runner
+RuntimeDirectoryMode=0711
+# A restart cannot enroll again: pair-bootstrap deleted the bootstrap.
+Restart=no
+KillMode=control-group
+# The machine is the sandbox; agents' builds get no smaller limits than a container's.
+TasksMax=infinity
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

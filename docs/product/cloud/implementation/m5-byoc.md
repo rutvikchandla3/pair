@@ -357,9 +357,12 @@ The names below cross PRs. Each is defined by the PR in brackets; later PRs use 
     line, with `PAIR_RUNNER_URL`, `PAIR_SANDBOX_ID`, `PAIR_RUNNER_BUILD`, `PAIR_RUNNER_ENROLL` and
     5.8's `PAIR_EXTRA_CA_B64`, `PAIR_HTTPS_PROXY`, `PAIR_NO_PROXY`. `pair-generation` is the
     generation, alone, so the driver can tell a replay without parsing.
-  - Base builds only: `pair-provision` (the provision tree, gzipped and base64) and `pair-role`
-    (`base`). The builder reports through the guest attribute `pair/provision`: `ok`, or
-    `failed:<step>`.
+  - Base builds only: `pair-provision` (the provision tree, gzipped and base64), `pair-role`
+    (`base`) and `pair-version` (the server's version, for `provision.sh`'s `PAIR_VERSION`; kept
+    out of the tree so a release with an unchanged tree reuses its base). The builder reports
+    through the guest attribute `pair/provision`: `ok`, or `failed:<step>`. It also writes
+    `pair-provision-result=<result>` to the serial console, for a cloud whose stopped machine
+    loses its guest attributes.
   - In the image: `/usr/local/bin/pair-bootstrap`, `/usr/local/bin/pair-vm-boot`,
     `pair-runner.service`, `/etc/pair-image.json`.
 - **Cloud names (5.11; 5.4 uses the same functions).**
@@ -1256,7 +1259,7 @@ VM in CI, with no cloud account.
       05 §1 marks this inferred, so the CI job below is its check), and runs `cloud-init clean`
       so each machine made from the image gets its own host keys and machine id.
     - `base-build.sh`, the base builder's `startup-script`: read `pair-provision`, unpack it to a
-      temp directory, run `provision.sh` with `PAIR_VERSION`, then `vm/install-vm.sh`, write the
+      temp directory, run `provision.sh` with `PAIR_VERSION` from `pair-version`, then `vm/install-vm.sh`, write the
       guest attribute `pair/provision` (`ok`, or `failed:<step>` from a `trap`), and power off.
       It needs no network path to the server and no credential.
     - `ci.env`: the pinned Ubuntu cloud image URL and its SHA-256, for the CI job.
@@ -1265,7 +1268,7 @@ VM in CI, with no cloud account.
     cannot import a script. `writeContext` (100–107) is otherwise unchanged; the Docker build
     ignores `vm/`.
   - New `apps/server/src/sandbox/image/SandboxProvisionTree.ts`: service
-    `SandboxProvisionTree { current: Effect<{ tarGzBase64, sha256, pairVersion },
+    `SandboxProvisionTree { current: Effect<{ tarGzBase64, sha256, pairVersion, baseBuildScript },
     SandboxProvisionTreeUnavailableError> }`. Released: the `sandbox-image/` directory beside the
     server, found as `RunnerBundle` finds `runner/` (RunnerBundle.ts 140–147, 228). From source:
     `infra/sandbox-image` plus the generated `codex.env`. The tar is made once per process with
@@ -1289,8 +1292,8 @@ VM in CI, with no cloud account.
       reached its first `fetch`. amd64 only.
     - `release` (438 on) also needs `vm-provision`.
   - New `apps/server/src/sandbox/compute/VmBaseImage.ts`: the base image's state machine, written
-    against a five-method interface (`findImage`, `findBuilder`, `launchBuilder`, `captureImage`,
-    `deleteBuilder`) so 5.7 (AWS) reuses it. `step` does at most one cloud write per call:
+    against a seven-method interface (`findImage`, `listImages`, `deleteImage`, `findBuilder`,
+    `launchBuilder`, `captureImage`, `deleteBuilder`) so 5.7 (AWS) reuses it. `step` does at most one cloud write per call:
     1. The image `pair-<install8>-base-<tree12>` exists and is ready: `Ready`.
     2. No builder: `launchBuilder` (stock Ubuntu, `base-build.sh`, `pair-provision`, `pair-role`,
        the install label and **no** `pair-sandbox` label, the driver's subnetwork, no service
@@ -1300,7 +1303,9 @@ VM in CI, with no cloud account.
        the Pair version and the tree's hash in the description, the key when set). `Building`.
     5. The image is ready and a builder remains: `deleteBuilder`. `Ready`.
     6. The builder stopped with `failed:<step>`: delete it, `Failed(step)`.
-       After `Ready` it deletes this install's base images other than the two newest.
+       After `Ready` it deletes this install's base images other than the current one and the
+       newest other ready one, one per step; `Ready.settled` is false until none is left. A
+       stopped builder with no report is `Failed("no-report")`.
   - `apps/server/src/sandbox/compute/GceComputeDriver.ts`: `make` requires
     `SandboxProvisionTree`. When `config.baseImage` is unset, a scoped fiber runs `step` every 30
     seconds until `Ready` or `Failed`, and again when `health` is called after `Failed`, as
@@ -1326,7 +1331,7 @@ VM in CI, with no cloud account.
   collection calls `deleteImage` (564), all through 5.11.
 - **Migrations:** none.
 - **Tests:**
-  - `VmBaseImage.test.ts`, against a stub of the five methods on a `TestClock`: each numbered
+  - `VmBaseImage.test.ts`, against a stub of the seven methods on a `TestClock`: each numbered
     step; a crash and a restart at every step ends in one image and no builder; a changed tree
     makes a second image and removes the third-newest; a builder at 31 minutes is reaped; a
     failure names its step and a later `health` starts again.
