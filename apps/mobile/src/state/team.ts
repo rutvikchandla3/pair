@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   EMPTY_TEAM_MEMBERS,
   activeTeamMembers,
+  canMemberAssignThread,
   canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
@@ -79,14 +80,29 @@ const followViewerFamily = Atom.family((environmentId: EnvironmentId) =>
   ).pipe(Atom.withLabel("mobile-team-follow-viewer")),
 );
 
+const NO_CLOUD_LAUNCH_ATOM = Atom.make(false).pipe(Atom.withLabel("mobile-cloud-launch:none"));
+
+const cloudLaunchFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+        .cloudLaunch === true,
+  ).pipe(Atom.withLabel("mobile-cloud-launch")),
+);
+
 export interface ThreadTeamMenu {
   readonly members: ReadonlyArray<Pick<TeamMember, "id" | "name">>;
   readonly ownerId: MemberId | null;
   readonly canDelete: boolean;
+  /** A cloud thread is its owner's to assign. */
+  readonly canAssign: boolean;
   readonly following: boolean | null;
 }
 
-type TeamThreadRef = TeamThread & { readonly environmentId: EnvironmentId };
+type TeamThreadRef = TeamThread & {
+  readonly environmentId: EnvironmentId;
+  readonly source: { readonly sandboxId?: unknown };
+};
 
 const NO_MEMBERS_ATOM = Atom.make(EMPTY_TEAM_MEMBERS).pipe(Atom.withLabel("mobile-team:none"));
 const NO_MEMBER_ID_ATOM = Atom.make<MemberId | null>(null).pipe(
@@ -133,6 +149,9 @@ export function useThreadTeamMenu(thread: TeamThreadRef | null): ThreadTeamMenu 
   const followViewer = useAtomValue(
     environmentId === null ? NO_VIEWER_ATOM : followViewerFamily(environmentId),
   );
+  const cloudLaunch = useAtomValue(
+    environmentId === null ? NO_CLOUD_LAUNCH_ATOM : cloudLaunchFamily(environmentId),
+  );
   if (thread === null || !isTeamModeMembers(members)) return null;
   const ownerId = thread.source.ownerId;
   const active = activeTeamMembers(members);
@@ -141,6 +160,12 @@ export function useThreadTeamMenu(thread: TeamThreadRef | null): ThreadTeamMenu 
     // A thread with no recorded owner belongs to the server owner.
     ownerId: ownerId ?? active.find((member) => member.isOwner)?.id ?? null,
     canDelete: canMemberDeleteThread({ members, memberId, ownerId }),
+    canAssign: canMemberAssignThread({
+      members,
+      memberId,
+      ownerId,
+      cloudThread: cloudLaunch && thread.source.sandboxId !== undefined,
+    }),
     following: resolveThreadFollowing(thread, followViewer),
   };
 }

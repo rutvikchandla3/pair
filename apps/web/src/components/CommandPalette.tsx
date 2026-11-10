@@ -152,6 +152,7 @@ import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSa
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
+import { ASSIGN_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/team";
 import {
   SANDBOX_OWNER_ONLY_REASON,
   SHARE_THREAD_OWNER_ONLY_REASON,
@@ -266,6 +267,7 @@ import { openAssignThreadDialog } from "./team/AssignThreadDialog";
 import { openShareThreadDialog } from "./team/shareThreadDialogTarget";
 import { setAddProviderAccountDialogOpen } from "./team/providerAccountDialogState";
 import {
+  useCanAssignThread,
   useIsTeamMode,
   useSetThreadFollowed,
   useThreadFollowing,
@@ -516,6 +518,7 @@ function OpenCommandPaletteDialog(props: {
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
   const activeThreadIsTeamMode = useIsTeamMode(activeThread?.environmentId ?? null);
+  const activeThreadCanAssign = useCanAssignThread(activeThread);
   const activeThreadShare = useThreadShare(
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
   );
@@ -1494,6 +1497,9 @@ function OpenCommandPaletteDialog(props: {
       title: "Assign thread to…",
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.assign",
+      ...(activeThreadCanAssign
+        ? {}
+        : { disabled: true, description: ASSIGN_THREAD_OWNER_ONLY_REASON }),
       run: async () => {
         openAssignThreadDialog(threadRef);
       },

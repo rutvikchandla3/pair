@@ -38,7 +38,8 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { assertCommandAccess, dispatchCommand } from "./ThreadMessageIntake.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { assertCommandAccess, dispatchCommand, stopSandboxById } from "./ThreadMessageIntake.ts";
 
 function member(id: string, overrides: Partial<MemberRecord> = {}): MemberRecord {
   return {
@@ -63,6 +64,7 @@ const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(
     TeamState.layerTest([
       member("member-owner", { role: "admin", isOwner: true }),
+      member("member-admin", { role: "admin" }),
       member("member-bob"),
       member("member-carol"),
       member("member-gone", { removedAt: "2026-09-01T00:00:00.000Z" }),
@@ -551,6 +553,112 @@ it.effect(
         threadId,
       );
     }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect.each([
+  // [owner of the thread, has a machine, cloud-only server, actor, outcome]
+  ["member-bob", true, true, "member-bob", "dispatched"],
+  ["member-bob", true, true, "member-carol", "not_owner_to_assign"],
+  ["member-bob", true, true, "member-admin", "not_owner_to_assign"],
+  ["member-bob", true, true, undefined, "rejected"],
+  ["member-gone", true, true, "member-admin", "dispatched"],
+  ["member-gone", true, true, "member-carol", "not_owner_to_assign"],
+  // An ownerless thread is held by the server's owner.
+  [null, true, true, "member-owner", "dispatched"],
+  [null, true, true, "member-admin", "not_owner_to_assign"],
+  ["member-bob", false, true, "member-carol", "dispatched"],
+  ["member-bob", true, false, "member-carol", "dispatched"],
+] as const)(
+  "assigns a thread owned by %s (machine %s, cloud-only %s) from %s: %s",
+  ([threadOwner, hasMachine, cloudOnly, actor, outcome]) =>
+    Effect.gen(function* () {
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const result = yield* dispatchCommand({
+        type: "thread.owner.set",
+        commandId: CommandId.make("assign"),
+        threadId: ThreadId.make("thread-assigned"),
+        ownerId: MemberId.make("member-carol"),
+        ...(actor === undefined ? {} : { actorId: MemberId.make(actor) }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            getThreadShell: () =>
+              Effect.succeed({
+                ownerId: threadOwner === null ? null : MemberId.make(threadOwner),
+                ...(hasMachine ? { sandboxId: SandboxId.make("sbx_0123456789abcdef0123") } : {}),
+              } as never),
+          }),
+        ),
+        Effect.updateService(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly })),
+        Effect.flip,
+        Effect.map((error) =>
+          error._tag === "ThreadMessageIntakeForbiddenError"
+            ? error.reason
+            : error._tag === "OrchestratorCommandRejectedError"
+              ? "rejected"
+              : "dispatched",
+        ),
+      );
+      expect(result).toBe(outcome);
+      expect(captured).toHaveLength(outcome === "dispatched" ? 1 : 0);
+    }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect.each([
+  // An admin who cannot open the machine's threads, its owner, a member, and an unknown machine.
+  ["member-admin", "sbx_0123456789abcdef0123", "sleep", "dispatched"],
+  ["member-admin", "sbx_0123456789abcdef0123", "discard", "dispatched"],
+  ["member-bob", "sbx_0123456789abcdef0123", "discard", "dispatched"],
+  ["member-carol", "sbx_0123456789abcdef0123", "sleep", "rejected"],
+  ["member-carol", "sbx_0123456789abcdef0123", "discard", "rejected"],
+  ["member-admin", "sbx_ffffffffffffffffffff", "discard", "rejected"],
+] as const)("stops a machine by id for %s on %s (%s): %s", ([actor, sandbox, action, outcome]) =>
+  Effect.gen(function* () {
+    const ownerThreadId = ThreadId.make("thread-owner");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const result = yield* stopSandboxById({
+      commandId: CommandId.make("stop-by-id"),
+      sandboxId: SandboxId.make(sandbox),
+      action,
+      actorId: MemberId.make(actor),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStoreV2)({
+            getSandbox: (id) =>
+              Effect.succeed(
+                id === "sbx_0123456789abcdef0123"
+                  ? ({ ownerThreadId, ownerMemberId: MemberId.make("member-bob") } as never)
+                  : null,
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            getThreadShell: () =>
+              Effect.succeed({
+                id: ownerThreadId,
+                ownerId: MemberId.make("member-bob"),
+                sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+                sandbox: { state: "ready", ownerThreadId },
+              } as never),
+          }),
+        ),
+      ),
+      Effect.flip,
+      Effect.map((error) =>
+        error._tag === "OrchestratorCommandRejectedError" ? "rejected" : "dispatched",
+      ),
+    );
+    expect(result).toBe(outcome);
+    expect(
+      captured.map((command) => [
+        command.type,
+        "threadId" in command && command.threadId,
+        "actorId" in command && command.actorId,
+      ]),
+    ).toEqual(outcome === "dispatched" ? [[`sandbox.${action}`, ownerThreadId, actor]] : []);
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 const PRIVATE_SANDBOX = SandboxId.make("sbx_aaaaaaaaaaaaaaaaaaaa");

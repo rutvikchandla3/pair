@@ -1,6 +1,13 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  CommandId,
+  MemberId,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import type { OrchestrationV2Sandbox } from "./orchestrationV2.ts";
 
 /** Path-safe: the server addresses a sandbox's files under `/t3-sandbox/<id>/`. */
@@ -172,6 +179,27 @@ export const SandboxRestoreModeMachine = Schema.Struct({
 });
 export type SandboxRestoreModeMachine = typeof SandboxRestoreModeMachine.Type;
 
+/**
+ * One machine in Settings → Cloud, listed for admins. `thread` is absent for a machine the reader
+ * cannot open, so an admin sees its owner, state, size, driver and age but not its title (11 §2).
+ */
+export const SandboxOverviewMachine = Schema.Struct({
+  sandboxId: SandboxId,
+  ownerMemberId: Schema.NullOr(MemberId),
+  state: SandboxState,
+  size: SandboxSize,
+  driverId: ComputeDriverId,
+  createdAt: Schema.DateTimeUtc,
+  thread: Schema.optionalKey(
+    Schema.Struct({
+      threadId: ThreadId,
+      title: Schema.String,
+      branch: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
+});
+export type SandboxOverviewMachine = typeof SandboxOverviewMachine.Type;
+
 /** Settings → Cloud's Overview; members may read it, so it carries no host or env value. */
 export const SandboxOverview = Schema.Struct({
   drivers: Schema.Array(SandboxDriverHealth),
@@ -188,6 +216,8 @@ export const SandboxOverview = Schema.Struct({
   restoreMode: Schema.optionalKey(
     Schema.Struct({ since: Schema.DateTimeUtc, machines: Schema.Array(SandboxRestoreModeMachine) }),
   ),
+  /** Every live machine, for an admin reading; absent for a member and on servers that send none. */
+  machineList: Schema.optionalKey(Schema.Array(SandboxOverviewMachine)),
 });
 export type SandboxOverview = typeof SandboxOverview.Type;
 
@@ -199,6 +229,17 @@ export class SandboxOverviewError extends Schema.TaggedError<SandboxOverviewErro
     return "Could not read the Cloud status.";
   }
 }
+
+/**
+ * Sleeps or discards a machine by its id, for an admin who cannot open its threads and so cannot
+ * name one. The server finds the owner thread; only the machine's owner or an admin may.
+ */
+export const SandboxStopByIdInput = Schema.Struct({
+  commandId: CommandId,
+  sandboxId: SandboxId,
+  action: Schema.Literals(["sleep", "discard"]),
+});
+export type SandboxStopByIdInput = typeof SandboxStopByIdInput.Type;
 
 /** The thread view's viewer lease, renewed while a cloud thread is visible and focused. */
 export const SandboxViewingInput = Schema.Struct({ threadId: ThreadId });

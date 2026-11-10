@@ -17,9 +17,13 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   EMPTY_TEAM_MEMBERS,
   applyTeamStreamEvent,
+  canMemberAssignThread,
   canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
+  memberRemovalInput,
+  memberRemovalPrompt,
+  memberRemovalTargets,
   otherMessageAuthorId,
   resolveTeamThreadSection,
   sortTeamThreadsByActivity,
@@ -127,6 +131,62 @@ describe("team state", () => {
     expect(can(team, other.id, null)).toBe(false);
     expect(can(solo, ownerId, null)).toBe(true);
     expect(can(team, null, guestId)).toBe(true);
+  });
+
+  it("a cloud thread is assigned by its owner, or by an admin once the owner has left", () => {
+    const guest = member(guestId);
+    const admin = member(MemberId.make("member-admin"), { role: "admin" });
+    const left = member(MemberId.make("member-left"), {
+      removedAt: "2036-04-08T00:00:00.000Z" as TeamMember["removedAt"],
+    });
+    const team = new Map([owner, guest, admin, left].map((entry) => [entry.id, entry]));
+    const can = (memberId: MemberId | null, owned: MemberId | null, cloudThread = true) =>
+      canMemberAssignThread({ members: team, memberId, ownerId: owned, cloudThread });
+    expect(can(guestId, guestId)).toBe(true);
+    // An admin cannot take a live member's thread: they could then read it.
+    expect(can(admin.id, guestId)).toBe(false);
+    expect(can(ownerId, guestId)).toBe(false);
+    expect(can(guestId, ownerId)).toBe(false);
+    expect(can(admin.id, left.id)).toBe(true);
+    expect(can(guestId, left.id)).toBe(false);
+    // No recorded owner: the server's owner holds it.
+    expect(can(ownerId, null)).toBe(true);
+    expect(can(admin.id, null)).toBe(false);
+    // Local threads, and servers with no team, keep today's rule.
+    expect(can(guestId, ownerId, false)).toBe(true);
+    expect(
+      canMemberAssignThread({
+        members: new Map([[ownerId, owner]]),
+        memberId: ownerId,
+        ownerId: guestId,
+        cloudThread: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("asks where a removed member's cloud threads go, and sends the answer", () => {
+    const guest = member(guestId);
+    const gone = member(MemberId.make("member-gone"), {
+      removedAt: "2036-04-08T00:00:00.000Z" as TeamMember["removedAt"],
+    });
+    const team = new Map([owner, guest, gone].map((entry) => [entry.id, entry]));
+    expect(memberRemovalPrompt("Ada", 4)).toBe("Ada owns 4 cloud threads. Give them to:");
+    expect(memberRemovalPrompt("Ada", 1)).toBe("Ada owns 1 cloud thread. Give them to:");
+    // Not the member being removed, and not one who already left.
+    expect(memberRemovalTargets(team, guestId).map((entry) => entry.id)).toEqual([ownerId]);
+    // Without cloud threads there is nothing to choose; with them, "give" needs a person.
+    expect(memberRemovalInput(guestId, 0, { type: "give", toMemberId: null })).toEqual({
+      memberId: guestId,
+    });
+    expect(memberRemovalInput(guestId, 2, { type: "give", toMemberId: null })).toBeNull();
+    expect(memberRemovalInput(guestId, 2, { type: "give", toMemberId: ownerId })).toEqual({
+      memberId: guestId,
+      cloudThreads: { type: "give", toMemberId: ownerId },
+    });
+    expect(memberRemovalInput(guestId, 2, { type: "delete" })).toEqual({
+      memberId: guestId,
+      cloudThreads: { type: "delete" },
+    });
   });
 
   it.effect("currentMember and team mode follow the member stream", () =>

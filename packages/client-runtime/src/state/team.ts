@@ -1,4 +1,10 @@
-import type { EnvironmentId, MemberId, TeamMember, TeamStreamEvent } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MemberId,
+  TeamMember,
+  TeamRemoveInput,
+  TeamStreamEvent,
+} from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -47,6 +53,62 @@ export function canMemberDeleteThread(input: {
     input.members.get(input.memberId)?.role === "admin" ||
     (input.ownerId != null && input.ownerId === input.memberId)
   );
+}
+
+export const ASSIGN_THREAD_OWNER_ONLY_REASON = "Only the owner can assign this thread";
+
+/**
+ * The server's Assign rule (11 §2). A cloud thread (one with a machine, on a cloud-only server) is
+ * assigned by its owner, or by an admin for an owner who has left: an admin who could take a live
+ * member's thread could then read it. Any other thread keeps today's rule: any member.
+ */
+export function canMemberAssignThread(input: {
+  readonly members: TeamMembers;
+  readonly memberId: MemberId | null;
+  /** Null for a thread with no recorded owner, which the server's owner holds. */
+  readonly ownerId: MemberId | null | undefined;
+  readonly cloudThread: boolean;
+}): boolean {
+  if (!input.cloudThread || input.memberId === null || !isTeamModeMembers(input.members)) {
+    return true;
+  }
+  const holderId =
+    input.ownerId ?? [...input.members.values()].find((member) => member.isOwner)?.id ?? null;
+  if (holderId === input.memberId) return true;
+  const holderLeft = holderId === null || input.members.get(holderId)?.removedAt !== null;
+  return holderLeft && input.members.get(input.memberId)?.role === "admin";
+}
+
+export const MEMBER_REMOVAL_DELETE_LABEL = "Delete them and their machines";
+
+/** The removal dialog's question for a member who owns cloud threads (11 §2). */
+export function memberRemovalPrompt(name: string, cloudThreadCount: number): string {
+  return `${name} owns ${cloudThreadCount} cloud ${cloudThreadCount === 1 ? "thread" : "threads"}. Give them to:`;
+}
+
+/** Who can take a removed member's cloud threads: every other active member. */
+export function memberRemovalTargets(
+  members: TeamMembers,
+  removedId: MemberId,
+): ReadonlyArray<TeamMember> {
+  return activeTeamMembers(members).filter((member) => member.id !== removedId);
+}
+
+export type MemberRemovalChoice =
+  | { readonly type: "give"; readonly toMemberId: MemberId | null }
+  | { readonly type: "delete" };
+
+/** The removal to send; null while "give" names no one, so Remove stays disabled. */
+export function memberRemovalInput(
+  memberId: MemberId,
+  cloudThreadCount: number,
+  choice: MemberRemovalChoice,
+): TeamRemoveInput | null {
+  if (cloudThreadCount === 0) return { memberId };
+  if (choice.type === "delete") return { memberId, cloudThreads: { type: "delete" } };
+  return choice.toMemberId === null
+    ? null
+    : { memberId, cloudThreads: { type: "give", toMemberId: choice.toMemberId } };
 }
 
 const FORMER_MEMBER_NAME = "Former member";
@@ -265,6 +327,11 @@ export function createTeamEnvironmentAtoms<R, E>(
     removeMember: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:remove",
       tag: WS_METHODS.teamRemove,
+    }),
+    /** How many cloud threads a member owns, counted on the server: an admin cannot list them. */
+    previewMemberRemoval: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:removal-preview",
+      tag: WS_METHODS.teamRemovalPreview,
     }),
     updateSelf: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:update-self",

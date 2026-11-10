@@ -105,6 +105,7 @@ import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamRemoval from "./team/TeamRemoval.ts";
 import * as TeamState from "./team/TeamState.ts";
 import * as ThreadAccess from "./team/ThreadAccess.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -771,6 +772,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(TeamMembers.TeamMembers)({}),
+  Layer.mock(TeamRemoval.TeamRemoval)({}),
   Layer.mock(MemberProviderAccounts.MemberProviderAccounts)({}),
   Layer.mock(TeamUsage.TeamUsage)({}),
   Layer.mock(MemberGitHub.MemberGitHub)({ enabled: false }),

@@ -1,4 +1,5 @@
 import { SHARE_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
+import { ASSIGN_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/team";
 import type { MemberId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -25,6 +26,9 @@ export function buildThreadTeamMenuItems(
       id: "assign",
       title: "Assign to…",
       image: "person.crop.circle",
+      ...(menu.canAssign
+        ? {}
+        : { attributes: { disabled: true }, subtitle: ASSIGN_THREAD_OWNER_ONLY_REASON }),
       subactions: menu.members.map((member) => ({
         id: `${ASSIGN_PREFIX}${member.id}`,
         title: member.name,
@@ -84,6 +88,7 @@ export function buildThreadTeamHeaderMenu(
         id: "assign",
         title: "Assign to…",
         icon: "person.crop.circle",
+        ...(menu.canAssign ? {} : { disabled: true, subtitle: ASSIGN_THREAD_OWNER_ONLY_REASON }),
         items: menu.members.map((member) => ({
           id: `${ASSIGN_PREFIX}${member.id}`,
           title: member.name,

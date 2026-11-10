@@ -36,7 +36,7 @@ import {
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
-import { useIsTeamMode, useThreadFollowing } from "../../state/team";
+import { useCanAssignThread, useIsTeamMode, useThreadFollowing } from "../../state/team";
 import { openAssignThreadDialog } from "../team/AssignThreadDialog";
 import { openShareThreadDialog } from "../team/shareThreadDialogTarget";
 import { readThreadShare } from "../../state/sandbox";
@@ -183,6 +183,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const router = useRouter();
   const { settleThread, pinThread, confirmAndUnpinThread, setThreadFollowed } = useThreadActions();
   const isTeamMode = useIsTeamMode(environmentId);
+  const canAssignActiveThread = useCanAssignThread(activeThreadShell);
   const activeThreadFollowing = useThreadFollowing(activeThreadShell);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
@@ -696,7 +697,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     },
     "thread.assign": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-      if (!activeThreadRef || !isTeamMode) return false;
+      if (!activeThreadRef || !isTeamMode || !canAssignActiveThread) return false;
       openAssignThreadDialog(activeThreadRef);
     },
     "thread.share": () => {

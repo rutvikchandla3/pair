@@ -91,8 +91,26 @@ export type TeamUpdateInput = typeof TeamUpdateInput.Type;
 export const TeamSetRoleInput = Schema.Struct({ memberId: MemberId, role: MemberRole });
 export type TeamSetRoleInput = typeof TeamSetRoleInput.Type;
 
-export const TeamRemoveInput = Schema.Struct({ memberId: MemberId });
+/** What happens to the cloud threads a removed member owns, and the machines they run on. */
+export const TeamCloudThreadsHandover = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("give"), toMemberId: MemberId }),
+  Schema.Struct({ type: Schema.Literal("delete") }),
+]);
+export type TeamCloudThreadsHandover = typeof TeamCloudThreadsHandover.Type;
+
+/** `cloudThreads` is required when the member owns any: the server refuses a removal without it. */
+export const TeamRemoveInput = Schema.Struct({
+  memberId: MemberId,
+  cloudThreads: Schema.optionalKey(TeamCloudThreadsHandover),
+});
 export type TeamRemoveInput = typeof TeamRemoveInput.Type;
+
+export const TeamRemovalPreviewInput = Schema.Struct({ memberId: MemberId });
+export type TeamRemovalPreviewInput = typeof TeamRemovalPreviewInput.Type;
+
+/** Counted on the server: the admin cannot list threads they cannot open (11 §2). */
+export const TeamRemovalPreview = Schema.Struct({ cloudThreadCount: NonNegativeInt });
+export type TeamRemovalPreview = typeof TeamRemovalPreview.Type;
 
 export const TeamLinkResult = Schema.Struct({
   member: TeamMember,
@@ -126,6 +144,7 @@ export class TeamError extends Schema.TaggedError<TeamError>()("TeamError", {
     "not-a-member",
     "forbidden",
     "policy-refused",
+    "owns-cloud-threads",
     "internal",
   ]),
   message: Schema.String,

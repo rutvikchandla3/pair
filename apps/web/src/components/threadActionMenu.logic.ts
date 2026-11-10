@@ -114,6 +114,8 @@ export interface ThreadActionMenuState {
     readonly ownerId: MemberId | null;
     /** Only the thread's owner or an admin may delete it. */
     readonly canDelete: boolean;
+    /** A cloud thread is its owner's to assign; everyone else sees Assign disabled. */
+    readonly canAssign: boolean;
     /** Absent hides Follow: the viewer owns the thread, or the server cannot follow. */
     readonly following?: boolean;
   };
@@ -221,8 +223,9 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "assign" as const,
-            label: "Assign to…",
+            label: state.team.canAssign ? "Assign to…" : "Assign to… (owner only)",
             icon: "user-plus",
+            ...(state.team.canAssign ? {} : { disabled: true }),
             children: state.team.members.map((member) => ({
               id: `assign:${member.id}` as const,
               label: member.name,

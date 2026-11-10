@@ -1451,7 +1451,7 @@ it.layer(layerTest)("shared sandboxes", (it) => {
       const reassign = (threadId: ThreadId, member: string) =>
         dispatch({
           type: "thread.owner.set",
-          commandId: CommandId.make(`owner:${threadId}`),
+          commandId: CommandId.make(`owner:${threadId}:${member}`),
           threadId,
           ownerId: MemberId.make(member),
         });
@@ -1459,6 +1459,11 @@ it.layer(layerTest)("shared sandboxes", (it) => {
       assert.isNull((yield* getSandbox(sandboxId))?.ownerMemberId);
       yield* reassign(owner, "member-owner");
       assert.equal((yield* getSandbox(sandboxId))?.ownerMemberId, "member-owner");
+      // Assigning to a member without access gives it to them; the one who gave it keeps theirs.
+      yield* reassign(owner, "member-next");
+      const handed = yield* getSandbox(sandboxId);
+      assert.equal(handed?.ownerMemberId, "member-next");
+      assert.deepEqual(handed?.access?.memberIds, [MemberId.make("member-owner")]);
     }),
   );
 });

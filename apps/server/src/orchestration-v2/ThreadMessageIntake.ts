@@ -4,6 +4,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2Command,
   MemberId,
+  type SandboxStopByIdInput,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -15,7 +16,7 @@ import * as TeamState from "../team/TeamState.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { sandboxOfPath } from "../workspaceHost/WorkspaceHosts.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
+import { ProjectionStoreThreadNotFoundError, ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -54,6 +55,7 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
       "machine_not_owner_or_admin",
       "not_owner",
       "inactive_member",
+      "not_owner_to_assign",
     ]),
   },
 ) {
@@ -69,6 +71,8 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
         return "Only the owner can share this thread.";
       case "inactive_member":
         return "Threads can only be shared with active team members.";
+      case "not_owner_to_assign":
+        return "Only the owner can assign this thread.";
     }
   }
 }
@@ -106,17 +110,55 @@ const actorOwnsThreadOrAdmin = Effect.fn("ThreadMessageIntake.actorOwnsThreadOrA
   return shell === null || shell.ownerId === actorId;
 });
 
+/** The socket stamps every member's command, so one without an actor did not come from a member. */
+const withoutActor = (command: Pick<OrchestrationV2Command, "commandId" | "type">) =>
+  new Orchestrator.OrchestratorCommandRejectedError({
+    commandId: command.commandId,
+    commandType: command.type,
+    cause: `${command.type} needs the member who sent it.`,
+  });
+
+/**
+ * On a cloud-only server a cloud thread is assigned by its owner, or by an admin for an owner who
+ * is no longer a member: an admin who could take a live member's thread could then read it (11 §3).
+ */
+const assertMayAssign = Effect.fn("ThreadMessageIntake.assertMayAssign")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "thread.owner.set" }>,
+) {
+  const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  if (!cloudOnly) return;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads.getThreadShell(command.threadId);
+  // A local or missing thread keeps today's rule; a missing one is the orchestrator's to reject.
+  if (shell === null || shell.sandboxId === undefined) return;
+  if (command.actorId === undefined) return yield* withoutActor(command);
+  const team = yield* TeamState.TeamState;
+  const holderId = shell.ownerId ?? team.ownerId;
+  if (command.actorId === holderId) return;
+  const actor = (yield* Ref.get(team.members)).get(command.actorId);
+  const isAdmin = actor?.role === "admin" || actor?.isOwner === true;
+  if (isAdmin && !(yield* team.isActive(holderId))) return;
+  return yield* new ThreadMessageIntakeForbiddenError({
+    threadId: command.threadId,
+    memberId: command.actorId,
+    reason: "not_owner_to_assign",
+  });
+});
+
 /** Team permissions the orchestrator cannot see; it only records who acted. */
 const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission")(function* (
   command: OrchestrationV2Command,
 ) {
   const team = yield* TeamState.TeamState;
-  if (command.type === "thread.owner.set" && !(yield* team.isActive(command.ownerId))) {
-    return yield* new ThreadMessageIntakeForbiddenError({
-      threadId: command.threadId,
-      memberId: command.ownerId,
-      reason: "inactive_owner",
-    });
+  if (command.type === "thread.owner.set") {
+    if (!(yield* team.isActive(command.ownerId))) {
+      return yield* new ThreadMessageIntakeForbiddenError({
+        threadId: command.threadId,
+        memberId: command.ownerId,
+        reason: "inactive_owner",
+      });
+    }
+    return yield* assertMayAssign(command);
   }
   if (command.type !== "thread.delete" || command.actorId === undefined) return;
   if (yield* actorOwnsThreadOrAdmin(command.actorId, command.threadId)) return;
@@ -126,14 +168,6 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
     reason: "not_owner_or_admin",
   });
 });
-
-/** The socket stamps every member's command, so one without an actor did not come from a member. */
-const withoutActor = (command: SandboxClientCommand) =>
-  new Orchestrator.OrchestratorCommandRejectedError({
-    commandId: command.commandId,
-    commandType: command.type,
-    cause: `${command.type} needs the member who sent it.`,
-  });
 
 /**
  * Sends a machine command from the thread the user acts in to the sandbox owner's stream, so its
@@ -196,6 +230,56 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
     );
   },
 );
+
+/**
+ * Sleeps or discards a machine by its id, for an admin who cannot open its threads and so cannot
+ * name one (11 §2). The owner thread is read here. Anyone but the owner or an admin gets what a
+ * machine that is not there gives, so a refusal does not confirm the machine exists.
+ */
+export const stopSandboxById = Effect.fn("ThreadMessageIntake.stopSandboxById")(function* (
+  input: SandboxStopByIdInput & { readonly actorId: MemberId },
+) {
+  const projections = yield* ProjectionStoreV2;
+  const team = yield* TeamState.TeamState;
+  const commandType = input.action === "sleep" ? "sandbox.sleep" : "sandbox.discard";
+  const notThere = new Orchestrator.OrchestratorCommandRejectedError({
+    commandId: input.commandId,
+    commandType,
+    cause: `Machine ${input.sandboxId} was not found.`,
+  });
+  const record = yield* projections.getSandbox(input.sandboxId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new Orchestrator.OrchestratorCommandRejectedError({
+          commandId: input.commandId,
+          commandType,
+          cause: `Could not read machine ${input.sandboxId}: ${String(cause)}`,
+        }),
+    ),
+  );
+  if (record === null) return yield* notThere;
+  const actor = (yield* Ref.get(team.members)).get(input.actorId);
+  const isAdmin = actor?.role === "admin" || actor?.isOwner === true;
+  if (!isAdmin && record.ownerMemberId !== input.actorId) {
+    yield* Effect.logWarning("access_denied", {
+      memberId: input.actorId,
+      commandType,
+      sandboxId: input.sandboxId,
+    });
+    return yield* notThere;
+  }
+  const command = {
+    commandId: input.commandId,
+    threadId: record.ownerThreadId,
+    sandboxId: input.sandboxId,
+    actorId: input.actorId,
+  };
+  return yield* dispatchSandboxCommand(
+    input.action === "sleep"
+      ? { type: "sandbox.sleep", ...command }
+      : { type: "sandbox.discard", ...command },
+  );
+});
 
 /** The threads, new thread ids and workspace paths one command reads or changes. */
 const commandTargets = (

@@ -10,6 +10,7 @@ import {
   type ProviderInstanceConfig,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
+  type SandboxOverviewMachine,
   type TeamMember,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -22,6 +23,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   cloudAccountNotice,
+  cloudMachineRow,
   cloudPushCredential,
   createSandboxEnvironmentAtoms,
   sandboxAccessSummary,
@@ -397,6 +399,76 @@ describe("sandboxAccessSummary", () => {
     expect(sandboxAccessSummary({ source: { ownerId: me } }, members, me)).toBeNull();
     const solo: TeamMembers = new Map([...members].filter(([id]) => id === me));
     expect(sandboxAccessSummary(shell(people(0)), solo, me)).toBeNull();
+  });
+});
+
+describe("cloudMachineRow", () => {
+  const owner = MemberId.make("member-ada");
+  const members: TeamMembers = new Map([
+    [
+      owner,
+      {
+        id: owner,
+        name: "Ada",
+        role: "member",
+        color: "red",
+        isOwner: false,
+        createdAt: "2036-04-07T00:00:00.000Z",
+        removedAt: null,
+      } as TeamMember,
+    ],
+  ]);
+  const machine = (fields: Partial<SandboxOverviewMachine>): SandboxOverviewMachine => ({
+    sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+    ownerMemberId: owner,
+    state: "ready",
+    size: "default",
+    driverId: "docker" as SandboxOverviewMachine["driverId"],
+    createdAt: DateTime.makeUnsafe("2036-04-07T00:00:00.000Z"),
+    ...fields,
+  });
+  const row = (fields: Partial<SandboxOverviewMachine>) =>
+    cloudMachineRow(machine(fields), {
+      members,
+      driverLabel: "Docker",
+      sizeLabel: "Default",
+      age: "3h ago",
+    });
+
+  it("names the owner and keeps a private machine's title, branch and link off the row", () => {
+    expect(row({})).toMatchObject({
+      threadId: null,
+      title: "Private · Ada",
+      details: "Running · Default · Docker · 3h ago",
+      discardConfirmation:
+        "This deletes Ada's machine and its uncommitted work. You can't see what is on it.",
+      actions: ["sleep", "discard"],
+    });
+    // A member the roster never listed reads as a former member, never as nobody.
+    expect(row({ ownerMemberId: MemberId.make("member-unknown") }).title).toBe(
+      "Private · Former member",
+    );
+  });
+
+  it("shows the title and link of a machine the admin can open, with the usual confirmation", () => {
+    expect(
+      row({ thread: { threadId: ownerThreadId, title: "Fix checkout", branch: "fix/checkout" } }),
+    ).toMatchObject({
+      threadId: ownerThreadId,
+      title: "Fix checkout",
+      details: "fix/checkout · Ada · Running · Default · Docker · 3h ago",
+      discardConfirmation: "Discard this machine? Its disk is deleted; transcript and diffs stay.",
+    });
+  });
+
+  it.each([
+    ["ready", ["sleep", "discard"]],
+    ["sleeping", ["discard"]],
+    ["failed", ["discard"]],
+    ["provisioning", []],
+    ["waking", []],
+  ] as const)("offers %s machines %j", (state, actions) => {
+    expect(row({ state }).actions).toEqual(actions);
   });
 });
 

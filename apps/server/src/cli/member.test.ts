@@ -97,10 +97,12 @@ const serveTeam = Effect.fn("MemberCliTest.serveTeam")(function* (calls: Array<s
           },
         }),
       ),
-    [WS_METHODS.teamRemove]: ({ memberId }) =>
-      Effect.sync(() => calls.push(`remove ${memberId}`)).pipe(
-        Effect.as({ ...remoteAlice, removedAt: "2026-11-05T00:00:00.000Z" }),
-      ),
+    [WS_METHODS.teamRemove]: ({ memberId, cloudThreads }) =>
+      Effect.sync(() =>
+        calls.push(
+          `remove ${memberId}${cloudThreads === undefined ? "" : ` ${JSON.stringify(cloudThreads)}`}`,
+        ),
+      ).pipe(Effect.as({ ...remoteAlice, removedAt: "2026-11-05T00:00:00.000Z" })),
   });
   const context = yield* HttpRouter.serve(
     RpcServer.layerHttp({ group: TeamRpcs, path: "/ws", protocol: "websocket" }),
@@ -205,6 +207,20 @@ describe("t3 member", () => {
       // remote-alice exists only on the server, so resolving her proves the list came from it.
       const removed = yield* captureStdout(runCli(["member", "remove", "alice", ...at]));
       assert.include(removed, "Removed Alice remote-alice.");
+      yield* captureStdout(
+        runCli(["member", "remove", "alice", "--give-cloud-threads-to", "alice", ...at]),
+      );
+      yield* captureStdout(runCli(["member", "remove", "alice", "--delete-cloud-threads", ...at]));
+      const both = yield* runCli([
+        "member",
+        "remove",
+        "alice",
+        "--give-cloud-threads-to",
+        "alice",
+        "--delete-cloud-threads",
+        ...at,
+      ]).pipe(Effect.flip);
+      assert.include(both.message, "Choose one of");
 
       const invited = parse<{ pairUrl: string }>(
         yield* captureStdout(
@@ -212,7 +228,12 @@ describe("t3 member", () => {
         ),
       );
       assert.equal(invited.pairUrl, `http://127.0.0.1:${port}/pair#token=REMOTECODE`);
-      assert.deepEqual(calls, ["remove remote-alice", "invite Carol admin"]);
+      assert.deepEqual(calls, [
+        "remove remote-alice",
+        'remove remote-alice {"type":"give","toMemberId":"remote-alice"}',
+        'remove remote-alice {"type":"delete"}',
+        "invite Carol admin",
+      ]);
 
       const local = parse<ReadonlyArray<unknown>>(
         yield* captureStdout(runCli(["auth", "session", "list", ...at, "--json"])),

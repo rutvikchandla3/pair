@@ -34,6 +34,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamImageRemoveSecret]: AuthSettingsWriteScope,
   // A lease keeps a machine awake, so read-only sessions cannot hold one.
   [WS_METHODS.sandboxViewing]: AuthOrchestrationOperateScope,
+  // The same stop `sandbox.sleep` and `sandbox.discard` send, by machine id.
+  [WS_METHODS.sandboxStopById]: AuthOrchestrationOperateScope,
   // Creates a worktree and a thread here.
   [WS_METHODS.threadMoveToLocal]: AuthOrchestrationOperateScope,
   // A move starts a thread on Pair Cloud through this server's link.
@@ -96,6 +98,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.teamUpdate]: AuthAccessWriteScope,
   [WS_METHODS.teamSetRole]: AuthAccessWriteScope,
   [WS_METHODS.teamRemove]: AuthAccessWriteScope,
+  [WS_METHODS.teamRemovalPreview]: AuthAccessWriteScope,
   [WS_METHODS.pushRegister]: AuthOrchestrationReadScope,
   [WS_METHODS.pushUnregister]: AuthOrchestrationReadScope,
   // Ownership, not a scope, limits which accounts a member can change.

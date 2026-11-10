@@ -100,7 +100,7 @@ describe("buildThreadActionMenuItems", () => {
 
     const owned = buildThreadActionMenuItems({
       ...baseState,
-      team: { members, ownerId: ben, canDelete: true },
+      team: { members, ownerId: ben, canDelete: true, canAssign: true },
     });
     expect(
       owned.find((item) => item.id === "assign")?.children?.map((c) => [c.id, c.checked]),
@@ -115,7 +115,7 @@ describe("buildThreadActionMenuItems", () => {
     const follow = (following: boolean) =>
       buildThreadActionMenuItems({
         ...baseState,
-        team: { members, ownerId: ben, canDelete: false, following },
+        team: { members, ownerId: ben, canDelete: false, canAssign: true, following },
       }).map((item) => item.id);
     expect(follow(false)).toContain("follow");
     expect(follow(true)).toContain("unfollow");
@@ -123,7 +123,7 @@ describe("buildThreadActionMenuItems", () => {
 
     const notOwner = buildThreadActionMenuItems({
       ...baseState,
-      team: { members, ownerId: null, canDelete: false },
+      team: { members, ownerId: null, canDelete: false, canAssign: true },
     });
     expect(notOwner.find((item) => item.id === "delete")?.disabled).toBe(true);
     expect(notOwner.find((item) => item.id === "assign")?.children?.some((c) => c.checked)).toBe(
@@ -136,7 +136,7 @@ describe("buildThreadActionMenuItems", () => {
 
     const member = buildThreadActionMenuItems({
       ...baseState,
-      team: { members, ownerId: ben, canDelete: false },
+      team: { members, ownerId: ben, canDelete: false, canAssign: true },
       machine: {
         actions: ["wake", "sleep", "retry", "discard"],
         ownerOnlyDenied: ["sleep", "discard"],
@@ -155,8 +155,21 @@ describe("buildThreadActionMenuItems", () => {
     expect(copyChildren(member)).not.toContain("copy-path");
   });
 
+  it("shows Assign to… disabled with its reason on a cloud thread the viewer does not own", () => {
+    const assign = (canAssign: boolean, canOperate = true) => {
+      const item = buildThreadActionMenuItems({
+        ...baseState,
+        canOperate,
+        team: { members: [], ownerId: null, canDelete: true, canAssign },
+      }).find((candidate) => candidate.id === "assign");
+      return [item?.label, item?.disabled ?? false];
+    };
+    expect(assign(true)).toEqual(["Assign to…", false]);
+    expect(assign(false)).toEqual(["Assign to… (owner only)", true]);
+  });
+
   it("offers Share… under Assign to… on a team's cloud thread, disabled for anyone but its owner", () => {
-    const team = { members: [], ownerId: null, canDelete: true };
+    const team = { members: [], ownerId: null, canDelete: true, canAssign: true };
     const share = (state: Partial<ThreadActionMenuState>) => {
       const items = buildThreadActionMenuItems({ ...baseState, ...state });
       const index = items.findIndex((item) => item.id === "share");

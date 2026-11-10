@@ -1,6 +1,6 @@
 import {
   MemberRole,
-  type TeamError,
+  TeamError,
   type TeamInviteInput,
   type TeamLinkResult,
   type TeamMember,
@@ -288,13 +288,39 @@ const signInLinkCommand = Command.make("signin-link", {
 const removeCommand = Command.make("remove", {
   ...authLocationFlags,
   member: memberArgument,
+  giveCloudThreadsTo: Flag.String("give-cloud-threads-to").pipe(
+    Flag.withDescription(
+      "Give the cloud threads the member owns to this member (id or name). Pair Cloud needs this or --delete-cloud-threads when they own any.",
+    ),
+    Flag.optional,
+  ),
+  deleteCloudThreads: Flag.Boolean("delete-cloud-threads").pipe(
+    Flag.withDescription("Delete the cloud threads the member owns, and their machines."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription("Remove a member and sign out all of their devices."),
   Command.withHandler((flags) =>
     runWithTeam(flags, (team) =>
       Effect.gen(function* () {
+        if (flags.deleteCloudThreads && Option.isSome(flags.giveCloudThreadsTo)) {
+          return yield* new TeamError({
+            reason: "forbidden",
+            message: "Choose one of --give-cloud-threads-to and --delete-cloud-threads.",
+          });
+        }
         const memberId = yield* resolveMemberId(team, flags.member);
-        const removed = yield* team.remove({ memberId });
+        const toMemberId = Option.isSome(flags.giveCloudThreadsTo)
+          ? yield* resolveMemberId(team, flags.giveCloudThreadsTo.value)
+          : undefined;
+        const removed = yield* team.remove({
+          memberId,
+          ...(toMemberId !== undefined
+            ? { cloudThreads: { type: "give", toMemberId } }
+            : flags.deleteCloudThreads
+              ? { cloudThreads: { type: "delete" } }
+              : {}),
+        });
         yield* Console.log(`Removed ${removed.name} ${removed.id}.\n`);
       }),
     ),

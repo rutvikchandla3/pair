@@ -12,6 +12,7 @@ import {
   SandboxDriverCheckResult,
   SandboxOverview,
   SandboxOverviewError,
+  SandboxStopByIdInput,
   SandboxViewingInput,
 } from "./sandbox.ts";
 import {
@@ -208,6 +209,8 @@ import {
   TeamInviteInput,
   TeamLinkResult,
   TeamMember,
+  TeamRemovalPreview,
+  TeamRemovalPreviewInput,
   TeamRemoveInput,
   TeamSetRoleInput,
   TeamSignInLinkInput,
@@ -595,6 +598,7 @@ export const WS_METHODS = {
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   sandboxOverview: "sandbox.overview",
   sandboxViewing: "sandbox.viewing",
+  sandboxStopById: "sandbox.stopById",
   sandboxCheckDriver: "sandbox.checkDriver",
   teamImageSubscribe: "teamImage.subscribe",
   teamImageSaveRecipe: "teamImage.saveRecipe",
@@ -627,6 +631,7 @@ export const WS_METHODS = {
   teamUpdate: "team.update",
   teamSetRole: "team.setRole",
   teamRemove: "team.remove",
+  teamRemovalPreview: "team.removalPreview",
   teamUpdateSelf: "team.updateSelf",
   teamProviderAccountsMutate: "team.providerAccounts.mutate",
   teamUsage: "team.usage",
@@ -1088,6 +1093,12 @@ const WsSandboxViewingRpc = Rpc.make(WS_METHODS.sandboxViewing, {
   payload: SandboxViewingInput,
   success: Schema.Void,
   error: EnvironmentAuthorizationError,
+});
+
+const WsSandboxStopByIdRpc = Rpc.make(WS_METHODS.sandboxStopById, {
+  payload: SandboxStopByIdInput,
+  success: OrchestrationV2RpcSchemas.dispatchCommand.output,
+  error: Schema.Union([OrchestrationV2DispatchCommandError, EnvironmentAuthorizationError]),
 });
 
 const WsSandboxCheckDriverRpc = Rpc.make(WS_METHODS.sandboxCheckDriver, {
@@ -2215,6 +2226,12 @@ const WsTeamRemoveRpc = Rpc.make(WS_METHODS.teamRemove, {
   error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
 });
 
+const WsTeamRemovalPreviewRpc = Rpc.make(WS_METHODS.teamRemovalPreview, {
+  payload: TeamRemovalPreviewInput,
+  success: TeamRemovalPreview,
+  error: Schema.Union([TeamError, EnvironmentAuthorizationError]),
+});
+
 const WsTeamUpdateSelfRpc = Rpc.make(WS_METHODS.teamUpdateSelf, {
   payload: TeamUpdateSelfInput,
   success: TeamMember,
@@ -2349,6 +2366,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamUpdateRpc,
   WsTeamSetRoleRpc,
   WsTeamRemoveRpc,
+  WsTeamRemovalPreviewRpc,
   WsTeamUpdateSelfRpc,
   WsTeamProviderAccountsMutateRpc,
   WsTeamUsageRpc,
@@ -2420,6 +2438,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCheckOtlpEndpointRpc,
   WsSandboxOverviewRpc,
   WsSandboxViewingRpc,
+  WsSandboxStopByIdRpc,
   WsSandboxCheckDriverRpc,
   WsTeamImageSubscribeRpc,
   WsTeamImageSaveRecipeRpc,

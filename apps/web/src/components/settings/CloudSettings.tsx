@@ -57,6 +57,7 @@ import {
 } from "./CloudSettings.logic";
 import { resolveAccessEnvironmentId } from "./ConnectionsSettings.logic";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+import { CloudMachines } from "./CloudMachines";
 import { RetentionControl } from "./RetentionControl";
 import { useSecretSources } from "./SecretSourceInput";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -439,6 +440,17 @@ function CloudEnvironmentSettings({
           </>
         )}
       </SettingsSection>
+
+      {overview.data?.machineList !== undefined && overview.data.machineList.length > 0 ? (
+        <SettingsSection title="All machines">
+          <CloudMachines
+            environmentId={environmentId}
+            machines={overview.data.machineList}
+            drivers={drivers}
+            onChanged={overview.refresh}
+          />
+        </SettingsSection>
+      ) : null}
 
       {canAdmin && (configured || form !== null) ? (
         <SettingsSection

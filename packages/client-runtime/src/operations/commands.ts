@@ -504,6 +504,21 @@ export const discardSandbox = Effect.fn("EnvironmentCommands.discardSandbox")(fu
   return yield* sandboxCommand("sandbox.discard", input);
 });
 
+export interface StopSandboxByIdInput extends CommandMetadata {
+  readonly sandboxId: SandboxId;
+  readonly action: "sleep" | "discard";
+}
+/** For a machine whose threads the caller cannot open, so cannot name one. */
+export const stopSandboxById = Effect.fn("EnvironmentCommands.stopSandboxById")(function* (
+  input: StopSandboxByIdInput,
+) {
+  return yield* requestGuarded(WS_METHODS.sandboxStopById, {
+    commandId: yield* allocateCommandId(input),
+    sandboxId: input.sandboxId,
+    action: input.action,
+  });
+});
+
 export interface SetSandboxAccessInput extends SandboxCommandInput {
   readonly audience: SandboxAccessAudience;
   readonly memberIds: ReadonlyArray<MemberId>;

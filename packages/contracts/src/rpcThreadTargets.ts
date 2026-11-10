@@ -197,6 +197,8 @@ export const RPC_THREAD_TARGET_EXEMPT: { readonly [M in WsMethod]?: string } = {
     "A batch: the handler drops the titles the viewer cannot open, so one hidden id does not fail the rest.",
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]:
     "`before` is a page cursor, not a target; the page's SQL keeps only threads the viewer can open.",
+  [WS_METHODS.sandboxStopById]:
+    "An admin who cannot open the machine's threads names only its id; ThreadMessageIntake.stopSandboxById lets the owner or an admin stop it and answers anyone else as a machine that is not there.",
   [WS_METHODS.presenceReport]:
     "Reports the caller's own view; who may see it is presence's filter (6.4).",
   [WS_METHODS.serverReportClientActivity]:

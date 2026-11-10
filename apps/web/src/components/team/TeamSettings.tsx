@@ -70,6 +70,7 @@ import {
 } from "./MemberGitHub";
 import { MemberUsage } from "./MemberUsage";
 import { ProviderAccountsSection } from "./ProviderAccountsSection";
+import { RemoveMemberDialog } from "./RemoveMemberDialog";
 import { toastCommandFailure } from "./toastCommandFailure";
 
 const ROLE_LABELS: Record<MemberRole, string> = { admin: "Admin", member: "Member" };
@@ -207,8 +208,12 @@ function MemberRow({
   });
   const setMemberRole = useAtomCommand(teamEnvironment.setMemberRole, { label: "set member role" });
   const removeMember = useAtomCommand(teamEnvironment.removeMember, { label: "remove member" });
+  const previewRemoval = useAtomCommand(teamEnvironment.previewMemberRemoval, {
+    label: "check member's cloud threads",
+  });
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [cloudThreadsToPlace, setCloudThreadsToPlace] = useState<number | null>(null);
   const [link, setLink] = useState<{
     readonly title: string;
     readonly description: string;
@@ -245,6 +250,18 @@ function MemberRow({
   };
 
   const remove = async () => {
+    setBusy(true);
+    const preview = await previewRemoval({ environmentId, input: { memberId: member.id } });
+    setBusy(false);
+    if (preview._tag !== "Success") {
+      toastCommandFailure("Could not remove the member", preview);
+      return;
+    }
+    // A member who owns cloud threads must say where they go, so the dialog replaces the confirm.
+    if (preview.value.cloudThreadCount > 0) {
+      setCloudThreadsToPlace(preview.value.cloudThreadCount);
+      return;
+    }
     const confirmed = await requestConfirmDialog(
       `Remove ${member.name}? Their devices are signed out and unused links stop working. Their past work stays in the threads.`,
       { variant: "destructive" },
@@ -366,6 +383,14 @@ function MemberRow({
           onClose={() => setEditing(false)}
         />
       ) : null}
+      {cloudThreadsToPlace === null ? null : (
+        <RemoveMemberDialog
+          environmentId={environmentId}
+          member={member}
+          cloudThreadCount={cloudThreadsToPlace}
+          onClose={() => setCloudThreadsToPlace(null)}
+        />
+      )}
       <MemberLinkDialog
         title={link?.title ?? ""}
         description={link?.description ?? ""}

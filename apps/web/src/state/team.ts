@@ -3,6 +3,7 @@ import { threadShareOrigin } from "@t3tools/client-runtime/thread-reference";
 import {
   EMPTY_TEAM_MEMBERS,
   activeTeamMembers,
+  canMemberAssignThread,
   canMemberDeleteThread,
   createTeamEnvironmentAtoms,
   isTeamModeMembers,
@@ -26,7 +27,7 @@ import { configuredHostedAppUrl } from "../hostedPairing";
 import { useEnvironmentHttpBaseUrl } from "./environments";
 import { environmentSummaries } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
-import { serverEnvironment } from "./server";
+import { environmentCloudLaunchAtom, serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
 import { useOrchestrationCommand } from "./use-orchestration-command";
 import { environmentSession, readPreparedConnection, sessionHasScope } from "./session";
@@ -198,18 +199,51 @@ export function useSetThreadFollowed() {
     });
 }
 
+type AssignableThread = FollowableThread & { readonly source: { readonly sandboxId?: unknown } };
+
+const assignViewerFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => ({
+    members: get(teamEnvironment.membersValueAtom(environmentId)),
+    memberId: get(teamEnvironment.currentMemberIdAtom(environmentId)),
+    cloudLaunch: get(environmentCloudLaunchAtom(environmentId)),
+  })).pipe(Atom.withLabel(`team-assign-viewer:${environmentId}`)),
+);
+
+const NO_ASSIGN_VIEWER_ATOM = Atom.make(null).pipe(Atom.withLabel("team-assign-viewer:none"));
+
+function canAssign(
+  viewer: { members: TeamMembers; memberId: MemberId | null; cloudLaunch: boolean },
+  thread: AssignableThread,
+): boolean {
+  return canMemberAssignThread({
+    members: viewer.members,
+    memberId: viewer.memberId,
+    ownerId: thread.source.ownerId,
+    cloudThread: viewer.cloudLaunch && thread.source.sandboxId !== undefined,
+  });
+}
+
+/** Whether Assign is open to the viewer: a cloud thread is its owner's to assign. */
+export function useCanAssignThread(thread: AssignableThread | null): boolean {
+  const viewer = useAtomValue(
+    thread === null ? NO_ASSIGN_VIEWER_ATOM : assignViewerFamily(thread.environmentId),
+  );
+  return thread === null || viewer === null || canAssign(viewer, thread);
+}
+
 /** For menus that read on demand. Team members are kept subscribed by TeamMembersWatch. */
-export function readThreadTeamMenu(thread: FollowableThread) {
+export function readThreadTeamMenu(thread: AssignableThread) {
   const { environmentId } = thread;
   const ownerId = thread.source.ownerId;
-  const members = appAtomRegistry.get(teamEnvironment.membersValueAtom(environmentId));
+  const viewer = appAtomRegistry.get(assignViewerFamily(environmentId));
+  const { members, memberId } = viewer;
   if (!isTeamModeMembers(members)) return undefined;
-  const memberId = appAtomRegistry.get(teamEnvironment.currentMemberIdAtom(environmentId));
   const following = readThreadFollowing(thread);
   return {
     members: activeTeamMembers(members).map(({ id, name }) => ({ id, name })),
     ownerId: ownerId ?? null,
     canDelete: canMemberDeleteThread({ members, memberId, ownerId }),
+    canAssign: canAssign(viewer, thread),
     ...(following === null ? {} : { following }),
   };
 }

@@ -12,6 +12,7 @@ import {
   type SandboxDriverHealth,
   type SandboxId,
   type SandboxOverview,
+  type SandboxOverviewMachine,
   type SandboxState,
   type ScopedThreadRef,
   type ServerConfig,
@@ -19,6 +20,7 @@ import {
   type ServerSettings,
   type TeamMember,
   type TerminalStoppedBy,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { usableCloudProviders } from "@t3tools/shared/sandboxCredentials";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
@@ -32,6 +34,7 @@ import {
   retrySandbox,
   setSandboxAccess,
   sleepSandbox,
+  stopSandboxById,
   wakeSandbox,
 } from "../operations/commands.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
@@ -40,6 +43,7 @@ import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from
 import {
   canMemberDeleteThread,
   isTeamModeMembers,
+  memberDisplayName,
   type createTeamEnvironmentAtoms,
   type TeamMembers,
 } from "./team.ts";
@@ -80,6 +84,78 @@ export const SANDBOX_ACTION_FAILURE_TITLES: Readonly<Record<SandboxAction, strin
   retry: "Could not retry the machine",
   discard: "Could not discard the machine",
 };
+
+const SANDBOX_MACHINE_STATE_LABELS: Readonly<Record<SandboxState, string>> = {
+  provisioning: "Starting",
+  ready: "Running",
+  sleeping: "Asleep",
+  waking: "Waking",
+  failed: "Failed",
+  destroyed: "Discarded",
+};
+
+/** What Discard asks for a machine whose threads the admin cannot open (11 §2). */
+function privateMachineDiscardConfirmation(ownerName: string): string {
+  return `This deletes ${ownerName}'s machine and its uncommitted work. You can't see what is on it.`;
+}
+
+/** A machine row in Settings → Cloud: a private one names its owner and nothing it holds. */
+export interface CloudMachineRow {
+  readonly sandboxId: SandboxId;
+  /** Null for a machine the reader cannot open: no title, branch or link. */
+  readonly threadId: ThreadId | null;
+  readonly title: string;
+  readonly details: string;
+  readonly ownerId: MemberId | null;
+  readonly ownerName: string;
+  readonly discardConfirmation: string;
+  /** Before the owner-or-admin check. */
+  readonly actions: ReadonlyArray<"sleep" | "discard">;
+}
+
+export function cloudMachineRow(
+  machine: SandboxOverviewMachine,
+  input: {
+    readonly members: TeamMembers;
+    readonly driverLabel: string;
+    readonly sizeLabel: string;
+    /** "3h ago", from the machine's `createdAt`. */
+    readonly age: string;
+  },
+): CloudMachineRow {
+  const ownerName =
+    machine.ownerMemberId === null
+      ? "the server's owner"
+      : memberDisplayName(input.members, machine.ownerMemberId);
+  const common = [
+    SANDBOX_MACHINE_STATE_LABELS[machine.state],
+    input.sizeLabel,
+    input.driverLabel,
+    input.age,
+  ];
+  const { thread } = machine;
+  return {
+    sandboxId: machine.sandboxId,
+    threadId: thread?.threadId ?? null,
+    title: thread === undefined ? `Private · ${ownerName}` : thread.title,
+    details: (thread === undefined
+      ? common
+      : [...(thread.branch == null ? [] : [thread.branch]), ownerName, ...common]
+    ).join(" · "),
+    ownerId: machine.ownerMemberId,
+    ownerName,
+    discardConfirmation:
+      thread === undefined
+        ? privateMachineDiscardConfirmation(ownerName)
+        : SANDBOX_DISCARD_CONFIRMATION,
+    actions:
+      machine.state === "ready"
+        ? ["sleep", "discard"]
+        : machine.state === "sleeping" || machine.state === "failed"
+          ? ["discard"]
+          : [],
+  };
+}
 
 const SANDBOX_ISOLATION_LABELS: Readonly<Record<SandboxDriverHealth["isolation"], string>> = {
   rootless: "Rootless Docker",
@@ -555,6 +631,13 @@ export function createSandboxEnvironmentAtoms<R, E>(
     }).pipe(Atom.withLabel(`sandbox-thread-access:${key}`));
   });
 
+  // Settings → Cloud's rows: the admin names a machine by id, not by a thread they cannot open.
+  const stopById = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:sandbox:stop-by-id",
+    tag: WS_METHODS.sandboxStopById,
+    execute: stopSandboxById,
+  });
+
   const share = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:sandbox:share",
     tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
@@ -582,6 +665,8 @@ export function createSandboxEnvironmentAtoms<R, E>(
       label: "environment-data:sandbox:viewing",
       tag: WS_METHODS.sandboxViewing,
     }),
+    /** Sleeps or discards a machine by id; the server lets only its owner or an admin. */
+    stopById,
     /** Boots and discards one machine; settings:write, like the driver it tests. */
     checkDriver: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandbox:check-driver",

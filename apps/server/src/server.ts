@@ -98,6 +98,7 @@ import * as MemberProviderAccounts from "./team/MemberProviderAccounts.ts";
 import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamRemoval from "./team/TeamRemoval.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -777,6 +778,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   MemberProviderAccounts.layer,
+  TeamRemoval.layer,
   SandboxWake.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   // Above the orchestration layers: a git credential's audit event is dispatched through them.

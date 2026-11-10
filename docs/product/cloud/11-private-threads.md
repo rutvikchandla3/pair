@@ -164,12 +164,20 @@ side chats on the same machine, and **Continue locally**, which gives them a cop
 
 ### Assign, remove and archive
 
-- **Assign to…** on a private or shared thread is the owner's, not any member's. The picker lists
-  every active member. Assigning to someone without access gives it to them; the previous owner
-  stays in **People with access** and can be removed by the new owner.
+- **Assign to…** on a cloud thread is the owner's, not any member's, and not an admin's: shown
+  disabled with "Assign to… (owner only)" in menus, and with "Only the owner can assign this
+  thread" in the palette and on mobile. An admin may assign only when the owner has left the team.
+  The picker lists every active member. Assigning to someone without access gives it to them; the
+  previous owner stays in **People with access** and can be removed by the new owner.
 - **Removing a member from the team** (Settings → Team) must say where their cloud threads go.
   The dialog gains: "Ada owns 4 cloud threads. Give them to: `[member picker]`", or **Delete them
-  and their machines**. An admin does this without being able to open the threads.
+  and their machines**. An admin does this without being able to open the threads. The server
+  counts the threads (`team.removalPreview`) and does it in the removal itself (`TeamRemoval`):
+  it gives every cloud thread the member owns, side chats included, to the chosen member, or
+  deletes them and discards the machines the member owns, then drops the member from every
+  machine's list and removes them. A removal that names neither is refused
+  (`owns-cloud-threads`). `t3 member remove` takes `--give-cloud-threads-to` or
+  `--delete-cloud-threads`.
 - A removed or deactivated member loses every share at once, as they lose the server.
 - **Archive, settle and delete** keep today's rules among people with access (delete is the
   owner's or an admin's).
@@ -180,10 +188,14 @@ An admin does not see other members' private threads: not in the sidebar, the Te
 or the archive. Settings → Cloud still lists every machine, because machines cost money:
 
 - A machine the admin cannot open shows "Private · `<owner>`", its state, size, driver and age, and
-  no title, branch or link.
-- **Sleep** and **Discard machine** work on it as today ("Only the owner or an admin"). Discard's
-  confirmation reads "This deletes `<owner>`'s machine and its uncommitted work. You can't see what
-  is on it."
+  no title, branch or link. Settings → Cloud had no machine list before this: the overview now
+  carries `machineList` for admins (the web's **All machines**), and mobile's read-only Cloud
+  screen does not list machines.
+- **Sleep** and **Discard machine** work on it as today ("Only the owner or an admin"). The admin
+  has no thread to name, so they go by machine id (`sandbox.stopById`, `stopSandboxById` in
+  intake): the owner or an admin may; anyone else is answered as for a machine that is not there.
+  Discard's confirmation reads "This deletes `<owner>`'s machine and its uncommitted work. You
+  can't see what is on it."
 
 Proposed: no "open as admin". If a team needs it, it is a separate, audited action later.
 
@@ -284,8 +296,11 @@ export const sandboxAllows = (roster, entry: SandboxAccessEntry | undefined, mem
   consumer that needs the members re-reads the machine's threads.
 - **Ownership.** When the owner thread's owner changes (`thread.owner.set`), the previous owner is
   appended to `memberIds` in the same decision and a `sandbox.access-changed` follows. This may
-  leave the list one past the cap. Refusing `thread.owner.set` on a machine's owner thread unless
-  the actor is the owner, or an admin acting for an owner who is no longer active, is 6.7.
+  leave the list one past the cap. On a cloud-only server, intake refuses `thread.owner.set` on any
+  thread that has a machine unless the actor is that thread's owner, or an admin acting for an
+  owner who is no longer an active member (`not_owner_to_assign`, "Only the owner can assign this
+  thread."). A thread with no owner is held by the server's owner. Local threads and servers that
+  are not cloud-only keep the old rule: any member may assign.
 - **A machine handed to another thread** (`sandbox.adopt`, when its owner thread is deleted) keeps
   its `access`; the new owner thread's owner becomes the owner, and the previous one is appended.
   A record from before access stays without one.
@@ -359,7 +374,7 @@ Every surface, and what guards it:
 | Push and in-app notifications                                      | Recipients are filtered through `allowsThread`. Each member in `added`, except the owner, gets a push titled "Shared with you"; a removal or an audience change pushes nothing                                                                                                                                                                                                                                                                                                                                     | `notifications/MemberPushNotifier.ts`                                     |
 | Usage                                                              | Nothing to filter: usage has per-member and per-instance totals only, with no thread id, title or branch                                                                                                                                                                                                                                                                                                                                                                                                           | `team/TeamUsage.ts`                                                       |
 | Pull requests                                                      | The pull request is GitHub's and stays listed. Its linked threads leave out one the reader cannot open. A review guide runs only in a linked machine the requester (a member, or an agent by section 5's reach rule) can open                                                                                                                                                                                                                                                                                      | `pullRequest/linkedThreads.ts`; `PullRequestReviewGuideService.ts`        |
-| Settings → Cloud (`sandbox.overview`)                              | Nothing to filter yet: the overview carries counts per state and restore mode's machine ids, never a thread id, title or branch. The per-machine rows in section 2 do not exist yet                                                                                                                                                                                                                                                                                                                                | `sandbox/lifecycle/SandboxOverview.ts`                                    |
+| Settings → Cloud (`sandbox.overview`)                              | `machineList` (admins) names each live machine's owner, state, size, driver and age. A machine the admin cannot open is sent without its `thread` (id, title and branch)                                                                                                                                                                                                                                                                                                                                           | `sandbox/lifecycle/SandboxOverview.ts`                                    |
 | Scheduled tasks                                                    | Every run stays listed; a last run's thread the reader cannot open is left out (`lastRunThreadId`). The task's own target thread id stays, so an edit does not reset it                                                                                                                                                                                                                                                                                                                                            | `scheduledTasks/ScheduledTaskService.ts` `subscribeList`                  |
 | Storage cleanup report                                             | Every entry and count stays; an entry's thread id and title are left out for a thread the reader cannot open                                                                                                                                                                                                                                                                                                                                                                                                       | `storageCleanup.ts` `reportForReader`                                     |
 | Guest links                                                        | Creating one needs access; on a `members` session it needs the owner                                                                                                                                                                                                                                                                                                                                                                                                                                               | `guest/GuestShareService.ts`                                              |

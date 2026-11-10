@@ -148,6 +148,7 @@ import * as MemberPushDevices from "./team/MemberPushDevices.ts";
 import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
+import * as TeamRemoval from "./team/TeamRemoval.ts";
 import * as TeamState from "./team/TeamState.ts";
 import * as ThreadAccess from "./team/ThreadAccess.ts";
 import {
@@ -1573,6 +1574,7 @@ export const layerWsRpc = (
         | DocumentText.DocumentText
         | TeamState.TeamState
         | ThreadAccess.ThreadAccess
+        | ProjectionStoreV2
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -1610,6 +1612,7 @@ export const layerWsRpc = (
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const teamMembers = yield* TeamMembers.TeamMembers;
+      const teamRemoval = yield* TeamRemoval.TeamRemoval;
       const memberGitHub = yield* MemberGitHub.MemberGitHub;
       const presence = yield* Presence.Presence;
       const pushDevices = yield* MemberPushDevices.MemberPushDevices;
@@ -2645,7 +2648,8 @@ export const layerWsRpc = (
         [WS_METHODS.teamSignInLink]: (input) => teamMembers.signInLink(input),
         [WS_METHODS.teamUpdate]: (input) => teamMembers.update(input),
         [WS_METHODS.teamSetRole]: (input) => teamMembers.setRole(input),
-        [WS_METHODS.teamRemove]: (input) => teamMembers.remove(input),
+        [WS_METHODS.teamRemove]: (input) => teamRemoval.remove(input, currentSession.memberId),
+        [WS_METHODS.teamRemovalPreview]: (input) => teamRemoval.preview(input),
         [WS_METHODS.teamUpdateSelf]: (input) =>
           teamMembers.updateSelf(currentSession.memberId, input),
         [WS_METHODS.teamProviderAccountsMutate]: (input) =>
@@ -3083,6 +3087,27 @@ export const layerWsRpc = (
         // Every member sees every team thread, as with presence; `view` skips local threads.
         [WS_METHODS.sandboxViewing]: ({ threadId }) =>
           sandboxWake.viewed({ threadId, actorId: currentSession.memberId }),
+        [WS_METHODS.sandboxStopById]: (input) =>
+          startup
+            .enqueueCommand(
+              ThreadMessageIntake.stopSandboxById({
+                ...input,
+                actorId: currentSession.memberId,
+              }).pipe(Effect.provide(intakeContext)),
+            )
+            .pipe(
+              Effect.map((result) => ({ sequence: result.sequence })),
+              Effect.mapError((cause) => {
+                const detail = userFacingDispatchErrorMessage(cause);
+                return new OrchestrationV2DispatchCommandError({
+                  commandId: input.commandId,
+                  commandType: input.action === "sleep" ? "sandbox.sleep" : "sandbox.discard",
+                  message: detail ?? "Failed to dispatch orchestration V2 command",
+                  ...(detail === undefined ? {} : { detail }),
+                  cause,
+                });
+              }),
+            ),
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
         [WS_METHODS.teamImageSubscribe]: (_input) =>
           teamImages.changes({

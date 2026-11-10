@@ -1,10 +1,17 @@
 import { SHARE_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
+import { ASSIGN_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/team";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadTeamMenu } from "../../state/team";
 import { buildThreadTeamHeaderMenu, buildThreadTeamMenuItems } from "./thread-team-menu";
 
-const menu: ThreadTeamMenu = { members: [], ownerId: null, canDelete: true, following: null };
+const menu: ThreadTeamMenu = {
+  members: [],
+  ownerId: null,
+  canDelete: true,
+  canAssign: true,
+  following: null,
+};
 const actions = { setFollowed: () => {}, assign: () => {}, share: () => {} };
 
 describe("Share in the thread menus", () => {
@@ -34,5 +41,24 @@ describe("Share in the thread menus", () => {
     expect(buildThreadTeamHeaderMenu(menu, actions).items.some(({ id }) => id === "share")).toBe(
       false,
     );
+  });
+});
+
+describe("Assign in the thread menus", () => {
+  it("is disabled with its reason on a cloud thread the viewer does not own", () => {
+    const denied = { ...menu, canAssign: false };
+    expect(buildThreadTeamMenuItems(denied).find(({ id }) => id === "assign")).toMatchObject({
+      attributes: { disabled: true },
+      subtitle: ASSIGN_THREAD_OWNER_ONLY_REASON,
+    });
+    expect(
+      buildThreadTeamHeaderMenu(denied, actions).items.find(({ id }) => id === "assign"),
+    ).toMatchObject({ disabled: true, subtitle: ASSIGN_THREAD_OWNER_ONLY_REASON });
+    expect(buildThreadTeamMenuItems(menu).find(({ id }) => id === "assign")).not.toHaveProperty(
+      "attributes",
+    );
+    expect(
+      buildThreadTeamHeaderMenu(menu, actions).items.find(({ id }) => id === "assign"),
+    ).not.toHaveProperty("disabled");
   });
 });
