@@ -81,9 +81,9 @@ are prereleases. **The M6 pass passed on `.13` on 2026-11-10**: see
 M6 landed, so each worker's prompt carries what changed (VM images, private threads, per-boot
 forwards). Workers are Opus at medium effort. All seven rows are landed: 7.1 (a6de84ca5), 7.5
 (ad9a88cff), 7.2 (1621691f9), 7.3 (68343cd94), 7.4 (35b3e389f), 7.6 (9b47d852a) and 7.7
-(38dc554c5). Release `0.1.7-pair.14` carries them. **The M7 integrated pass has not run**: no row
-has been exercised on a real server or in a real client, apart from 7.1's image build and 7.4's
-spike.
+(38dc554c5), and fix row 7.8 (4751f8366, be9bae139). Releases `0.1.7-pair.14` and `.15` carry
+them. **The core of the M7 pass passed on `.15` on 2026-11-11; most of its steps are still owed**:
+see [M7 on real hardware](#m7-on-real-hardware-2026-11-11-vm-provider-dev-releases-v14-and-v15).
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
@@ -796,6 +796,45 @@ or demoted on a live connection, the Docker driver, and Codex after a wake.
 Left: `Teammate` on the server is a new member (id `2c905933…`; the lead removed and re-invited
 it, twice, the second time by mistake), with no session. The pass's threads (P1 to P3 and the
 wake check) are A's and asleep. The probe is in the lead's scratch directory, not committed.
+
+### M7 on real hardware (2026-11-11, `vm-provider-dev`, releases V14 and V15)
+
+**The core path passed on V15, on a Compute Engine machine. This is not the whole pass.** The
+server is the clone of `pair-cloud-pass`; the client is the web app in a browser on the tailnet.
+
+- **The VM base image with Chrome: passed.** After the upgrade to V14 the driver rebuilt its base
+  (`pair-1c53db55-base-8d8d59c64014`) in 7 m 25 s, first try. `install-vm.sh` starts Chrome with
+  its sandbox on and the build reports `ok` only if that works. 2.41 GB stored, against 2.13.
+- **The tab was refused on V14 (finding 1, fixed by 7.8).** Browser was offered on a cloud
+  thread, and each click reached `preview.open` and was refused with "This server runs agents,
+  terminals and scripts only on cloud machines.", with a `ready` machine. `server.ts` gave
+  `PreviewMachineLive` to the HTTP routes with `Layer.provide`, which reaches only their
+  construction, so the per-connection RPC handler read the reference's no-op default. 7.4 and 7.6
+  each passed with test layers. `PreviewMachine` is now a required service, so leaving it out does
+  not compile, and a test builds the real cloud-only wiring.
+- **The web app showed nothing when the open failed (finding 2, fixed by 7.8).** It now toasts
+  the server's message.
+- **On V15: passed.** On a thread whose machine was asleep, opening Browser showed "Connecting…"
+  and the header "Waking"; the tab then loaded `https://example.com` from the address bar. After
+  the agent restarted `python3 -m http.server 8080 --bind 127.0.0.1` on the machine,
+  `http://localhost:8080/index.html` loaded in the tab, and a click on the page's button changed
+  its heading: input reaches the machine's Chrome.
+- V15's boot no longer warns that the host blocks the server's own browser sandbox.
+
+Smaller findings, not fixed:
+
+- Text in scripts the image has no font for renders as boxes (seen on example.com's Arabic and
+  CJK paragraphs). The image has Liberation and the Noto emoji font only.
+- A server started by an agent dies when the machine sleeps, as any process does; the Browser's
+  empty state does not say so.
+
+Not run: the servers list and **Stop**; downloads and uploads (the agent's upload of a
+server-only path must be refused on a real machine); recording; a second viewer and the viewer
+lease holding off idle sleep; cookies surviving a sleep; revoking a member while they watch a tab;
+a tab id from another thread; `ps` in the machine for `--no-sandbox` and Chrome's environment; a
+Docker session (team build 25 predates Chrome, so it should say the image has no browser until the
+team image is rebuilt); desktop (must stream, not use its webview); mobile; the web browser tests
+the rows touched; frame rate over the tunnel; Codex.
 
 ## How to resume
 
@@ -2991,6 +3030,18 @@ Each item had a failing test first, except the two that needed no code.
 - Not run: `ThreadServersPanel`, `PreviewView` and `ServerBrowserSurface` browser tests.
   `ServerEnvironment` "publishes proven install ownership only for manually updated servers"
   fails on this Mac on `feat/pair` too.
+
+## 7.8 a cloud session's Browser tab opens (landed 4751f8366, be9bae139)
+
+- `PreviewMachine` is a service with an explicit `layerNone`, required by `PreviewManager.open`;
+  `server.ts` exports `layerMachineServices` (`MachineBrowser` and `PreviewMachine`) and provides
+  it with the runtime services. `PreviewMachineLive` requires `SandboxWake`.
+- `docs/internals/effect-services.md` has the trap: a `Context.Reference` provided to a route
+  layer with `Layer.provide` is not in the context requests run in.
+- `useRightPanelActions.createBrowserSurface` and the `PreviewView` address bar toast a failed
+  open. A cloud-only server skips the server-browser sandbox warning.
+- Audited and found correctly wired: `MachineBrowser`, `MachinePorts`, the sleep hook's
+  `stopForSleep`, and the stream's viewer lease.
 
 ## Open follow-ups and risks
 
