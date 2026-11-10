@@ -74,7 +74,6 @@ import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -258,13 +257,11 @@ export function PreviewView({
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      if (isBrowserSettingsReadError(error)) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to open browser",
-          description: error.message,
-        });
-      }
+      toastManager.add({
+        type: "error",
+        title: "Unable to open browser",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
     }
     return result._tag === "Success";
   };
