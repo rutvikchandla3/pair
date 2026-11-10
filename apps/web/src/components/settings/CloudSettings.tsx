@@ -300,7 +300,8 @@ function CloudEnvironmentSettings({
           <TriangleAlertIcon aria-hidden />
           <AlertDescription>
             Plain Docker is not a security boundary: agents in a machine can reach this host's
-            Docker network and kernel. Use rootless Docker or gVisor.
+            Docker network and kernel. Private threads are not isolated from other members on this
+            driver. Use rootless Docker or gVisor.
           </AlertDescription>
         </Alert>
       ) : null}

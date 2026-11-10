@@ -593,7 +593,7 @@ customer's VPC to them. It is rejected: Pair Cloud runs in an account the team c
 
 - **Multi-tenant is out on its face.** "Several teams on one server" is a non-goal
   ([decisions](../decisions.md#non-goals)), the event store is SQLite with one writer per server,
-  and everyone on a server sees every thread.
+  and a team server shows every member its shared threads.
 - **A fleet of single-tenant servers is a company, not a feature.** The host would store
   transcripts, credentials and the mirror, which is customer code, and its server could run any
   command in the customer's machines. Calling EC2 in the customer's account would need a
@@ -615,8 +615,9 @@ customer's VPC to them. It is rejected: Pair Cloud runs in an account the team c
   AMIs, and the driver deletes a machine's volumes and snapshots when it is destroyed. A machine
   shared by side chats and forks is destroyed only when no thread uses it (decision 6). On GCP,
   CMEK on disks, snapshots and images.
-- **Access.** Membership is the trust boundary: everyone on Pair Cloud sees every project and thread
-  ([decisions](../decisions.md)), and the team invites only its own members (D15). Adding a Pair
+- **Access.** Membership decides who may use the server and its accounts: everyone on Pair Cloud
+  sees every project, a cloud thread is private until its owner shares it
+  ([11](./11-private-threads.md)), and the team invites only its own members (D15). Adding a Pair
   Cloud project checks that the member can access the repo (decision 16). Removing a member revokes
   their sessions, push devices and GitHub token, but nothing removes a member who leaves the
   company's GitHub org (open question 6).

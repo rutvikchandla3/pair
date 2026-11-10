@@ -499,9 +499,9 @@ sequenceDiagram
   and Cursor download their server into the machine, which needs egress to their CDNs
   ([06](./06-credentials-and-security.md)).
 
-**Who may SSH into whose thread.** Any active member, into any cloud thread's machine. Anyone may
-already prompt any thread ([decisions](../decisions.md#threads)) and so run commands in it, so SSH
-adds no new reach. Admins get one team switch, "Allow SSH into machines", on by default. Guests,
+**Who may SSH into whose thread.** Any active member who can open the thread, into its machine. Anyone
+who can open a thread may already prompt it ([decisions](../decisions.md#threads)) and so run
+commands in it, so SSH adds no new reach. Admins get one team switch, "Allow SSH into machines", on by default. Guests,
 guest links, API tokens and the sandbox token can never open a tunnel. An open SSH session shows in
 presence as viewing the thread. It gets no timeline row.
 

@@ -158,9 +158,11 @@ t3 member invite "Ada Lovelace" --github ada-gh --base-url https://pair.example.
 ```
 
 Add `--role admin` for another admin. Each link works once; see [Team](./team.md#invite-people).
-The invite dialog tells you what you are trusting a member with: "Members can prompt any thread,
-which reaches its provider sign-in and git token. Their agents run in cloud machines, not on this
-server." Invite the people you would share those credentials with.
+The invite dialog tells you what you are trusting a member with: "Members can start cloud threads on
+this server's machines and provider accounts. They see a teammate's thread only when it is shared
+with them." Invite the people you would let use those machines and accounts. A cloud thread is
+private to its owner until they share it; see
+[Who can open a cloud thread](./cloud.md#who-can-open-a-cloud-thread).
 
 Each member opens their link in a browser, or pastes it into **Add environment** in Pair's desktop
 or mobile app (**Add a device** on their row makes links for more devices). Then, on their own row
@@ -337,8 +339,11 @@ Instead of `t3 update`, an admin can choose **Update server** in Pair's app (see
 1. Run `t3 member remove "<name>"`, or remove them in **Settings → Team**. That signs out all their
    devices, deletes their GitHub connection and pasted token from the server, signs out their
    provider accounts, and ends the link from their Mac.
-2. **Discard machine** on their running cloud threads, whose agents may still hold their
-   credentials, and **Assign to…** or delete the threads you keep.
+2. If they own cloud threads, Pair asks where they go: give them to another member, or delete them
+   and their machines. On the command line, pass `--give-cloud-threads-to "<name>"` or
+   `--delete-cloud-threads`; without one, the removal is refused. An admin hands the threads over
+   without being able to open them. Delete them instead when their agents may still hold the
+   member's credentials.
 3. On GitHub, remove them from the organization, which also ends what the App can do as them.
    Ask them to revoke the App at
    [github.com/settings/apps/authorizations](https://github.com/settings/apps/authorizations),

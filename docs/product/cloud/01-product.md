@@ -186,9 +186,10 @@ Surfaces: mobile. Milestone: M2.
 
 Surfaces: all. Milestone: M2.
 
-Everyone on Pair Cloud sees every project and thread
-([decisions](../decisions.md#members-and-roles)), so nothing about multiplayer changes. The
-teammate opens the session from the Team shelf, sees the owner's avatar and presence, and sends. If
+A cloud thread is private to its owner until they share it with named members or with everyone on
+the team ([private threads](./11-private-threads.md)). Once it is shared, nothing about multiplayer
+changes. The teammate opens the session from the Team shelf, sees the owner's avatar and presence,
+and sends. If
 the owner's turn is running, the message queues, and **Steer now** stays the deliberate interrupt.
 The turn runs on the thread's provider account, by default the owner's own subscription, so a
 teammate who prompts spends it; usage shows per sender. If the machine is asleep, sending wakes it,
@@ -389,8 +390,9 @@ Proposed text:
 > the machine running them can read. On a server with local threads, that is the server's user,
 > including credentials and the database. On Pair Cloud, which is cloud-only, it is the thread's
 > machine, including the thread's provider credential and its git credential, which can be the
-> owner's own GitHub token. Anyone can prompt any thread, so any member can reach both. Roles
-> prevent accidents, not malice.
+> owner's own GitHub token. Whoever can open a thread can prompt it, so a member it is shared with
+> can reach both. A cloud thread is private to its owner until they share it. Roles prevent
+> accidents, not malice.
 
 What follows from it:
 
@@ -399,14 +401,18 @@ What follows from it:
   EC2 in M5. No agent or terminal runs on the server, so a member can no longer read the database,
   other members' GitHub tokens or the server's secrets. The simplest M2 install runs plain Docker on
   the same VM, so the install guide says this, and Settings → Cloud's isolation warning covers it.
-  The invite dialog on Pair Cloud says "Members can run agents on your team's cloud machines and use
-  the provider accounts those threads run on."
-- **Invite the team, not the company.** Pair Cloud keeps today's trust level, where everyone sees
-  everything, so it is for the people who would share a server today, not the whole engineering
-  org.
-- **It is not isolation between members.** A member can prompt a teammate's session and ask its
-  agent to print the credential it was started with. Plan decision 10 already notes that an agent
-  can leak anything its process can read. Private threads stay a non-goal.
+  The invite dialog on Pair Cloud says "Members can start cloud threads on this server's machines and
+  provider accounts. They see a teammate's thread only when it is shared with them."
+- **Invite the team, not the company.** Every member can use the server's machines and provider
+  accounts, and a member a thread is shared with can read that machine's credentials. It is for the
+  people who would share a server today, not the whole engineering org.
+- **Private threads isolate members in the product, not from everything.** A member cannot open,
+  prompt or read a teammate's thread unless it is shared with them, and the server enforces that on
+  every request. A member it is shared with can prompt the session and ask its agent to print the
+  credential it was started with, and plan decision 10 already notes that an agent can leak anything
+  its process can read. Private does not cover a pushed branch or its pull request on GitHub, a
+  shared provider account, plain Docker, or whoever runs the server's host
+  ([11 §1](./11-private-threads.md#1-what-changes-and-why-it-is-not-theater)).
 - **A Viewer role becomes possible on Pair Cloud, and only there.** A viewer reads threads, diffs
   and usage, and cannot prompt, approve, open terminals or start threads. On a server with local
   threads it stays a non-goal, because reading the filesystem reads credentials. Recommend building
@@ -516,10 +522,10 @@ get no row; they would fill timelines with noise.
 
 ### Rules that stay unchanged
 
-- Everyone on Pair Cloud sees every project and thread
-  ([decisions](../decisions.md#members-and-roles)). "Private until shared" cloud sessions would
-  contradict that, so they are not offered.
-- Anyone can prompt any thread, never hijacking a turn. Queued messages and approvals work as today.
+- Everyone on Pair Cloud sees every project. A cloud thread is private until its owner shares it
+  ([11](./11-private-threads.md)); local threads on a team server stay visible to everyone.
+- Anyone who can open a thread can prompt it, never hijacking a turn. Queued messages and approvals
+  work as today.
 - One owner per thread. Only the owner or an admin deletes it, and only they can **Sleep now** or
   **Discard** its machine (from failed, asleep, or ready with no run). Any member can wake or retry.
 - Personal and shared state split as today. A thread's mode and sandbox are shared state.
@@ -701,8 +707,9 @@ timeout.
   (Pair Cloud), never both. The local server never orchestrates cloud machines.
 - **Syncing threads between servers.** The local server and Pair Cloud each keep their own threads.
   Moving a session (M3) copies its code and conversation; nothing stays in sync.
-- **Private threads, per-project permissions and several teams on one server.** Unchanged, including
-  on Pair Cloud.
+- **Per-project permissions, several teams on one server, and private local threads on a team
+  server.** Unchanged, including on Pair Cloud. Private cloud threads are built
+  ([11](./11-private-threads.md)).
 
 ## Open questions
 

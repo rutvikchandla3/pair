@@ -472,7 +472,8 @@ print only the token; pass `--base-url` for a full link. `--github` lets the
 member [sign in with GitHub](./team.md#sign-in-with-github) instead. Members get
 every permission except settings, providers, access, T3 Connect, and environment
 maintenance; admins get all of them. Removing a member signs out all of their
-devices.
+devices. On Pair Cloud, when they own cloud threads, `remove` needs
+`--give-cloud-threads-to <member>` or `--delete-cloud-threads`, and is refused without one.
 
 `t3 pair` and `t3 auth session issue` take `--member` to issue the credential
 to that member instead of the owner. It gets the member's role permissions;

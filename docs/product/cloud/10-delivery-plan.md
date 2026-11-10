@@ -713,7 +713,7 @@ has the full text):
 | D12 | Desktop and other servers that aren't cloud-only stop offering Cloud.                                                                                                                                                         | 2.24                  |
 | D13 | Machine images (GCE custom images, then AMIs) built in the customer's account; Pair CI runs `provision.sh` each release.                                                                                                      | 5.7                   |
 | D14 | One member-scoped agent link, laptop to Pair Cloud only.                                                                                                                                                                      | 3.19                  |
-| D15 | Pair Cloud invites the team only, at today's trust level.                                                                                                                                                                     | 2.22                  |
+| D15 | Pair Cloud invites the team only. A cloud thread is private until shared (M6).                                                                                                                                                | 2.22                  |
 | D16 | One Pair app build receives pushes from any Pair Cloud server.                                                                                                                                                                | 2.35                  |
 | D17 | The phone keeps its Mac connection and also pairs with Pair Cloud; anyone starts a cloud session from it in M2.                                                                                                               | 2.29                  |
 | D18 | 30 concurrent machines per server, proven by a load test before M2 ships; byte budgets.                                                                                                                                       | 2.40, 2.43            |
@@ -754,8 +754,9 @@ From 01 §10, 02, 04, 05, 06, 07, 09 and the 2026-11-08 architecture:
 - The local server orchestrating cloud machines; local work never depends on anything remote.
 - Syncing threads or state between servers.
 - A mixed-mode server, with local agents and cloud machines on one server.
-- "Private until shared" threads, which would contradict
-  [decisions](../decisions.md#members-and-roles): everyone on a server sees every thread.
+- Private _local_ threads on a team server: its agents share one shell
+  ([decisions](../decisions.md#members-and-roles)). Private cloud threads are M6
+  ([11](./11-private-threads.md)).
 - Seeds over the WebSocket or the chat attachment route, a temporary forge branch as the seed, or
   copying every checkpoint ref.
 - T3 Connect as the default ingress, or app.t3.codes as Pair Cloud's web surface.

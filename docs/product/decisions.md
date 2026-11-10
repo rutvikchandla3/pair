@@ -15,10 +15,12 @@ page says how it must behave. The decisions came from a product design review du
 - **Membership is the trust boundary.** A member who can run agents or terminals can read everything
   the machine running them can read. On a server with local threads that is the server's user,
   every file, credentials and the database included. On Pair Cloud it is the thread's machine, with
-  the thread's provider credential and git credential, and anyone can prompt any thread. Roles
-  prevent accidents, not malice. The invite dialog says so: "Invite only people you'd give SSH
-  access to.", or on Pair Cloud "Members can prompt any thread, which reaches its provider sign-in
-  and git token."
+  the thread's provider credential and git credential, and whoever can open a thread can prompt it.
+  Membership decides who may use the server and its accounts, not who can read a cloud thread: a
+  cloud thread is private to its owner until they share it. Roles prevent accidents, not malice. The
+  invite dialog says so: "Invite only people you'd give SSH access to.", or on Pair Cloud "Members
+  can start cloud threads on this server's machines and provider accounts. They see a teammate's
+  thread only when it is shared with them."
 - **Quiet UI.** Team features add little: static avatars, one-line timeline rows, no animation and
   no activity feed. Presence sends nothing while you're alone.
 
@@ -29,18 +31,25 @@ page says how it must behave. The decisions came from a product design review du
 - Two roles. Only admins change settings, providers, members, access and T3 Connect, remove
   projects, and delete other people's threads. There is no Viewer role, because reading the
   filesystem reads credentials, and no per-project permissions.
-- Everyone sees every project and thread. Private threads would be theater on a shared shell.
+- Everyone sees every project. On a team server, everyone sees every local thread too: private
+  local threads would be theater on a shared shell. A cloud thread on Pair Cloud is the exception.
+  It is private to its owner, shared with named members or with everyone on the team, and no role
+  reads it without being added, admins included
+  ([private threads](./cloud/11-private-threads.md)).
 - A GitHub identity maps to a member only by proof: the device flow from a signed-in session, or a
   username an admin set that binds on first sign-in. No open sign-up.
 - Removing a member revokes their sessions, push devices and GitHub token. Their threads stay,
-  shown as "Former member" until reassigned. Their provider accounts are signed out and wiped but
+  shown as "Former member" until reassigned, except cloud threads on Pair Cloud: removing a member
+  who owns any asks an admin to give them to a member or delete them and their machines, without
+  letting the admin open them. Their provider accounts are signed out and wiped but
   kept, disabled, as the record of whose account old threads used.
 
 ## Threads
 
 - **One owner.** The creator owns a thread until **Assign to…** hands it over, and the previous
-  owner keeps following it. Only the owner or an admin deletes it.
-- **Anyone can prompt any thread.** No locks, no "driver".
+  owner keeps following it. Only the owner or an admin deletes it. On a cloud thread, only the owner
+  assigns it, or an admin once the owner has left the team.
+- **Anyone who can open a thread can prompt it.** No locks, no "driver".
 - **Never hijack a teammate's turn.** Sending on someone else's running turn queues the message and
   leaves their approvals alone. **Steer now** is the deliberate way to interrupt; it also declines
   their pending approvals. On mobile it is a long-press on Send.
@@ -135,7 +144,7 @@ page says how it must behave. The decisions came from a product design review du
 
 ## Non-goals
 
-- Private threads, per-project permissions, a Viewer role, several teams on one server.
+- Private local threads, per-project permissions, a Viewer role, several teams on one server.
 - An activity feed, side chat, and @mentions for now.
 - Thread locks, shared composers, live cursors.
 - Switching accounts per prompter, and account pools.

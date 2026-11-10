@@ -36,7 +36,7 @@ import { toastCommandFailure } from "./toastCommandFailure";
 const TRUST_WARNING =
   "Members can run commands as this server's user. Invite only people you'd give SSH access to.";
 const CLOUD_TRUST_WARNING =
-  "Members can prompt any thread, which reaches its provider sign-in and git token. Their agents run in cloud machines, not on this server.";
+  "Members can start cloud threads on this server's machines and provider accounts. They see a teammate's thread only when it is shared with them.";
 
 /** What an invited member can reach on this environment (D15). */
 export function useTrustWarning(environmentId: EnvironmentId) {

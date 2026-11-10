@@ -8,8 +8,8 @@ Engineers work locally in the Pair Mac app. Its bundled local server runs their 
 own machine, as it does today. When they want to share work, they start a cloud session on their
 team's Pair Cloud server: one always-on, cloud-only Pair server per team. Pair Cloud clones the
 repo and checks out the branch on a machine (a Docker container now, a VM in the
-customer's own Google Cloud project or AWS account later), runs the agent there, and every teammate can open the session
-and prompt it. The Pair app on desktop, web and phone connects to both servers and sends each
+customer's own Google Cloud project or AWS account later), runs the agent there, and its owner can share the session
+with teammates, who can then open it and prompt it. The Pair app on desktop, web and phone connects to both servers and sends each
 launch to the right one. The two servers never sync.
 
 ```mermaid
@@ -53,7 +53,7 @@ flowchart TB
 | [08 Clients and contracts](./08-clients-and-contracts.md)       | What changes on the wire, how clients route between servers, and what web, desktop, mobile, MCP and the CLI get? |
 | [09 BYOC](./09-byoc.md)                                         | How does a customer run Pair Cloud and its machines in their own cloud?                                          |
 | [10 Delivery plan](./10-delivery-plan.md)                       | In what order do we build it, in which pull requests, and how do we know it works?                               |
-| [11 Private threads](./11-private-threads.md)                   | Who can open a cloud thread, how does its owner share it, and where is that enforced? (Proposal, not built)      |
+| [11 Private threads](./11-private-threads.md)                   | Who can open a cloud thread, how does its owner share it, and where is that enforced?                            |
 
 ## Decisions everything else builds on
 
@@ -259,7 +259,7 @@ Settled on 2026-11-08 by the maintainers:
 | D12 | Laptops and other servers that aren't cloud-only no longer offer Cloud.                                                                                           |
 | D13 | Machine images (GCE custom images, then AMIs) are built in the customer's account when the driver is set up. Pair CI runs `provision.sh` on every release.        |
 | D14 | Local agents reach Pair Cloud through one member-scoped link, from the laptop to Pair Cloud only (M3).                                                            |
-| D15 | Pair Cloud invites the team, at today's trust level, not the whole engineering org.                                                                               |
+| D15 | Pair Cloud invites the team, not the whole engineering org. A cloud thread is private until its owner shares it (11).                                             |
 | D16 | One Pair app build receives notifications from any Pair Cloud server.                                                                                             |
 | D17 | The phone keeps its connection to the member's Mac and also pairs with Pair Cloud. Anyone can start a cloud session from it in M2.                                |
 | D18 | Each Pair Cloud server targets 30 concurrent machines, proven by a load test before M2 ships.                                                                     |

@@ -93,13 +93,19 @@ Scripts and agents start cloud threads too: see `--cloud` in
 [Scripts and CI](./outside-agents.md#scripts-and-ci) and
 [Agents working with agents](./outside-agents.md#agents-working-with-agents).
 
-Side chats and forks of a cloud thread run on the same machine. A fork of a teammate's cloud thread
-says so, because its agent can read that teammate's credentials there.
+Side chats and forks of a cloud thread run on the same machine, so
+[sharing the thread](#who-can-open-a-cloud-thread) shares them too. A fork of a teammate's cloud
+thread says so, because its agent can read that teammate's credentials there.
 
 On a Cloud server, scheduled and webhook tasks that start a new thread run in Cloud too, from the
 task's base branch on `origin`. Turn on **Discard the machine when the run settles** in the task to
 give each run a machine that is deleted once the run settles; the transcript and diffs stay. A run
 that cannot get a machine fails with the reason in the task list, and never runs on the server.
+
+A run is private to the member who created the task. Choose who else can open its runs under
+**Share runs with** in the task editor, on the web; the phone's editor has no such control yet. Tasks
+that existed before sharing are shared with everyone on the team. Everyone can still see the task
+and that it ran.
 
 ## Move a thread between your Mac and Pair Cloud
 
@@ -156,7 +162,7 @@ thread in your project with the same `origin`, on your computer's own provider s
 
 - When the thread is yours, it moves. The cloud thread says it continued on your computer and
   settles, so its machine can sleep. The new thread keeps the branch's name.
-- When it's a teammate's, you get a copy on a new branch ending in `-copy`, and their cloud thread
+- When it's a teammate's thread shared with you, you get a copy on a new branch ending in `-copy`, and their cloud thread
   keeps going.
 
 An asleep machine isn't woken: Pair uses what it saved when it went to sleep, and asks you to wake
@@ -195,7 +201,7 @@ and waking one rebuilds the machine from the server's copy of its work. The agen
 session there with the conversation so far ([handoffs](./portable-handoffs.md)). Admins change both
 in **Settings → Cloud → Compute**.
 
-Anyone can wake or retry a machine. Only the thread's owner or an admin can choose **Sleep now** or
+Anyone who can open the thread can wake or retry its machine. Only the thread's owner or an admin can choose **Sleep now** or
 **Discard machine**, from the thread's menu (on a phone, the **Machine** menu in the thread
 header). Discarding deletes the machine's disk; the transcript and diffs stay. When a machine
 fails, the member who started the turn and the thread's owner are
@@ -250,13 +256,76 @@ When a machine can't clone a private repository, the thread says "Pair Cloud can
 
 Cloud threads push only to github.com for now.
 
+## Who can open a cloud thread
+
+A cloud thread is private. Only you can see it, in the sidebar, the **Team** shelf, search and the
+archive, until you share it. Someone who opens a link to a thread they cannot open sees "This
+thread is private, or it no longer exists." The page does not say which. A thread that existed
+before your server offered sharing stays open to everyone on the team until its owner changes that.
+
+Share a thread you own from any of these:
+
+- The **Share** button in the thread header.
+- **Share…** in the thread's menu or its sidebar row's menu.
+- **Share thread** in the command palette, or a shortcut you bind to **Thread: Share…** in
+  [Keybindings](./keybindings.md).
+
+The mobile app has **Share** in the thread's menu too. For anyone but the owner the item reads
+**Share… (owner only)** and is disabled.
+
+In the dialog, add people by name or GitHub username. Under **General access**, choose **Only
+people added** or **Everyone on** your team, which includes people who join later. Changes apply at
+once, and **Remove** takes access away at once. The thread appears on the **Team** shelf of each
+person you add, with a **Shared with you** notification. A chip beside the title shows who has
+access, and a quiet line in the thread says who shared it with whom.
+
+What people you share with can do:
+
+- Read the thread, prompt it, open its terminal, and fork it, as with any
+  [teammate's thread](./team.md#prompting-someone-elses-turn).
+- Choose **Continue locally**, which gives them a copy.
+- Read the credentials on its machine: its provider sign-in and git token. Share only with people
+  you trust with them.
+
+They cannot share the thread with anyone else, and only you can **Assign to…** it to another
+member.
+
+Sharing covers the thread's machine, so it covers every side chat and fork on it, which share one
+disk and one set of credentials. You cannot share one of them alone.
+
+An agent in a thread can read another cloud thread only when everyone who can open its own thread
+can open that one, and agents cannot change who has access. Mentioning a thread in a message sends
+the agent its title and id, so the same rule decides whether it can read it.
+
+What private does not cover:
+
+- **GitHub.** A pushed branch, its commits and its pull request are as visible as the repository.
+  Private covers the conversation, the terminal, uncommitted work and checkpoints.
+- **A shared provider account.** What the provider shows other users of an account, such as usage
+  and sometimes session history, is outside Pair. Use your own account to avoid it.
+- **Plain Docker.** A machine that escapes its container reaches the server's host and everything
+  on it. Settings → Cloud warns when a driver is plain Docker; use rootless Docker or gVisor.
+- **The network between machines.** On a flat network, a dev server in one machine can answer
+  another. gVisor with Pair's private network block, or VMs behind the kit's firewall, keep
+  machines apart.
+- **Whoever runs the server.** Someone with a shell on the server's host can read its files. Pair
+  keeps members apart in the app, not from the person who operates the server.
+
+An admin cannot open a private thread either, not even in search. **Settings → Cloud** gives admins
+an **All machines** list, because machines cost money. A machine the admin cannot open shows
+**Private** and its owner's name, with its state, size, driver and age, and no title, branch or link. **Sleep**
+and **Discard machine** work on it as usual. Members who are not admins get no list. If an owner
+leaves the team, an admin gives their cloud threads to a member or deletes them; see
+[Offboard a member](./pair-cloud.md#offboard-a-member).
+
 ## What agents in a machine can read
 
 An agent in a cloud thread can read its thread's provider credential, its git credential (your own
 GitHub token, when that is what pushes), and the machine's environment variables. Pair writes none
 of them to the machine's disk, but anyone who can prompt the thread can ask its agent to print what
-it was started with. Membership is still the trust boundary: invite only people you trust with
-those credentials.
+it was started with. That is you and the people you share the thread with, so share a cloud thread
+only with people you trust with those credentials. Every member can use the server's machines and
+provider accounts, so invite only people you trust with them.
 
 ## Phone
 

@@ -1,9 +1,9 @@
 # 11 Private cloud threads and sharing
 
-Status: proposal, 2026-11-10 (maintainer's request). Nothing here is built. It follows the shared
-decisions in the [plan](./README.md) and reverses one of them: on Pair Cloud, a cloud thread is
-private to the member who started it until that member shares it. Line numbers are from `feat/pair`
-at `8ddac9f79`; re-read every symbol before editing.
+Status: landed in M6 (2026-11). A cloud thread is private to the member who started it until that
+member shares it, which reverses the earlier plan decision that everyone on Pair Cloud sees every
+thread. [Progress](./implementation/progress.md) lists the rows and what each landed. Line numbers
+below are from `feat/pair` at `8ddac9f79`; re-read every symbol before editing.
 
 Who can open a cloud thread, how does its owner share it, and where does the server enforce that?
 This doc is for the engineers building it and for maintainers reviewing the model. Section 2 is

@@ -1,7 +1,7 @@
 # Team
 
 Several people can share one Pair server, for example one running on a team VM. Everyone
-signs in as a member, works in the same projects and threads, and sees who did what. A server
+signs in as a member, works in the same projects, and sees who did what. A server
 with one member looks and behaves exactly as it did before.
 
 When the desktop or web app is connected to more than one team server, such as your Mac and Pair
@@ -14,8 +14,9 @@ inviting. It works once and signs them in as that member. Members can run comman
 server's user, so invite only people you would give SSH access to.
 
 On a cloud-only server, agents run in cloud machines rather than on the server itself. A member
-can still prompt any thread, and that thread's agent can reach its provider sign-in and git token.
-Only admins' agents can link the server to another machine.
+start cloud threads on the server's machines and provider accounts, and see a teammate's thread
+only when it is [shared with them](./cloud.md#who-can-open-a-cloud-thread). A thread's agent can
+reach its provider sign-in and git token. Only admins' agents can link the server to another machine.
 
 - **Admins** can do everything, including settings, providers, access and inviting people.
 - **Members** can do everything else: start and prompt threads, approve requests, use
@@ -23,7 +24,8 @@ Only admins' agents can link the server to another machine.
 
 To use Pair on another device, choose **Add a device** on your own row. An admin can create a
 **Sign-in link** for any member. Removing a member signs out all of their devices at once; their
-threads stay and can be assigned to someone else. The same actions are available from the
+threads stay and can be assigned to someone else. On Pair Cloud, if they own cloud threads, you
+choose a member to give them to or delete them and their machines. The same actions are available from the
 command line: see [Team members from the command line](./remote-access.md#team-members-from-the-command-line).
 For scripts, CI and outside agents, create an [API token](./outside-agents.md#api-tokens) instead.
 
@@ -180,12 +182,15 @@ you a code is asking you to sign them in as you.
 Every thread has an owner: the person who created it. Side chats and subagent threads belong to
 the owner of the thread they came from.
 
-- Your sidebar shows the threads you own. Other people's active threads are in the collapsed
-  **Team** shelf, newest activity first, with the owner's avatar on each row.
+- Your sidebar shows the threads you own. Other people's active threads you can open are in the
+  collapsed **Team** shelf, newest activity first, with the owner's avatar on each row. On a team
+  server, that is every thread that runs locally. On Pair Cloud, a cloud thread is private until
+  its owner [shares it](./cloud.md#who-can-open-a-cloud-thread) with you.
 - Pin someone else's thread to keep it in your own **Pinned** list.
 - **Settled** lists only your own threads.
 - To hand a thread over, choose **Assign to…** from the thread's menu or the command palette. You
-  can also bind a shortcut to it in [Keybindings](./keybindings.md).
+  can also bind a shortcut to it in [Keybindings](./keybindings.md). A cloud thread can only be
+  assigned by its owner, or by an admin once the owner has left the team.
 - Only a thread's owner or an admin can delete it.
 
 The mobile app shows names, owners, the Team shelf, Follow and Assign too. On a teammate's
@@ -216,7 +221,9 @@ phone; it never includes messages or agent output.
 ## Share a thread
 
 On a team server, **Copy thread** copies a link to the thread on your own server. A teammate who
-opens it while signed out is asked to sign in, and lands on the thread afterwards.
+opens it while signed out is asked to sign in, and lands on the thread afterwards. On Pair Cloud
+the link opens only for people the cloud thread is shared with; choose **Share** to
+[give someone access](./cloud.md#who-can-open-a-cloud-thread).
 
 ## See who's around
 

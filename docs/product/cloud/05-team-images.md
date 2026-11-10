@@ -533,7 +533,7 @@ with one change Pair's own rules force.
 
 ### Authority comes from the people prompting, not the thread
 
-In Pair anyone can prompt any thread ([decisions](../decisions.md#threads)). README decision 9
+In Pair anyone who can open a thread can prompt it ([decisions](../decisions.md#threads)). README decision 9
 therefore checks the **run**: every human who authored a message in the current run must be an
 active admin when an image tool that changes something is called. Authors are already recorded per
 message ([HumanAuthorship.ts](../../../apps/server/src/orchestration-v2/HumanAuthorship.ts)).
