@@ -36,13 +36,18 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (12 of 12), G4 step 1 next:** full specs in
+**M4 (12 of 12), G4 step 1 blocked at its first build:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
 (52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too, then 4.21 (e756fae13) and 4.22
 (0ee7304c3), 4.19 (54967e437) and 4.20 (8957aa206), so every M4 row is landed. The four
-`team-image-*` eval cases pass 2 of 2 live on Sonnet 5.5 and Opus 5.5 (`../pair-wt/g4-evidence/`). Then a release with M4 and the M4 integrated pass (G4
+`team-image-*` eval cases pass 2 of 2 live on Sonnet 5.5 and Opus 5.5 (`../pair-wt/g4-evidence/`).
+Release `0.1.7-pair.6` (V6) is published and on the VM; see
+[G4 step 1 on real hardware](#g4-step-1-on-real-hardware-2026-11-10-pair-cloud-pass-release-v6).
+
+**M5, specs written 2026-11-10:** [m5-byoc.md](./m5-byoc.md) (b4dad95d5), Google Cloud first and
+AWS second (maintainer, 2026-11-10), with every open question answered as proposed. No row built. Then a release with M4 and the M4 integrated pass (G4
 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -459,6 +464,51 @@ Findings:
   both (the launch left out `projectId`) and `agent-link-vps-stays-vps` failed on a missing mock.
   Fixed by 3.27 (529fd4920), in V5. Re-run live on the fixed text: all four `agent-link-*` cases
   pass 2 of 2 on Sonnet 5.5 and Opus 5.5 (`m3-rerun-sonnet/`, `m3-rerun-opus/`).
+
+### G4 step 1 on real hardware (2026-11-10, `pair-cloud-pass`, release V6)
+
+**Blocked: no team image build can succeed on the VM, so steps 2, 3, 4 and 7 did not run.** Pair
+Cloud runs [v0.1.7-pair.6](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.6)
+(prerelease, tag `cc7833040`, every M4 row; transcript `upgrade-v6.txt`). A Sonnet worker ran the
+[M4 integrated pass](./m4-team-images.md#m4-integrated-pass); evidence is in
+`../pair-wt/g4-evidence/` (not committed).
+
+1. **Build: failed (finding 1).** The page rendered, the log streamed and the phases advanced,
+   but build 1 failed at preflight in 3.5 s: "sudo: effective uid is not 0 … nosuid".
+2. **A session boots from it: not run.** Clone baseline only: `checkoutInSandbox` with
+   `clone_source=origin` took 6.82, 5.84 and 6.49 s on three fresh sessions.
+3. **A leak fails the build: not run (finding 2).**
+4. **Roll back: not run.**
+5. **The admin agent: partly passed.** Haiku called `t3_team_image_read`, `recipe_update`
+   (revision 2 kept the old line and added `jq`) and `build_start`; build 8 is agent-requested with
+   `activateOnSuccess` off. As member B the update was refused ("Teammate is not an admin … or
+   propose it with t3_team_image_propose"), the agent filed a proposal, and the admin reviewed the
+   diff and dismissed it. No Ready build, toast or Activate, since no build succeeds.
+6. **Cancel and restart: passed during `launch`, not `install`.** Cancel: Cancelled about 75 ms
+   after the click, machine destroyed, no tagged container left. `t3 drain` printed "Waiting for 1
+   team image build". `t3 service restart` during a build: failed as `interrupted`, machine
+   destroyed 12 s later, no restore mode.
+7. **Collection: not run.**
+
+Findings:
+
+- **Finding 1 (blocker): `sudo` does not work in any machine on this VM.** gVisor
+  `release-20261102.0` ignores setuid binaries unless runsc runs with `--allow-suid`; the same
+  image under `runc` runs `sudo` fine. The install guide's line (`sudo runsc install --
+  --host-uds=open`) leaves the flag out, so D3 (agents have passwordless `sudo`) is false on a
+  guide-built server, for setup scripts as well as builds. G1 and G2 never ran `sudo` in a machine.
+  Settings → Cloud **Test** doesn't check it.
+- **Finding 2 (blocker for step 3): a build secret can't be saved.** The page refuses a sensitive
+  row with "Pick where it comes from…", but secret sources need the `secretReferences` capability
+  and a 1Password provider, which this server doesn't have. There is no other place to keep one.
+- Page: a failed row repeats the failing log line (tail and log box); a failed build never reads
+  "Failed · interrupted"; a member's empty state doesn't say an admin manages the image; **Restore
+  recipe** shows only on succeeded builds, though the guide uses it after a failed one; the empty
+  install-script placeholder reads like a filled recipe.
+- Every boot logs a failed `fs.stat` span under `CloudPreparation.copyImageClone` with no image.
+
+Left on the VM: builds 1–9 failed or cancelled, no active build, the recipe at revision 4, four
+running machines from the pass, and `~/g4-scratch`.
 
 ## How to resume
 
