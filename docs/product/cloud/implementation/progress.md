@@ -36,12 +36,13 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (11 of 12), specs written 2026-11-10:** full specs in
+**M4 (12 of 12), G4 step 1 next:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
 (52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too, then 4.21 (e756fae13) and 4.22
-(0ee7304c3) and 4.19 (54967e437). In flight: 4.20, the last row. Then a release with M4 and the M4 integrated pass (G4
+(0ee7304c3), 4.19 (54967e437) and 4.20 (8957aa206), so every M4 row is landed. The four
+`team-image-*` eval cases pass 2 of 2 live on Sonnet 5.5 and Opus 5.5 (`../pair-wt/g4-evidence/`). Then a release with M4 and the M4 integrated pass (G4
 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -2185,6 +2186,20 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   and is refused in team mode.
 - Eval cases in `team-image.ndjson`: `team-image-admin-adds-postgres`,
   `team-image-member-asks-to-build`, `team-image-ordinary-work-control`.
+
+## 4.20 proposals from members' sessions (landed 8957aa206)
+
+- Migration 096. Commands for filing and dismissing a proposal, `acceptsProposalId` on a save,
+  event `team-image.proposal-updated`. One open proposal per thread (`proposal-open`), 20 open per
+  server (`too-many-proposals`). `TeamImageProposal.baseRevision` is nullable; the decider fills it.
+- Tool `t3_team_image_propose { install, reason }`, for a thread with a machine; the authority
+  refusals now end "…or propose it with t3_team_image_propose." `mcpToolListJsonBytes` 50,313 →
+  50,769 (4.19 and 4.20 add 1,981 of the 6,000 allowed): needs the `agent-context-increase` label.
+- RPC `teamImage.dismissProposal`. Web: a Proposals list for admins with Review (`installDiff`),
+  Accept (fills the editor; saving closes the proposal) and Dismiss.
+- Every snapshot push carries the open proposals' full scripts (20 at 64 KB in the worst case).
+- Follow-up b518c831a: the `team-image.ndjson` cases began their patterns with `(?i)`, which
+  `RegExp` rejects, so a live run crashed while grading. Owes the page captures with the M4 pass.
 
 ## Open follow-ups and risks
 
