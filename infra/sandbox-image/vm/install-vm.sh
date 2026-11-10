@@ -15,6 +15,23 @@ rm -f /etc/pair-runner/bootstrap.env /etc/pair-runner/generation
 systemctl daemon-reload
 systemctl enable pair-runner.service
 
+# Chrome's own sandbox needs unprivileged user namespaces, which Ubuntu 24.04 allows only to a
+# profile that grants them: PreviewBrowserHost.APPARMOR_PROFILE with the machine's Chrome path.
+# A container gets no profile and runs Chrome without its sandbox.
+cat >/etc/apparmor.d/pair-chrome <<'APPARMOR'
+# Written by Pair's machine image: lets the machine's headless browser use Chrome's sandbox.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile pair-chrome /opt/pair-chrome/*/chrome-headless-shell flags=(unconfined) {
+  userns,
+
+  include if exists <local/pair-chrome>
+}
+APPARMOR
+apparmor_parser -r /etc/apparmor.d/pair-chrome
+sudo -u t3 -H pair-chrome --dump-dom about:blank >/dev/null
+
 # Agents run apt; Ubuntu's own upgrades would hold the dpkg lock under them.
 for unit in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
   if systemctl cat "$unit" >/dev/null 2>&1; then systemctl disable --now "$unit"; fi

@@ -35,6 +35,12 @@ apt-get install -y --no-install-recommends \
   ca-certificates curl openssh-client openssh-server sudo tini locales procps less unzip tmux vim \
   git git-lfs ripgrep fd-find jq build-essential pkg-config python3 python3-venv python3-pip \
   iptables xz-utils
+# What chrome-headless-shell links against on 24.04 (the t64 names of PreviewBrowserHost's list),
+# and fonts, without which pages render no text. Step 11 starts it, so a missing one fails here.
+apt-get install -y --no-install-recommends \
+  libnss3 libglib2.0-0t64 libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 libdbus-1-3 \
+  libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libxkbcommon0 \
+  libgbm1 libasound2t64 libexpat1 fontconfig fonts-liberation fonts-noto-color-emoji
 rm -rf /var/lib/apt/lists/*
 ln -sf /usr/bin/fdfind /usr/local/bin/fd
 locale-gen en_US.UTF-8
@@ -73,20 +79,30 @@ ln -sf /opt/pair-providers/node_modules/.bin/claude /usr/local/bin/claude
 rm -rf /root/.npm
 claude_version="$(node -p 'require("/opt/pair-providers/node_modules/@anthropic-ai/claude-code/package.json").version')"
 
-# 5. The agent user. Ubuntu 24.04 ships an `ubuntu` user at uid 1000.
+# 5. Chrome's headless shell, the build the server's Playwright drives, for the machine browser.
+chrome_platform="$([ "$arch" = amd64 ] && echo linux64 || echo linux-arm64)"
+chrome_dir="/opt/pair-chrome/${CHROME_VERSION}"
+fetch "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/${chrome_platform}/chrome-headless-shell-${chrome_platform}.zip" \
+  "$(indirect "CHROME_SHA256_${suffix}")" "$work/chrome.zip"
+unzip -q "$work/chrome.zip" -d "$work/chrome"
+install -d /opt/pair-chrome
+mv "$work/chrome/chrome-headless-shell-${chrome_platform}" "$chrome_dir"
+ln -sf "$chrome_dir/chrome-headless-shell" /usr/local/bin/pair-chrome
+
+# 6. The agent user. Ubuntu 24.04 ships an `ubuntu` user at uid 1000.
 if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi
 useradd -m -u 1000 -s /bin/bash t3
 echo 't3 ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/t3
 chmod 0440 /etc/sudoers.d/t3
 visudo -c -q -f /etc/sudoers.d/t3
 
-# 6. User npm prefix, ahead of everything on PATH.
+# 7. User npm prefix, ahead of everything on PATH.
 install -d -o t3 -g t3 /home/t3/.npm-global
 printf 'prefix=/home/t3/.npm-global\n' >/home/t3/.npmrc
 chown t3:t3 /home/t3/.npmrc
 echo 'export PATH="/home/t3/.npm-global/bin:$PATH"' >/etc/profile.d/pair.sh
 
-# 7. Git asks the server for every credential through the runner and never stores one; SSH
+# 8. Git asks the server for every credential through the runner and never stores one; SSH
 # remotes on github.com go over HTTPS so the helper answers them too. No user.name: the server
 # sets the identity per process.
 cat >/etc/gitconfig <<'GITCONFIG'
@@ -98,15 +114,20 @@ cat >/etc/gitconfig <<'GITCONFIG'
 	insteadOf = ssh://git@github.com/
 GITCONFIG
 
-# 8. Directories other components fill in.
+# 9. Directories other components fill in.
 install -d -m 0700 /etc/pair-runner
 install -d -m 0755 /opt/pair-runner /t3-sandbox
 
-# 9. What this image runs, keyed by the model manifest's driver names.
-printf '{"pairVersion":"%s","providers":{"claudeAgent":"%s","codex":"%s"}}\n' \
-  "${PAIR_VERSION:-dev}" "$claude_version" "$CODEX_VERSION" >/etc/pair-image.json
+# 10. What this image runs, keyed by the model manifest's driver names.
+# `browser` is absent from images built before it, so every reader treats it as optional.
+printf '{"pairVersion":"%s","providers":{"claudeAgent":"%s","codex":"%s"},"browser":"%s"}\n' \
+  "${PAIR_VERSION:-dev}" "$claude_version" "$CODEX_VERSION" "$CHROME_VERSION" >/etc/pair-image.json
 
-# 10. The CLIs must start as the agent user, and be the versions pinned above.
+# 11. The CLIs and the browser must start as the agent user, and be the versions pinned above.
 sudo -u t3 -H claude --version | grep -qF "$claude_version"
 sudo -u t3 -H codex --version | grep -qF "$CODEX_VERSION"
+sudo -u t3 -H pair-chrome --version | grep -qF "$CHROME_VERSION"
+# One real start, so a missing library fails the build. Chrome's own sandbox is off here: a
+# container forbids it, and vm/install-vm.sh checks it on a VM.
+sudo -u t3 -H pair-chrome --no-sandbox --dump-dom about:blank >/dev/null
 rm -rf /tmp/node-compile-cache

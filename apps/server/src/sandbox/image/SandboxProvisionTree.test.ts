@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { previewBrowserRelease } from "../../preview/PreviewBrowser.ts";
 import { CODEX_RELEASES } from "../../provider/codexReleases.ts";
 import {
   codexEnv,
@@ -91,6 +92,32 @@ it.layer(NodeServices.layer)("SandboxProvisionTree", (it) => {
         NodeCrypto.randomBytes(PROVISION_TREE_MAX_BYTES),
       );
       assert.strictEqual((yield* Effect.flip(readReleasedTree(empty))).reason, "too-large");
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("versions.env", (it) => {
+  it.effect("pins the machine's Chrome to the build the server's Playwright drives", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const env = yield* fs.readFileString(path.join(yield* infraDir, "versions.env"));
+      const pins = Object.fromEntries(
+        env.split("\n").flatMap((line) => {
+          const match = /^([A-Z0-9_]+)=(.*)$/.exec(line);
+          return match === null ? [] : [[match[1], match[2]]];
+        }),
+      );
+      const amd64 = previewBrowserRelease("linux", "x64")!;
+      const arm64 = previewBrowserRelease("linux", "arm64")!;
+      assert.deepStrictEqual(
+        {
+          version: pins.CHROME_VERSION,
+          amd64: pins.CHROME_SHA256_AMD64,
+          arm64: pins.CHROME_SHA256_ARM64,
+        },
+        { version: amd64.version, amd64: amd64.sha256, arm64: arm64.sha256 },
+      );
     }),
   );
 });

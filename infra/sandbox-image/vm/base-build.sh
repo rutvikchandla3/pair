@@ -15,7 +15,7 @@ cd /
 
 STATE=/var/lib/pair-base-build
 METADATA=http://169.254.169.254/computeMetadata/v1/instance
-# Room for provision.sh's packages, Node, Codex and Claude Code, with a margin.
+# Room for provision.sh's packages, Node, Codex, Claude Code and Chrome, with a margin.
 MIN_FREE_KB=$((4 * 1024 * 1024))
 
 say() {

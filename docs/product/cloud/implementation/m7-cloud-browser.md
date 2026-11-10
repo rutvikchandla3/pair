@@ -148,6 +148,16 @@ This reverses 10 §8's "Chrome in the base image before previews need it": previ
   - `apps/server/src/sandbox/image/SandboxProvisionTree.ts`: the tree travels in instance metadata
     (M5), so check its size budget still holds after the two edits; the zip is downloaded by the
     script, not carried in the tree.
+- **As built:** Chrome is provision.sh step 5, the manifest step 10 and the checks step 11; the
+  library list is the 24.04 (`t64`) names of `PreviewBrowserHost.DEBIAN_PACKAGES` plus
+  `fontconfig`. `browser` is a top-level manifest key, beside `providers` rather than in it, since
+  `TeamImageEffectsLive` reads every `providers` entry as a provider driver; no reader decodes it
+  yet. The VM profile is `/etc/apparmor.d/pair-chrome` (profile `pair-chrome`), not `t3 browser
+  setup`'s name, so that command on a machine neither skips nor overwrites it; install-vm.sh then
+  starts Chrome once with its sandbox on. The image's CI smoke test
+  (`.github/scripts/sandbox-image-smoke.sh`) checks `pair-chrome --version` against the manifest
+  and loads example.com as `t3`. Cost: a ~127 MB download and roughly 0.4 GB on disk with the
+  libraries and fonts; about a minute of build time.
 - **Types and services:** none. **Commands and events:** none. **Migrations:** none.
 - **Tests:**
   - One test beside `SandboxProvisionTree.test.ts` (or the existing versions test, if one reads

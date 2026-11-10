@@ -11,3 +11,5 @@ run bash "$image" -lc 'claude --version && codex --version && node --version && 
 pinned() { run jq "$image" -r ".providers.$1" /etc/pair-image.json; }
 run claude "$image" --version | grep -qF "$(pinned claudeAgent)"
 run codex "$image" --version | grep -qF "$(pinned codex)"
+run pair-chrome "$image" --version | grep -qF "$(run jq "$image" -r .browser /etc/pair-image.json)"
+run pair-chrome "$image" --no-sandbox --dump-dom https://example.com | grep -qF 'Example Domain'

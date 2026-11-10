@@ -44,9 +44,10 @@ targets ([CodexInstallation.ts](../../../apps/server/src/provider/CodexInstallat
 | Node           | Node 24 LTS with `corepack` (pnpm, yarn)                                                                                                                      | The runner runs on the image's Node, which must satisfy the server's `engines.node`, `^22.16 \|\| ^23.11 \|\| >=24.10` ([package.json](../../../apps/server/package.json)).                                          |
 | Provider CLIs  | Claude Code and Codex. OpenCode, Grok and Kiro are Later. Cursor and Muse run inside the server process and are "not supported in cloud" (README decision 2). | README decision 12.                                                                                                                                                                                                  |
 | Runner         | The runner bundle of the release's own build, cached under its `runnerBuildId`                                                                                | A cache only. Pair Cloud serves the bundle by `runnerBuildId`, and fetching it at boot is the normal path after any upgrade ([03](./03-runner.md)). Nothing comes from npm, whose `t3` is upstream T3 Code.          |
+| Browser        | Chrome's `chrome-headless-shell` at `/opt/pair-chrome/<version>/`, run as `pair-chrome`, with its libraries and fonts                                         | The machine browser of cloud sessions ([07 §5](./07-access-and-data.md)). The same build the server's Playwright drives; on a VM an AppArmor profile lets it use its own sandbox.                                    |
 | User           | `t3`, uid 1000, home `/home/t3`, passwordless `sudo`                                                                                                          | See below.                                                                                                                                                                                                           |
 
-Left out on purpose: Chrome, Docker inside the sandbox, Go, Rust and Java. Teams add them in recipes.
+Left out on purpose: Docker inside the sandbox, Go, Rust and Java. Teams add them in recipes.
 
 **Runner as root, agents as `t3` with passwordless sudo** (D3, as Conductor and Claude Code cloud
 give agents root). Agents run as `t3` because some provider CLIs refuse permission-bypass modes as
@@ -694,8 +695,8 @@ One row, one pull request. Server code goes in `apps/server/src/sandbox/image/` 
    git proxy (Later), so a customer on GitHub Enterprise Server or an in-VPC GitLab can't use team
    images or cloud sessions at all. Recommend asking BYOC prospects before M5 whether that blocks
    them.
-6. **Chrome in the base?** Not in M1. Decide with [07](./07-access-and-data.md) when previews reach
-   cloud (Later).
+6. **Chrome in the base?** Yes, from M7: the Browser tab of a cloud session runs Chrome on the
+   machine ([07 §5](./07-access-and-data.md)).
 
 ## Challenges to the plan
 
