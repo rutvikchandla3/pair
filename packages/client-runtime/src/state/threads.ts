@@ -23,7 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -31,6 +31,7 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { request, subscribeDynamic } from "../rpc/client.ts";
@@ -212,6 +213,8 @@ function hasMissingPendingQuestionCard(projection: OrchestrationV2ThreadProjecti
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  /** Emits whenever the shell lists this thread, and once on subscribe if it already does. */
+  shellListings: Stream.Stream<void> = Stream.empty,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -954,6 +957,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
 
+  // A thread the server answered as missing or revoked parks its subscription for good, so
+  // access granted later (the shell lists the thread) has to open it again.
+  const reopenWhenListed = shellListings.pipe(
+    Stream.filterEffect(() =>
+      Effect.gen(function* () {
+        const current = yield* SubscriptionRef.get(state);
+        if (current.status !== "deleted") return false;
+        const { accessRevoked: _revoked, ...open } = current;
+        yield* SubscriptionRef.set(state, { ...open, status: "synchronizing" });
+        yield* remember;
+        return true;
+      }),
+    ),
+  );
+
   // Only the first subscription after a warm live resume keeps the retained
   // status. A replacement session or foreground resubscribe on the same scope
   // may have missed events, so those show sync progress until confirmed.
@@ -1069,7 +1087,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ? setDeleted({ accessRevoked: true })
             : setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, reopenWhenListed),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );
@@ -1081,11 +1099,14 @@ function threadStateChanges(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  shellListings?: Stream.Stream<void>,
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentThreadState(threadId, resumeCache).pipe(Effect.map(SubscriptionRef.changes)),
+      makeEnvironmentThreadState(threadId, resumeCache, shellListings).pipe(
+        Effect.map(SubscriptionRef.changes),
+      ),
     ),
   );
 }
@@ -1098,7 +1119,22 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     | R,
     E
   >,
+  shellStateAtom: (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>,
 ) {
+  // The shell's row for a thread this client may open; it changes when the row does.
+  const listedRowFamily = Atom.family((key: string) => {
+    const { environmentId, threadId } = parseThreadKey(key);
+    return Atom.make((get) => {
+      const shell = AsyncResult.getOrElse(get(shellStateAtom(environmentId)), () => null);
+      const row =
+        shell === null
+          ? undefined
+          : Option.getOrUndefined(shell.snapshot)?.threads.find((thread) => thread.id === threadId);
+      return row?.deletedAt == null ? row : undefined;
+    }).pipe(Atom.withLabel(`environment-thread-listed-row:${key}`));
+  });
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
   const resumeFamily = Atom.family((key: string) =>
@@ -1118,7 +1154,19 @@ export function createEnvironmentThreadStateAtoms<R, E>(
         (get) => {
           get.mount(resumeAtom);
           const resume = get.once(resumeAtom);
-          const live = threadStateChanges(environmentId, threadId, resume);
+          // `subscribe`, not `get`: a shell update must not rebuild the detail stream.
+          const listings = Stream.callback<void>((queue) =>
+            Effect.sync(() =>
+              get.subscribe(
+                listedRowFamily(key),
+                (row) => {
+                  if (row !== undefined) Queue.offerUnsafe(queue, undefined);
+                },
+                { immediate: true },
+              ),
+            ),
+          );
+          const live = threadStateChanges(environmentId, threadId, resume, listings);
           return resume.snapshot === undefined
             ? live
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);

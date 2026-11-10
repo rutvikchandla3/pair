@@ -134,6 +134,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
   const lastAcceptCompactTurnItems = yield* Ref.make<true | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
+  const shellListings = yield* Queue.unbounded<void>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
@@ -234,7 +235,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
+  let makeThreadState = makeEnvironmentThreadState(
+    THREAD_ID,
+    options?.resumeCache,
+    Stream.fromQueue(shellListings),
+  ).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader.ThreadSnapshotLoader, snapshotLoader),
@@ -290,6 +295,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     savedThreads,
     removedThreads,
     wakeups,
+    shellListings,
     replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
   };
 });
@@ -2206,6 +2212,72 @@ describe("EnvironmentThreads", () => {
       expect(state.accessRevoked).toBe(true);
       expect(Option.isNone(state.data)).toBe(true);
       expect(Option.isNone(state.error)).toBe(true);
+    }),
+  );
+
+  it.effect("opens a revoked thread again each time the shell lists it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+
+      // An ordinary shell update of a loaded thread leaves its stream alone.
+      yield* Queue.offer(harness.shellListings, undefined);
+      yield* Queue.offer(harness.inputs, titleUpdated("After a shell update"));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "After a shell update",
+      );
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+
+      for (const round of [2, 3]) {
+        yield* Queue.offer(
+          harness.inputs,
+          Object.assign(new Error("revoked"), { _tag: "ThreadAccessRevoked" }),
+        );
+        const revoked = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "deleted",
+        );
+        expect(revoked.accessRevoked).toBe(true);
+
+        yield* Queue.offer(harness.shellListings, undefined);
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count >= round),
+          Stream.runHead,
+        );
+        yield* Queue.offer(
+          harness.inputs,
+          snapshot({
+            ...BASE_PROJECTION,
+            thread: { ...BASE_PROJECTION.thread, title: `Granted ${round}` },
+          }),
+        );
+        const granted = yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.isSome(value.data) &&
+            value.data.value.thread.title === `Granted ${round}`,
+        );
+        expect(granted.accessRevoked).toBeUndefined();
+        expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(round);
+      }
+    }),
+  );
+
+  it.effect("asks again for a thread that was not found when the shell lists it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+
+      yield* Queue.offer(harness.shellListings, undefined);
+      yield* awaitThreadState(harness.observed, (value) => value.status === "synchronizing");
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
     }),
   );
 

@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -33,8 +33,14 @@ import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
-import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import {
+  v2Projection,
+  v2ShellSnapshot,
+  v2ThreadId,
+  v2ThreadShell,
+} from "./orchestrationV2TestFixtures.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
+import { EMPTY_SHELL_STATE } from "./shell.ts";
 import { createEnvironmentThreadStateAtoms, type EnvironmentThreadState } from "./threads.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
@@ -212,7 +218,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       ),
     ),
   );
-  const raw = createEnvironmentThreadStateAtoms(runtime);
+  const shell = Atom.make(AsyncResult.success(EMPTY_SHELL_STATE));
+  const raw = createEnvironmentThreadStateAtoms(runtime, () => shell);
   const details = createEnvironmentThreadDetailAtoms(raw.stateAtom);
   const ref = { environmentId: TARGET.environmentId, threadId: THREAD_ID };
   const stateAtom = details.stateAtom(ref);
@@ -224,6 +231,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
 
   return {
     registry,
+    shell,
     makeRegistry,
     rawAtoms: raw,
     stateAtom,
@@ -289,6 +297,51 @@ describe("createEnvironmentThreadStateAtoms", () => {
       expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 2, active: 1 });
       remount();
       yield* Deferred.await(next.closed);
+    }),
+  );
+
+  it.effect("opens a deleted thread again when the shell starts listing it, and only then", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      yield* Queue.offer(first.events, {
+        kind: "event",
+        sequence: 8,
+        event: {
+          id: EventId.make("deleted-1"),
+          type: "thread.deleted",
+          threadId: THREAD_ID,
+          occurredAt: THREAD.thread.updatedAt,
+          payload: { ...THREAD.thread, deletedAt: THREAD.thread.updatedAt },
+        },
+      });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+
+      const listed = (title: string) =>
+        AsyncResult.success({
+          ...EMPTY_SHELL_STATE,
+          snapshot: Option.some({
+            ...v2ShellSnapshot,
+            threads: [{ ...v2ThreadShell, title }],
+          }),
+        });
+      h.registry.set(h.shell, listed("Shared with me"));
+      const second = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(second.events, {
+        kind: "snapshot",
+        snapshotSequence: 9,
+        projection: THREAD,
+      });
+      yield* Queue.offer(second.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+
+      h.registry.set(h.shell, listed("Renamed"));
+      expect(h.counts().opened).toBe(2);
+      unmount();
+      yield* Deferred.await(second.closed);
     }),
   );
 
