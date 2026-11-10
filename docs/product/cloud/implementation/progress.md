@@ -36,12 +36,12 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (8 of 12), specs written 2026-11-10:** full specs in
+**M4 (10 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
-(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too. In flight: 4.19 (critical),
-4.21 and 4.22 (small); 4.20 follows 4.19. Then a release with M4 and the M4 integrated pass (G4
+(52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too, then 4.21 (e756fae13) and 4.22
+(0ee7304c3). In flight: 4.19 (critical); 4.20 follows it. Then a release with M4 and the M4 integrated pass (G4
 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -2140,6 +2140,31 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   whole `test-t3-app` pass and captures (admin and member views, a failed build's tail, the log
   streaming, the stale-edit alert, rollback, the toast, a thread's older-build line), with the M4
   pass.
+
+## 4.21 mobile build row and the build push (landed e756fae13)
+
+- `packages/shared`: `teamImageBuildNotification(build)` and `TEAM_IMAGE_DEEP_LINK` in
+  `threadNotificationRouting.ts`; `teamImageFinishedMessage` moved to `teamImageBuildMessage.ts`
+  (the server can't import client-runtime, which re-exports it); `formatBytes` moved here too.
+- `MemberPushNotifier.sendToMembers` is shared with the thread path; a second fiber streams
+  `buildFinished` into the same worker, with no presence check. A build failed as interrupted in
+  restart recovery is not announced.
+- Mobile: Team image and Last build rows and a failed build's log tail on the machines screen;
+  `notificationPayload.ts` now accepts the machines link (it dropped every deep link that wasn't a
+  thread or the archive).
+- Not run on a phone or simulator. Owes a `test-t3-mobile` pass of the machines screen and a push
+  tapped on a real phone.
+
+## 4.22 rebuild hint (landed 0ee7304c3)
+
+- `TeamImageCurrentBase { ref, digest, version }` (both nullable) fills `snapshot.currentBase`
+  for the default driver (`currentBaseImage` and `driverBaseImage` in `SandboxOverview.ts`;
+  `TeamImageService` now needs `ComputeDriverRegistry`). A resolved base is cached until
+  `sandbox.baseImage` changes; an unresolved one is retried after 60 s.
+- `rebuildSuggestion` (`teamImagePresentation.ts`): digests decide when both are known, else
+  versions when both exist. It tests "differs", not "older", so a server rolled back to an older
+  release also shows the hint. Web shows it on the active row for admins, with **Build**.
+- To see it on the VM: a build made on one release, then an upgrade to the next.
 
 ## Open follow-ups and risks
 
