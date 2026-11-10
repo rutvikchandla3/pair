@@ -53,6 +53,7 @@ flowchart TB
 | [08 Clients and contracts](./08-clients-and-contracts.md)       | What changes on the wire, how clients route between servers, and what web, desktop, mobile, MCP and the CLI get? |
 | [09 BYOC](./09-byoc.md)                                         | How does a customer run Pair Cloud and its machines in their own cloud?                                          |
 | [10 Delivery plan](./10-delivery-plan.md)                       | In what order do we build it, in which pull requests, and how do we know it works?                               |
+| [11 Private threads](./11-private-threads.md)                   | Who can open a cloud thread, how does its owner share it, and where is that enforced? (Proposal, not built)      |
 
 ## Decisions everything else builds on
 

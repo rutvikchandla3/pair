@@ -63,6 +63,11 @@ slice's pass passed on 2026-11-10**: see
 [M5 slice on real hardware](#m5-slice-on-real-hardware-2026-11-10-vm-provider-dev-releases-v9-and-v10).
 Not built: 5.8, 5.13, 5.3, 5.17, 5.20, 5.6, 5.12, 5.14, 5.18, 5.7's `vm-provision` job, and
 every AWS row.
+**M6 private cloud threads, proposed 2026-11-10:** [11 Private threads](../11-private-threads.md)
+is the maintainer's request to make a cloud thread private to its owner until shared with named
+members. It holds the UX, the access model, where the server enforces it and rows 6.1 to 6.9. It
+reverses "everyone sees every thread" on Pair Cloud. Nothing is built and no row has a full spec.
+
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
