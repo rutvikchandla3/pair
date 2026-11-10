@@ -57,7 +57,12 @@ base). 5.8 and 5.13 are left out: 5.11 writes no proxy or CA fields and there ar
 metrics. The pass runs in project `vm-provider-dev` (the maintainer's choice: about 30 instances
 against about 770 in `vm-provider`), on a clone of `pair-cloud-pass`, with the project's default
 compute service account, since the maintainer is Editor and cannot bind a custom role. Landed:
-5.5 (8ceeb1d83), 5.7a (02918c225), 5.19 (eab83d688), 5.11 (809e7c416) and 5.7b (e41121cbb). Release `0.1.7-pair.9` (V9) carries them.
+5.5 (8ceeb1d83), 5.7a (02918c225), 5.19 (eab83d688), 5.11 (809e7c416) and 5.7b (e41121cbb), then fix row 5.21 (134b5a6aa). Releases
+`0.1.7-pair.9` (V9) and `0.1.7-pair.10` (V10, with 5.21) are published as prereleases. **The
+slice's pass passed on 2026-11-10**: see
+[M5 slice on real hardware](#m5-slice-on-real-hardware-2026-11-10-vm-provider-dev-releases-v9-and-v10).
+Not built: 5.8, 5.13, 5.3, 5.17, 5.20, 5.6, 5.12, 5.14, 5.18, 5.7's `vm-provision` job, and
+every AWS row.
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -587,6 +592,108 @@ Left on the VM: V8, build 25 active (postgres, `BUILD_FLAG`, `NPM_TOKEN` as a se
 test value), the recipe at revision 11, Keep succeeded builds at 5, no open proposals, images
 13–15, 23–25, 28 and 29, the pass's sessions, and `~/g4-scratch`. `/etc/docker/daemon.json`
 carries `--allow-suid` (the copy before it is `daemon.json.pre-allow-suid`).
+
+### M5 slice on real hardware (2026-11-10, `vm-provider-dev`, releases V9 and V10)
+
+**Passed.** One Compute Engine VM per cloud thread, and a real Haiku turn ran on it. This is not
+G4 steps 2–6: there was no kit, and the list at the end says what was not run.
+
+Setup, by the lead with the maintainer's go-ahead:
+
+- **Project.** `vm-provider-dev`, zone `asia-south1-a`, network and subnetwork `default`
+  (10.160.0.0/20). The maintainer chose it over `vm-provider`.
+- **Server.** A clone of `pair-cloud-pass`: an image of the original's disk, then an
+  `e2-standard-8` of the same name in `vm-provider-dev`, private address 10.160.0.16, **no
+  external address**, `block-project-ssh-keys=TRUE`. It is the same tailnet node as the original,
+  so the two must never run together. `../pair-wt/vm.sh` reaches it over the tailnet.
+- **Identity.** The project's default compute service account with the `cloud-platform` scope.
+  The maintainer is Editor on both projects and cannot bind a custom role, so the scoped role of
+  the track note was not tried.
+- **Egress.** A Cloud Router and Cloud NAT (`pair-cloud-default-router`, `pair-cloud-default-nat`)
+  on the `default` subnet. No firewall rule was needed: `default-allow-internal` covers the
+  runner port.
+- **Listener.** `T3CODE_RUNNER_HOST=10.160.0.16` and `T3CODE_RUNNER_PORT=3774` in `service.env`.
+  After the upgrade to V9 (transcript `upgrade-v9.txt`): `/runner/v1/connect` answers 400 on
+  3774 and 404 on 3773; `/api/auth/session` answers 404 on 3774 and 200 on 3773. That is 5.19's
+  owed transcript (`m5-5.19-transcript.txt`).
+- **Driver.** Added in Settings → Cloud as **Google Cloud**, with only Subnetwork
+  (`regions/asia-south1/subnetworks/default`) and Machines at once (3) filled; project and zone
+  came from the metadata server. Machines were `e2-standard-4` with a 50 GB balanced disk.
+
+The run, on V9 unless marked:
+
+1. **Base image: passed, first try.** Saving the driver launched
+   `pair-1c53db55-basebuild-0026f02a3e66` (`e2-standard-2`, no external address, no service
+   account, only the `pair-install` label) at 10:22:31 UTC. Capture started at 10:25:50 and
+   `pair-1c53db55-base-0026f02a3e66` was ready at 10:29:24: 6 m 53 s, of which the guest's
+   provisioning was 3 m 19 s and the capture 3 m 34 s. The image is 20 GB, 2.13 GB stored. The
+   builder was deleted. The guest attribute was read; the serial fallback was not needed.
+2. **Test: passed.** Base image 279 ms, Create machine 26.1 s, Runner connects 35.6 s, "Run git
+   and sudo, and reach github.com" 293 ms, Discard machine 23.7 s. Overview reads "Google Cloud ·
+   Virtual machine".
+3. **A thread creates one instance: passed.** Thread A on `rutvikchandla3/pair-cloud-test`
+   created `pair-1c53db55-sbx-184c695ae277e4e8b5e6-g1`: no `accessConfigs`, no service account,
+   `automaticRestart` off, the four labels, metadata `pair-bootstrap` and `pair-generation`.
+   Create to runner attached was **36.1 s**. Claude Haiku 5.5 wrote `m5-gce-a.txt` (the
+   hostname and kernel `7.0.0-1017-gcp`) in 7 s. A terminal opened as `t3`; `sudo -n true`
+   works; the metadata server's service-account token answers 404.
+4. **A side chat adds none: passed.** A side chat on thread A ran `hostname` on the same
+   instance, and the project still listed one.
+5. **A second thread creates a second: passed.** Thread B created
+   `pair-1c53db55-sbx-9067b216316d23b3a710-g1`, 39.9 s to attached.
+6. **Sleep now and Wake: passed.** Sleep now on A: `TERMINATED` about 23 s after the click.
+   Wake: `waking` to `ready` in **31.4 s**, the same instance and disk, booted 10:39:36. A marker
+   file in `~` and the agent's untracked file were intact, and the terminal started a new shell.
+7. **Delete removes the instance and disk: passed.** Deleting A: gone in about 29 s, and its
+   disk with it. Deleting B while asleep: gone in about 10 s.
+8. **Archive: as designed, not as the brief expected.** Archiving B left its machine running.
+   `sleepOnSettle` is false on VM drivers (m5-byoc.md, "Caps and sleep"), so an archived thread's
+   machine waits for the 20-minute idle deadline, and its disk for the 7-day retention. It slept
+   at 10:57:57, 20 m 44 s after it became ready, with reason `idle`.
+9. **Docker still works: passed, on V10.** With **Use for new machines** set to Docker (5.21's
+   button), a new thread ran in container `19d04e8806e1` from team build 25 (`psql` 16.15)
+   and no instance was created.
+10. **Nothing left: passed, with one manual step.** After the deletes: no instance, disk or
+    snapshot named or labelled for the install. The base image stays by design, so the lead
+    removed the driver in Settings and deleted the image with `gcloud`.
+
+Findings:
+
+- **Finding 1 (fixed by 5.21): nothing in a client chose the default driver.** With Docker and
+  Google Cloud both configured every launch went to Docker. The lead set `defaultDriverId` in
+  `settings.json` with the service stopped to run steps 3–8, then used 5.21's button on V10.
+- Removing a driver leaves its base image in the project. Nothing collects it, and nothing says
+  so.
+- The instance label `pair-generation` stays `1` after a wake to generation 2; only the metadata
+  key moves. The instance name also ends `-g1` for the machine's life.
+- Both driver rows read "Default machines" (the size label), which reads like "the default
+  driver" beside 5.21's marker.
+- Overview's **Image** row shows the Docker team build whichever driver new machines use.
+- Deleting from Settings → Archive asks 'Delete thread "this thread"?', not the title.
+- Deleting a cloud thread asks a second question, "Delete the worktree too?", for a worktree
+  that lives on the machine being deleted.
+- `vm-provider-dev`'s `default` network has 114 untargeted rules that allow all ingress from
+  `0.0.0.0/0`, which is why the server clone has no external address. They are the project's, not
+  Pair's. On its first boot there the clone also got about 30 user accounts from the project's
+  SSH keys, before `block-project-ssh-keys` was set.
+
+Compute Engine questions 5.11 left open, as seen: the list filter on hyphenated label keys works;
+metadata is served to an instance with no service account; a shielded VM boots from an image
+captured from Canonical's; `TERMINATED` is the stopped status; guest attributes of a stopped
+builder were readable. Not exercised: a stockout, a fingerprint mismatch, the zone move, a second
+zone, `snapshot` and `deleteImage`.
+
+Not run: the kit, Terraform and its negatives (a machine reaching the member port or another
+machine: the `default` network allows both); the scoped IAM role; the real-cloud contract suite
+(`T3_TEST_GCE=1`); a team image as a GCE image; restore; Secret Manager; commit, push and PR from
+a GCE machine; Docker inside a machine; the capacity paths; 5.5's `test-t3-app` capture of the
+form beyond what the run showed; anything on a phone; a video. Cost was not read from billing:
+about 40 minutes of the server and under 30 machine-minutes, well under a dollar at list prices.
+
+Left: in `vm-provider-dev`, the stopped server clone `pair-cloud-pass` (V10, Docker only, the
+Google Cloud driver removed, `T3CODE_RUNNER_*` still in `service.env`) and the router and NAT,
+which cost about $0.045 an hour while they exist. In `vm-provider`, the original
+`pair-cloud-pass`, stopped on V8 and untouched.
 
 ## How to resume
 
@@ -2469,6 +2576,17 @@ Built without 5.8's proxy and CA fields and without 5.13's metrics.
   parses.
 - The reconciler calls `health` every 10 minutes, so a build that keeps failing relaunches every
   10 to 40 minutes. The step inside the guest shows only on the builder's serial console.
+
+## 5.21 choose which driver new machines use (landed 134b5a6aa)
+
+- `defaultDriverIdOf({drivers, defaultDriverId})` in `CloudSettings.logic.ts` derives the default
+  as the server does. With more than one driver, its row reads "New machines start here" and the
+  others offer **Use for new machines**, behind the same permission as Test and Edit.
+- `mergeSandboxPatch` drops a `defaultDriverId` that names no driver, so a driver re-added under
+  a reused id does not become the default again. One `ComputeDriverRegistry.test.ts` assertion
+  changed with it. This replaces 1.36's note that removing the default driver keeps the id.
+- Members still receive `defaultDriverId` and see no Compute section. No mobile change.
+- Seen on V10: the button moved the marker in both directions and the next launch followed it.
 
 ## Open follow-ups and risks
 
