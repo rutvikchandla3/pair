@@ -421,6 +421,7 @@ export function applyOrchestrationV2ProjectionEvent(
     case "sandbox.updated":
       return { ...projection, sandbox: event.payload };
     case "sandbox.git-credential.issued":
+    case "sandbox.access-changed":
       return projection;
   }
 }

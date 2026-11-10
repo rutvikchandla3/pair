@@ -45,7 +45,13 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
   {
     threadId: ThreadId,
     memberId: MemberId,
-    reason: Schema.Literals(["not_owner_or_admin", "inactive_owner", "machine_not_owner_or_admin"]),
+    reason: Schema.Literals([
+      "not_owner_or_admin",
+      "inactive_owner",
+      "machine_not_owner_or_admin",
+      "not_owner",
+      "inactive_member",
+    ]),
   },
 ) {
   override get message(): string {
@@ -56,20 +62,32 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
         return "Threads can only be assigned to active team members.";
       case "machine_not_owner_or_admin":
         return "Only the owner or an admin can sleep or discard this machine.";
+      case "not_owner":
+        return "Only the owner can share this thread.";
+      case "inactive_member":
+        return "Threads can only be shared with active team members.";
     }
   }
 }
 
 type SandboxClientCommand = Extract<
   OrchestrationV2Command,
-  { readonly type: "sandbox.wake" | "sandbox.sleep" | "sandbox.retry" | "sandbox.discard" }
+  {
+    readonly type:
+      | "sandbox.wake"
+      | "sandbox.sleep"
+      | "sandbox.retry"
+      | "sandbox.discard"
+      | "sandbox.access.set";
+  }
 >;
 
 const isSandboxClientCommand = (command: OrchestrationV2Command): command is SandboxClientCommand =>
   command.type === "sandbox.wake" ||
   command.type === "sandbox.sleep" ||
   command.type === "sandbox.retry" ||
-  command.type === "sandbox.discard";
+  command.type === "sandbox.discard" ||
+  command.type === "sandbox.access.set";
 
 /** The actor is an admin, the server owner, or `threadId`'s owner. A missing thread passes. */
 const actorOwnsThreadOrAdmin = Effect.fn("ThreadMessageIntake.actorOwnsThreadOrAdmin")(function* (
@@ -108,11 +126,23 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
 
 /**
  * Sends a machine command from the thread the user acts in to the sandbox owner's stream, so its
- * receipt and events land there (04 §1). Sleep and discard need the owner thread's owner.
+ * receipt and events land there (04 §1). Sleep and discard need the owner thread's owner or an
+ * admin; sharing needs its owner.
  */
 export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSandboxCommand")(
   function* (command: SandboxClientCommand) {
     const threads = yield* ThreadManagement.ThreadManagementService;
+    if (command.type === "sandbox.access.set") {
+      const team = yield* TeamState.TeamState;
+      for (const memberId of command.memberIds) {
+        if (yield* team.isActive(memberId)) continue;
+        return yield* new ThreadMessageIntakeForbiddenError({
+          threadId: command.threadId,
+          memberId,
+          reason: "inactive_member",
+        });
+      }
+    }
     const route = Effect.gen(function* () {
       const acting = yield* threads.getThreadShell(command.threadId);
       if (acting === null || acting.sandboxId !== command.sandboxId) {
@@ -124,6 +154,18 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
       }
       // Without a record the orchestrator refuses on the acting thread.
       const ownerThreadId = acting.sandbox?.ownerThreadId ?? command.threadId;
+      // Not an admin either: one who could share a thread with themselves could read it.
+      if (command.type === "sandbox.access.set" && command.actorId !== undefined) {
+        const owner =
+          ownerThreadId === acting.id ? acting : yield* threads.getThreadShell(ownerThreadId);
+        if (owner !== null && owner.ownerId !== command.actorId) {
+          return yield* new ThreadMessageIntakeForbiddenError({
+            threadId: ownerThreadId,
+            memberId: command.actorId,
+            reason: "not_owner",
+          });
+        }
+      }
       if (
         (command.type === "sandbox.sleep" || command.type === "sandbox.discard") &&
         command.actorId !== undefined &&

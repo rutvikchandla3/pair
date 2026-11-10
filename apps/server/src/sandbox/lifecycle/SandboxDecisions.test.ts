@@ -27,8 +27,10 @@ import {
   type IdleDecision,
   type IdleInput,
   planSandboxOnDelete,
+  sandboxAccessChange,
   type SandboxAttachedThread,
   type SandboxCommand,
+  sandboxOwnerMemberChange,
 } from "./SandboxDecisions.ts";
 
 const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
@@ -144,16 +146,18 @@ const rows: ReadonlyArray<Row> = [
         generation: 1,
         size: "small",
         ownerMemberId: MemberId.make("member"),
+        // A new session is private.
+        access: { audience: "members", memberIds: [], updatedBy: null, updatedAt: now },
       },
       effects: ["sandbox.create"],
     },
   ],
   [
-    "provision after destroy bumps the generation",
+    "provision after destroy bumps the generation and keeps the old record's team audience",
     provision,
     record({ state: "destroyed" }),
     {
-      next: { state: "provisioning", generation: 3, driverRef: null },
+      next: { state: "provisioning", generation: 3, driverRef: null, access: undefined },
       effects: ["sandbox.create"],
     },
   ],
@@ -1275,5 +1279,152 @@ describe("decideCloudPrompt", () => {
       state: expected.state,
       generation: expected.generation,
     });
+  });
+});
+
+describe("sandbox access", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const carol = MemberId.make("member-carol");
+  const admin = MemberId.make("member-admin");
+  const shared = (
+    audience: "members" | "team",
+    memberIds: ReadonlyArray<MemberId>,
+  ): OrchestrationV2Sandbox["access"] => ({
+    audience,
+    memberIds,
+    updatedBy: alice,
+    updatedAt: earlier,
+  });
+  const owned = (access?: OrchestrationV2Sandbox["access"]) =>
+    record({ ownerMemberId: alice, ...(access === undefined ? {} : { access }) });
+  const set = (
+    actorId: MemberId | undefined,
+    audience: "members" | "team",
+    memberIds: ReadonlyArray<MemberId>,
+  ): SandboxCommand => ({
+    type: "sandbox.access.set",
+    ...base,
+    ...(actorId === undefined ? {} : { actorId }),
+    audience,
+    memberIds,
+  });
+  const decide = (command: SandboxCommand, current: OrchestrationV2Sandbox) =>
+    decideSandboxCommand({
+      command,
+      record: current,
+      ownerMemberId: carol,
+      attachedThreads: [],
+      admission: null,
+      cloudOnly: true,
+      now,
+    });
+
+  it.each([
+    ["a member", bob],
+    ["an admin", admin],
+    ["a session with no member", undefined],
+  ])("refuses %s who does not own the machine", (_name, actorId) => {
+    expect(decide(set(actorId, "members", [bob]), owned(shared("members", [])))).toEqual({
+      _tag: "Refuse",
+      reason: "not-owner",
+    });
+  });
+
+  it("lets the owner share, deduped and without themselves, and names who gained access", () => {
+    const decision = decide(set(alice, "members", [bob, bob, alice, carol]), owned());
+    expect(decision).toMatchObject({
+      _tag: "Accept",
+      effects: [],
+      // The idle and expiry clocks read `updatedAt`.
+      next: {
+        updatedAt: earlier,
+        access: { audience: "members", memberIds: [bob, carol], updatedBy: alice, updatedAt: now },
+      },
+    });
+    // From no record (`team`) to a list: an audience change, so nobody is named.
+    expect(decision._tag === "Accept" && decision.accessChange).toMatchObject({
+      sandboxId,
+      added: [],
+      removed: [],
+      audienceChanged: true,
+      actorId: alice,
+    });
+  });
+
+  it.each([
+    [
+      "adding and removing members names both",
+      shared("members", [bob]),
+      set(alice, "members", [carol]),
+      { added: [carol], removed: [bob], audienceChanged: false },
+    ],
+    [
+      "switching to team keeps the list and names nobody",
+      shared("members", [bob]),
+      set(alice, "team", [bob, carol]),
+      { added: [], removed: [], audienceChanged: true },
+    ],
+    [
+      "switching from team to members names nobody",
+      shared("team", [bob]),
+      set(alice, "members", [bob]),
+      { added: [], removed: [], audienceChanged: true },
+    ],
+  ])("%s", (_name, access, command, change) => {
+    const decision = decide(command, owned(access));
+    if (decision._tag !== "Accept") throw new Error(`Expected Accept, got ${decision._tag}`);
+    expect(decision.accessChange).toMatchObject(change);
+  });
+
+  it.each([
+    ["the same list in another order", owned(shared("members", [bob, carol])), [carol, bob]],
+    ["a record from before access, set to team", owned(), []],
+  ] as const)("emits nothing for %s", (_name, current, memberIds) => {
+    const audience = current.access?.audience ?? "team";
+    expect(decide(set(alice, audience, memberIds), current)).toEqual({ _tag: "NoOp" });
+  });
+
+  it("caps the list at 50 besides the owner", () => {
+    const members = Array.from({ length: 51 }, (_, index) => MemberId.make(`member-${index}`));
+    expect(decide(set(alice, "members", members), owned())).toEqual({
+      _tag: "Refuse",
+      reason: "over-cap",
+    });
+    expect(decide(set(alice, "members", [alice, ...members.slice(1)]), owned())._tag).toBe(
+      "Accept",
+    );
+  });
+
+  it("keeps the previous owner on the list when the owner thread changes hands", () => {
+    const before = owned(shared("members", [bob]));
+    const after = sandboxOwnerMemberChange(before, owner, carol, admin, now);
+    expect(after).toMatchObject({
+      ownerMemberId: carol,
+      access: { audience: "members", memberIds: [bob, alice], updatedBy: admin, updatedAt: now },
+    });
+    expect(after && sandboxAccessChange(before, after, admin)).toMatchObject({
+      added: [carol],
+      removed: [],
+      audienceChanged: false,
+    });
+    // A record from before access stays `team`, so nobody gains or loses anything.
+    const legacy = sandboxOwnerMemberChange(owned(), owner, carol, admin, now);
+    expect(legacy?.access).toBeUndefined();
+    expect(legacy && sandboxAccessChange(owned(), legacy, admin)).toBeNull();
+  });
+
+  it("keeps access when another thread adopts the machine", () => {
+    const decision = decide(
+      { type: "sandbox.adopt", ...base, threadId: fork, previousOwnerThreadId: owner },
+      owned(shared("members", [bob, carol])),
+    );
+    if (decision._tag !== "Accept") throw new Error(`Expected Accept, got ${decision._tag}`);
+    expect(decision.next).toMatchObject({
+      ownerThreadId: fork,
+      ownerMemberId: carol,
+      access: { audience: "members", memberIds: [bob, alice], updatedBy: null },
+    });
+    expect(decision.accessChange).toMatchObject({ added: [], removed: [], actorId: null });
   });
 });

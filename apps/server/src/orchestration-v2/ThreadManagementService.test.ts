@@ -17,6 +17,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -152,6 +153,20 @@ it("attributes client commands to the session's member, never to a member the cl
       alice,
     ),
   ).toEqual({ type: "thread.unarchive", commandId, threadId, actorId: alice });
+  expect(
+    ThreadManagementService.withActor(
+      {
+        type: "sandbox.access.set",
+        commandId,
+        threadId,
+        sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+        audience: "members",
+        memberIds: [forged],
+        actorId: forged,
+      },
+      alice,
+    ),
+  ).toMatchObject({ actorId: alice, memberIds: [forged] });
   expect(
     ThreadManagementService.withActor(
       { type: "thread.interaction-mode.set", commandId, threadId, interactionMode: "plan" },

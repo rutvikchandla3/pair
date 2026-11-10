@@ -455,7 +455,7 @@ it.effect("sends a guest message with the guest's files, never ones the client n
 );
 
 it.effect(
-  "lets only the owner or an admin delete or sleep a machine, and assigns only active members",
+  "lets only the owner or an admin delete or sleep a machine, only its owner share it, and assigns only active members",
   () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-owned");
@@ -510,6 +510,21 @@ it.effect(
         });
       expect(yield* sleepBy("member-carol")).toBe("machine_not_owner_or_admin");
       expect(yield* sleepBy("member-owner")).toBe("dispatched");
+      const shareBy = (actorId: string, memberIds: ReadonlyArray<string>) =>
+        attempt({
+          type: "sandbox.access.set",
+          commandId: CommandId.make(`share-${actorId}-${memberIds.join()}`),
+          threadId: sideChatId,
+          sandboxId,
+          actorId: MemberId.make(actorId),
+          audience: "members",
+          memberIds: memberIds.map((id) => MemberId.make(id)),
+        });
+      expect(yield* shareBy("member-carol", ["member-carol"])).toBe("not_owner");
+      expect(yield* shareBy("member-owner", ["member-owner"])).toBe("not_owner");
+      expect(yield* shareBy("member-bob", ["member-carol", "member-gone"])).toBe("inactive_member");
+      expect(yield* shareBy("member-bob", ["member-unknown"])).toBe("inactive_member");
+      expect(yield* shareBy("member-bob", ["member-carol"])).toBe("dispatched");
       expect(yield* assign("member-gone")).toBe("inactive_owner");
       expect(yield* assign("member-unknown")).toBe("inactive_owner");
       expect(yield* assign("member-carol")).toBe("dispatched");
@@ -518,9 +533,13 @@ it.effect(
         "delete-member-owner",
         "delete-undefined",
         "sleep-member-owner",
+        "share-member-bob-member-carol",
         "assign-member-carol",
       ]);
       // Routed to the owner's stream, not the side chat the admin clicked from.
       expect(captured.find((command) => command.type === "sandbox.sleep")?.threadId).toBe(threadId);
+      expect(captured.find((command) => command.type === "sandbox.access.set")?.threadId).toBe(
+        threadId,
+      );
     }).pipe(Effect.provide(layerIntakeTest)),
 );

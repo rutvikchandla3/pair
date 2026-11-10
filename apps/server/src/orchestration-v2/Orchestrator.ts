@@ -224,6 +224,7 @@ import {
   diskRetentionOf,
   planSandboxOnDelete,
   type SandboxAttachedThread,
+  sandboxAccessChange,
   sandboxOwnerMemberChange,
   hasNoDisk,
   sandboxAttachedThread,
@@ -737,6 +738,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "sandbox.auto-sleep":
     case "sandbox.expire":
     case "sandbox.adopt":
+    case "sandbox.access.set":
     case "sandbox.git-credential.record":
       return command.threadId;
     case "delegated_task.request":
@@ -11252,6 +11254,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: next,
     });
+    if (decision.accessChange != null) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "sandbox.access-changed",
+        threadId: next.ownerThreadId,
+        occurredAt: now,
+        payload: decision.accessChange,
+      });
+    }
     yield* Ref.update(effects, (existing) => [
       ...existing,
       ...decision.effects.map((request): PendingOrchestrationEffectV2 => ({
@@ -11276,12 +11289,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (thread.sandboxId === undefined) return;
       const record = yield* projectionStore.getSandbox(thread.sandboxId).pipe(mapProjection);
       const now = yield* DateTime.now;
-      const next = sandboxOwnerMemberChange(record, command.threadId, command.ownerId, now);
-      if (next === null) return;
-      yield* emit(
-        events,
-        command,
-      )({ type: "sandbox.updated", threadId: next.ownerThreadId, occurredAt: now, payload: next });
+      const actorId = command.actorId ?? null;
+      const next = sandboxOwnerMemberChange(
+        record,
+        command.threadId,
+        command.ownerId,
+        actorId,
+        now,
+      );
+      if (record === null || next === null) return;
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "sandbox.updated",
+        threadId: next.ownerThreadId,
+        occurredAt: now,
+        payload: next,
+      });
+      const change = sandboxAccessChange(record, next, actorId);
+      if (change !== null) {
+        yield* emitEvent({
+          type: "sandbox.access-changed",
+          threadId: next.ownerThreadId,
+          occurredAt: now,
+          payload: change,
+        });
+      }
     },
   );
 
@@ -14991,6 +15023,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "sandbox.auto-sleep":
       case "sandbox.expire":
       case "sandbox.adopt":
+      case "sandbox.access.set":
         yield* dispatchSandboxCommand(command, events, effects);
         break;
       case "sandbox.git-credential.record":
@@ -15108,7 +15141,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "sandbox.wake" ||
           command.type === "sandbox.stopped" ||
           command.type === "sandbox.destroyed" ||
-          command.type === "sandbox.runner.attached",
+          command.type === "sandbox.runner.attached" ||
+          // Already shared that way, so a replay is a no-op.
+          command.type === "sandbox.access.set",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

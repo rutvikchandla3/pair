@@ -70,6 +70,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 
 const withLocalServerConfig = Effect.provideService(ServerConfig.ServerConfig, {
   cloudOnly: false,
@@ -3575,6 +3576,7 @@ it.effect("publishes live events in commit order across concurrent writers", () 
           layerCommandReceiptStoreProvided,
           ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
           TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+          ThreadAccess.layerIndex.pipe(Layer.provide(layerDatabase)),
         ),
       ),
     );
@@ -3861,6 +3863,7 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadAccess.layerIndex.pipe(Layer.provide(layerDatabase)),
           ),
         ),
       );

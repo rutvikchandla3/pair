@@ -501,6 +501,28 @@ export const OrchestrationV2SandboxAdmission = Schema.Struct({
 });
 export type OrchestrationV2SandboxAdmission = typeof OrchestrationV2SandboxAdmission.Type;
 
+export const SandboxAccessAudience = Schema.Literals(["members", "team"]);
+export type SandboxAccessAudience = typeof SandboxAccessAudience.Type;
+
+/** A larger audience is what `team` is for. */
+export const SANDBOX_ACCESS_MEMBER_LIMIT = 50;
+
+/** Who can open a cloud session's threads. */
+export const SandboxAccess = Schema.Struct({
+  /** `team`: every active member. `members`: the owner and `memberIds`. */
+  audience: SandboxAccessAudience,
+  /** Besides the owner. Kept when the audience is `team`, so switching back restores it. */
+  memberIds: Schema.Array(MemberId),
+  updatedBy: Schema.NullOr(MemberId),
+  updatedAt: Schema.DateTimeUtc,
+});
+export type SandboxAccess = typeof SandboxAccess.Type;
+
+const SandboxAccessJson = SandboxAccess.mapFields((fields) => ({
+  ...fields,
+  updatedAt: Schema.DateTimeUtcFromString,
+}));
+
 export const OrchestrationV2Sandbox = Schema.Struct({
   id: SandboxId,
   projectId: ProjectId,
@@ -525,6 +547,8 @@ export const OrchestrationV2Sandbox = Schema.Struct({
   sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtc)),
   /** A scheduled run's machine: its disk is destroyed instead of kept once its threads settle. */
   discardOnSettle: Schema.optionalKey(Schema.Boolean),
+  /** Absent on records from before private threads, which read as `team`. */
+  access: Schema.optionalKey(SandboxAccess),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });
@@ -540,10 +564,30 @@ export const OrchestrationV2SandboxJson = OrchestrationV2Sandbox.mapFields((fiel
   ),
   runnerLostAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   sleepSnapshotAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  access: Schema.optionalKey(SandboxAccessJson),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
 }));
 export type OrchestrationV2SandboxJson = typeof OrchestrationV2SandboxJson.Type;
+
+/**
+ * `added` and `removed` name who gained or lost access by this change. An audience flip lists
+ * nobody and sets `audienceChanged`: every member's access may have changed.
+ */
+export const SandboxAccessChange = Schema.Struct({
+  sandboxId: SandboxId,
+  access: SandboxAccess,
+  added: Schema.Array(MemberId),
+  removed: Schema.Array(MemberId),
+  audienceChanged: Schema.Boolean,
+  actorId: Schema.NullOr(MemberId),
+});
+export type SandboxAccessChange = typeof SandboxAccessChange.Type;
+
+const SandboxAccessChangeJson = SandboxAccessChange.mapFields((fields) => ({
+  ...fields,
+  access: SandboxAccessJson,
+}));
 
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
@@ -2252,6 +2296,12 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     type: Schema.Literal("sandbox.git-credential.issued"),
     payload: OrchestrationV2GitCredentialIssued,
   }),
+  /** On the owner's stream, after the `sandbox.updated` that stores the new `access`. */
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("sandbox.access-changed"),
+    payload: SandboxAccessChange,
+  }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -2332,6 +2382,13 @@ export const OrchestrationV2ThreadShellSandbox = Schema.Struct({
   runnerConnected: Schema.optionalKey(Schema.Boolean),
   failureCode: Schema.optionalKey(Schema.String),
   retryable: Schema.optionalKey(Schema.Boolean),
+  /** Absent from older servers and on machines from before private threads: `team`. */
+  access: Schema.optionalKey(
+    Schema.Struct({
+      audience: ForwardCompatibleNullable(SandboxAccessAudience),
+      memberIds: Schema.Array(MemberId),
+    }),
+  ),
 });
 export type OrchestrationV2ThreadShellSandbox = typeof OrchestrationV2ThreadShellSandbox.Type;
 
@@ -3219,6 +3276,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("sandbox.git-credential.issued"),
     payload: OrchestrationV2GitCredentialIssued,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("sandbox.access-changed"),
+    payload: SandboxAccessChangeJson,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -3758,6 +3820,13 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("sandbox.sleep"), ...SandboxClientCommandFields }),
   Schema.Struct({ type: Schema.Literal("sandbox.retry"), ...SandboxClientCommandFields }),
   Schema.Struct({ type: Schema.Literal("sandbox.discard"), ...SandboxClientCommandFields }),
+  /** Only the machine's owner may send it; the server stamps `actorId` from the session. */
+  Schema.Struct({
+    type: Schema.Literal("sandbox.access.set"),
+    ...SandboxClientCommandFields,
+    audience: SandboxAccessAudience,
+    memberIds: Schema.Array(MemberId),
+  }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 

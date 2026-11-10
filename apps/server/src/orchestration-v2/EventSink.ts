@@ -31,6 +31,7 @@ import type {
 } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
+import { layerIndex as layerThreadAccessIndex, ThreadAccessIndex } from "../team/ThreadAccess.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -240,6 +241,7 @@ const layerBase: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | SqlClient.SqlClient
+  | ThreadAccessIndex
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   EventSinkV2,
@@ -251,6 +253,7 @@ const layerBase: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const accessIndex = yield* ThreadAccessIndex;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -274,13 +277,15 @@ const layerBase: Layer.Layer<
         .pipe(Effect.map((thread) => thread.lineage.relationshipToParent === "subagent")),
     );
     // Recorded before publication, so an interrupted publish cannot lose a committed outcome.
+    // Access is indexed first, so no stream hands out an event that access does not yet reflect.
     const publishStoredEvents = (
       events: ReadonlyArray<OrchestrationV2StoredEvent>,
       outcomes: ReadonlyArray<RunOutcome>,
     ) =>
-      runOutcomes
-        .record(outcomes)
+      accessIndex
+        .observeCommitted(events)
         .pipe(
+          Effect.andThen(runOutcomes.record(outcomes)),
           Effect.andThen(eventStore.publishCommitted(events)),
           Effect.andThen(publishLiveEvents(events)),
         );
@@ -1150,6 +1155,7 @@ export const layer: Layer.Layer<
       CommandReceiptStore.layer,
       EffectOutbox.layer,
       ProjectStore.layer,
+      layerThreadAccessIndex,
       TurnItemPositionStore.layer,
     ),
   ),

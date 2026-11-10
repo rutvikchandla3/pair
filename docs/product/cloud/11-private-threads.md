@@ -221,28 +221,35 @@ access: Schema.optionalKey(SandboxAccess),
 - A record with no `access` is `team`, so nothing that exists at upgrade is hidden. Its owner can
   make it private in the dialog.
 - The list is capped at 50 members (proposed; a larger audience is what `team` is for).
-- `OrchestrationV2ThreadShellSandbox` (the summary a thread shell carries, `orchestrationV2.ts` 2321) gains the same optional `access`, so clients draw the chip and the dialog from the shell
-  they already have. Older clients drop the key and show nothing; the server still enforces.
+- `OrchestrationV2ThreadShellSandbox` (the summary a thread shell carries) gains an optional
+  `access: { audience, memberIds }`, without `updatedBy`/`updatedAt`, so clients draw the chip and
+  the dialog from the shell they already have. Its `audience` reads an unknown value from a newer
+  server as `null`. Older clients drop the key and show nothing; the server still enforces.
 
 ### The rule
 
-One pure function, used everywhere:
+Two pure functions in `apps/server/src/team/ThreadAccess.ts`, used everywhere. They read a
+prebuilt index entry (`audience` defaults to `team`, `memberIds` is a `Set`) and a roster built
+once, so a check is a map lookup with no allocation:
 
 ```ts
-// apps/server/src/team/threadAccess.ts
-export function sandboxAllows(
-  record: { ownerMemberId: MemberId | null; access?: SandboxAccess },
-  member: { id: MemberId; active: boolean },
-): boolean {
-  if (!member.active) return false;
-  if (record.access === undefined || record.access.audience === "team") return true;
-  return record.ownerMemberId === member.id || record.access.memberIds.includes(member.id);
-}
+export const sandboxAllows = (roster, entry: SandboxAccessEntry | undefined, memberId) => {
+  if (!roster.cloudOnly) return true;
+  if (!roster.isActive(memberId) || entry === undefined) return false;
+  return (
+    entry.audience === "team" ||
+    (entry.ownerMemberId ?? roster.serverOwnerId) === memberId ||
+    entry.memberIds.has(memberId)
+  );
+};
+// threadAllows(roster, { sandboxId?, ownerId? }, entry, memberId) adds the rules for a thread
+// with no machine, or with a machine the index has never seen.
 ```
 
 - **No role is in the rule.** An admin and the server's owner get no access they were not given.
 - **A solo server** has one member, who owns everything, so nothing changes (decision "Solo stays
-  T3 Code").
+  T3 Code"). A machine with no `ownerMemberId` is held by the server's owner, as `holderOf` says.
+- **A machine the index has never seen** opens only to its thread's holder.
 - **A thread with no `sandboxId`** on a cloud-only server is its owner's alone; a thread with no
   owner (written before ownership existed) is everyone's. On any other server the rule is not
   consulted and every member sees every thread, as today.
@@ -252,22 +259,32 @@ export function sandboxAllows(
 ### Changing it
 
 - A new client command, `sandbox.access.set { commandId, threadId, sandboxId, audience, memberIds,
-  actorId }`, joins `SandboxClientCommand` (`ThreadMessageIntake.ts` 63) and is routed to the
-  owner thread's stream by `dispatchSandboxCommand` (113), as wake, sleep and discard are.
+  actorId? }`, joins `SandboxClientCommand` (`ThreadMessageIntake.ts`) and is routed to the owner
+  thread's stream by `dispatchSandboxCommand`, as wake, sleep and discard are. The socket stamps
+  `actorId` with the session's member (`withActor`, `ThreadManagementService.ts`); a command
+  without one is refused.
 - **Only the machine's owner may send it** (`record.ownerMemberId === actorId`). Not an admin: an
-  admin who could share a thread with themselves could read it. Proposed; see the questions.
-- Intake checks, beside `inactive_owner` (`assertTeamPermission`, 89): every id is an active
-  member. The decider (`sandbox/lifecycle/SandboxDecisions.ts`) dedupes, drops the owner, enforces
-  the cap, and emits nothing when the result equals the stored value, so a replay is a no-op.
-- One event, `sandbox.access-changed { sandboxId, access, added, removed, actorId }`. `added` and
-  `removed` are the members who gained or lost access by this change, computed by the decider, so
-  no consumer has to diff. Switching to `team` lists nobody in `added`.
-- **Ownership.** When the owner thread's owner changes (`thread.owner.set`, and
-  `SandboxDecisions.ts` 370 already moves `ownerMemberId`), the previous owner is appended to
-  `memberIds` in the same decision. `thread.owner.set` on a machine's owner thread is refused
-  unless the actor is the owner, or an admin acting for an owner who is no longer active.
+  admin who could share a thread with themselves could read it. Intake refuses anyone else with
+  `not_owner` ("Only the owner can share this thread."), and the decider refuses again. A machine
+  with no `ownerMemberId` (a solo server) cannot be shared.
+- Intake checks that every id is an active member (`inactive_member`). It does this in
+  `dispatchSandboxCommand`, since sandbox commands do not pass `assertTeamPermission`. The decider
+  (`sandbox/lifecycle/SandboxDecisions.ts`) dedupes, drops the owner, refuses more than 50, and
+  emits nothing when the result equals the stored value (a missing `access` equals `team`), so a
+  replay is a no-op. Setting access leaves the record's `updatedAt` alone.
+- The decision writes `sandbox.updated` with the new record, then
+  `sandbox.access-changed { sandboxId, access, added, removed, audienceChanged, actorId }` on the
+  owner thread's stream. Within `members`, `added` and `removed` are the members who gained or
+  lost access, computed by the decider, so no consumer has to diff. A switch between `members` and
+  `team`, or a change while `team`, lists nobody; `audienceChanged` marks the switch, and a
+  consumer that needs the members re-reads the machine's threads.
+- **Ownership.** When the owner thread's owner changes (`thread.owner.set`), the previous owner is
+  appended to `memberIds` in the same decision and a `sandbox.access-changed` follows. This may
+  leave the list one past the cap. Refusing `thread.owner.set` on a machine's owner thread unless
+  the actor is the owner, or an admin acting for an owner who is no longer active, is 6.7.
 - **A machine handed to another thread** (`sandbox.adopt`, when its owner thread is deleted) keeps
-  its `access`; the new owner thread's owner becomes the owner.
+  its `access`; the new owner thread's owner becomes the owner, and the previous one is appended.
+  A record from before access stays without one.
 
 ### Persistence
 
@@ -278,10 +295,12 @@ reads filter in SQL, so the projection gains a lookup, in **migration 097** (the
 - `orchestration_v2_projection_sandbox_members (sandbox_id, member_id, PRIMARY KEY (sandbox_id,
   member_id))`, written by `SandboxProjection.ts` in the same transaction as the record.
 
-Live checks do not query. `ThreadAccess` keeps an in-memory index of every machine's owner,
-audience and members, loaded once from the projection and updated from the committed event, so a
-check on a streamed event is a map lookup. Machines number in the hundreds; the index is a few
-kilobytes.
+Live checks do not query. `ThreadAccessIndex` keeps every machine's owner, audience and members
+in memory, destroyed machines included. It is loaded once from the projection, and `EventSink`
+updates it from each committed `sandbox.updated` before it publishes the batch, inside the same
+publish lane, so no live stream hands out an event the index does not yet reflect. A read that
+goes to the database (a stream's replay, `getThread`) can see a commit microseconds before the
+index does. Machines number in the hundreds; the index is a few kilobytes.
 
 ## 4. Where the server enforces it
 
@@ -294,17 +313,18 @@ export class ThreadAccess extends Context.Service<
   ThreadAccess,
   {
     readonly allowsSandbox: (memberId: MemberId, sandboxId: SandboxId) => boolean;
-    readonly allowsThread: (
-      memberId: MemberId,
-      thread: { sandboxId?: SandboxId; ownerId?: MemberId | null },
-    ) => boolean;
+    readonly allowsThread: (memberId: MemberId, thread: ThreadAccessTarget) => boolean;
     /** Fails as a missing thread does, so a refusal does not confirm the thread exists. */
     readonly assertThread: (
       memberId: MemberId,
       threadId: ThreadId,
-    ) => Effect.Effect<void, ThreadNotFound>;
-    readonly assertPath: (memberId: MemberId, path: string) => Effect.Effect<void, ThreadNotFound>;
-    /** One item per committed `sandbox.access-changed`. */
+    ) => Effect.Effect<void, ProjectionStoreV2Error>;
+    /** Fails as a path on a missing machine does. Paths outside the sandbox root pass. */
+    readonly assertPath: (
+      memberId: MemberId,
+      path: string,
+    ) => Effect.Effect<void, WorkspaceHostUnavailableError>;
+    /** One item per committed `sandbox.access-changed`, after `allowsSandbox` reflects it. */
     readonly changes: Stream.Stream<SandboxAccessChange>;
   }
 >()("t3/team/ThreadAccess") {}

@@ -71,6 +71,7 @@ import * as SandboxAdmission from "../sandbox/lifecycle/SandboxAdmission.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as SandboxLifecycleWorker from "../sandbox/lifecycle/SandboxLifecycleWorker.ts";
 import * as SandboxReconciler from "../sandbox/lifecycle/SandboxReconciler.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -96,6 +97,8 @@ const layerStores = Layer.mergeAll(
   layerCommandReceiptStoreProvided,
   EffectOutbox.layer,
   TurnItemPositionStore.layer,
+  // The server's `ThreadAccess` provides the same layer, so memoization shares one index.
+  ThreadAccess.layerIndex,
 );
 
 export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));

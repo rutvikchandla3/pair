@@ -906,6 +906,58 @@ describe("cloud threads on older clients", () => {
     expect(encodeDomainEventJson(decodeDomainEventJson(event))).toEqual(event);
   });
 
+  it("stores who can open a machine, and reads a record from before access as having none", () => {
+    const access = {
+      audience: "members",
+      memberIds: ["member-bob"],
+      updatedBy: "member-alice",
+      updatedAt: at,
+    };
+    const updated = (payload: object) => ({
+      id: "event-1",
+      threadId: "thread-1",
+      occurredAt: at,
+      type: "sandbox.updated",
+      payload,
+    });
+    expect(encodeDomainEventJson(decodeDomainEventJson(updated({ ...sandbox, access })))).toEqual(
+      updated({ ...sandbox, access }),
+    );
+    const legacy = decodeDomainEventJson(updated(sandbox));
+    expect(legacy.type === "sandbox.updated" && "access" in legacy.payload).toBe(false);
+
+    expect(isKnownOrchestrationV2EventType("sandbox.access-changed")).toBe(true);
+    const changed = {
+      id: "event-2",
+      threadId: "thread-1",
+      occurredAt: at,
+      type: "sandbox.access-changed",
+      payload: {
+        sandboxId,
+        access,
+        added: ["member-bob"],
+        removed: [],
+        audienceChanged: false,
+        actorId: "member-alice",
+      },
+    };
+    expect(encodeDomainEventJson(decodeDomainEventJson(changed))).toEqual(changed);
+    expect(
+      decodeThreadStreamWireItem({ kind: "event", sequence: 2, event: changed }),
+    ).toMatchObject({ kind: "event", event: { type: "sandbox.access-changed" } });
+  });
+
+  it("shows a shell's audience, and an audience from a newer server as unknown", () => {
+    const withAccess = (audience: string) =>
+      decodeThreadShellJson({
+        ...shell,
+        sandboxId,
+        sandbox: { ...summary, access: { audience, memberIds: ["member-bob"] } },
+      }).sandbox?.access;
+    expect(withAccess("members")).toEqual({ audience: "members", memberIds: ["member-bob"] });
+    expect(withAccess("org")).toEqual({ audience: null, memberIds: ["member-bob"] });
+  });
+
   it("lets clients send only the user sandbox commands", () => {
     const command = { commandId: "command-1", threadId: "thread-2", sandboxId };
     expect(
@@ -914,6 +966,14 @@ describe("cloud threads on older clients", () => {
       type: "sandbox.wake",
       sandboxId,
     });
+    expect(
+      decodeClientCommand({
+        ...command,
+        type: "sandbox.access.set",
+        audience: "members",
+        memberIds: ["member-2"],
+      }),
+    ).toMatchObject({ type: "sandbox.access.set", audience: "members", memberIds: ["member-2"] });
     expect(() =>
       decodeClientCommand({
         ...command,

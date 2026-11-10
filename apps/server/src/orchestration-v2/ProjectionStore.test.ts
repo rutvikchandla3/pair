@@ -2723,7 +2723,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const owner = thread(ownerId, at(0));
       const fork = thread(forkId, at(2));
-      const sandbox = (state: OrchestrationV2Sandbox["state"], minutes: number) =>
+      const bob = MemberId.make("member-bob");
+      const carol = MemberId.make("member-carol");
+      const access = (audience: "members" | "team", memberIds: ReadonlyArray<MemberId>) => ({
+        audience,
+        memberIds,
+        updatedBy: null,
+        updatedAt: at(3),
+      });
+      const sandbox = (
+        state: OrchestrationV2Sandbox["state"],
+        minutes: number,
+        sandboxAccess = access("members", [bob, carol]),
+      ) =>
         ({
           id: sandboxId,
           projectId,
@@ -2739,10 +2751,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           sleepReason: null,
           failure:
             state === "failed" ? { code: "lost", message: "Runner lost", retryable: true } : null,
+          access: sandboxAccess,
           createdAt: at(1),
           updatedAt: at(minutes),
         }) satisfies OrchestrationV2Sandbox;
-      const failed = sandbox("failed", 4);
+      const failed = sandbox("failed", 4, access("team", [bob]));
       const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
         {
           id: EventId.make("event:sbx:owner"),
@@ -2771,6 +2784,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           threadId: ownerId,
           occurredAt: at(3),
           payload: sandbox("ready", 3),
+        },
+        {
+          id: EventId.make("event:sbx:access-changed"),
+          type: "sandbox.access-changed",
+          threadId: ownerId,
+          occurredAt: at(3),
+          payload: {
+            sandboxId,
+            access: access("members", [bob, carol]),
+            added: [bob, carol],
+            removed: [],
+            audienceChanged: false,
+            actorId: null,
+          },
         },
         {
           id: EventId.make("event:sbx:failed"),
@@ -2816,9 +2843,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         runnerConnected: false,
         failureCode: "lost",
         retryable: true,
+        access: { audience: "team", memberIds: [bob] },
       };
+      const readAccess = Effect.all([
+        sql`SELECT audience FROM orchestration_v2_projection_sandboxes`,
+        sql`SELECT sandbox_id, member_id FROM orchestration_v2_projection_sandbox_members`,
+      ]);
+      const stored: [ReadonlyArray<object>, ReadonlyArray<object>] = [
+        [{ audience: "team" }],
+        [{ sandbox_id: sandboxId, member_id: bob }],
+      ];
 
       for (const event of events) yield* store.apply(event);
+      assert.deepStrictEqual(yield* readAccess, stored);
       assert.deepStrictEqual(yield* store.getSandbox(sandboxId), failed);
       assert.deepStrictEqual(yield* readLedger, ledger);
       const shells = (yield* store.getShellSnapshot({ threadIds: [ownerId, forkId] })).threads;
@@ -2839,6 +2876,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       for (const event of [...events, ...later]) yield* store.apply(event);
       assert.deepStrictEqual(yield* store.listSandboxThreads(sandboxId), members);
       assert.deepStrictEqual(yield* readLedger, ledger);
+      assert.deepStrictEqual(yield* readAccess, stored);
     }),
   );
 

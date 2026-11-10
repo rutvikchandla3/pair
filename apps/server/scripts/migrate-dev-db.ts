@@ -202,6 +202,7 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   // Sandbox records name the developer's real containers; a dev server must never act on them.
   "orchestration_v2_projection_sandboxes",
   "orchestration_v2_projection_sandbox_threads",
+  "orchestration_v2_projection_sandbox_members",
   "sandbox_usage_intervals",
   "sandbox_runner_grants",
 ];
@@ -386,7 +387,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))
-           OR event_type = 'sandbox.updated'`;
+           OR event_type IN ('sandbox.updated', 'sandbox.access-changed')`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }

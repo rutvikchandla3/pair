@@ -78,6 +78,7 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.ts";
+import * as ThreadAccess from "../../team/ThreadAccess.ts";
 
 export function makeReplayServerConfig(
   scenario: string,
@@ -364,7 +365,13 @@ export function layerWithRegistry<Error>(
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerStores,
+        layerDatabase,
+        ThreadAccess.layerIndex.pipe(Layer.provide(layerDatabase)),
+      ),
+    ),
   );
   const layerSandboxAdmission = (options.sandboxAdmission ?? layerSandboxAdmissionOpen).pipe(
     Layer.provide(layerStores),

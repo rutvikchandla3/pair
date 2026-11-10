@@ -75,6 +75,8 @@ describe("V2 preview upgrade", () => {
         [93, "StagedCloudImports"],
         [94, "OutboxAggregateKey"],
         [95, "TeamImages"],
+        [96, "TeamImageProposals"],
+        [97, "SandboxAccess"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -193,6 +195,8 @@ describe("V2 preview upgrade", () => {
         [93, "StagedCloudImports"],
         [94, "OutboxAggregateKey"],
         [95, "TeamImages"],
+        [96, "TeamImageProposals"],
+        [97, "SandboxAccess"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

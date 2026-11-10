@@ -190,6 +190,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "sandbox.sleep":
     case "sandbox.retry":
     case "sandbox.discard":
+    case "sandbox.access.set":
       return [command.threadId];
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":

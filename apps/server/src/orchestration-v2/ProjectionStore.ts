@@ -1084,6 +1084,8 @@ export function applyToProjection(
       return { ...projection, sandbox: event.payload };
     // Audit only: the event log and server log are its record.
     case "sandbox.git-credential.issued":
+    // The `sandbox.updated` before it carries the record.
+    case "sandbox.access-changed":
       return projection;
   }
 }
@@ -3144,7 +3146,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.provider-switched" &&
             event.type !== "thread.guest-share-updated" &&
             // Machine state must not reorder threads.
-            event.type !== "sandbox.updated"
+            event.type !== "sandbox.updated" &&
+            event.type !== "sandbox.access-changed"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`

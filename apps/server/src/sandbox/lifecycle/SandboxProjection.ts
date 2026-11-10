@@ -83,6 +83,9 @@ export const sandboxShellSummary = (
   ...(sandbox.failure === null
     ? {}
     : { failureCode: sandbox.failure.code, retryable: sandbox.failure.retryable }),
+  ...(sandbox.access === undefined
+    ? {}
+    : { access: { audience: sandbox.access.audience, memberIds: sandbox.access.memberIds } }),
 });
 
 const SandboxPayload = Schema.fromJsonString(OrchestrationV2SandboxJson);
@@ -117,12 +120,12 @@ export const applySandboxUpdated = Effect.fnUntraced(function* (
   yield* sql`
     INSERT INTO orchestration_v2_projection_sandboxes (
       sandbox_id, project_id, owner_thread_id, owner_member_id, driver_id, state, generation,
-      admission_since, updated_at, payload_json
+      admission_since, updated_at, audience, payload_json
     )
     VALUES (
       ${sandbox.id}, ${sandbox.projectId}, ${sandbox.ownerThreadId}, ${sandbox.ownerMemberId},
       ${sandbox.driverId}, ${sandbox.state}, ${sandbox.generation}, ${admissionSince},
-      ${updatedAt}, ${payloadJson}
+      ${updatedAt}, ${sandbox.access?.audience ?? null}, ${payloadJson}
     )
     ON CONFLICT(sandbox_id) DO UPDATE SET
       project_id = excluded.project_id,
@@ -133,7 +136,13 @@ export const applySandboxUpdated = Effect.fnUntraced(function* (
       generation = excluded.generation,
       admission_since = excluded.admission_since,
       updated_at = excluded.updated_at,
+      audience = excluded.audience,
       payload_json = excluded.payload_json
+  `;
+  yield* sql`DELETE FROM orchestration_v2_projection_sandbox_members WHERE sandbox_id = ${sandbox.id}`;
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_sandbox_members (sandbox_id, member_id)
+    SELECT ${sandbox.id}, value FROM json_each(${yield* encodeIds(sandbox.access?.memberIds ?? [])})
   `;
 
   const latest = (yield* decodeIntervalRows(
@@ -229,6 +238,15 @@ export const getSandboxes = Effect.fn("SandboxProjection.getSandboxes")(function
 
 export const getSandbox = Effect.fn("SandboxProjection.getSandbox")(function* (id: SandboxId) {
   return (yield* getSandboxes([id])).get(id) ?? null;
+});
+
+/** Every record, destroyed ones included: a thread keeps its `sandboxId` after its disk is gone. */
+export const listSandboxes = Effect.fn("SandboxProjection.listSandboxes")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_sandboxes
+  `;
+  return yield* Effect.forEach(rows, (row) => decodeSandbox(row.payload_json));
 });
 
 /** Every sandbox not yet destroyed; the lifecycle worker and the reconciler sweep these. */

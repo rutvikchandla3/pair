@@ -8,12 +8,15 @@ import type {
   OrchestrationV2ServerCommand,
   OrchestrationV2ThreadShell,
   RunId,
+  SandboxAccess,
+  SandboxAccessChange,
   SandboxDiskRetention,
   SandboxFailure,
   SandboxSettings,
   SandboxSleepReason,
   ThreadId,
 } from "@t3tools/contracts";
+import { SANDBOX_ACCESS_MEMBER_LIMIT } from "@t3tools/contracts";
 import { DEFAULT_DISK_RETENTION, NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import * as DateTime from "effect/DateTime";
 
@@ -40,7 +43,8 @@ export type SandboxCommand = Extract<
       | "sandbox.failed"
       | "sandbox.auto-sleep"
       | "sandbox.expire"
-      | "sandbox.adopt";
+      | "sandbox.adopt"
+      | "sandbox.access.set";
   }
 >;
 
@@ -120,7 +124,10 @@ type SandboxRefusalReason =
   | "stale-generation"
   /** `sandbox.admit` with no free slot or start token, or while draining; the sweep tries again later. */
   | "no-capacity"
-  | "not-cloud-only";
+  | "not-cloud-only"
+  /** `sandbox.access.set` from anyone but the machine's owner, an admin included. */
+  | "not-owner"
+  | "over-cap";
 
 /**
  * Why a machine about to start must wait, or null to start it now. A new start also queues
@@ -360,16 +367,79 @@ export const planSandboxOnDelete = (input: {
   };
 };
 
+/** A new owner leaves the list, and the previous one joins it so they keep access. */
+const withOwner = (
+  record: OrchestrationV2Sandbox,
+  ownerMemberId: MemberId | null,
+  actorId: MemberId | null,
+  now: DateTime.Utc,
+): OrchestrationV2Sandbox => {
+  const { access, ownerMemberId: previous } = record;
+  if (access === undefined || previous === ownerMemberId) return { ...record, ownerMemberId };
+  const memberIds = access.memberIds.filter((id) => id !== ownerMemberId && id !== previous);
+  return {
+    ...record,
+    ownerMemberId,
+    access: {
+      ...access,
+      memberIds: previous === null ? memberIds : [...memberIds, previous],
+      updatedBy: actorId,
+      updatedAt: now,
+    },
+  };
+};
+
 /** Reassigning the owning thread moves the sandbox's member with it; other threads' don't. */
 export const sandboxOwnerMemberChange = (
   record: OrchestrationV2Sandbox | null,
   threadId: ThreadId,
   ownerMemberId: MemberId | null,
+  actorId: MemberId | null,
   now: DateTime.Utc,
 ): OrchestrationV2Sandbox | null =>
   record === null || record.ownerThreadId !== threadId || record.ownerMemberId === ownerMemberId
     ? null
-    : { ...record, ownerMemberId, updatedAt: now };
+    : { ...withOwner(record, ownerMemberId, actorId, now), updatedAt: now };
+
+const audienceOf = (access: SandboxAccess | undefined) => access?.audience ?? "team";
+
+const namedMembers = (record: OrchestrationV2Sandbox): ReadonlySet<MemberId> => {
+  const named = new Set(record.access?.memberIds ?? []);
+  if (record.ownerMemberId !== null) named.add(record.ownerMemberId);
+  return named;
+};
+
+/**
+ * The `sandbox.access-changed` payload for a record change, or null when neither its access nor
+ * its owner moved. An audience flip names nobody: whom it reaches depends on the roster.
+ */
+export const sandboxAccessChange = (
+  before: OrchestrationV2Sandbox,
+  after: OrchestrationV2Sandbox,
+  actorId: MemberId | null,
+): SandboxAccessChange | null => {
+  const { access } = after;
+  if (
+    access === undefined ||
+    (before.access === access && before.ownerMemberId === after.ownerMemberId)
+  ) {
+    return null;
+  }
+  const audienceChanged = audienceOf(before.access) !== access.audience;
+  if (audienceChanged || access.audience === "team") {
+    return { sandboxId: after.id, access, added: [], removed: [], audienceChanged, actorId };
+  }
+  const was = namedMembers(before);
+  const is = namedMembers(after);
+  return {
+    sandboxId: after.id,
+    access,
+    added: [...is].filter((id) => !was.has(id)),
+    removed: [...was].filter((id) => !is.has(id)),
+    audienceChanged,
+    actorId,
+  };
+};
 
 export type CloudPromptDecision =
   | { readonly _tag: "Send" }
@@ -476,6 +546,8 @@ export type SandboxDecision =
       readonly _tag: "Accept";
       readonly next: OrchestrationV2Sandbox;
       readonly effects: ReadonlyArray<SandboxEffectRequest>;
+      /** Committed as `sandbox.access-changed` after the record. */
+      readonly accessChange?: SandboxAccessChange | null;
     }
   /** Already there; only types on dispatch's no-event allow list return it. */
   | { readonly _tag: "NoOp" }
@@ -487,7 +559,7 @@ const refuse = (reason: SandboxRefusalReason): SandboxDecision => ({ _tag: "Refu
 const accept = (
   next: OrchestrationV2Sandbox,
   effectTypes: ReadonlyArray<SandboxEffectRequest["type"]>,
-): SandboxDecision => ({
+): Extract<SandboxDecision, { readonly _tag: "Accept" }> => ({
   _tag: "Accept",
   next,
   effects: effectTypes.map((type) => ({ type, sandboxId: next.id, generation: next.generation })),
@@ -501,6 +573,31 @@ const acceptStart = (
 ): SandboxDecision => {
   const admission = admissionWait(snapshot, next.updatedAt);
   return admission === null ? accept(next, [start]) : accept({ ...next, admission }, []);
+};
+
+const decideAccessSet = (
+  record: OrchestrationV2Sandbox,
+  command: Extract<SandboxCommand, { readonly type: "sandbox.access.set" }>,
+  now: DateTime.Utc,
+): SandboxDecision => {
+  const { actorId } = command;
+  if (actorId === undefined || record.ownerMemberId !== actorId) return refuse("not-owner");
+  const memberIds = [...new Set(command.memberIds)].filter((id) => id !== actorId);
+  if (memberIds.length > SANDBOX_ACCESS_MEMBER_LIMIT) return refuse("over-cap");
+  const stored = record.access?.memberIds ?? [];
+  if (
+    audienceOf(record.access) === command.audience &&
+    stored.length === memberIds.length &&
+    memberIds.every((id) => stored.includes(id))
+  ) {
+    return noOp;
+  }
+  // Not `updatedAt`: the idle and expiry clocks read it.
+  const next: OrchestrationV2Sandbox = {
+    ...record,
+    access: { audience: command.audience, memberIds, updatedBy: actorId, updatedAt: now },
+  };
+  return { ...accept(next, []), accessChange: sandboxAccessChange(record, next, actorId) };
 };
 
 const decideProvision = (
@@ -530,6 +627,12 @@ const decideProvision = (
       failure: null,
       ...(command.discardOnSettle === true ? { discardOnSettle: true } : {}),
       ...(command.imageBuild === undefined ? {} : { imageBuild: command.imageBuild }),
+      // A new session is private; a rebuilt one keeps its audience, or its lack of one (`team`).
+      ...(record === null
+        ? { access: { audience: "members", memberIds: [], updatedBy: null, updatedAt: now } }
+        : record.access === undefined
+          ? {}
+          : { access: record.access }),
       createdAt: now,
       updatedAt: now,
     },
@@ -545,19 +648,16 @@ const decide = (input: SandboxDecisionInput): SandboxDecision => {
   if (record === null) return refuse("not-found");
   if (command.type === "sandbox.adopt") {
     // A hand-over that lost its race resends to the next thread under the same id.
-    return record.ownerThreadId === command.previousOwnerThreadId
-      ? accept(
-          {
-            ...record,
-            ownerThreadId: command.threadId,
-            ownerMemberId: input.ownerMemberId,
-            updatedAt: now,
-          },
-          [],
-        )
-      : refuse("not-owner-thread");
+    if (record.ownerThreadId !== command.previousOwnerThreadId) return refuse("not-owner-thread");
+    const next = {
+      ...withOwner(record, input.ownerMemberId, null, now),
+      ownerThreadId: command.threadId,
+      updatedAt: now,
+    };
+    return { ...accept(next, []), accessChange: sandboxAccessChange(record, next, null) };
   }
   if (record.ownerThreadId !== command.threadId) return refuse("not-owner-thread");
+  if (command.type === "sandbox.access.set") return decideAccessSet(record, command, now);
 
   // Only a booting record waits for admission.
   const patched = (patch: Partial<OrchestrationV2Sandbox>): OrchestrationV2Sandbox => {
