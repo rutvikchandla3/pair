@@ -78,7 +78,7 @@ it.effect("fails a removed driver that is still the default and closes it", () =
       yield* registry.get(local);
 
       const next = yield* settings.updateSettings({ sandbox: { drivers: { [local]: null } } });
-      assert.strictEqual(next.sandbox?.defaultDriverId, local);
+      assert.isUndefined(next.sandbox?.defaultDriverId);
 
       const error = yield* Effect.flip(registry.get(local));
       assert.instanceOf(error, ComputeDriverRegistry.ComputeDriverNotConfiguredError);

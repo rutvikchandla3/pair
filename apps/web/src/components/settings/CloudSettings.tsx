@@ -47,6 +47,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
   cloudSettingsVisible,
+  defaultDriverIdOf,
   dockerDriverFormError,
   type GceDriverForm,
   gceDriverFormError,
@@ -242,6 +243,9 @@ function CloudEnvironmentSettings({
       "Disk retention not saved",
     );
 
+  const startNewMachinesOn = (driver: SandboxDriverInstance) =>
+    void save({ sandbox: { defaultDriverId: driver.id } }, "Default driver not saved");
+
   const saveDriver = async (driver: SandboxDriverInstance) => {
     if (await save({ sandbox: { drivers: { [driver.id]: driver } } }, "Driver not saved"))
       setForm(null);
@@ -280,6 +284,8 @@ function CloudEnvironmentSettings({
 
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
   const plainDocker = drivers.filter((driver) => healths.get(driver.id)?.isolation === "runc");
+  const defaultDriverId =
+    drivers.length > 1 && sandbox !== undefined ? defaultDriverIdOf(sandbox) : undefined;
   const editing = form?.mode === "edit" ? drivers.find((driver) => driver.id === form.id) : null;
   const formKind = form?.mode === "add" ? form.kind : editing?.kind;
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
@@ -470,8 +476,20 @@ function CloudEnvironmentSettings({
                 description={driverDescription(driver)}
                 control={
                   <div className="flex items-center gap-1.5">
+                    {defaultDriverId === driver.id ? (
+                      <span className="text-xs text-muted-foreground">New machines start here</span>
+                    ) : null}
                     {canEdit ? (
                       <>
+                        {defaultDriverId !== undefined && defaultDriverId !== driver.id ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => startNewMachinesOn(driver)}
+                          >
+                            Use for new machines
+                          </Button>
+                        ) : null}
                         <Button
                           size="xs"
                           variant="outline"

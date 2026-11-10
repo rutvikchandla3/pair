@@ -646,6 +646,24 @@ describe("serverSettings helpers", () => {
     });
     expect(removed.sandbox?.drivers).toEqual([remote]);
 
+    const chosen = applyServerSettingsPatch(renamed, {
+      sandbox: { defaultDriverId: remote.id },
+    });
+    expect(chosen.sandbox?.defaultDriverId).toBe(remote.id);
+    const chosenRemoved = applyServerSettingsPatch(chosen, {
+      sandbox: { drivers: { [remote.id]: null } },
+    });
+    expect(chosenRemoved.sandbox?.defaultDriverId).toBeUndefined();
+    expect(
+      applyServerSettingsPatch(chosenRemoved, { sandbox: { drivers: { [remote.id]: remote } } })
+        .sandbox?.defaultDriverId,
+    ).toBeUndefined();
+    expect(
+      applyServerSettingsPatch(renamed, {
+        sandbox: { defaultDriverId: ComputeDriverId.make("gone") },
+      }).sandbox?.defaultDriverId,
+    ).toBeUndefined();
+
     const since = DateTime.makeUnsafe("2026-11-07T14:02:00.000Z");
     const restoring = applyServerSettingsPatch(removed, { sandbox: { restoreModeSince: since } });
     expect(restoring.sandbox).toEqual({ drivers: [remote], restoreModeSince: since });

@@ -248,7 +248,10 @@ function mergeSandboxPatch(
   }
   const patched = <Value>(value: Value | null | undefined, saved: Value | undefined) =>
     value === undefined ? saved : (value ?? undefined);
-  const defaultDriverId = patched(patch.defaultDriverId, current?.defaultDriverId);
+  const namedDefaultId = patched(patch.defaultDriverId, current?.defaultDriverId);
+  // A default naming no driver is dropped, so a driver re-added under that id is not silently it.
+  const defaultDriverId =
+    namedDefaultId !== undefined && drivers.has(namedDefaultId) ? namedDefaultId : undefined;
   const baseImage = patched(patch.baseImage, current?.baseImage);
   const env = patched(patch.env, current?.env);
   const restoreModeSince = patched(patch.restoreModeSince, current?.restoreModeSince);

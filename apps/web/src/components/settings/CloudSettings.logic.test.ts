@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  defaultDriverIdOf,
   dockerDriverFormError,
   type GceDriverForm,
   gceDriverFormError,
@@ -170,5 +171,33 @@ describe("nextDriverId", () => {
     { name: "a second gce driver", drivers: [docker, gce], kind: "gce", expected: "gce-2" },
   ])("$name", ({ drivers, kind, expected }) => {
     expect(nextDriverId(drivers, kind)).toBe(expected);
+  });
+});
+
+describe("defaultDriverIdOf", () => {
+  const docker = { kind: "docker", id: ComputeDriverId.make("docker"), label: "D" } as const;
+  const gce = { kind: "gce", id: ComputeDriverId.make("gce"), label: "G" } as const;
+  it.each<{
+    readonly name: string;
+    readonly drivers: ReadonlyArray<SandboxDriverInstance>;
+    readonly saved?: string;
+    readonly expected: string | undefined;
+  }>([
+    { name: "no saved id is the first driver", drivers: [docker, gce], expected: "docker" },
+    { name: "the second driver's id", drivers: [docker, gce], saved: "gce", expected: "gce" },
+    {
+      name: "the id of a removed driver is the first driver",
+      drivers: [docker, gce],
+      saved: "gone",
+      expected: "docker",
+    },
+    { name: "no drivers", drivers: [], saved: "gce", expected: undefined },
+  ])("$name", ({ drivers, saved, expected }) => {
+    expect(
+      defaultDriverIdOf({
+        drivers,
+        ...(saved === undefined ? {} : { defaultDriverId: ComputeDriverId.make(saved) }),
+      }),
+    ).toBe(expected);
   });
 });

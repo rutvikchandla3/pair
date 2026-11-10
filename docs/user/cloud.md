@@ -48,6 +48,9 @@ agents. Projects can add their own.
 A Pair Cloud server that runs in your own Google Cloud project can use that project's Compute
 Engine VMs as machines instead: choose **Add driver**, then **Google Cloud**.
 
+With more than one driver, new machines start on the first one until you choose another:
+press **Use for new machines** on its row. Machines already running stay where they are.
+
 Removing a driver stops the cloud threads on its machines.
 
 ## Choose which projects use Cloud

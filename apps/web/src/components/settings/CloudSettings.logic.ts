@@ -2,6 +2,7 @@ import {
   ComputeDriverId,
   type ComputeDriverKind,
   type GceSandboxDriver,
+  type SandboxSettings,
   type SandboxDriverInstance,
   type SandboxSize,
 } from "@t3tools/contracts";
@@ -128,6 +129,14 @@ export function gceDriverFromForm(
     ...(form.size === "default" ? {} : { size: form.size }),
     ...(runningCap === "" ? {} : { runningCap: Number(runningCap) }),
   };
+}
+
+/** The driver new machines start on, derived as the server does: the saved id if it names one, else the first. */
+export function defaultDriverIdOf(
+  sandbox: Pick<SandboxSettings, "drivers" | "defaultDriverId">,
+): ComputeDriverId | undefined {
+  const named = sandbox.drivers.find((driver) => driver.id === sandbox.defaultDriverId);
+  return (named ?? sandbox.drivers[0])?.id;
 }
 
 export function nextDriverId(
