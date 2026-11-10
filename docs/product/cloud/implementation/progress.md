@@ -70,7 +70,11 @@ reverses "everyone sees every thread" on Pair Cloud. The maintainer said to buil
 with the doc's open questions answered as proposed. Rows have no per-row spec page: the lead's
 worker prompt is each row's scope. Landed: 6.1 (5bc3e5646), 6.5 (d9178ebd5), 6.2 (fb41bbbd5),
 6.6 (31f9befd8), 6.3 (0edf33475, dace0d081, edc976924), 6.4 (4cbcc7c05, 45269cd73), 6.7
-(2a200651f), 6.8 (9bb619610) and fix row 6.10 (c1934d16f, a63300772, 062dc2835, b5694b98f).
+(2a200651f), 6.8 (9bb619610), fix row 6.10 (c1934d16f, a63300772, 062dc2835, b5694b98f), 6.9
+(840a9bac6), and the pass's fix rows 6.12 (5fd644ac3, f00b54770), 6.13 (5ea58d848), 6.11
+(47730753b, 659ae13c2, 46b55451a) and 6.14 (c9f5ab7a8). Releases `0.1.7-pair.11`, `.12` and `.13`
+are prereleases. **The M6 pass passed on `.13` on 2026-11-10**: see
+[M6 on real hardware](#m6-on-real-hardware-2026-11-10-vm-provider-dev-releases-v11-to-v13).
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
@@ -708,6 +712,81 @@ Left: in `vm-provider-dev`, the stopped server clone `pair-cloud-pass` (V10, Doc
 Google Cloud driver removed, `T3CODE_RUNNER_*` still in `service.env`) and the router and NAT,
 which cost about $0.045 an hour while they exist. In `vm-provider`, the original
 `pair-cloud-pass`, stopped on V8 and untouched.
+
+### M6 on real hardware (2026-11-10, `vm-provider-dev`, releases V11 to V13)
+
+**Passed on V13**, after two fix releases. The server is the clone of `pair-cloud-pass` with the
+Google Cloud driver for new machines. A is `rutvik` (owner and admin), in a browser on the tailnet
+URL; B is `Teammate` (a plain member), in a second browser origin through an SSH tunnel to the
+member listener, and as a probe script speaking the RPC protocol with B's session. The steps are
+[11 §7](../11-private-threads.md#7-verification)'s.
+
+1. **Private by default: passed (V11).** A's new thread got `{ audience: "members", memberIds:
+   [] }`. B saw it nowhere; its link showed "This thread is private, or it no longer exists. Ask
+   its owner to share it with you."; the server logged `access_denied`.
+2. **Share: passed (V11).** Adding B in the Share dialog put the thread in B's Team shelf at once,
+   with "rutvik shared this thread with Teammate". B prompted it and got a reply.
+3. **Every guarded RPC, as B: passed on V13.** All 77 methods of `RPC_THREAD_TARGETS` were sent at
+   a private thread and at an id that does not exist: 75 answered `thread_not_found`, identical
+   after masking ids; `guestShare.create` and `peerLinks.answerRequest` stopped earlier on B's
+   missing `access:write` (a unit test covers the guard for them). Eight command kinds, a create
+   with the private thread's id, path escapes (`..`, `//`, `./..`) from a shared machine into a
+   private one, and the HTTP reads were refused the same way. 382 responses held nothing of
+   either private thread. Open: `%2e%2e` and a backslash are taken as literal names.
+4. **Remove while open: passed (V11).** B's view changed to "You no longer have access to this
+   thread." in about 2 s, the terminal closed and the row left the sidebar.
+5. **Everyone, then only people added: passed (V11)**, both ways, live.
+6. **The agent reach rule: passed (V11).** B's agent read two of A's private threads:
+   `thread_not_found` for both, and `t3_thread_search` returned only its own thread.
+7. **Admin view: passed on V12.** B's thread was invisible to A. Settings → Cloud listed its
+   machine as "Private · Teammate" with state, size and driver. **Discard machine** showed "This
+   deletes Teammate's machine and its uncommitted work. You can't see what is on it." and removed
+   the machine and its instance.
+8. **Remove a member: passed (V13, CLI).** `t3 member remove Teammate` was refused; with
+   `--give-cloud-threads-to rutvik` it removed B, both of B's machines became A's, and B's browser
+   went to the sign-in page at once.
+9. **Threads from before: passed (V11).** They read "Team" and stayed visible to B.
+
+Findings, and what fixed them:
+
+- **Two leaks to a plain member, found by the probe on V11 (fixed by 6.11, verified on V13).**
+  The server config sent every machine's workspace snapshots (`cwd` under
+  `/t3-sandbox/<id>/worktrees/…`), and `server.getTraceDiagnostics` returned server-wide log lines
+  that name other members' threads and tell private from missing. Both were in what RPCs return;
+  6.10's walk only read inputs. 6.11 added the output walk, which found six more (scheduled task
+  writes, the storage report, device state).
+- **A regression in V12 (fixed by 6.14, verified on V13).** 6.11 narrowed a member's scopes at
+  sign-in, and the sockets compared the narrowed set with the stored one, so every plain member's
+  WebSocket closed after the upgrade. 6.11's test checked the scope list, not a connection.
+- **A granted thread showed an empty conversation** until reload when its page was already open
+  (6.12, verified on V13).
+- **The private machine row had no actions** on V11 (6.12, verified on V12). The worker could not
+  reproduce the cause; the row had a menu on V12.
+- **An agent lost its Pair tools after its machine slept and woke** within 30 minutes: the server
+  reused the provider session from before the sleep, with the old runner's MCP address. It
+  predates M6 and affects Docker too (6.13). Verified on V12: a tool call, Sleep now, a wake, the
+  same tool call, then `git fetch` and `gh auth status`, all working. Codex was not run.
+
+Smaller, not fixed:
+
+- **Everyone on…** names the server's hostname, the environment's label on this server.
+- The sidebar's rows overlap for a moment while the list loads.
+- `t3 member remove` prints a stack trace with its refusal.
+- A team image proposal shows its thread's id to every member, private or not (6.11).
+- Opening a device a hidden thread is using can fail with "busy" (6.11).
+- "Add a device" for a member on a cloud-only server delegates the narrowed scopes, so a later
+  promotion never widens that device (6.14).
+- A thread shows nothing when its agent's Pair tools are unavailable; the warning is only logged.
+- `DeviceHubProxy.stream.test.ts` "closes an upstream socket that is still connecting…" times out
+  on `feat/pair`.
+
+Not run: mobile (`test-t3-mobile`), the web browser tests the rows touched, scheduled task
+sharing (6.8), guest links, the Share dialog's member cap and removal warning, a member promoted
+or demoted on a live connection, the Docker driver, and Codex after a wake.
+
+Left: `Teammate` on the server is a new member (id `2c905933…`; the lead removed and re-invited
+it, twice, the second time by mistake), with no session. The pass's threads (P1 to P3 and the
+wake check) are A's and asleep. The probe is in the lead's scratch directory, not committed.
 
 ## How to resume
 
@@ -2777,6 +2856,25 @@ Each item had a failing test first, except the two that needed no code.
 - Open: `DeviceHubProxy.stream.test.ts` "closes an upstream socket that is still connecting…"
   times out on `feat/pair` too. A remote delegation sends the parent thread's title to the other
   server.
+
+## 6.9, and the pass's fix rows 6.11 to 6.14
+
+- **6.9 (840a9bac6):** the decisions, 01, 06, 09, the README and the user guides say cloud threads
+  are private until shared; the invite dialog and the plain-Docker warning changed with them.
+- **6.12 (5fd644ac3, f00b54770):** `makeEnvironmentThreadState` takes a `shellListings` stream and
+  reopens a thread's detail subscription when the shell lists a thread whose detail is deleted or
+  revoked. Any new caller of `createEnvironmentThreadStateAtoms` passes the shell state atom.
+  `cloudMachineRow` takes `memberId` and returns `allowed`; `canMemberDeleteThread` counts
+  `isOwner`; the sidebar drops the owner from its viewers stack.
+- **6.13 (5ea58d848):** `ProviderSessionManager.open` releases a session whose sandbox has a new
+  host object (reason `host_restarted`) and opens it again, so session-scoped forwards and the
+  MCP thread token are made fresh. The git credential forward reopens on every runner boot.
+- **6.11 (47730753b, 659ae13c2, 46b55451a):** `providersForViewer` filters workspace snapshots;
+  `effectiveScopes` drops `diagnostics:read` for a member who is not an admin on a cloud-only
+  server; `RPC_OUTPUT_FILTERED` (24) and `RPC_OUTPUT_EXEMPT` (27) beside the input table (39 of
+  the 90 methods the output walk flags); `deviceStateForViewer`.
+- **6.14 (c9f5ab7a8):** `AuthenticatedSession.storedScopes`; the RPC, preview and device sockets
+  watch the session row with it. `docs/internals/environment-auth.md` says why.
 
 ## Open follow-ups and risks
 
