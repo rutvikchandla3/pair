@@ -308,6 +308,8 @@ import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
+import * as MachinePorts from "./sandbox/browser/MachinePorts.ts";
+import * as ProcessRunner from "./processRunner.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -1674,6 +1676,7 @@ export const layerWsRpc = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
+      const machinePorts = yield* MachinePorts.MachinePorts;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
@@ -3740,44 +3743,51 @@ export const layerWsRpc = (
           DeviceService.stateStream(deviceService).pipe(
             Stream.map((state) => deviceStateForViewer(threadViewer, state)),
           ),
-        [WS_METHODS.previewStopLocalServer]: (input) =>
-          refuseOnCloudOnly("preview.stopLocalServer").pipe(
-            Effect.andThen(portDiscovery.stopServer(input)),
-          ),
+        [WS_METHODS.previewStopLocalServer]: ({ threadId, ...input }) =>
+          config.cloudOnly && threadId !== undefined
+            ? machinePorts.stop({ ...input, threadId })
+            : refuseOnCloudOnly("preview.stopLocalServer").pipe(
+                Effect.andThen(portDiscovery.stopServer(input)),
+              ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
-          Stream.callback<DiscoveredLocalServerList>((queue) =>
-            Effect.gen(function* () {
-              // The server's own ports are not the agents'; nothing scans them.
-              if (config.cloudOnly) {
-                yield* Queue.offer(queue, {
-                  servers: [],
-                  scannedAt: DateTime.formatIso(yield* DateTime.now),
-                });
-                return;
-              }
-              const configuredUrls = input.configuredUrls ?? [];
-              yield* portDiscovery.retain;
-              const initial = yield* portDiscovery.scan(configuredUrls);
-              const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-              yield* Queue.offer(queue, {
-                servers: initial,
-                scannedAt: initialScannedAt,
-                configuredUrlProbing: true,
-              });
-              yield* portDiscovery.subscribe(
-                { configuredUrls, initialSnapshot: initial },
-                (servers) =>
-                  Effect.gen(function* () {
-                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
+          config.cloudOnly && input.threadId !== undefined
+            ? machinePorts.listen({
+                threadId: input.threadId,
+                configuredUrls: input.configuredUrls ?? [],
+              })
+            : Stream.callback<DiscoveredLocalServerList>((queue) =>
+                Effect.gen(function* () {
+                  // The server's own ports are not the agents'; nothing scans them.
+                  if (config.cloudOnly) {
                     yield* Queue.offer(queue, {
-                      servers,
-                      scannedAt,
-                      configuredUrlProbing: true,
+                      servers: [],
+                      scannedAt: DateTime.formatIso(yield* DateTime.now),
                     });
-                  }),
-              );
-            }),
-          ),
+                    return;
+                  }
+                  const configuredUrls = input.configuredUrls ?? [];
+                  yield* portDiscovery.retain;
+                  const initial = yield* portDiscovery.scan(configuredUrls);
+                  const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
+                  yield* Queue.offer(queue, {
+                    servers: initial,
+                    scannedAt: initialScannedAt,
+                    configuredUrlProbing: true,
+                  });
+                  yield* portDiscovery.subscribe(
+                    { configuredUrls, initialSnapshot: initial },
+                    (servers) =>
+                      Effect.gen(function* () {
+                        const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                        yield* Queue.offer(queue, {
+                          servers,
+                          scannedAt,
+                          configuredUrlProbing: true,
+                        });
+                      }),
+                  );
+                }),
+              ),
         [WS_METHODS.subscribeServerConfig]: (input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -4106,6 +4116,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),
               Layer.provide(Layer.mergeAll(SandboxOverview.layer, ComputeDriverCheck.layer)),
+              Layer.provide(MachinePorts.layer.pipe(Layer.provide(ProcessRunner.layer))),
               Layer.provide(TeamUsage.layer),
               Layer.provide(
                 Layer.succeed(

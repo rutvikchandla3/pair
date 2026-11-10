@@ -166,13 +166,19 @@ it.effect("checks nothing where access is not enforced", () =>
   }),
 );
 
-it.effect("ends a stream when the member loses its machine", () =>
+it.effect.each([
+  {
+    method: WS_METHODS.terminalAttach,
+    payload: { threadId: "thread-shared", terminalId: "default" },
+  },
+  { method: WS_METHODS.subscribeDiscoveredLocalServers, payload: { threadId: "thread-shared" } },
+])("ends $method when the member loses its machine", ({ method, payload }) =>
   Effect.gen(function* () {
     const { call, machines, changes } = yield* setup();
     const started = yield* Deferred.make<void>();
     const attach = yield* call(
-      WS_METHODS.terminalAttach,
-      { threadId: "thread-shared", terminalId: "default" },
+      method,
+      payload,
       Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
     ).pipe(Effect.forkChild);
     yield* Deferred.await(started);

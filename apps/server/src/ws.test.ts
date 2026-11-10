@@ -77,6 +77,7 @@ import * as TeamImageService from "./sandbox/image/TeamImageService.ts";
 import { SandboxWake } from "./sandbox/lifecycle/SandboxWakeService.ts";
 import * as ServerDrain from "./drain/ServerDrain.ts";
 import * as SandboxOverview from "./sandbox/lifecycle/SandboxOverview.ts";
+import * as MachinePorts from "./sandbox/browser/MachinePorts.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
@@ -747,6 +748,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
   Layer.mock(SandboxOverview.SandboxOverview)({}),
   Layer.mock(ComputeDriverCheck.ComputeDriverCheck)({}),
+  Layer.mock(MachinePorts.MachinePorts)({}),
   Layer.mock(TeamImageService.TeamImageService)({}),
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),

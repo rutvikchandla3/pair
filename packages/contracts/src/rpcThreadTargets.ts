@@ -18,6 +18,10 @@ type WsPayload<M extends WsMethod> = Rpc.Payload<Rpc.ExtractTag<WsRpc, M>>;
 const thread = (input: { readonly threadId: string }): ReadonlyArray<RpcThreadTarget> => [
   { threadId: input.threadId },
 ];
+/** Without one, a cloud-only server answers as if it had nothing to list or stop. */
+const optionalThread = (input: {
+  readonly threadId?: string | undefined;
+}): ReadonlyArray<RpcThreadTarget> => (input.threadId ? [{ threadId: input.threadId }] : []);
 const cwd = (input: { readonly cwd: string }): ReadonlyArray<RpcThreadTarget> => [
   { path: input.cwd },
 ];
@@ -144,6 +148,8 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.previewClose]: thread,
   [WS_METHODS.previewList]: thread,
   [WS_METHODS.previewReportStatus]: thread,
+  [WS_METHODS.subscribeDiscoveredLocalServers]: optionalThread,
+  [WS_METHODS.previewStopLocalServer]: optionalThread,
   [WS_METHODS.deviceOpen]: thread,
   [WS_METHODS.deviceClose]: thread,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) => [
@@ -281,8 +287,6 @@ export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.serverListAcpRegistrySessions]: refusedOnCloudOnly,
   [WS_METHODS.serverImportAcpRegistrySession]: refusedOnCloudOnly,
   [WS_METHODS.agentSessionsScan]: refusedOnCloudOnly,
-  [WS_METHODS.subscribeDiscoveredLocalServers]:
-    "A cloud-only server scans no ports and sends an empty list.",
   [WS_METHODS.serverGetTraceDiagnostics]: adminDiagnostics,
   [WS_METHODS.serverGetProcessResourceHistory]: adminDiagnostics,
   [WS_METHODS.serverGetUsageSummary]: adminDiagnostics,

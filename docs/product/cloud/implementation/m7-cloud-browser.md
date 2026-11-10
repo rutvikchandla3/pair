@@ -409,20 +409,21 @@ stops one. This is 02 §6 PR 8 and 07 §10 #26, without a `LayerMap`: the runner
     - `subscribeDiscoveredLocalServers` on cloud-only: with no `threadId`, today's empty list.
       With one, resolve the thread's host (its checkout path through `WorkspaceHosts.forPath`);
       stream `host.invoke.portListeners(configuredUrls)` mapped to `DiscoveredLocalServerList`,
-      filling `agent: { threadId }` with the machine's owning thread only where the runner left
-      thread fields empty and the listener is not a terminal's. A machine that is not connected
-      yields one empty list and ends; the client resubscribes when the thread's machine state
-      changes, as it does for terminals.
-    - Drop Chrome's own debugging listener from the list: `MachineBrowser` knows its port.
+      filling `agent: { threadId }` with the requested thread where the runner left both thread
+      fields empty (the server cannot tell a sandbox terminal's listener apart, so those read as
+      the agent's). The runner's own listeners (its MCP forward) are dropped. **As built:** the
+      subscription follows `RunnerHub.status`: an empty list while the machine has no runner,
+      and the new boot's listing after a wake, so one subscription outlives a sleep (6.13).
+    - Chrome's debugging listener: not dropped here, since `MachineBrowser` did not exist when
+      this landed. 7.3 or 7.4 drops its port in `MachinePorts` and refuses it in `stop`.
     - `preview.stopLocalServer` on cloud-only: with a `threadId`, check the pid and port are in
-      that machine's latest listing, then `host.processes.signalGroup(pid, "SIGTERM")`; map
-      failures onto `PreviewStopLocalServerError`'s existing reasons. Without one, today's
-      refusal.
-    - Both handlers call one service method each; put the cloud branch in a small
-      `sandbox/browser/MachinePorts.ts`, not in the handler.
-  - `packages/client-runtime` and `apps/web`, `apps/mobile`: pass the open thread's id on both
-    calls. Re-read every caller of the two methods; the palette and Settings entries that list
-    servers with no thread stay as they are.
+      a fresh scan by that machine's runner, then read the machine's process table (`ps`, with
+      the runner's pid as the shell's `$PPID`) and signal `stoppableProcessGroup`'s group with
+      SIGTERM, refusing as `shared-group` a group that holds the runner or one of its direct
+      children (agents, terminal shells). `signalGroup(pid)` alone would miss a server that is
+      not its group's leader. No SIGKILL escalation. Without a `threadId`, today's refusal.
+    - Both handlers call one service method each: `sandbox/browser/MachinePorts.ts`.
+  - Clients pass the open thread's id in 7.7, not here.
 - **Types and services:** `MachinePorts`. **Commands and events:** none. **Migrations:** none.
 - **Tests:**
   - `MachinePorts.test.ts`: a snapshot then a change arrive in order; Chrome's port is absent;
@@ -503,6 +504,10 @@ The Browser tab is enabled for cloud sessions on web, desktop and mobile, and al
     command palette, keybindings, `BrowserProfileReporter.ts` (28) and `IntegrationsSettings.tsx`
     (1141). The last two are profile features: with `machineBrowser` they stay off (Q2). Re-read
     each; most follow `usePreviewAvailable` and need nothing.
+  - `packages/client-runtime` (`state/preview.ts`) and its web and mobile callers: pass the open
+    thread's id as `threadId` on `subscribeDiscoveredLocalServers` and `preview.stopLocalServer`
+    (7.5 added the field). The palette and Settings entries that list servers with no thread
+    stay as they are.
   - Empty and error states, in web and mobile: a sleeping machine's Browser panel says "This
     machine is asleep. Open a tab to wake it."; 7.4's `not-installed` close shows Q6's sentence
     with no setup command.

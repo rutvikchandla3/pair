@@ -323,6 +323,8 @@ export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 export const PreviewStopLocalServerInput = Schema.Struct({
   pid: PositiveInt,
   port: LocalServerPort,
+  /** A cloud-only server stops it in this thread's machine. Older clients omit it. */
+  threadId: Schema.optionalKey(ThreadId),
 });
 export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
 

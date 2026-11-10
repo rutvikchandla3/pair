@@ -381,7 +381,7 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
   return threads;
 };
 
-const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
+export const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> => {
   const rows = new Map<number, ProcessTableRow>();
   for (const line of raw.split("\n")) {
     const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
