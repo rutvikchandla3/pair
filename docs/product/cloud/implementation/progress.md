@@ -57,7 +57,7 @@ base). 5.8 and 5.13 are left out: 5.11 writes no proxy or CA fields and there ar
 metrics. The pass runs in project `vm-provider-dev` (the maintainer's choice: about 30 instances
 against about 770 in `vm-provider`), on a clone of `pair-cloud-pass`, with the project's default
 compute service account, since the maintainer is Editor and cannot bind a custom role. Landed:
-5.5 (8ceeb1d83).
+5.5 (8ceeb1d83), 5.7a (02918c225), 5.19 (eab83d688) and 5.11 (809e7c416).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
 ### M3 maintainer answers (2026-11-09)
@@ -2378,6 +2378,77 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   no link, since 5.18 is not built.
 - Owed: the `test-t3-app` capture of the form. 5.5 (AWS) needs a `DRIVER_KIND_LABELS` entry and a
   `driverDescription` case.
+
+## 5.7a VM guest files, provision tree and base image state machine (landed 02918c225)
+
+The half of 5.7 (GCP) that does not touch the driver. Not built: the `vm-provision` KVM job,
+`ci.env`, the release gating and `docs/operations/release.md`.
+
+- `infra/sandbox-image/vm/`: `pair-vm-boot.sh`, `pair-runner.service`, `install-vm.sh`,
+  `base-build.sh` (shellcheck clean). The builder waits for cloud-init and the apt lock, refuses
+  under 4 GB free, always reports and powers off, and is a no-op on a machine that is not a builder.
+- `SandboxProvisionTree` (service and layer): released and from-source lookup, a stable tar, a
+  200 KB cap; `codexEnv` moved into it. The tree is 13 KB as base64.
+- `build-cli-archive.ts --sandbox-image-dir`, `smoke-cli-archive.ts --expect-sandbox-image`, and
+  the `archive` job passes both, so a release carries `sandbox-image/`.
+- `VmBaseImage.ts`: `stepVmBaseImage({cloud, installId, tree})` over `VmBaseImageCloud`, one cloud
+  call per method.
+- Deviations: a `pair-version` metadata key (the version stays out of the tar, so an unchanged tree
+  reuses its image); seven cloud methods, not five (`listImages` and `deleteImage` for collection);
+  `Ready.settled`; the kept images are the current one and the newest other ready one;
+  `baseBuildScript` is part of the tree info; the builder also prints
+  `pair-provision-result=<r>` on the serial console, and one that stops with no report is
+  `Failed("no-report")`.
+- Open: whether a stopped builder's guest attributes can be read; `pair-vm-boot` has no
+  `PAIR_METADATA_DIR` seam for the KVM job.
+
+## 5.19 runner listener (landed eab83d688)
+
+- `--runner-host` and `--runner-port`, `T3CODE_RUNNER_HOST` and `T3CODE_RUNNER_PORT`,
+  `ServerConfig.runnerListener`. Start is refused when one is set alone, the host is a wildcard or
+  the port is the member port.
+- `RunnerEndpoint.listenTcp` serves `RunnerRoute.layer` only, drops peers that fail
+  `acceptsPrivateNetworkConnection`, and opens while the layer builds (a taken port fails start).
+  `chooseRunnerRoute` answers the listener's URL before `runner-url-required`; a local Linux
+  Docker driver keeps the Unix socket. `dialsOverTcp` is false whenever the listener is set.
+  `runnerListenerUrl` is on the service for 5.6.
+- Deviations: `perMessageDeflate: false`, as on the Unix socket (03 §3.1; the spec said true).
+  Docker Desktop on a macOS server dials `host.docker.internal:<runner port>` while the listener
+  is set. The listener logs its own line, `runner listener listening { url }`.
+- The guard accepts IPv4 peers only, so an IPv6 runner host refuses every machine.
+- A release install reads the two variables from `~/.t3/service.env`; apply with
+  `t3 service restart`.
+- Owed: the runtime transcript (`curl -i` on both listeners).
+
+## 5.11 gce compute driver (landed 809e7c416)
+
+Built without 5.8's proxy and CA fields and without 5.13's metrics.
+
+- `GceApi.ts`, `GceMetadata.ts`, `GceApiTesting.ts` (the fake), `GceComputeDriver.ts`, its test
+  and contract test, and `testdata/stand-in-runner/gce-startup.sh`. The contract suite can listen
+  on TCP; `StandInRunnerServer` lost `socketPath`.
+- `server.ts` registers `gce` and names both factories' requirements. `SandboxDriverHealth.vm`,
+  `sandboxIsolationLabel` ("Virtual machine") on web and mobile, and Overview wording that no
+  longer assumes Docker.
+- Deviations: inserts send no `requestId` (Compute Engine returns the first operation for a
+  reused id for an hour, so a create that hit a stockout would keep failing); a replay looks for
+  the instance first and treats 409 as an earlier attempt that landed. A plain 503 counts as no
+  capacity, but a create moves zones only when a finished operation reports the stockout. With no
+  `subnetwork`, machines use `global/networks/default`, which needs `compute.networks.use`: 5.12
+  must always set `subnetwork`. The client calls `instances.setLabels` and makes no `disks.*`
+  call except through the instance.
+- Permissions its calls need: `compute.instances.{create,get,list,start,stop,delete,setMetadata,
+  setLabels,setTags,getGuestAttributes,getSerialPortOutput}`, `compute.disks.{create,use,
+  createSnapshot,setLabels}`, `compute.images.{create,get,getFromFamily,list,delete,useReadOnly,
+  setLabels}`, `compute.snapshots.{create,get,delete,useReadOnly,setLabels}`,
+  `compute.subnetworks.use`, `compute.zoneOperations.get`, `compute.globalOperations.get`,
+  `compute.machineTypes.get`.
+- Never run on the real API. Unsure, to check there: the list filter on hyphenated label keys with
+  `:*`; a fingerprint mismatch answering 412; `stop` on STOPPING, `start` on RUNNING and a second
+  delete; whether a stockout leaves an instance behind; `STOPPED` against `TERMINATED`;
+  `images.insert` from an attached disk; a PENDING image; `archiveSizeBytes` as a string; the
+  guest attributes shape; metadata for an instance with no service account; a shielded VM and UEFI.
+- `docs/user/pair-cloud.md` still lists only the Docker isolation labels.
 
 ## Open follow-ups and risks
 
