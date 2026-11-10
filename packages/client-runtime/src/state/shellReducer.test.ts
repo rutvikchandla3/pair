@@ -420,6 +420,26 @@ describe("applyShellStreamEvents", () => {
     expect(applyShellStreamEvents(seed, [])).toBe(seed);
   });
 
+  it("applies threads re-sent at the sequence of the change that caused them", () => {
+    const seed = { ...v2ShellSnapshot, threads: [a, b], snapshotSequence: 4 };
+    const resent = [update(5, { ...a, title: "A" }), update(5, { ...b, title: "B" })];
+    const together = applyShellStreamEvents(seed, resent);
+    const split = applyShellStreamEvents(
+      applyShellStreamEvents(seed, [resent[0]!]),
+      [resent[1]!],
+      true,
+    );
+    for (const next of [together, split]) {
+      expect(next.threads.map((row) => row.title)).toEqual(["A", "B"]);
+      expect(next.snapshotSequence).toBe(5);
+    }
+    // A snapshot already holds what happened at its sequence; anything lower is stale.
+    expect(applyShellStreamEvents(seed, [update(4, { ...a, title: "Stale" })])).toBe(seed);
+    expect(applyShellStreamEvents(together, [update(4, { ...a, title: "Stale" })], true)).toBe(
+      together,
+    );
+  });
+
   it("does not advance the cursor for an unknown future event", () => {
     const events = [
       { kind: "future.event", sequence: 99 } as never,

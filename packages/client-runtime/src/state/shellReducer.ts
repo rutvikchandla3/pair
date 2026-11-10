@@ -129,6 +129,13 @@ export function mergeShellSnapshotProjects(
   return { ...next, projects: unchanged ? previous.projects : projects };
 }
 
+/**
+ * A machine change re-sends every thread on it at that change's sequence, so once a delta set
+ * the cursor, items at the same sequence still apply. After a snapshot they are already in it.
+ */
+export const isStaleShellDelta = (sequence: number, cursor: number, cursorFromDelta: boolean) =>
+  sequence < cursor || (sequence === cursor && !cursorFromDelta);
+
 export function applyShellStreamEvent(
   snapshot: OrchestrationV2ShellSnapshot,
   event: Exclude<
@@ -226,15 +233,19 @@ export type ShellStreamEvent = Exclude<
 export function applyShellStreamEvents(
   snapshot: OrchestrationV2ShellSnapshot,
   events: ReadonlyArray<ShellStreamEvent>,
+  cursorFromDelta = false,
 ): OrchestrationV2ShellSnapshot {
   // Avoid indexing the whole shell for the common single-event delivery.
-  if (events.length === 1) return applyShellStreamEvent(snapshot, events[0]!);
+  if (events.length === 1 && events[0]!.sequence !== snapshot.snapshotSequence) {
+    return applyShellStreamEvent(snapshot, events[0]!);
+  }
   const projects = batchRows(snapshot.projects);
   const threads = batchRows(snapshot.threads);
   const archivedThreads = batchRows(snapshot.archivedThreads);
   let sequence = snapshot.snapshotSequence;
+  let fromDelta = cursorFromDelta;
   for (const event of events) {
-    if (event.sequence <= sequence) continue;
+    if (isStaleShellDelta(event.sequence, sequence, fromDelta)) continue;
     switch (event.kind) {
       case "project.updated":
         projects.set(retainRepositoryIdentity(projects.get(event.project.id), event.project));
@@ -263,13 +274,19 @@ export function applyShellStreamEvents(
         continue;
     }
     sequence = event.sequence;
+    fromDelta = true;
   }
-  if (sequence === snapshot.snapshotSequence) return snapshot;
-  return {
+  const next = {
     ...snapshot,
     snapshotSequence: sequence,
     projects: projects.finish(),
     threads: threads.finish(),
     archivedThreads: archivedThreads.finish(),
   };
+  return sequence === snapshot.snapshotSequence &&
+    next.projects === snapshot.projects &&
+    next.threads === snapshot.threads &&
+    next.archivedThreads === snapshot.archivedThreads
+    ? snapshot
+    : next;
 }

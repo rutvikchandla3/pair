@@ -33,6 +33,7 @@ import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
   applyShellStreamEvents,
+  isStaleShellDelta,
   type ShellStreamEvent,
   mergeShellSnapshotProjects,
   reuseUnchangedThreadShells,
@@ -210,6 +211,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Server items and deferred link fills both read the snapshot and write it back; one at a
   // time, so neither can overwrite what the other wrote in between.
   const snapshotWriteLock = yield* Semaphore.make(1);
+  // Whether a delta, not a snapshot, set the cursor (`isStaleShellDelta`). Under the lock.
+  let cursorFromDelta = false;
 
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
@@ -223,10 +226,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     const flushDeltas = () => {
       if (deltas.length > 0 && Option.isSome(next.snapshot)) {
         let sequence = next.snapshot.value.snapshotSequence;
+        let fromDelta = cursorFromDelta;
         let removedAt: Map<ThreadId, number> | undefined;
         let removedBy: Map<ThreadId, MemberId> | undefined;
         for (const delta of deltas) {
-          if (delta.sequence <= sequence) continue;
+          if (isStaleShellDelta(delta.sequence, sequence, fromDelta)) continue;
           switch (delta.kind) {
             case "thread.removed":
               removedAt ??= new Map(next.removedAt);
@@ -257,12 +261,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               continue;
           }
           sequence = delta.sequence;
+          fromDelta = true;
         }
+        const snapshot = applyShellStreamEvents(next.snapshot.value, deltas, cursorFromDelta);
+        cursorFromDelta = fromDelta;
         next = {
           ...next,
           removedAt: removedAt ?? next.removedAt,
           removedBy: removedBy ?? next.removedBy,
-          snapshot: Option.some(applyShellStreamEvents(next.snapshot.value, deltas)),
+          snapshot: Option.some(snapshot),
           status: waiting ? "synchronizing" : "live",
           error: Option.none(),
         };
@@ -292,6 +299,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           : { resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots },
       );
       receivedSnapshot = true;
+      if (
+        authoritative ||
+        nextSnapshot.snapshotSequence !== Option.getOrNull(next.snapshot)?.snapshotSequence
+      ) {
+        cursorFromDelta = false;
+      }
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
