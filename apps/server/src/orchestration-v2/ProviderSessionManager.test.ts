@@ -29,6 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
@@ -4084,6 +4085,93 @@ it.effect("ProviderSessionManagerV2 opens a sandbox session only for a cloud-rea
     assert.equal(config?.endpoint, "http://127.0.0.1:9/mcp");
     assert.deepEqual(codex.forwarded, [`mcp:${config?.providerSessionId}`]);
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 reopens a sandbox session after its machine sleeps and wakes",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const state = yield* Ref.make(emptyState);
+      const hostsReady = yield* Deferred.make<WorkspaceHosts.WorkspaceHosts["Service"]>();
+      const forwards: Array<string> = [];
+      const driver = ProviderDriverKind.make("claudeAgent");
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const hosts = yield* Deferred.await(hostsReady);
+        // Each runner boot is a new host, and its MCP forward listens on a port of its own.
+        const boot = (port: number) =>
+          hosts.register(root, {
+            ...hosts.local,
+            id: "sbx_00000000000000000123" as WorkspaceHostId,
+            kind: "sandbox",
+            exposeServerEndpoint: () =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  forwards.push(`open ${port}`);
+                  return `http://127.0.0.1:${port}/mcp`;
+                }),
+                () => Effect.sync(() => forwards.push(`close ${port}`)),
+              ),
+          });
+        const threadId = ThreadId.make("thread-sandbox-wake");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const input = {
+          threadId,
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          }),
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: root },
+        };
+
+        const firstBoot = yield* Scope.make();
+        yield* boot(41001).pipe(Scope.provide(firstBoot));
+        yield* manager.open(input);
+        assert.equal((yield* mcpSessions.read(threadId))?.endpoint, "http://127.0.0.1:41001/mcp");
+
+        // The machine sleeps (its runner and every forward in it are gone) and wakes on a new boot.
+        yield* Scope.close(firstBoot, Exit.void);
+        yield* boot(41002);
+        yield* manager.open(input);
+
+        assert.equal((yield* mcpSessions.read(threadId))?.endpoint, "http://127.0.0.1:41002/mcp");
+        assert.deepEqual(forwards, ["open 41001", "close 41001", "open 41002"]);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            driver,
+            workspaceHostsLayer: Layer.effectDiscard(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(hostsReady, yield* WorkspaceHosts.WorkspaceHosts);
+              }),
+            ).pipe(Layer.provideMerge(WorkspaceHostTesting.layerFromContext)),
+            serverSettingsLayer: ServerSettings.layerTest({
+              providerInstances: {
+                [modelSelection.instanceId]: {
+                  driver,
+                  environment: [
+                    { name: "CLAUDE_CODE_OAUTH_TOKEN", value: "sk-ant-oat-test", sensitive: true },
+                  ],
+                },
+              },
+            }),
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(

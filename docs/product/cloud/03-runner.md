@@ -583,6 +583,11 @@ and the proxy passes only a thread token of the session that opened the forward,
 Credentials do not change: the workspace host gets the thread's token from `McpSessionRegistry.issue`
 as today and swaps only the endpoint for the `mcp` forward address.
 
+A listener lives only as long as its runner boot. `git-credential` is opened again on every boot at
+its fixed path; a session's `mcp` and `codex-token` forwards are not, so a session still open when
+its machine wakes on a new boot is released on its next turn and opens again there, resuming its
+provider thread (`ProviderSessionManager.open`).
+
 ## 9. Performance
 
 Budgets, measured from bytes leaving the child to bytes entering the adapter or terminal manager:

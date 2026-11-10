@@ -88,6 +88,7 @@ export const ProviderSessionReleaseReason = Schema.Literals([
   "runtime_error",
   "manual_shutdown",
   "server_shutdown",
+  "host_restarted",
 ]);
 export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.Type;
 
@@ -2190,7 +2191,20 @@ export const layerWithOptions = (
                 return yield* new CloudOnly.CloudOnlyRefusedError({ operation: "provider.open" });
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              // A runner's next boot (the machine woke or restarted) is a new host: the session's
+              // processes and forwards ended with the old one, so it opens again and resumes.
+              if (
+                existing?.host?.kind === "sandbox" &&
+                host?.id === existing.host.id &&
+                host !== existing.host
+              ) {
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "host_restarted",
+                }).pipe(logReleaseFailure(input.providerSessionId));
+                existing = undefined;
+              }
               if (existing !== undefined) {
                 // A shared session's processes run on one machine.
                 if ((existing.host?.id ?? host?.id) !== (host?.id ?? existing.host?.id)) {
