@@ -36,7 +36,7 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (12 of 12), G4 step 1 blocked at its first build:** full specs in
+**M4 (12 of 12, plus fix rows 4.23–4.25), G4 step 1 passed on 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
@@ -467,8 +467,8 @@ Findings:
 
 ### G4 step 1 on real hardware (2026-11-10, `pair-cloud-pass`, release V6)
 
-**Blocked: no team image build can succeed on the VM, so steps 2, 3, 4 and 7 did not run.** Pair
-Cloud runs [v0.1.7-pair.6](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.6)
+**Passed on the third run, on V8** (see "Run on V8" below); the first two runs were blocked by
+findings 1 to 3. On the first run Pair Cloud ran [v0.1.7-pair.6](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.6)
 (prerelease, tag `cc7833040`, every M4 row; transcript `upgrade-v6.txt`). A Sonnet worker ran the
 [M4 integrated pass](./m4-team-images.md#m4-integrated-pass); evidence is in
 `../pair-wt/g4-evidence/` (not committed).
@@ -541,10 +541,43 @@ Fixed since: finding 1 by 4.23 (c94ac4653) and finding 2 by 4.24 (4cb0771a0), bo
 [v0.1.7-pair.7](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.7) (prerelease),
 which the VM doesn't run yet.
 
-Left on the VM: build 23 active, the recipe at revision 5, images `t3-team-image:13`–`15` and
-`18`–`23` (all empty of build content), about sixteen G4 sessions, one open proposal, and
-`~/g4-scratch`. `/etc/docker/daemon.json` now carries `--allow-suid` (the copy before it is
-`daemon.json.pre-allow-suid`).
+**Run on V8** ([v0.1.7-pair.8](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.8),
+prerelease, with 4.23, 4.24 and 4.25; transcript `upgrade-v8.txt`; evidence `v8-*`): **passed.**
+
+- **Cloud Test:** passes and lists "Run git and sudo, and reach github.com".
+- **Step 1, build:** build 25, with a server-held secret, took 25 s and went active. Run under
+  runc, `t3-team-image:25` has `psql` 16.15, `/etc/t3/build.json` with this build's id and the
+  clone under `/t3-sandbox/.image`; `Config.Env` is `PATH` only; the secret's value is in neither
+  the image, the log, the database nor the trace. The build machine ran on `runc` while a session
+  ran on `runsc`. Image size 2.30 GB.
+- **Step 2, a session boots from it:** `copyImageClone` copied in 155.7, 154.6 and 156.9 ms and
+  `checkout.clone_source` was `image` each time; the whole checkout took 5.38, 5.29 and 5.51 s
+  (median 5.38 s, against 6.49 s cloning). The copy stays, well under the 30 s threshold. `psql`
+  is on the session's `PATH`.
+- **Step 3, a leak fails the build:** build 26 failed at `leak` with "NPM_TOKEN's value was found
+  in /home/t3/.npmrc. Use ${NPM_TOKEN} instead."; the active build stayed 25. A script that echoes
+  the value logs `***`.
+- **Step 4, roll back:** build 28 added `tree`; **Activate** on 25 showed active in 69 ms; the new
+  session had `psql` and no `tree`, and the session on `:28` kept `tree`.
+- **Step 7, collection:** Keep succeeded builds at 1 survived a reload; builds 19–22 were removed,
+  and builds in use and the newest unused one survived.
+- Steps 5 and 6 passed on V6 (above) and were not repeated.
+
+Not run: the contract suite with `T3_TEST_DOCKER=1`, the saved-image check failing, 4.22's hint,
+and anything on a phone. No video: captures and transcripts only.
+
+Smaller findings from the V8 run, not fixed:
+
+- Enter doesn't commit Keep succeeded builds; blur does.
+- **Build** with every machine slot in use shows nothing on the page, though the server answers
+  "Every machine is in use. Build when one frees up…".
+- A session booted from a team image carries the image's `pair.team-image.*` labels, so a label
+  filter for build machines also matches sessions.
+
+Left on the VM: V8, build 25 active (postgres, `BUILD_FLAG`, `NPM_TOKEN` as a server secret, a
+test value), the recipe at revision 11, Keep succeeded builds at 5, no open proposals, images
+13–15, 23–25, 28 and 29, the pass's sessions, and `~/g4-scratch`. `/etc/docker/daemon.json`
+carries `--allow-suid` (the copy before it is `daemon.json.pre-allow-suid`).
 
 ## How to resume
 
@@ -2303,6 +2336,19 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   image page first."); removing a value the latest recipe names is refused; a value under 4
   characters is refused when set. No MCP tool touches values. The page reuses the stored-secret
   field. Owes the leak step on the VM.
+
+## 4.25 builds capture what they installed (landed a7724f718)
+
+- `ComputeDriver.create` takes `purpose: "image-build"`; the Docker driver runs such a machine on
+  `runc` (no `PAIR_DNS`, no `--host-uds` check) and sessions on `runsc`. A Docker host without
+  runc refuses with a `setupHint` and the build fails at launch. Lead's decision: an admin's
+  install script runs outside gVisor so its result can be saved.
+- `ComputeDriver.readImageFile(imageRef, path)` (Docker: a reader container on network `none`,
+  never started, always removed; whole-disk drivers answer `"whole-disk"`). `capture` reads
+  `/etc/t3/build.json`, which now records `buildId`; a missing file or another id deletes the image
+  and fails the build at `verify`.
+- `mergeSandboxPatch` (`packages/shared/src/serverSettings.ts`) dropped `teamImage`, so Keep
+  succeeded builds never saved.
 
 ## Open follow-ups and risks
 
