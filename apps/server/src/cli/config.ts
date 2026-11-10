@@ -27,6 +27,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { isWildcardHost } from "../startupAccess.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -39,6 +40,17 @@ const portFlag = Flag.Int("port").pipe(
 );
 const hostFlag = Flag.String("host").pipe(
   Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
+  Flag.optional,
+);
+const runnerHostFlag = Flag.String("runner-host").pipe(
+  Flag.withDescription(
+    "Address of a second listener that serves only Cloud machines' runners, which the main listener then refuses. Use with --runner-port (equivalent to T3CODE_RUNNER_HOST).",
+  ),
+  Flag.optional,
+);
+const runnerPortFlag = Flag.Int("runner-port").pipe(
+  Flag.withSchema(PortSchema),
+  Flag.withDescription("Port of the runner listener (equivalent to T3CODE_RUNNER_PORT)."),
   Flag.optional,
 );
 export const baseDirFlag = Flag.String("base-dir").pipe(
@@ -155,6 +167,14 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  runnerHost: Config.String("T3CODE_RUNNER_HOST").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  runnerPort: Config.Port("T3CODE_RUNNER_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   publicUrl: Config.URL("T3CODE_PUBLIC_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
@@ -239,6 +259,8 @@ export interface CliServerFlags {
   readonly lan: Option.Option<boolean>;
   readonly restoreMode: Option.Option<boolean>;
   readonly cloudOnly: Option.Option<boolean>;
+  readonly runnerHost: Option.Option<string>;
+  readonly runnerPort: Option.Option<number>;
 }
 
 export interface CliAuthLocationFlags {
@@ -277,6 +299,8 @@ export const sharedServerCommandFlags = {
   lan: lanFlag,
   restoreMode: restoreModeFlag,
   cloudOnly: cloudOnlyFlag,
+  runnerHost: runnerHostFlag,
+  runnerPort: runnerPortFlag,
 } as const;
 
 const PUBLIC_URL_NOT_ORIGIN = "--public-url must be an origin, like https://pair.example.com.";
@@ -292,6 +316,36 @@ const isOrigin = (url: URL) =>
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
+
+const resolveRunnerListener = (
+  host: Option.Option<string>,
+  runnerPort: Option.Option<number>,
+  memberPort: number,
+): Effect.Effect<ServerConfig.ServerConfig["Service"]["runnerListener"], CliError.UserError> => {
+  if (Option.isNone(host) && Option.isNone(runnerPort)) return Effect.undefined;
+  if (Option.isNone(host) || Option.isNone(runnerPort)) {
+    return Effect.fail(
+      new CliError.UserError({
+        cause: "Set --runner-host and --runner-port together, or neither.",
+      }),
+    );
+  }
+  if (isWildcardHost(host.value)) {
+    return Effect.fail(
+      new CliError.UserError({
+        cause: "Name the address your machines reach for --runner-host, not every interface.",
+      }),
+    );
+  }
+  if (runnerPort.value === memberPort) {
+    return Effect.fail(
+      new CliError.UserError({
+        cause: `--runner-port must differ from the server's own port, ${memberPort}.`,
+      }),
+    );
+  }
+  return Effect.succeed({ host: host.value, port: runnerPort.value });
+};
 
 const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -338,6 +392,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     lan: flags.lan ?? Option.none(),
     restoreMode: flags.restoreMode ?? Option.none(),
     cloudOnly: flags.cloudOnly ?? Option.none(),
+    runnerHost: flags.runnerHost ?? Option.none(),
+    runnerPort: flags.runnerPort ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -379,6 +435,17 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
         return selectAutomaticPort(ServerConfig.DEFAULT_PORT);
       },
     },
+  );
+  const runnerListener = yield* resolveRunnerListener(
+    resolveOptionPrecedence(
+      normalizedFlags.runnerHost,
+      Option.fromUndefinedOr(env.runnerHost),
+    ).pipe(
+      Option.map((value) => value.trim()),
+      Option.filter((value) => value.length > 0),
+    ),
+    resolveOptionPrecedence(normalizedFlags.runnerPort, Option.fromUndefinedOr(env.runnerPort)),
+    port,
   );
   const devUrl = Option.getOrElse(
     resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
@@ -593,6 +660,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServeEnabled,
     tailscaleServePort,
     ...(restoreMode ? { restoreMode } : {}),
+    ...(runnerListener === undefined ? {} : { runnerListener }),
   };
 
   return config;
@@ -621,6 +689,8 @@ export const resolveCliAuthConfig = (
       lan: Option.none(),
       restoreMode: Option.none(),
       cloudOnly: Option.none(),
+      runnerHost: Option.none(),
+      runnerPort: Option.none(),
     },
     cliLogLevel,
   );

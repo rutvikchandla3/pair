@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { ComputeDriverId, type DockerSandboxDriver, SandboxId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -42,6 +43,7 @@ it.effect("mints a grant only once the route and the runner build are known", ()
                   new RunnerRouteError({ driverId: driver.id, reason: "runner-url-required" }),
                 ),
           dialsOverTcp: Effect.succeed(false),
+          runnerListenerUrl: Option.none(),
         }),
       ),
       Layer.provide(

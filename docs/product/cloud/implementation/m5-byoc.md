@@ -729,6 +729,15 @@ loopback.
     that a remote Docker host then needs no runner URL.
   - [03 §3.2](../03-runner.md) and [06 §11](../06-credentials-and-security.md): change "M5 work"
     to what landed, in the sentences that say the internal listener is not built.
+  - As built: the listener's websocket has `perMessageDeflate: false`, as the Unix socket's (03
+    3.1: runner frames are not compressed). `chooseRunnerRoute` takes `runnerListener: { url,
+    port } | null`, the bound address, so port 0 works in tests; Docker Desktop on a macOS server
+    dials `host.docker.internal:<runner port>` while it is set, since the live port then refuses
+    runners. The member listener's line is Effect's own "Listening on", so the runner listener
+    logs its own `runner listener listening { url }` when it binds. A bind failure is
+    `RunnerListenerError`. The two `RunnerEndpoint` stubs gained `runnerListenerUrl:
+    Option.none()`. The guard admits IPv4 peers only, so an IPv6 `--runner-host` refuses every
+    machine.
 - **Types and services:** `ServerConfig.runnerListener`, `RunnerEndpoint.runnerListenerUrl`.
 - **Commands and events:** none. **Migrations:** none.
 - **Tests:**

@@ -206,23 +206,26 @@ passes it to the driver; the runner never guesses
 ([RunnerEndpoint.ts](../../../apps/server/src/sandbox/runnerHub/RunnerEndpoint.ts)). An admin can
 override it per driver (`runnerUrl`) for reverse proxies and split DNS.
 
-| Where the machines run                               | URL the runner dials                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docker on the Pair Cloud server's Linux machine (M2) | `unix:` path to a runner-only socket in the state directory. The driver mounts its directory read only at `/run/pair-host`. Its listener serves runner routes only, uncompressed, works whatever the server's bind host is, and exposes no port                                                                                                                                                                                    |
-| Docker on another host (`DOCKER_HOST`)               | The server's address as that host's containers reach it, set by the admin as `runnerUrl`. Without one, the boot fails with `runner-url-required`                                                                                                                                                                                                                                                                                   |
-| A VM in the customer's VPC (M5): GCE, then EC2       | `wss://<private address>/runner/v1/connect`, set by the deployment kit ([09](./09-byoc.md)), on an internal-only listener that serves `/runner/*` and no client routes. Never the optional public client listener                                                                                                                                                                                                                  |
-| Docker Desktop on a macOS server (development only)  | `http://host.docker.internal:<port>`. Docker Desktop resolves the name. Laptops no longer offer Cloud, so this path only serves Pair Cloud run from source on a Mac. On Linux the name needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a server bound to loopback, as desktop mode is by default ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
-| A hosted vendor (Later)                              | A public origin, or the T3 Connect tunnel hostname from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). A vendor's machine is on neither the customer's VPC nor a tailnet. Waits for the vendor driver                                                                                                                                                                                      |
+| Where the machines run                               | URL the runner dials                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker on the Pair Cloud server's Linux machine (M2) | `unix:` path to a runner-only socket in the state directory. The driver mounts its directory read only at `/run/pair-host`. Its listener serves runner routes only, uncompressed, works whatever the server's bind host is, and exposes no port                                                                                                                                                                                                                            |
+| Docker on another host (`DOCKER_HOST`)               | The server's address as that host's containers reach it, set by the admin as `runnerUrl`. Without one, the runner listener's address, else the boot fails with `runner-url-required`                                                                                                                                                                                                                                                                                       |
+| A VM in the customer's VPC (M5): GCE, then EC2       | The runner listener's address, `http://<runner host>:<runner port>`, which serves `/runner/*` and no client routes; or a `runnerUrl` the deployment kit sets ([09](./09-byoc.md)). Without either, `runner-url-required`. Never the optional public client listener                                                                                                                                                                                                        |
+| Docker Desktop on a macOS server (development only)  | `http://host.docker.internal:<port>`, the live port or the runner listener's. Docker Desktop resolves the name. Laptops no longer offer Cloud, so this path only serves Pair Cloud run from source on a Mac. On Linux the name needs `--add-host host.docker.internal=host-gateway` ([source](#sources)), which fails for a server bound to loopback, as desktop mode is by default ([cli/config.ts](../../../apps/server/src/cli/config.ts)), hence the Unix socket above |
+| A hosted vendor (Later)                              | A public origin, or the T3 Connect tunnel hostname from [ManagedEndpointRuntime.ts](../../../apps/server/src/cloud/ManagedEndpointRuntime.ts). A vendor's machine is on neither the customer's VPC nor a tailnet. Waits for the vendor driver                                                                                                                                                                                                                              |
 
 A server on any other platform fails with `unsupported-platform` unless the driver sets a
 `runnerUrl`.
 
 How members reach Pair Cloud (VPN, Tailscale or the team's HTTPS domain) doesn't matter to
-machines. The member listener also answers `/runner/*` today
-([server.ts](../../../apps/server/src/server.ts)), but only while some configured driver dials it
-over TCP: a `runnerUrl`, a remote `DOCKER_HOST`, or the macOS path. Otherwise those routes are 404
-there, checked per request so a driver added at runtime takes effect. In BYOC (M5), `/runner/*` moves to the internal-only listener, so it is reachable only from
-machine networks (see Challenges for M2).
+machines. A server started with `--runner-host` and `--runner-port` (`T3CODE_RUNNER_HOST`,
+`T3CODE_RUNNER_PORT`) opens a runner listener at that address: runner routes only, never a wildcard
+host, private-network peers only. Every machine that cannot mount the socket and has no
+`runnerUrl` dials it, and the member listener answers 404 for every runner route. Without one, the
+member listener answers `/runner/*` ([server.ts](../../../apps/server/src/server.ts)), but only
+while some configured driver dials it over TCP: a `runnerUrl`, a remote `DOCKER_HOST`, or the macOS
+path. Otherwise those routes are 404 there, checked per request so a driver added at runtime takes
+effect. BYOC's kits set the runner listener, so `/runner/*` is reachable only from machine networks.
 
 ## 4. Protocol
 
@@ -573,9 +576,9 @@ has several forwards; when a session ends, its forward closes:
 The sandbox cannot name a target, so a forward is not a path into the server's network. Reaching
 the loopback listener grants nothing by itself: the auth policy depends on the configured bind host,
 not the peer ([EnvironmentAuthPolicy.ts](../../../apps/server/src/auth/EnvironmentAuthPolicy.ts)),
-and MCP thread tokens resolve only on `/mcp`. M5 hardens this for BYOC with an in-process listener
-that mounts only `/mcp` as the forwards' target, beside section 3.2's internal-only `/runner/*`
-listener (inferred feasibility).
+and MCP thread tokens resolve only on `/mcp`. The forwards ride the runner's socket and never listen,
+and the proxy passes only a thread token of the session that opened the forward, so M5 adds no
+`/mcp`-only listener beside section 3.2's runner listener.
 
 Credentials do not change: the workspace host gets the thread's token from `McpSessionRegistry.issue`
 as today and swaps only the endpoint for the `mcp` forward address.
@@ -687,9 +690,10 @@ buffer size, bytes delivered equal bytes written, no duplicates.
 
 ## Challenges to the plan
 
-1. **`/runner/*` stays on the member listener until M5.** Decision 4 makes `/runner/*` reachable
-   only from machine networks, but [server.ts](../../../apps/server/src/server.ts) mounts
-   `RunnerRoute` on the listener members use, and the internal-only listener is M5 work. Every
+1. **`/runner/*` stays on the member listener without a runner listener.** Decision 4 makes
+   `/runner/*` reachable only from machine networks, but [server.ts](../../../apps/server/src/server.ts)
+   mounts `RunnerRoute` on the listener members use unless the server has a runner listener (M5,
+   section 3.2). Every
    runner route needs an enrollment secret or a sandbox token before it does anything but name the
    server's runner build (section 6), so this is exposure, not a hole. M2's Docker machines dial
    the Unix socket, and only `DOCKER_HOST` drivers and the macOS development path need the TCP

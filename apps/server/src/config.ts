@@ -112,6 +112,8 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServePort: number;
     /** `--restore-mode`: the reconciler's first pass turns restore mode on (04 §5). */
     readonly restoreMode?: boolean | undefined;
+    /** `--runner-host` and `--runner-port`: the only listener that serves `/runner/*` (03 §3.2). */
+    readonly runnerListener?: { readonly host: string; readonly port: number } | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

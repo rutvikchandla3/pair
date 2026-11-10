@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { ServerConfig } from "../../config.ts";
@@ -31,6 +32,7 @@ import * as WorkspaceHostTesting from "../../workspaceHost/WorkspaceHostTesting.
 const local: DockerHost = { _tag: "Unix", socketPaths: ["/var/run/docker.sock"] };
 const tcp: DockerHost = { _tag: "Tcp", origin: "http://docker.example:2375", tls: null };
 const refused = (reason: RunnerEndpoint.RunnerRouteError["reason"]) => Result.fail(reason);
+const listener = { url: "http://10.0.0.2:3774", port: 3774 };
 
 interface RouteRow {
   readonly name: string;
@@ -38,6 +40,7 @@ interface RouteRow {
   readonly dockerHost: DockerHost | null;
   readonly platform: NodeJS.Platform;
   readonly hostSocketDir?: string;
+  readonly runnerListener?: { readonly url: string; readonly port: number };
   readonly expected: ReturnType<typeof RunnerEndpoint.chooseRunnerRoute>;
 }
 
@@ -100,13 +103,54 @@ describe("chooseRunnerRoute", () => {
       platform: "linux",
       expected: refused("runner-url-required"),
     },
-  ])("$name", ({ runnerUrl, dockerHost, platform, hostSocketDir, expected }) => {
+    {
+      name: "a VM driver dials the runner listener by default",
+      runnerUrl: undefined,
+      dockerHost: null,
+      platform: "linux",
+      runnerListener: listener,
+      expected: Result.succeed({ _tag: "url", url: listener.url }),
+    },
+    {
+      name: "a remote daemon dials the runner listener by default",
+      runnerUrl: undefined,
+      dockerHost: tcp,
+      platform: "linux",
+      runnerListener: listener,
+      expected: Result.succeed({ _tag: "url", url: listener.url }),
+    },
+    {
+      name: "a local daemon on Linux keeps the socket beside a runner listener",
+      runnerUrl: undefined,
+      dockerHost: local,
+      platform: "linux",
+      runnerListener: listener,
+      expected: Result.succeed({ _tag: "unix", socketPath: "/srv/t3/runner-socket/runner.sock" }),
+    },
+    {
+      name: "Docker Desktop reaches the runner listener's port, since the live port refuses runners",
+      runnerUrl: undefined,
+      dockerHost: local,
+      platform: "darwin",
+      runnerListener: listener,
+      expected: Result.succeed({ _tag: "url", url: "http://host.docker.internal:3774" }),
+    },
+    {
+      name: "the admin's runner URL wins over the runner listener",
+      runnerUrl: "https://t3.example.com",
+      dockerHost: null,
+      platform: "linux",
+      runnerListener: listener,
+      expected: Result.succeed({ _tag: "url", url: "https://t3.example.com" }),
+    },
+  ])("$name", ({ runnerUrl, dockerHost, platform, hostSocketDir, runnerListener, expected }) => {
     assert.deepStrictEqual(
       RunnerEndpoint.chooseRunnerRoute({
         runnerUrl,
         dockerHost,
         serverPlatform: platform,
         serverPort: 3773,
+        runnerListener: runnerListener ?? null,
         hostSocketDir: hostSocketDir ?? "/srv/t3/runner-socket",
       }),
       expected,
@@ -114,9 +158,9 @@ describe("chooseRunnerRoute", () => {
   });
 });
 
-const httpStatus = (socketPath: string, path: string) =>
+const httpStatus = (target: NodeHttp.RequestOptions, path: string) =>
   Effect.callback<number>((resume) => {
-    const request = NodeHttp.get({ socketPath, path }, (response) => {
+    const request = NodeHttp.get({ ...target, path }, (response) => {
       response.resume();
       resume(Effect.succeed(response.statusCode ?? 0));
     });
@@ -141,33 +185,39 @@ const driver: DockerSandboxDriver = {
   label: "Local",
 };
 
+const liveEndpoint = (
+  config: Partial<ServerConfig["Service"]>,
+  drivers: ReadonlyArray<SandboxDriverInstance> = [],
+) =>
+  RunnerEndpoint.layer.pipe(
+    Layer.provide(
+      Layer.mock(ServerConfig)({ runnerListener: undefined, ...config } as ServerConfig["Service"]),
+    ),
+    Layer.provide(ServerSettings.layerTest({ sandbox: { drivers } })),
+    Layer.provide(NodeHttpServer.layerTest),
+    Layer.provide(
+      Layer.succeed(RunnerBundle.RunnerBundle, {
+        current: Effect.fail(
+          new RunnerBundle.RunnerBundleUnavailableError({ reason: "not-bundled" }),
+        ),
+      }),
+    ),
+    Layer.provide(
+      RunnerHub.layer.pipe(
+        Layer.provide(RunnerGrants.layer),
+        Layer.provide(WorkspaceHostTesting.layerFromContext),
+      ),
+    ),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(NodeCrypto.layer),
+  );
+
 // Live: a real Unix listener and real upgrades, so the status codes are the wire's.
 it.live("opens the runner socket once and serves only the runner routes on it", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-endpoint-" });
-    const services = yield* Layer.build(
-      RunnerEndpoint.layer.pipe(
-        Layer.provide(Layer.mock(ServerConfig)({ stateDir } as ServerConfig["Service"])),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(NodeHttpServer.layerTest),
-        Layer.provide(
-          Layer.succeed(RunnerBundle.RunnerBundle, {
-            current: Effect.fail(
-              new RunnerBundle.RunnerBundleUnavailableError({ reason: "not-bundled" }),
-            ),
-          }),
-        ),
-        Layer.provide(
-          RunnerHub.layer.pipe(
-            Layer.provide(RunnerGrants.layer),
-            Layer.provide(WorkspaceHostTesting.layerFromContext),
-          ),
-        ),
-        Layer.provide(SqlitePersistence.layerMemory),
-        Layer.provide(NodeCrypto.layer),
-      ),
-    );
+    const services = yield* Layer.build(liveEndpoint({ stateDir }));
     const endpoint = Context.get(services, RunnerEndpoint.RunnerEndpoint);
     const planFor = endpoint
       .planFor(driver)
@@ -189,10 +239,51 @@ it.live("opens the runner socket once and serves only the runner routes on it", 
       }),
       401,
     );
-    assert.strictEqual(yield* httpStatus(socketPath, "/api/auth/session"), 404);
+    assert.strictEqual(yield* httpStatus({ socketPath }, "/api/auth/session"), 404);
 
     assert.deepStrictEqual(yield* planFor, plan);
     assert.deepStrictEqual((yield* fs.stat(socketPath)).ino, inode);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Live: a real TCP listener, a real upgrade, and a real port collision.
+it.live("opens the runner listener at start and serves only the runner routes on it", () =>
+  Effect.gen(function* () {
+    const memberListener: SandboxDriverInstance = {
+      ...driver,
+      runnerUrl: "http://127.0.0.1:3773",
+    };
+    const services = yield* Layer.build(
+      liveEndpoint({ stateDir: "/srv/t3", runnerListener: { host: "127.0.0.1", port: 0 } }, [
+        memberListener,
+      ]),
+    );
+    const endpoint = Context.get(services, RunnerEndpoint.RunnerEndpoint);
+    assert(Option.isSome(endpoint.runnerListenerUrl));
+    const url = new URL(endpoint.runnerListenerUrl.value);
+    const target = { host: url.hostname, port: Number(url.port) };
+
+    // The route is there: a plain GET is refused for want of an upgrade, not a credential.
+    assert.strictEqual(yield* httpStatus(target, "/runner/v1/connect"), 400);
+    for (const path of ["/api/auth/session", "/mcp", "/"]) {
+      assert.strictEqual(yield* httpStatus(target, path), 404, path);
+    }
+    assert.strictEqual(yield* upgradeStatus(`ws://${url.host}/ws`, {}), 404);
+    // The member listener never serves runners, even for a driver pointed at it.
+    assert.isFalse(
+      yield* endpoint.dialsOverTcp.pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    );
+
+    const taken = yield* Layer.build(
+      liveEndpoint({
+        stateDir: "/srv/t3",
+        runnerListener: { host: "127.0.0.1", port: target.port },
+      }),
+    ).pipe(Effect.flip);
+    assert.strictEqual(
+      taken.message,
+      `The runner listener could not bind 127.0.0.1:${target.port}.`,
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -212,7 +303,10 @@ describe("dialsOverTcp", () => {
       const services = yield* Layer.build(
         RunnerEndpoint.layer.pipe(
           Layer.provide(
-            Layer.mock(ServerConfig)({ stateDir: "/srv/t3" } as ServerConfig["Service"]),
+            Layer.mock(ServerConfig)({
+              stateDir: "/srv/t3",
+              runnerListener: undefined,
+            } as ServerConfig["Service"]),
           ),
           Layer.provide(ServerSettings.layerTest({ sandbox: { drivers: [driver] } })),
           Layer.provide(NodeHttpServer.layerTest),

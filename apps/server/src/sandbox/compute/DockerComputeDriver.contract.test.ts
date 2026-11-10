@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -106,6 +107,7 @@ const makeContractDriver = (installId: EnvironmentId) =>
           Layer.succeed(RunnerEndpoint, {
             planFor: () => Effect.succeed({ serverUrl: "unix:/unused/runner.sock" }),
             dialsOverTcp: Effect.succeed(false),
+            runnerListenerUrl: Option.none(),
           }),
           Layer.succeed(RunnerBundle, {
             current: Effect.fail(new RunnerBundleUnavailableError({ reason: "not-bundled" })),

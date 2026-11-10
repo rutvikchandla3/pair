@@ -24,7 +24,8 @@ them up in its **Settings → Cloud**:
 2. Leave **Docker host** empty to use Docker on the server's own machine (or the server's
    `DOCKER_HOST`). For another Docker host, enter its `tcp://` address or a `unix://` socket;
    `ssh://` is not supported, so forward the socket instead. A remote host also needs a
-   **Runner URL**: an address of this Pair server that its machines can reach.
+   **Runner URL**: an address of this Pair server that its machines can reach, unless the server
+   has a [runner listener](./pair-cloud.md#keep-machines-off-the-member-listener).
 3. Pick a **Machine size** and save.
 4. Choose **Test**. It starts a machine, checks that it connects back, runs git, checks that
    `sudo` works and reaches github.com, removes it, and shows how long each step took.

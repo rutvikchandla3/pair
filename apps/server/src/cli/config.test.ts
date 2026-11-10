@@ -53,6 +53,8 @@ const minimalDesktopFlags = (baseDir: string) => ({
   lan: Option.none<boolean>(),
   restoreMode: Option.none<boolean>(),
   cloudOnly: Option.none<boolean>(),
+  runnerHost: Option.none<string>(),
+  runnerPort: Option.none<number>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -239,6 +241,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         lan: Option.none<boolean>(),
         restoreMode: Option.none<boolean>(),
         cloudOnly: Option.none<boolean>(),
+        runnerHost: Option.none<string>(),
+        runnerPort: Option.none<number>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -287,6 +291,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         lan: Option.none<boolean>(),
         restoreMode: Option.none<boolean>(),
         cloudOnly: Option.none<boolean>(),
+        runnerHost: Option.none<string>(),
+        runnerPort: Option.none<number>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -346,6 +352,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.none(),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -427,6 +435,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.some(false),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -611,6 +621,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.none(),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -663,6 +675,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.none(),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -707,6 +721,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.none(),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.none(),
         {
@@ -774,6 +790,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           lan: Option.none(),
           restoreMode: Option.none(),
           cloudOnly: Option.none(),
+          runnerHost: Option.none(),
+          runnerPort: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -817,6 +835,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     lan: Option.none<boolean>(),
     restoreMode: Option.none<boolean>(),
     cloudOnly: Option.none<boolean>(),
+    runnerHost: Option.none<string>(),
+    runnerPort: Option.none<number>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
@@ -897,6 +917,65 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           );
         }
       }),
+  );
+
+  it.effect("takes a runner listener only as a named address and a port of its own", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-runner-listener-" })),
+      );
+      const resolveRunnerListener = (
+        flags: { readonly host?: string; readonly port?: number },
+        env: Record<string, string> = {},
+      ) =>
+        resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            runnerHost: Option.fromUndefinedOr(flags.host),
+            runnerPort: Option.fromUndefinedOr(flags.port),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.map((config) => config.runnerListener),
+          Effect.provide(
+            Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+          ),
+        );
+      const refusal = (
+        flags: { readonly host?: string; readonly port?: number },
+        env?: Record<string, string>,
+      ) =>
+        resolveRunnerListener(flags, env).pipe(
+          Effect.flip,
+          Effect.map((error) => String(error.cause)),
+        );
+
+      expect(yield* resolveRunnerListener({})).toBeUndefined();
+      expect(yield* resolveRunnerListener({ host: "10.0.0.2", port: 3774 })).toEqual({
+        host: "10.0.0.2",
+        port: 3774,
+      });
+      expect(
+        yield* resolveRunnerListener(
+          {},
+          { T3CODE_RUNNER_HOST: "10.0.0.2", T3CODE_RUNNER_PORT: "3774" },
+        ),
+      ).toEqual({ host: "10.0.0.2", port: 3774 });
+      expect(yield* refusal({ host: "10.0.0.2" })).toBe(
+        "Set --runner-host and --runner-port together, or neither.",
+      );
+      expect(yield* refusal({}, { T3CODE_RUNNER_PORT: "3774" })).toBe(
+        "Set --runner-host and --runner-port together, or neither.",
+      );
+      for (const host of ["0.0.0.0", "::", "[::]"]) {
+        expect(yield* refusal({ host, port: 3774 }), host).toBe(
+          "Name the address your machines reach for --runner-host, not every interface.",
+        );
+      }
+      expect(yield* refusal({ host: "10.0.0.2", port: 3773 })).toBe(
+        "--runner-port must differ from the server's own port, 3773.",
+      );
+    }),
   );
 
   it.effect(

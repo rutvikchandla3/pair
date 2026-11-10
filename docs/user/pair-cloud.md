@@ -116,6 +116,22 @@ works, reaches github.com, then removes it. The driver's row under **Overview** 
 [Turn on Cloud](./cloud.md#turn-on-cloud) covers other Docker hosts, machine sizes, the base image
 and variables.
 
+## Keep machines off the member listener
+
+Machines on the server's own Docker reach Pair through a socket on its disk. Machines anywhere
+else, such as another Docker host, dial an address. To give them one that members never use, add
+a runner listener to `service.env` and run `t3 service restart`:
+
+```dotenv
+T3CODE_RUNNER_HOST=10.0.0.2
+T3CODE_RUNNER_PORT=3774
+```
+
+Use an address your machines reach and your members need not, never `0.0.0.0`; it answers only
+private-network peers. The runner listener serves machines and nothing else, and the address
+members use then refuses machines. A remote Docker host needs no **Runner URL** once it is set.
+The server does not start if the port is taken.
+
 ## Connect GitHub
 
 Create one GitHub App for your organization, as in

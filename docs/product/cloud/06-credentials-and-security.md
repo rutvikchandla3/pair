@@ -564,11 +564,14 @@ because the server knows exactly which sensitive values it injected:
 
 `/runner/*` ([RunnerRoute.ts](../../../apps/server/src/sandbox/runnerHub/RunnerRoute.ts)) shares
 nothing with `/ws` but the HTTP server, and every request needs a runner credential. It should
-still be reachable only from machine networks. Today the server mounts it on its main listener,
-for a remote `DOCKER_HOST` whose machines dial the Runner URL, and on the runner-only Unix socket
-([RunnerEndpoint.ts](../../../apps/server/src/sandbox/runnerHub/RunnerEndpoint.ts)) that Pair Cloud's
-own Docker machines use. In BYOC (M5) the kit serves `/runner/*` and the forwards on an
-internal-only listener, and the optional public client listener never routes them.
+still be reachable only from machine networks. The runner-only Unix socket
+([RunnerEndpoint.ts](../../../apps/server/src/sandbox/runnerHub/RunnerEndpoint.ts)) serves Pair
+Cloud's own Docker machines. A server started with a runner listener (`T3CODE_RUNNER_HOST` and
+`T3CODE_RUNNER_PORT`) serves every other machine there, on a named address that answers
+private-network peers only, and its main listener then answers 404 for every runner route. Without
+one, the main listener serves `/runner/*` while a driver dials it over TCP, such as a remote
+`DOCKER_HOST` whose machines dial the Runner URL. BYOC's kits set the runner listener, and the
+optional public client listener never routes `/runner/*`.
 
 ### What the socket reaches
 
