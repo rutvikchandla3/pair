@@ -116,7 +116,10 @@ export function SidebarSectionHeader(props: {
   dragging?: boolean;
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
+  /** Shown under an open shelf that has no rows. */
+  emptyLabel?: string;
 }) {
+  const emptyLabel = props.count === 0 && props.toggle.expanded ? (props.emptyLabel ?? null) : null;
   const shelf =
     props.marker === "working-header"
       ? "working"
@@ -129,7 +132,7 @@ export function SidebarSectionHeader(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("relative mx-0.5 h-8", props.className)}
+      className={cn("relative mx-0.5", emptyLabel === null && "h-8", props.className)}
     >
       <CollapsibleSectionHeader
         data-sidebar-row={`shelf:${shelf}`}
@@ -141,6 +144,9 @@ export function SidebarSectionHeader(props: {
       >
         {props.label}
       </CollapsibleSectionHeader>
+      {emptyLabel === null ? null : (
+        <p className="px-2 pt-0.5 pb-1.5 text-muted-foreground text-xs">{emptyLabel}</p>
+      )}
     </SortableSidebarMarker>
   );
 }

@@ -376,6 +376,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
   if (command === "thread.assign") return "Thread: Assign to…";
+  if (command === "thread.share") return "Thread: Share…";
   if (command === "thread.follow") return "Thread: Follow or Unfollow";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);

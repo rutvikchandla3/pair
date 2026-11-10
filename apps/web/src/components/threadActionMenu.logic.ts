@@ -24,6 +24,7 @@ export type ThreadActionMenuId =
   | "unsnooze"
   | "assign"
   | `assign:${MemberId}`
+  | "share"
   | "follow"
   | "unfollow"
   | "rename"
@@ -116,6 +117,8 @@ export interface ThreadActionMenuState {
     /** Absent hides Follow: the viewer owns the thread, or the server cannot follow. */
     readonly following?: boolean;
   };
+  /** Set only for a cloud thread on a server with a team; only its owner may share it. */
+  readonly share?: { readonly allowed: boolean };
   /** Set only for a cloud thread, which has no local path to copy. */
   readonly machine?: {
     readonly actions: ReadonlyArray<SandboxAction>;
@@ -225,6 +228,16 @@ export function buildThreadActionMenuItems(
               label: member.name,
               checked: member.id === state.team?.ownerId,
             })),
+          },
+        ]
+      : []),
+    ...(state.share
+      ? [
+          {
+            id: "share" as const,
+            label: state.share.allowed ? "Share…" : "Share… (owner only)",
+            icon: "users",
+            ...(state.share.allowed ? {} : { disabled: true }),
           },
         ]
       : []),

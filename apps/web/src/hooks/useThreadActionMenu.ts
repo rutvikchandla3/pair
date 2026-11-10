@@ -1,6 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
+import { openShareThreadDialog } from "../components/team/shareThreadDialogTarget";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -29,7 +30,7 @@ import {
   readSandboxThreadMachine,
   useSandboxActionRunner,
 } from "../components/sandbox/useSandboxThreadStatus";
-import { readContinueInCloudOffer } from "../state/sandbox";
+import { readContinueInCloudOffer, readThreadShare } from "../state/sandbox";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -149,6 +150,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const team = readThreadTeamMenu(thread);
       const machine = readSandboxThreadMachine(threadRef);
+      const share = readThreadShare(threadRef);
       const moveOffer = continueLocally.offerFor(threadRef);
       const cloudOffer = readContinueInCloudOffer(threadRef);
       const items = buildThreadActionMenuItems({
@@ -168,6 +170,7 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         ...(team ? { team } : {}),
+        ...(share ? { share: { allowed: share.allowed } } : {}),
         ...(machine ? { machine } : {}),
         ...(cloudOffer.kind === "hidden"
           ? {}
@@ -314,6 +317,9 @@ export function useThreadActionMenu(input: {
           return;
         case "mark-unread":
           markThreadUnread(threadRef);
+          return;
+        case "share":
+          openShareThreadDialog(threadRef);
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

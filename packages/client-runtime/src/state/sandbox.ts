@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Sandbox,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShellSandbox,
+  type SandboxAccessAudience,
   type SandboxDriverHealth,
   type SandboxId,
   type SandboxOverview,
@@ -26,11 +27,22 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { discardSandbox, retrySandbox, sleepSandbox, wakeSandbox } from "../operations/commands.ts";
+import {
+  discardSandbox,
+  retrySandbox,
+  setSandboxAccess,
+  sleepSandbox,
+  wakeSandbox,
+} from "../operations/commands.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
-import { canMemberDeleteThread, type createTeamEnvironmentAtoms } from "./team.ts";
+import {
+  canMemberDeleteThread,
+  isTeamModeMembers,
+  type createTeamEnvironmentAtoms,
+  type TeamMembers,
+} from "./team.ts";
 
 export type SandboxAction = "wake" | "sleep" | "retry" | "discard";
 
@@ -369,6 +381,74 @@ export interface SandboxThreadMachine {
   readonly ownerOnlyDenied: ReadonlyArray<SandboxAction>;
 }
 
+export const SHARE_THREAD_OWNER_ONLY_REASON = "Only the owner can share this thread";
+
+/** The header chip: absent while private. Its label is the hover text. */
+export type SandboxAccessChip =
+  | {
+      readonly kind: "people";
+      /** Up to three, in the order they were added. */
+      readonly shown: ReadonlyArray<TeamMember>;
+      readonly more: number;
+      readonly label: string;
+    }
+  | { readonly kind: "team"; readonly label: string };
+
+export interface SandboxAccessSummary {
+  readonly ownerId: MemberId | null;
+  /** Null for an audience from a newer server: nothing shows and nobody can change it here. */
+  readonly audience: SandboxAccessAudience | null;
+  readonly memberIds: ReadonlyArray<MemberId>;
+  readonly chip: SandboxAccessChip | null;
+  readonly canShare: boolean;
+}
+
+const SHARED_WITH_TEAM_LABEL = "Shared with everyone on the team";
+const CHIP_AVATARS = 3;
+
+/**
+ * Who can open a cloud thread, from the shell of the thread that owns its machine (a fork's or
+ * side chat's owner thread). Null for a local thread and on a solo server.
+ */
+export function sandboxAccessSummary(
+  shell: {
+    readonly source: {
+      readonly ownerId?: MemberId | null | undefined;
+      readonly sandbox?: OrchestrationV2ThreadShellSandbox | undefined;
+    };
+  },
+  members: TeamMembers,
+  me: MemberId | null,
+): SandboxAccessSummary | null {
+  const summary = shell.source.sandbox;
+  if (summary === undefined || !isTeamModeMembers(members)) return null;
+  const ownerId = shell.source.ownerId ?? null;
+  const audience = summary.access === undefined ? "team" : summary.access.audience;
+  const memberIds = summary.access?.memberIds ?? [];
+  const listed = memberIds.flatMap((id) => {
+    const member = members.get(id);
+    return member === undefined || member.removedAt !== null || id === ownerId ? [] : [member];
+  });
+  const chip: SandboxAccessChip | null =
+    audience === "team"
+      ? { kind: "team", label: SHARED_WITH_TEAM_LABEL }
+      : audience === "members" && listed.length > 0
+        ? {
+            kind: "people",
+            shown: listed.slice(0, CHIP_AVATARS),
+            more: Math.max(0, listed.length - CHIP_AVATARS),
+            label: `Shared with ${listed.map((member) => member.name).join(", ")}`,
+          }
+        : null;
+  return {
+    ownerId,
+    audience,
+    memberIds,
+    chip,
+    canShare: me !== null && ownerId === me && audience !== null,
+  };
+}
+
 export function createSandboxEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
   deps: {
@@ -417,6 +497,22 @@ export function createSandboxEnvironmentAtoms<R, E>(
     readonly ownerMemberId: MemberId | null | undefined;
   }) => allowedFamily(key.environmentId)(key.action)(key.ownerMemberId ?? null);
 
+  // A fork or side chat shares its owner thread's machine, which that thread's owner owns;
+  // the shell summary has no owner member of its own.
+  const ownerThreadOf = (
+    get: Atom.AtomContext,
+    shell: EnvironmentThreadShell,
+    summary: OrchestrationV2ThreadShellSandbox,
+  ) =>
+    summary.ownerThreadId === shell.id
+      ? shell
+      : (get(
+          deps.threadShells.quietThreadShellAtom({
+            environmentId: shell.environmentId,
+            threadId: summary.ownerThreadId,
+          }),
+        ) ?? shell);
+
   const machineFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
     return Atom.make((get): SandboxThreadMachine | null => {
@@ -424,18 +520,7 @@ export function createSandboxEnvironmentAtoms<R, E>(
       const sandboxId = shell?.source.sandboxId;
       const summary = shell?.source.sandbox;
       if (shell == null || sandboxId === undefined || summary === undefined) return null;
-      // A fork or side chat shares its owner thread's machine, which that thread's owner owns;
-      // the shell summary has no owner member of its own.
-      const ownerThread =
-        summary.ownerThreadId === shell.id
-          ? shell
-          : (get(
-              deps.threadShells.quietThreadShellAtom({
-                environmentId: ref.environmentId,
-                threadId: summary.ownerThreadId,
-              }),
-            ) ?? shell);
-      const ownerMemberId = ownerThread.source.ownerId ?? null;
+      const ownerMemberId = ownerThreadOf(get, shell, summary).source.ownerId ?? null;
       const presentation = sandboxStatePresentation(summary, {
         hasActiveRun: shell.runtime?.activeRunId != null,
       });
@@ -453,6 +538,35 @@ export function createSandboxEnvironmentAtoms<R, E>(
         ),
       };
     }).pipe(Atom.withLabel(`sandbox-thread-machine:${key}`));
+  });
+
+  const accessFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get): SandboxAccessSummary | null => {
+      const shell = get(deps.threadShells.quietThreadShellAtom(ref));
+      const summary = shell?.source.sandbox;
+      if (shell == null || summary === undefined) return null;
+      const ownerId = ownerThreadOf(get, shell, summary).source.ownerId;
+      return sandboxAccessSummary(
+        { source: { ownerId, sandbox: summary } },
+        get(deps.team.membersValueAtom(ref.environmentId)),
+        get(deps.team.currentMemberIdAtom(ref.environmentId)),
+      );
+    }).pipe(Atom.withLabel(`sandbox-thread-access:${key}`));
+  });
+
+  const share = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:sandbox:share",
+    tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+    execute: setSandboxAccess,
+  });
+  const sharePermissionFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make(
+      (get) =>
+        get(share.permissionAtom(ref.environmentId, { type: "sandbox.access.set" })) &&
+        get(accessFamily(key))?.canShare === true,
+    ).pipe(Atom.withLabel(`sandbox-share-permission:${key}`));
   });
 
   return {
@@ -486,5 +600,12 @@ export function createSandboxEnvironmentAtoms<R, E>(
     actionAllowedAtom,
     /** Null for a local thread. Read from the shell, so it never subscribes to the transcript. */
     threadMachineAtom: (ref: ScopedThreadRef) => machineFamily(threadKey(ref)),
+    /** Null for a local thread and on a solo server, where nothing about sharing shows. */
+    threadAccessAtom: (ref: ScopedThreadRef) => accessFamily(threadKey(ref)),
+    /** Sends to the thread's own environment; only the owner of its machine may. */
+    shareThreadCommand: {
+      ...share,
+      permissionAtom: (ref: ScopedThreadRef) => sharePermissionFamily(threadKey(ref)),
+    },
   };
 }

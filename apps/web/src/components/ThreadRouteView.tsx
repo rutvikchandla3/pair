@@ -3,6 +3,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
@@ -16,7 +17,10 @@ import {
   useAnyEnvironmentHiding,
   useQuietThreadShell,
 } from "../state/entities";
+import { environmentCloudLaunchAtom } from "../state/server";
 import { useEnvironmentShellStatus } from "../state/shell";
+import { useIsTeamMode } from "../state/team";
+import { ThreadAccessNotice } from "./team/ThreadAccessNotice";
 import { environmentThreadShells, useEnvironmentThread } from "../state/threads";
 import {
   buildThreadRouteParams,
@@ -24,6 +28,8 @@ import {
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const NO_CLOUD_LAUNCH_ATOM = Atom.make(false).pipe(Atom.withLabel("thread-route:no-cloud-launch"));
 
 /**
  * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
@@ -118,6 +124,21 @@ export function ThreadRouteView({
     draftThreadExists: draftThread !== null,
   });
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
+  // On a team's Pair Cloud server a miss may be a thread nobody shared, so it is said, not skipped.
+  const teamMode = useIsTeamMode(serverThreadRef?.environmentId ?? null);
+  const cloudServer = useAtomValue(
+    serverThreadRef === null
+      ? NO_CLOUD_LAUNCH_ATOM
+      : environmentCloudLaunchAtom(serverThreadRef.environmentId),
+  );
+  const accessNotice =
+    unlistedThreadRef === null || renderState !== "missing" || background
+      ? null
+      : unlistedThreadDetail.accessRevoked === true
+        ? "revoked"
+        : teamMode && cloudServer
+          ? "private"
+          : null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears pending file drops and navigates the router home once a server thread is confirmed missing
   useEffect(() => {
@@ -127,11 +148,19 @@ export function ThreadRouteView({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (environmentHasAnyThreads && !background && accessNotice === null) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [
+    accessNotice,
+    background,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    renderState,
+    target,
+  ]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -187,6 +216,8 @@ export function ThreadRouteView({
     } else {
       redirect = <Navigate to="/" replace />;
     }
+  } else if (accessNotice !== null) {
+    view = <ThreadAccessNotice reason={accessNotice} />;
   } else if (hiddenByTagFilter) {
     redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {

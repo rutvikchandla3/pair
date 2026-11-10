@@ -6,17 +6,20 @@ import { MemberAvatar } from "./MemberAvatar";
 export function MemberAvatarStack({
   members,
   max = 3,
+  more = 0,
   size = "sm",
   className,
 }: {
   readonly members: ReadonlyArray<PresentMember>;
   readonly max?: number;
+  /** People counted in "+n" beyond `members`, when the caller already trimmed the list. */
+  readonly more?: number;
   readonly size?: "sm" | "md";
   readonly className?: string;
 }) {
   if (members.length === 0) return null;
   const shown = members.slice(0, max);
-  const hidden = members.length - shown.length;
+  const hidden = members.length - shown.length + more;
   return (
     <span className={cn("inline-flex shrink-0 items-center", className)}>
       {shown.map((member, index) => (

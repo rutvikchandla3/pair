@@ -168,6 +168,12 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "19", x2: "19", y1: "8", y2: "14" } },
     { tag: "line", attrs: { x1: "22", x2: "16", y1: "11", y2: "11" } },
   ],
+  users: [
+    { tag: "path", attrs: { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" } },
+    { tag: "circle", attrs: { cx: "9", cy: "7", r: "4" } },
+    { tag: "path", attrs: { d: "M22 21v-2a4 4 0 0 0-3-3.87" } },
+    { tag: "path", attrs: { d: "M16 3.13a4 4 0 0 1 0 7.75" } },
+  ],
   "folder-plus": [
     { tag: "path", attrs: { d: "M12 10v6" } },
     { tag: "path", attrs: { d: "M9 13h6" } },

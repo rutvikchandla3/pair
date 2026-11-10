@@ -48,6 +48,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useSetThreadFollowed, useThreadFollowing } from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
 import { MemberAvatarStack } from "../team/MemberAvatarStack";
+import { ThreadAccessChip, ThreadShareButton } from "../team/ThreadShareControls";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -451,8 +452,12 @@ export const ChatHeader = memo(function ChatHeader({
               {machineLabel}
             </Badge>
           ) : null}
+          {renamingTitle === null && isServerThread ? (
+            <ThreadAccessChip threadRef={activeThreadRef} />
+          ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? <ThreadShareButton threadRef={activeThreadRef} /> : null}
       {isServerThread ? <ThreadViewersStack threadRef={activeThreadRef} /> : null}
       {isServerThread ? <ThreadFollowToggle threadRef={activeThreadRef} /> : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

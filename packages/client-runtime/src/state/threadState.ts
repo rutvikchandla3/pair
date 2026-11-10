@@ -16,6 +16,8 @@ export interface EnvironmentThreadState {
   readonly history: ThreadHistoryMeta;
   /** The last server sequence `data` reflects, so readers can tell a write has landed without searching paged-out history. */
   readonly sequence: number;
+  /** Deleted because the owner stopped sharing it with this member, not because it is gone. */
+  readonly accessRevoked?: true;
 }
 
 export const EMPTY_ENVIRONMENT_THREAD_STATE: EnvironmentThreadState = {

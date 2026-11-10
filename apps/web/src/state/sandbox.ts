@@ -9,6 +9,7 @@ import {
 import {
   createCloudAccountNoticeAtoms,
   createSandboxEnvironmentAtoms,
+  type SandboxAccessSummary,
 } from "@t3tools/client-runtime/state/sandbox";
 import type {
   EnvironmentProject,
@@ -129,4 +130,40 @@ export function readContinueInCloudOffer(threadRef: ScopedThreadRef): ContinueIn
     appAtomRegistry.get(environmentPresentations.presentationsAtom),
     appAtomRegistry.get(environmentProjects.projectsAtom),
   );
+}
+
+const NO_ACCESS_ATOM = Atom.make<SandboxAccessSummary | null>(null).pipe(
+  Atom.withLabel("web-thread-share:no-access"),
+);
+const NO_SHARE_PERMISSION_ATOM = Atom.make(false).pipe(
+  Atom.withLabel("web-thread-share:no-permission"),
+);
+
+export interface ThreadShare {
+  readonly access: SandboxAccessSummary;
+  /** The owner's alone; everyone else sees the entry disabled. */
+  readonly allowed: boolean;
+}
+
+/** Null for a local thread and on a solo server, where nothing about sharing shows. */
+export function useThreadShare(threadRef: ScopedThreadRef | null): ThreadShare | null {
+  const access = useAtomValue(
+    threadRef === null ? NO_ACCESS_ATOM : sandboxEnvironment.threadAccessAtom(threadRef),
+  );
+  const allowed = useAtomValue(
+    threadRef === null
+      ? NO_SHARE_PERMISSION_ATOM
+      : sandboxEnvironment.shareThreadCommand.permissionAtom(threadRef),
+  );
+  return access === null ? null : { access, allowed };
+}
+
+/** Read at event time, for menus and shortcuts. */
+export function readThreadShare(threadRef: ScopedThreadRef): ThreadShare | null {
+  const access = appAtomRegistry.get(sandboxEnvironment.threadAccessAtom(threadRef));
+  if (access === null) return null;
+  return {
+    access,
+    allowed: appAtomRegistry.get(sandboxEnvironment.shareThreadCommand.permissionAtom(threadRef)),
+  };
 }

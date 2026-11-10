@@ -80,6 +80,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  UsersIcon,
   EyeIcon,
   EyeOffIcon,
 } from "lucide-react";
@@ -146,12 +147,15 @@ import {
 } from "../state/entities";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useCloudTarget, useContinueInCloudOffer } from "../state/sandbox";
+import { useCloudTarget, useContinueInCloudOffer, useThreadShare } from "../state/sandbox";
 import { useSandboxActionRunner, useSandboxThreadMachine } from "./sandbox/useSandboxThreadStatus";
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
-import { SANDBOX_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
+import {
+  SANDBOX_OWNER_ONLY_REASON,
+  SHARE_THREAD_OWNER_ONLY_REASON,
+} from "@t3tools/client-runtime/state/sandbox";
 import { SANDBOX_ACTION_PALETTE_LABELS } from "./sandbox/sandboxActionLabels";
 import {
   appendBrowsePathSegment,
@@ -259,6 +263,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openAssignThreadDialog } from "./team/AssignThreadDialog";
+import { openShareThreadDialog } from "./team/shareThreadDialogTarget";
 import { setAddProviderAccountDialogOpen } from "./team/providerAccountDialogState";
 import {
   useIsTeamMode,
@@ -511,6 +516,9 @@ function OpenCommandPaletteDialog(props: {
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
   const activeThreadIsTeamMode = useIsTeamMode(activeThread?.environmentId ?? null);
+  const activeThreadShare = useThreadShare(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
   const primaryIsTeamMode = useIsTeamMode(primaryEnvironmentId);
   const activeThreadFollowing = useThreadFollowing(activeThread);
   const setThreadFollowed = useSetThreadFollowed();
@@ -1488,6 +1496,24 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "thread.assign",
       run: async () => {
         openAssignThreadDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null && activeThreadShare !== null && canOperateActiveThread) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:share-thread",
+      searchTerms: ["share", "private", "access", "people", "teammate", "member", "thread"],
+      title: "Share thread",
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.share",
+      ...(activeThreadShare.allowed
+        ? {}
+        : { disabled: true, description: SHARE_THREAD_OWNER_ONLY_REASON }),
+      run: async () => {
+        openShareThreadDialog(threadRef);
       },
     });
   }

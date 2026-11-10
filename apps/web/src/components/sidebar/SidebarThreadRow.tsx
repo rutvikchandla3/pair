@@ -50,6 +50,7 @@ import {
   TerminalIcon,
   Undo2Icon,
   UserRoundIcon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -566,6 +567,8 @@ type SidebarThreadRowProps = {
   owner?: Pick<TeamMember, "name" | "color"> | null | undefined;
   /** Team mode only: other members with this thread open right now. */
   viewers?: ReadonlyArray<PresentMember> | undefined;
+  /** The viewer's own shared cloud thread: who else can open it. */
+  sharedWith?: string | null | undefined;
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
@@ -1217,6 +1220,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <TooltipPopup side="top">{props.owner.name}</TooltipPopup>
       </Tooltip>
     );
+  const sharedIndicator =
+    props.sharedWith == null ? null : (
+      <Tooltip>
+        <TooltipTrigger
+          render={<span aria-label={props.sharedWith} className="inline-flex shrink-0" />}
+        >
+          <UsersIcon aria-hidden className="size-3.5 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{props.sharedWith}</TooltipPopup>
+      </Tooltip>
+    );
   const viewersStack =
     props.viewers === undefined ? null : (
       <MemberAvatarStack members={props.viewers} max={2} size="sm" />
@@ -1299,6 +1313,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {sharedIndicator}
               {ownerAvatar}
               {viewersStack}
               {sortable?.isDragging ? (
@@ -1488,6 +1503,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
+              {sharedIndicator}
               {ownerAvatar}
               {viewersStack}
               {sortable?.isDragging ? (

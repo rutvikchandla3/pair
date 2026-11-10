@@ -96,7 +96,9 @@ project's existence.
 
 All of these open the same dialog, and all are owner-only. For anyone else the item is shown
 disabled with "Only the owner can share this thread", the pattern `SANDBOX_OWNER_ONLY_REASON`
-already uses (client-runtime `state/sandbox.ts` 60).
+already uses (client-runtime `state/sandbox.ts` 60). Menu items have no tooltip, so there it reads
+**Share… (owner only)**, as **Delete (owner or admin only)** does. They show only for cloud threads
+on a server with more than one member.
 
 - The header's **Share** button.
 - The thread menu and the sidebar row's context menu: **Share…**, directly under **Assign to…**
@@ -133,13 +135,15 @@ already uses (client-runtime `state/sandbox.ts` 60).
 
 - **Add people** is a multi-select over the server's active members, matched on name and GitHub
   username, without the owner and without people already listed. Enter or **Add** adds every chip.
-- **General access** has two values: **Only people added** and **Everyone on `<team name>`**.
+- **General access** has two values: **Only people added** and **Everyone on `<team name>`**,
+  where the team name is the environment's label.
   Choosing the second keeps the list and shows "Everyone on `<team name>` can open this thread,
   including people who join later."
 - **Changes apply at once**, one command per change, with no Save. The row shows the change
   optimistically and rolls back with the server's message if it is refused. **Done** only closes.
-- **Remove** asks nothing for a member who owns no thread on the machine. For one who does: "Ada
-  has 2 threads on this machine. She will lose access to them too." with **Remove** and **Cancel**.
+- **Remove** asks nothing for a member who owns no thread on the machine, or while Everyone on the
+  team can open it. Otherwise: "Ada Lovelace has 2 threads on this machine and will lose access to
+  them too." with **Remove** and **Cancel**.
 - **Copy link** copies the same link **Copy thread** does today. A link grants nothing by itself.
 - The trust sentence names the provider only when the session runs on the owner's own account:
   "…reaches your Claude sign-in and git token…".

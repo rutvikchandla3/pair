@@ -6,6 +6,7 @@ import {
   teamOwnerOf,
   type TeamViewer,
 } from "@t3tools/client-runtime/state/team";
+import { sandboxAccessSummary } from "@t3tools/client-runtime/state/sandbox";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -174,6 +175,7 @@ import { MemberAvatar } from "./team/MemberAvatar";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openShareThreadDialog } from "./team/shareThreadDialogTarget";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -194,7 +196,7 @@ import {
 import { openContinueInCloudDialog } from "./sandbox/ContinueInCloudDialog";
 import { useContinueLocally } from "../hooks/useContinueLocally";
 import { readSandboxThreadMachine, useSandboxActionRunner } from "./sandbox/useSandboxThreadStatus";
-import { readContinueInCloudOffer } from "../state/sandbox";
+import { readContinueInCloudOffer, readThreadShare } from "../state/sandbox";
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
@@ -1426,6 +1428,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+  const showTeamShelf = teamThreads.length > 0 || teamViewers.size > 0;
   const threadViewers = useThreadViewers([...serverConfigs.keys()]);
   const ownerFilters = useUiStateStore((store) => store.sidebarOwnerFilterByEnvironmentId);
   const setOwnerFilters = useUiStateStore((store) => store.setSidebarOwnerFilters);
@@ -2041,7 +2044,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
     }
-    if (teamThreads.length > 0) {
+    if (showTeamShelf) {
       items.push({ kind: "marker", marker: "team-header" });
       items.push(...rowsOf(visibleTeamThreads, "team"));
     }
@@ -2732,6 +2735,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) ?? null;
         const teamMenu = readThreadTeamMenu(thread);
         const machine = readSandboxThreadMachine(threadRef);
+        const share = readThreadShare(threadRef);
         const cloudOffer = readContinueInCloudOffer(threadRef);
         const moveOffer = continueLocally.offerFor(threadRef);
         const clicked = await settlePromise(() =>
@@ -2762,6 +2766,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               ...(teamMenu ? { team: teamMenu } : {}),
+              ...(share ? { share: { allowed: share.allowed } } : {}),
               ...(machine ? { machine } : {}),
               ...(cloudOffer.kind === "hidden"
                 ? {}
@@ -2917,6 +2922,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           }
           case "rename":
             startThreadRename(threadRef, thread.title);
+            return;
+          case "share":
+            openShareThreadDialog(threadRef);
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
@@ -3530,6 +3538,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           ? null
                           : teamOwnerOf(viewer, thread.source.ownerId);
                       };
+                      const sharedWithOf = (thread: EnvironmentThreadShell) => {
+                        const viewer = teamViewers.get(thread.environmentId);
+                        if (viewer === undefined) return null;
+                        const access = sandboxAccessSummary(
+                          thread,
+                          viewer.members,
+                          viewer.memberId,
+                        );
+                        return access?.canShare === true ? (access.chip?.label ?? null) : null;
+                      };
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
@@ -3582,6 +3600,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             pinningSupported={serverConfigs.has(thread.environmentId)}
                             isPinned={thread.pinnedAt != null}
                             owner={ownerOfThread(thread)}
+                            sharedWith={sharedWithOf(thread)}
                             viewers={threadViewers.get(threadKey)}
                             dropVerb={
                               dragState?.activeKey === threadKey
@@ -3761,6 +3780,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Team"
                                 count={teamThreads.length}
+                                emptyLabel="Threads teammates share with you show up here."
                                 toggle={{
                                   expanded: teamShelfExpanded,
                                   onToggle: toggleTeamShelf,
@@ -3774,7 +3794,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
                                 className={cn(
-                                  workingThreads.length + teamThreads.length === 0 && "mt-auto",
+                                  workingThreads.length === 0 && !showTeamShelf && "mt-auto",
                                 )}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
@@ -3791,10 +3811,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length +
-                                    teamThreads.length +
-                                    snoozedThreads.length ===
-                                    0 && "mt-auto",
+                                  workingThreads.length + snoozedThreads.length === 0 &&
+                                    !showTeamShelf &&
+                                    "mt-auto",
                                 )}
                                 label="Settled"
                                 count={settledCount}

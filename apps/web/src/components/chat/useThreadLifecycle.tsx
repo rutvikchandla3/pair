@@ -38,6 +38,8 @@ import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { useIsTeamMode, useThreadFollowing } from "../../state/team";
 import { openAssignThreadDialog } from "../team/AssignThreadDialog";
+import { openShareThreadDialog } from "../team/shareThreadDialogTarget";
+import { readThreadShare } from "../../state/sandbox";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction, useRef, useState } from "react";
@@ -696,6 +698,10 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadRef || !isTeamMode) return false;
       openAssignThreadDialog(activeThreadRef);
+    },
+    "thread.share": () => {
+      if (!activeThreadRef || readThreadShare(activeThreadRef)?.allowed !== true) return false;
+      openShareThreadDialog(activeThreadRef);
     },
     "thread.follow": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;

@@ -24,6 +24,7 @@ import {
   cloudAccountNotice,
   cloudPushCredential,
   createSandboxEnvironmentAtoms,
+  sandboxAccessSummary,
   sandboxStatePresentation,
   sharesOtherOwnersMachine,
   stoppedFilesFromProjection,
@@ -330,6 +331,75 @@ describe("sharesOtherOwnersMachine", () => {
   });
 });
 
+describe("sandboxAccessSummary", () => {
+  const me = MemberId.make("ada");
+  const fay = MemberId.make("fay");
+  const others = ["bob", "cy", "di", "ed"].map((id) => MemberId.make(id)).concat(fay);
+  const ids = [me, ...others];
+  const removed = MemberId.make("gone");
+  const members: TeamMembers = new Map(
+    [...ids, removed].map((id) => [
+      id,
+      {
+        id,
+        name: id.toUpperCase(),
+        role: "member",
+        color: "hsl(0, 60%, 50%)",
+        isOwner: false,
+        createdAt: since,
+        removedAt: id === removed ? since : null,
+      },
+    ]),
+  );
+  const shell = (access: OrchestrationV2ThreadShellSandbox["access"], ownerId = me) => ({
+    source: { ownerId, sandbox: summary(access === undefined ? {} : { access }) },
+  });
+  const people = (count: number) => ({
+    audience: "members" as const,
+    memberIds: others.slice(0, count),
+  });
+
+  // The chip as a row: "people" lists the avatars shown, then the count behind "+N".
+  const view = (input: ReturnType<typeof shell>, viewer: MemberId | null) => {
+    const result = sandboxAccessSummary(input, members, viewer);
+    const chip = result?.chip ?? null;
+    return {
+      chip:
+        chip?.kind === "people"
+          ? [chip.shown.map((member) => member.name).join(" "), chip.more, chip.label]
+          : (chip?.kind ?? null),
+      canShare: result?.canShare,
+    };
+  };
+
+  it.each([
+    ["private", shell(people(0)), me, null, true],
+    ["one person", shell(people(1)), me, ["BOB", 0, "Shared with BOB"], true],
+    ["three people", shell(people(3)), me, ["BOB CY DI", 0, "Shared with BOB, CY, DI"], true],
+    [
+      "five people",
+      shell(people(5)),
+      me,
+      ["BOB CY DI", 2, "Shared with BOB, CY, DI, ED, FAY"],
+      true,
+    ],
+    ["only a removed member", shell({ audience: "members", memberIds: [removed] }), me, null, true],
+    ["everyone", shell({ audience: "team", memberIds: [] }), me, "team", true],
+    ["a machine from before sharing", shell(undefined), me, "team", true],
+    ["an audience from a newer server", shell({ audience: null, memberIds: [] }), me, null, false],
+    ["not the owner", shell(people(2), fay), me, ["BOB CY", 0, "Shared with BOB, CY"], false],
+    ["no member session", shell(people(0)), null, null, false],
+  ] as const)("%s", (_name, input, viewer, chip, canShare) => {
+    expect(view(input, viewer)).toEqual({ chip, canShare });
+  });
+
+  it("says nothing for a local thread or on a solo server", () => {
+    expect(sandboxAccessSummary({ source: { ownerId: me } }, members, me)).toBeNull();
+    const solo: TeamMembers = new Map([...members].filter(([id]) => id === me));
+    expect(sandboxAccessSummary(shell(people(0)), solo, me)).toBeNull();
+  });
+});
+
 describe("stopped reads", () => {
   const at = (iso: string) => DateTime.makeUnsafe(iso);
   const clock = (time: DateTime.Utc) => DateTime.formatIso(time).slice(11, 16);
@@ -492,11 +562,11 @@ describe("actionAllowedAtom", () => {
     }
   });
 
-  it("judges a fork's owner-only actions by the machine's owner thread", () => {
+  it("judges a fork's owner-only actions and sharing by the machine's owner thread", () => {
     const registry = AtomRegistry.make();
     registry.mount(sessions(env));
-    const machine = () =>
-      registry.get(sandbox.threadMachineAtom({ environmentId: env, threadId: forkThreadId }));
+    const fork = { environmentId: env, threadId: forkThreadId };
+    const machine = () => registry.get(sandbox.threadMachineAtom(fork));
     try {
       registry.set(
         sessions(env),
@@ -511,8 +581,10 @@ describe("actionAllowedAtom", () => {
         actions: ["sleep", "discard"],
         ownerOnlyDenied: ["sleep", "discard"],
       });
+      expect(registry.get(sandbox.shareThreadCommand.permissionAtom(fork))).toBe(false);
       registry.set(currentMemberId, ownerId);
       expect(machine()?.ownerOnlyDenied).toEqual([]);
+      expect(registry.get(sandbox.shareThreadCommand.permissionAtom(fork))).toBe(true);
     } finally {
       registry.dispose();
     }

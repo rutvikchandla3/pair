@@ -155,6 +155,28 @@ describe("buildThreadActionMenuItems", () => {
     expect(copyChildren(member)).not.toContain("copy-path");
   });
 
+  it("offers Share… under Assign to… on a team's cloud thread, disabled for anyone but its owner", () => {
+    const team = { members: [], ownerId: null, canDelete: true };
+    const share = (state: Partial<ThreadActionMenuState>) => {
+      const items = buildThreadActionMenuItems({ ...baseState, ...state });
+      const index = items.findIndex((item) => item.id === "share");
+      const item = items[index];
+      return item === undefined
+        ? null
+        : [item.label, item.disabled ?? false, items[index - 1]?.id ?? null];
+    };
+    expect(share({ team, share: { allowed: true } })).toEqual(["Share…", false, "assign"]);
+    expect(share({ team, share: { allowed: false } })).toEqual([
+      "Share… (owner only)",
+      true,
+      "assign",
+    ]);
+    // A local thread, or a cloud thread on a solo server, has no share state.
+    expect(share({ team })).toBeNull();
+    expect(share({})).toBeNull();
+    expect(share({ team, share: { allowed: true }, canOperate: false })?.[1]).toBe(true);
+  });
+
   it("offers Continue locally after the machine actions, disabled with why", () => {
     const ids = (state: ThreadActionMenuState) =>
       buildThreadActionMenuItems(state).map((item) => item.id);

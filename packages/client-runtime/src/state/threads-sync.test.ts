@@ -2189,6 +2189,26 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("drops the thread, marked revoked, when the owner stops sharing it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      yield* Queue.offer(
+        harness.inputs,
+        Object.assign(new Error("revoked"), { _tag: "ThreadAccessRevoked" }),
+      );
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+
+      expect(state.accessRevoked).toBe(true);
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(Option.isNone(state.error)).toBe(true);
+    }),
+  );
+
   it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });

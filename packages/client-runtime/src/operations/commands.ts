@@ -24,6 +24,7 @@ import {
   type RunId,
   type RuntimeMode,
   type RuntimeRequestId,
+  type SandboxAccessAudience,
   type SandboxId,
   type ThreadId,
   type ThreadEnvMode,
@@ -501,6 +502,24 @@ export const discardSandbox = Effect.fn("EnvironmentCommands.discardSandbox")(fu
   input: SandboxCommandInput,
 ) {
   return yield* sandboxCommand("sandbox.discard", input);
+});
+
+export interface SetSandboxAccessInput extends SandboxCommandInput {
+  readonly audience: SandboxAccessAudience;
+  readonly memberIds: ReadonlyArray<MemberId>;
+}
+/** The whole list each time: the server stores what it is sent. */
+export const setSandboxAccess = Effect.fn("EnvironmentCommands.setSandboxAccess")(function* (
+  input: SetSandboxAccessInput,
+) {
+  return yield* dispatch({
+    type: "sandbox.access.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    sandboxId: input.sandboxId,
+    audience: input.audience,
+    memberIds: input.memberIds,
+  });
 });
 
 export type CloseGuestShareInput = ThreadCommandInput;
