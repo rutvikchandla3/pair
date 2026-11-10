@@ -1956,6 +1956,18 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const sessionRunAccess = Effect.fn("OrchestratorMcpService.sessionRunAccess")(function* (
+    threadId: ThreadId,
+  ) {
+    const read = (id: ThreadId) =>
+      threadManagement.getThreadShell(id).pipe(Effect.mapError(threadManagementFailure));
+    const shell = yield* read(threadId);
+    const ownerThreadId = shell?.sandbox?.ownerThreadId;
+    if (shell === null || ownerThreadId === undefined) return undefined;
+    const ownerShell = ownerThreadId === shell.id ? shell : yield* read(ownerThreadId);
+    return ScheduledTaskService.inheritedRunAccess(shell, ownerShell?.ownerId);
+  });
+
   const withinLimits = (
     limits: {
       readonly runtimeMode: RuntimeMode;
@@ -2050,12 +2062,15 @@ const make = Effect.gen(function* () {
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
+      const runAccess =
+        parent === undefined ? undefined : yield* sessionRunAccess(parent.thread.id);
       const upsertInput: ScheduledTaskUpsertInput = {
         title,
         prompt: input.prompt,
         enabled: input.enabled ?? true,
         schedule: input.schedule,
         projectId,
+        ...(runAccess === undefined ? {} : { access: runAccess }),
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,

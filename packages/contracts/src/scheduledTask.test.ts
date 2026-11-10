@@ -3,12 +3,17 @@ import * as Schema from "effect/Schema";
 
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  ScheduledTask,
   ScheduledTaskSchedule,
+  ScheduledTaskUpsertInput,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
+const decodeTask = Schema.decodeUnknownSync(ScheduledTask);
+const encodeTask = Schema.encodeSync(ScheduledTask);
+const decodeUpsertInput = Schema.decodeUnknownSync(ScheduledTaskUpsertInput);
 
 describe("ScheduledTaskSchedule", () => {
   it("keeps legacy sub-minute persisted schedules readable", () => {
@@ -72,5 +77,58 @@ describe("webhook filters", () => {
     expect(accepts([{ path: "body.label.name", op: "in", value: ["needs review"] }])).toBe(true);
     expect(accepts([{ path: "body.action", op: "equals" }])).toBe(false);
     expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
+  });
+});
+
+describe("a scheduled task's access", () => {
+  const stored = {
+    id: "task-1",
+    title: "Nightly",
+    prompt: "Run the suite",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: "project-1",
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    updatedAt: "2026-11-01T00:00:00.000Z",
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  };
+  it("is absent on a task from before, which reads as team", () => {
+    expect(decodeTask(stored).access).toBeUndefined();
+  });
+
+  it("round-trips, and an audience from a newer server reads as null", () => {
+    const access = { audience: "members", memberIds: ["member-ada"] };
+    const task = decodeTask({ ...stored, createdByMemberId: "member-rutvik", access });
+    expect(encodeTask(task)).toMatchObject({
+      createdByMemberId: "member-rutvik",
+      access,
+    });
+    expect(decodeTask({ ...stored, access: { audience: "groups", memberIds: [] } }).access).toEqual(
+      { audience: null, memberIds: [] },
+    );
+  });
+
+  it("is chosen on save from the two known audiences", () => {
+    const { id: _id, createdAt: _c, ...input } = stored;
+    expect(
+      decodeUpsertInput({ ...input, access: { audience: "team", memberIds: [] } }).access,
+    ).toEqual({
+      audience: "team",
+      memberIds: [],
+    });
+    expect(() =>
+      decodeUpsertInput({ ...input, access: { audience: "groups", memberIds: [] } }),
+    ).toThrow();
   });
 });

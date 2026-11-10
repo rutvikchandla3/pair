@@ -13,6 +13,8 @@ import {
   applyShareChange,
   exceedsShareCap,
   removalWarning,
+  PRIVATE_RUN_SHARE,
+  runShareControl,
   shareCandidates,
   shareMachineContext,
   shareTrustSentence,
@@ -199,5 +201,54 @@ describe("shareMachineContext", () => {
         providerInstances: instances(ada.id),
       }).ownAccountProvider,
     ).toBeNull();
+  });
+});
+
+describe("runShareControl", () => {
+  const owner = member("server-owner", "Server Owner", { isOwner: true });
+  const team: TeamMembers = new Map([owner, rutvik, ada].map((m) => [m.id, m]));
+  const base = { cloudLaunch: true, members: team, me: rutvik.id, task: null, bound: false };
+  const task = (extra: { createdByMemberId?: MemberId; access?: object }) =>
+    extra as unknown as NonNullable<Parameters<typeof runShareControl>[0]["task"]>;
+
+  it("starts a new task private, and its creator can change it", () => {
+    expect(runShareControl(base)).toEqual({
+      access: PRIVATE_RUN_SHARE,
+      creatorId: rutvik.id,
+      canEdit: true,
+    });
+  });
+
+  it.each([
+    ["not on Pair Cloud", { cloudLaunch: false }],
+    ["on a server with one member", { members: new Map([[rutvik.id, rutvik]]) }],
+    ["on a task that continues a thread", { bound: true }],
+    [
+      "for an audience from a newer server",
+      { task: task({ createdByMemberId: rutvik.id, access: { audience: null, memberIds: [] } }) },
+    ],
+  ])("is hidden %s", (_name, override) => {
+    expect(runShareControl({ ...base, ...override })).toBeNull();
+  });
+
+  it("reads a task from before as everyone, whose creator is the server's owner", () => {
+    expect(runShareControl({ ...base, task: task({}), me: rutvik.id })).toEqual({
+      access: { audience: "team", memberIds: [] },
+      creatorId: owner.id,
+      canEdit: false,
+    });
+    expect(runShareControl({ ...base, task: task({}), me: owner.id })?.canEdit).toBe(true);
+  });
+
+  it("lets only the recorded creator change a task's audience", () => {
+    const stored = task({
+      createdByMemberId: ada.id,
+      access: { audience: "members", memberIds: [rutvik.id] },
+    });
+    expect(runShareControl({ ...base, task: stored, me: ada.id })).toMatchObject({
+      access: { audience: "members", memberIds: [rutvik.id] },
+      canEdit: true,
+    });
+    expect(runShareControl({ ...base, task: stored, me: owner.id })?.canEdit).toBe(false);
   });
 });

@@ -62,6 +62,11 @@ import {
 import { useProjects, useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sandboxWaitingLabel } from "@t3tools/client-runtime/state/sandbox";
+import {
+  PRIVATE_RUN_SHARE,
+  RUN_SHARE_LABEL,
+  runShareControl,
+} from "@t3tools/client-runtime/state/share-thread";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -79,6 +84,8 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
+import { useCurrentMemberId, useTeamMembers } from "../../state/team";
+import { ScheduledTaskRunShare } from "./ScheduledTaskRunShare";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -90,6 +97,7 @@ import {
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  runAccessForSave,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -155,6 +163,7 @@ const EMPTY_DRAFT: DraftState = {
   startFromOrigin: true,
   existingWorktreePath: "",
   discardOnSettle: false,
+  runAccess: PRIVATE_RUN_SHARE,
   modelKey: "",
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -1267,6 +1276,15 @@ function ScheduledTaskEditorForm({
   const liveTask = tasksQuery.data
     ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
     : task;
+  const members = useTeamMembers(environmentId);
+  const currentMemberId = useCurrentMemberId(environmentId);
+  const runShare = runShareControl({
+    cloudLaunch,
+    members,
+    me: currentMemberId,
+    task: liveTask,
+    bound: Boolean(draft.threadId),
+  });
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const instanceEntries = providerInstanceEntriesFor(
@@ -1376,6 +1394,11 @@ function ScheduledTaskEditorForm({
               baseRef: draft.baseRef.trim() || "main",
               startFromOrigin: draft.startFromOrigin,
             };
+    const access = runAccessForSave({
+      control: runShare,
+      editing: draft.editingId !== null,
+      runAccess: draft.runAccess,
+    });
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -1393,6 +1416,7 @@ function ScheduledTaskEditorForm({
       interactionMode: draft.interactionMode,
       creationSource: "web",
       ...(cloudLaunch ? { discardOnSettle: draft.discardOnSettle } : {}),
+      ...(access === undefined ? {} : { access }),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1441,6 +1465,7 @@ function ScheduledTaskEditorForm({
                   baseRef: "main",
                   startFromOrigin: true,
                   existingWorktreePath: "",
+                  runAccess: PRIVATE_RUN_SHARE,
                 }));
               }}
             >
@@ -1608,6 +1633,17 @@ function ScheduledTaskEditorForm({
                 }
               />
             </div>
+          ) : null}
+          {runShare !== null ? (
+            <Field label={RUN_SHARE_LABEL}>
+              <ScheduledTaskRunShare
+                control={runShare}
+                access={draft.runAccess}
+                members={members}
+                teamName={environment?.label.trim() || "the team"}
+                onChange={(runAccess) => setDraft((current) => ({ ...current, runAccess }))}
+              />
+            </Field>
           ) : null}
           {workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">

@@ -31,6 +31,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -692,3 +693,148 @@ it.effect("a cloud task's run launches with discardOnSettle and records its thre
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect(
+  "a task's runs start private, follow who its creator picks, and only the creator picks",
+  () =>
+    Effect.gen(function* () {
+      const owner = MemberId.make("member-owner");
+      const alice = MemberId.make("member-alice");
+      const bob = MemberId.make("member-bob");
+      const carol = MemberId.make("member-carol");
+      const member = (id: MemberId, role: "admin" | "member", removedAt: string | null = null) => ({
+        id,
+        name: id,
+        role,
+        gitName: null,
+        gitEmail: null,
+        isOwner: id === owner,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: null,
+        removedAt,
+      });
+      const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchInput>>([]);
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            TeamState.layerTest([
+              member(owner, "admin"),
+              member(alice, "member"),
+              member(bob, "admin"),
+              member(carol, "member", "2026-02-01T00:00:00.000Z"),
+            ]),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Ref.update(launches, (all) => [...all, input]).pipe(
+                  Effect.as({ threadId: ThreadId.make("thread:run"), resumed: false } as never),
+                ),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            NodeCrypto.layer,
+            Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const input = {
+          id: ScheduledTaskId.make("task:shared-runs"),
+          title: "Nightly",
+          prompt: "Run the suite",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "worktree", baseRef: "main" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        } as const;
+        const lastLaunchAccess = Effect.map(Ref.get(launches), (all) => all.at(-1)?.sandboxAccess);
+        const refusal = (error: { readonly message: string }) =>
+          "Only the task's creator can change who sees its runs." === error.message;
+
+        // A new task starts private to its creator.
+        const { task } = yield* service.upsert(input, alice);
+        assert.deepEqual(task.access, { audience: "members", memberIds: [] });
+        assert.equal(task.createdByMemberId, alice);
+        yield* service.runNow({ id: task.id });
+        assert.deepEqual(yield* lastLaunchAccess, { audience: "members", memberIds: [] });
+
+        // The list is deduped and leaves the creator out; a client that omits it keeps it.
+        const shared = yield* service.upsert(
+          { ...input, access: { audience: "members", memberIds: [bob, alice, bob] } },
+          alice,
+        );
+        assert.deepEqual(shared.task.access, { audience: "members", memberIds: [bob] });
+        assert.deepEqual((yield* service.upsert(input, bob)).task.access, shared.task.access);
+
+        // An admin who is not the creator cannot widen it, and nobody can list a removed member.
+        const widened = yield* service
+          .upsert({ ...input, access: { audience: "team", memberIds: [] } }, bob)
+          .pipe(Effect.flip);
+        assert.isTrue(refusal(widened));
+        assert.deepEqual((yield* service.list()).tasks[0]?.access, shared.task.access);
+        const removed = yield* service
+          .upsert({ ...input, access: { audience: "members", memberIds: [carol] } }, alice)
+          .pipe(Effect.flip);
+        assert.equal(removed.message, "Runs can be shared only with active members.");
+        // Resending what is stored is not a change, so another editor's form can round-trip it.
+        yield* service.upsert({ ...input, access: { audience: "members", memberIds: [bob] } }, bob);
+
+        yield* service.upsert({ ...input, access: { audience: "team", memberIds: [bob] } }, alice);
+        yield* service.runNow({ id: task.id });
+        assert.deepEqual(yield* lastLaunchAccess, { audience: "team", memberIds: [bob] });
+
+        // A task from before private threads has no access: its runs start `team`, and with no
+        // recorded creator only the server's owner changes it.
+        yield* sql`UPDATE scheduled_tasks SET access_json = NULL, created_by_member_id = NULL`;
+        const [old] = (yield* service.list()).tasks;
+        assert.isUndefined(old?.access);
+        assert.isUndefined(old?.createdByMemberId);
+        yield* service.runNow({ id: task.id });
+        assert.isNull(yield* lastLaunchAccess);
+        const narrowed = { ...input, access: { audience: "members", memberIds: [] } } as const;
+        assert.isTrue(refusal(yield* service.upsert(narrowed, alice).pipe(Effect.flip)));
+        assert.isTrue(refusal(yield* service.upsert(narrowed, bob).pipe(Effect.flip)));
+        const byOwner = yield* service.upsert(narrowed, owner);
+        assert.deepEqual(byOwner.task.access, { audience: "members", memberIds: [] });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it("an agent's task inherits its session's audience and lists the machine's owner", () => {
+  const owner = MemberId.make("member-owner");
+  const ada = MemberId.make("member-ada");
+  const shell = (
+    access: { audience: "members" | "team" | null; memberIds: ReadonlyArray<MemberId> } | undefined,
+  ) =>
+    ({
+      sandbox: { ownerThreadId: ThreadId.make("thread:owner"), state: "ready", access },
+    }) as never;
+  const inherit = ScheduledTaskService.inheritedRunAccess;
+  // A thread with no machine, or an audience from a newer server, leaves the private default.
+  assert.isUndefined(inherit({}, owner));
+  assert.isUndefined(inherit(shell({ audience: null, memberIds: [ada] }), owner));
+  // A machine from before private threads is `team`.
+  assert.deepEqual(inherit(shell(undefined), owner), { audience: "team", memberIds: [] });
+  assert.deepEqual(inherit(shell({ audience: "team", memberIds: [ada] }), owner), {
+    audience: "team",
+    memberIds: [],
+  });
+  // Whoever can open the agent's session can open its runs, the machine's owner included.
+  assert.deepEqual(inherit(shell({ audience: "members", memberIds: [ada] }), owner), {
+    audience: "members",
+    memberIds: [ada, owner],
+  });
+  assert.deepEqual(inherit(shell({ audience: "members", memberIds: [] }), null), {
+    audience: "members",
+    memberIds: [],
+  });
+});

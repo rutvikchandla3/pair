@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type SandboxAccessGrant,
   type ProviderInteractionMode,
   ProjectId,
   type RunId,
@@ -142,6 +143,8 @@ export interface ThreadLaunchInput {
   readonly cloudPlacement?: true;
   /** The cloud launch's machine is discarded once its threads settle. */
   readonly discardOnSettle?: boolean;
+  /** Who can open a cloud launch's machine, for a scheduled run: null is `team`. Absent: private. */
+  readonly sandboxAccess?: SandboxAccessGrant | null;
   /** A context export staged on this server; only 3.23's move launch route sets it. */
   readonly contextExportRef?: CloudStagingKey;
   /** An export already in hand; only `CloudMoves.continueLocally` sets it (3.25). */
@@ -465,6 +468,7 @@ const make = Effect.gen(function* () {
     readonly projectId: ProjectId;
     readonly placement: CloudPlacement;
     readonly discardOnSettle: boolean;
+    readonly access?: SandboxAccessGrant | null;
   }) {
     yield* threads.dispatch({
       type: "sandbox.provision",
@@ -475,6 +479,7 @@ const make = Effect.gen(function* () {
       driverId: input.placement.driverId,
       size: input.placement.size,
       ...(input.discardOnSettle ? { discardOnSettle: true } : {}),
+      ...(input.access === undefined ? {} : { access: input.access }),
       ...(input.placement.imageBuild === null ? {} : { imageBuild: input.placement.imageBuild }),
     });
   });
@@ -1535,6 +1540,7 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             placement: cloud,
             discardOnSettle: input.discardOnSettle === true,
+            ...(input.sandboxAccess === undefined ? {} : { access: input.sandboxAccess }),
           }).pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
         }
         let runId: RunId | null = null;

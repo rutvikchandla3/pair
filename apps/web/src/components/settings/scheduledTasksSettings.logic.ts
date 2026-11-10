@@ -6,6 +6,7 @@ import {
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskUpsertSchedule,
+  type SandboxAccessGrant,
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
@@ -23,6 +24,13 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
+import {
+  PRIVATE_RUN_SHARE,
+  sameShareAccess,
+  taskRunShareAccess,
+  type RunShareControl,
+  type ShareAccess,
+} from "@t3tools/client-runtime/state/share-thread";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
@@ -76,6 +84,8 @@ export interface DraftState {
   readonly existingWorktreePath: string;
   /** Only sent to a cloud-launch server, where each run gets its own machine. */
   readonly discardOnSettle: boolean;
+  /** Who can open each run's machine; only a team Pair Cloud server shows or sends it. */
+  readonly runAccess: ShareAccess;
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -235,6 +245,21 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/**
+ * What a save sends as `access`: nothing unless the control shows, this person is the task's
+ * creator and, for an existing task, they changed it, so an admin's edit leaves it alone.
+ */
+export function runAccessForSave(input: {
+  readonly control: RunShareControl | null;
+  readonly editing: boolean;
+  readonly runAccess: ShareAccess;
+}): SandboxAccessGrant | undefined {
+  const { control } = input;
+  if (control === null || !control.canEdit) return undefined;
+  if (input.editing && sameShareAccess(control.access, input.runAccess)) return undefined;
+  return { audience: input.runAccess.audience, memberIds: input.runAccess.memberIds };
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
@@ -267,6 +292,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? task.workspaceStrategy.worktreePath
         : "",
     discardOnSettle: task.discardOnSettle === true,
+    runAccess: taskRunShareAccess(task) ?? PRIVATE_RUN_SHARE,
     modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,

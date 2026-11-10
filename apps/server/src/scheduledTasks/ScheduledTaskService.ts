@@ -3,8 +3,12 @@ import {
   CommandId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  SANDBOX_ACCESS_MEMBER_LIMIT,
   type ProjectId,
+  type OrchestrationV2ThreadShell,
+  type SandboxAccessGrant,
   ScheduledTask,
+  ScheduledTaskAccess,
   ScheduledTaskError,
   ScheduledTaskId,
   ThreadId,
@@ -54,6 +58,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TeamState from "../team/TeamState.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -201,6 +206,9 @@ const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
+const decodeAccessJson = Schema.decodeUnknownOption(Schema.fromJsonString(ScheduledTaskAccess));
+/** What a run's machine starts with when nothing else was chosen: only its creator. */
+const PRIVATE_RUN_ACCESS: SandboxAccessGrant = { audience: "members", memberIds: [] };
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
@@ -233,6 +241,8 @@ interface ScheduledTaskRow {
   readonly webhook_secret: string | null;
   readonly discard_on_settle: number;
   readonly last_run_thread_id: string | null;
+  readonly created_by_member_id: string | null;
+  readonly access_json: string | null;
 }
 
 interface WebhookDeliveryRow {
@@ -413,6 +423,13 @@ const decodeRow = Effect.fnUntraced(
       ...(webhook === undefined ? {} : { webhook }),
       ...(row.discard_on_settle === 1 ? { discardOnSettle: true } : {}),
       ...(row.last_run_thread_id === null ? {} : { lastRunThreadId: row.last_run_thread_id }),
+      ...(row.created_by_member_id === null ? {} : { createdByMemberId: row.created_by_member_id }),
+      // A stored value that no longer decodes reads as private, never as `team`.
+      ...(row.access_json === null
+        ? {}
+        : {
+            access: Option.getOrElse(decodeAccessJson(row.access_json), () => PRIVATE_RUN_ACCESS),
+          }),
     });
   },
   (effect, row, _origin?) =>
@@ -426,6 +443,34 @@ const decodeRow = Effect.fnUntraced(
       }),
     ),
 );
+
+/**
+ * A task an agent schedules shares its runs with whoever can open the agent's own session, so
+ * scheduling cannot widen who reads: the session's people, plus the machine's owner when the
+ * agent's thread is someone else's. Undefined (a thread with no machine, or an audience this
+ * server does not know) leaves the default: only the task's creator.
+ */
+export const inheritedRunAccess = (
+  shell: Pick<OrchestrationV2ThreadShell, "sandbox">,
+  machineOwnerId: MemberId | null | undefined,
+): SandboxAccessGrant | undefined => {
+  const access = shell.sandbox?.access;
+  if (shell.sandbox === undefined || access?.audience === null) return undefined;
+  if (access === undefined || access.audience === "team")
+    return { audience: "team", memberIds: [] };
+  return {
+    audience: "members",
+    memberIds: machineOwnerId == null ? access.memberIds : [...access.memberIds, machineOwnerId],
+  };
+};
+
+/** The audience each run's machine starts with. None recorded reads as `team`; one we cannot read, as private. */
+const runMachineAccess = (task: ScheduledTask): SandboxAccessGrant | null =>
+  task.access === undefined
+    ? null
+    : task.access.audience === null
+      ? PRIVATE_RUN_ACCESS
+      : { audience: task.access.audience, memberIds: task.access.memberIds };
 
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
   now: DateTime.DateTime,
@@ -474,6 +519,8 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    // CLI and test runtimes have no team, so no one else's runs need guarding there.
+    const team = yield* Effect.serviceOption(TeamState.TeamState);
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -537,7 +584,9 @@ export const layer = Layer.effect(
         webhook_token,
         webhook_secret,
         discard_on_settle,
-        last_run_thread_id
+        last_run_thread_id,
+        created_by_member_id,
+        access_json
       FROM scheduled_tasks
       -- Not updated_at: toggles, runs and edits rewrite it, and clients render
       -- this order as-is, so rows would move under the pointer.
@@ -580,7 +629,9 @@ export const layer = Layer.effect(
         webhook_token,
         webhook_secret,
         discard_on_settle,
-        last_run_thread_id
+        last_run_thread_id,
+        created_by_member_id,
+        access_json
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `.pipe(NodeSqliteClient.readOnly);
@@ -675,7 +726,8 @@ export const layer = Layer.effect(
           webhook_token,
           webhook_secret,
           created_by_member_id,
-          discard_on_settle
+          discard_on_settle,
+          access_json
         )
         SELECT
           ${task.id},
@@ -701,7 +753,8 @@ export const layer = Layer.effect(
           ${webhook.token},
           ${webhook.secret},
           ${createdByMemberId},
-          ${task.discardOnSettle === true ? 1 : 0}
+          ${task.discardOnSettle === true ? 1 : 0},
+          ${task.access === undefined ? null : JSON.stringify(task.access)}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -744,7 +797,8 @@ export const layer = Layer.effect(
             scheduled_tasks.created_by_member_id,
             excluded.created_by_member_id
           ),
-          discard_on_settle = excluded.discard_on_settle
+          discard_on_settle = excluded.discard_on_settle,
+          access_json = excluded.access_json
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -1004,6 +1058,7 @@ export const layer = Layer.effect(
                       creationSource: active.creationSource,
                       ...(ownerId === null ? {} : { ownerId }),
                       cloudPlacement: true,
+                      sandboxAccess: runMachineAccess(active),
                       ...(active.discardOnSettle === true ? { discardOnSettle: true } : {}),
                     }),
                   ),
@@ -1281,6 +1336,58 @@ export const layer = Layer.effect(
       );
     };
 
+    /**
+     * What a save stores as the task's `access`. Only the task's creator (the server's owner when
+     * none was recorded) changes it, so an admin editing the task cannot widen who sees its runs.
+     */
+    const resolveAccess = Effect.fn("ScheduledTaskService.resolveAccess")(function* (
+      taskId: ScheduledTaskId,
+      existingTask: ScheduledTask | null,
+      requested: SandboxAccessGrant | undefined,
+      actorId: MemberId | undefined,
+    ) {
+      if (requested === undefined) {
+        return existingTask === null ? PRIVATE_RUN_ACCESS : existingTask.access;
+      }
+      const creatorId =
+        existingTask === null
+          ? actorId
+          : (existingTask.createdByMemberId ?? Option.getOrUndefined(team)?.ownerId);
+      const memberIds = [...new Set(requested.memberIds)].filter((id) => id !== creatorId);
+      if (memberIds.length > SANDBOX_ACCESS_MEMBER_LIMIT) {
+        return yield* taskError(
+          `Runs can be shared with up to ${SANDBOX_ACCESS_MEMBER_LIMIT} people. Choose everyone on the team instead.`,
+          { taskId },
+        );
+      }
+      if (Option.isSome(team)) {
+        for (const memberId of memberIds) {
+          const active = yield* team.value
+            .isActive(memberId)
+            .pipe(
+              Effect.mapError((cause) => taskError("Could not read the team.", { taskId, cause })),
+            );
+          if (!active) {
+            return yield* taskError("Runs can be shared only with active members.", { taskId });
+          }
+        }
+      }
+      const next = { audience: requested.audience, memberIds };
+      if (existingTask === null) return next;
+      const current = existingTask.access ?? { audience: "team", memberIds: [] };
+      const unchanged =
+        current.audience === next.audience &&
+        current.memberIds.length === next.memberIds.length &&
+        next.memberIds.every((id) => current.memberIds.includes(id));
+      if (unchanged) return existingTask.access;
+      if (Option.isSome(team) && actorId !== creatorId) {
+        return yield* taskError("Only the task's creator can change who sees its runs.", {
+          taskId,
+        });
+      }
+      return next;
+    });
+
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input, createdByMemberId) {
@@ -1402,6 +1509,7 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      const access = yield* resolveAccess(id, existingTask, input.access, createdByMemberId);
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1428,6 +1536,7 @@ export const layer = Layer.effect(
         ...((input.discardOnSettle ?? existingTask?.discardOnSettle) === true
           ? { discardOnSettle: true }
           : {}),
+        ...(access === undefined ? {} : { access }),
       };
       yield* saveTask(
         task,

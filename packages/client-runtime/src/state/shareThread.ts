@@ -5,12 +5,13 @@ import {
   type ProviderInstanceId,
   type SandboxAccessAudience,
   type SandboxId,
+  type ScheduledTask,
   type ServerSettings,
   type TeamMember,
   type ThreadId,
 } from "@t3tools/contracts";
 
-import { activeTeamMembers, type TeamMembers } from "./team.ts";
+import { activeTeamMembers, isTeamModeMembers, type TeamMembers } from "./team.ts";
 
 export const SHARE_FAILURE_TITLE = "Could not change who can open this thread";
 
@@ -179,4 +180,53 @@ export function shareTrustSentence(input: {
         ? " Sharing also covers its side chat or fork."
         : ` Sharing also covers its ${input.relatedCount} side chats and forks.`;
   return `${lead} can prompt this thread and use its terminal. That reaches ${provider} sign-in and git token on its machine.${related}`;
+}
+
+export const RUN_SHARE_LABEL = "Share runs with";
+export const RUN_SHARE_CREATOR_ONLY_REASON = "Only the task's creator can change who sees its runs";
+export const RUN_SHARE_NOTE =
+  "New runs start shared with these people. Earlier runs keep who they were shared with.";
+
+/** A new task's runs start private, as a new cloud thread does. */
+export const PRIVATE_RUN_SHARE: ShareAccess = { audience: "members", memberIds: [] };
+
+/** A task from before private threads has no access, which reads as everyone. */
+export function taskRunShareAccess(task: Pick<ScheduledTask, "access">): ShareAccess | null {
+  if (task.access === undefined) return { audience: "team", memberIds: [] };
+  return task.access.audience === null
+    ? null
+    : { audience: task.access.audience, memberIds: task.access.memberIds };
+}
+
+export interface RunShareControl {
+  /** The task's stored audience, or the private default for a new task. */
+  readonly access: ShareAccess;
+  /** Who the runs belong to: left out of the people to add. */
+  readonly creatorId: MemberId | null;
+  readonly canEdit: boolean;
+}
+
+/**
+ * Where the editor's "Share runs with" control shows, and who can change it. Null off Pair Cloud,
+ * on a server with one member, for a task that continues one thread (it starts no machine), and
+ * for an audience from a newer server. The creator is the server's owner when none was recorded.
+ */
+export function runShareControl(input: {
+  readonly cloudLaunch: boolean;
+  readonly members: TeamMembers;
+  readonly me: MemberId | null;
+  readonly task: Pick<ScheduledTask, "access" | "createdByMemberId"> | null;
+  readonly bound: boolean;
+}): RunShareControl | null {
+  if (!input.cloudLaunch || input.bound || !isTeamModeMembers(input.members)) return null;
+  if (input.task === null) {
+    return { access: PRIVATE_RUN_SHARE, creatorId: input.me, canEdit: input.me !== null };
+  }
+  const access = taskRunShareAccess(input.task);
+  if (access === null) return null;
+  const creatorId =
+    input.task.createdByMemberId ??
+    activeTeamMembers(input.members).find((member) => member.isOwner)?.id ??
+    null;
+  return { access, creatorId, canEdit: input.me !== null && input.me === creatorId };
 }

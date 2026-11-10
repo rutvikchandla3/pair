@@ -11216,11 +11216,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? yield* sandboxAdmission.snapshot(driverId).pipe(mapProjection)
         : null;
     const now = yield* DateTime.now;
+    // A scheduled run names its task's audience on the command; a delegated child gets its parent's.
+    const requested = command.type === "sandbox.provision" ? command.access : undefined;
+    const access =
+      inheritedAccess !== undefined || requested === undefined
+        ? inheritedAccess
+        : requested === null
+          ? null
+          : { ...requested, updatedBy: null, updatedAt: now };
     const decision = decideSandboxCommand({
       command,
       record,
       ownerMemberId: thread?.ownerId ?? null,
-      ...(inheritedAccess === undefined ? {} : { inheritedAccess }),
+      ...(access === undefined ? {} : { inheritedAccess: access }),
       attachedThreads,
       ...(diskRetention === undefined ? {} : { diskRetention }),
       admission,

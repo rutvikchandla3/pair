@@ -21,6 +21,7 @@ import {
   EnvironmentId,
   GitCommandError,
   MemberId,
+  type SandboxAccessGrant,
   MessageId,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ProjectId,
@@ -2697,6 +2698,58 @@ it.effect("places a scheduled worktree launch in the cloud on a cloud-only serve
       const sandbox = yield* projections.getSandbox(sandboxId);
       assert.equal(sandbox?.state, "provisioning");
       assert.equal(sandbox?.discardOnSettle, workspace.type === "worktree" ? true : undefined);
+    }
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("starts a scheduled run's machine with its task's audience and owner", () => {
+  const harness = cloudHarness({ currentBranch: () => Effect.succeed("main") });
+  const owner = MemberId.make("member-creator");
+  const listed = MemberId.make("member-listed");
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly access: SandboxAccessGrant | null | undefined;
+    readonly expected: SandboxAccessGrant | undefined;
+  }> = [
+    // A task that names nothing starts private.
+    { name: "private", access: undefined, expected: { audience: "members", memberIds: [] } },
+    {
+      name: "people",
+      access: { audience: "members", memberIds: [listed] },
+      expected: { audience: "members", memberIds: [listed] },
+    },
+    {
+      name: "team",
+      access: { audience: "team", memberIds: [] },
+      expected: { audience: "team", memberIds: [] },
+    },
+    // A task from before private threads records nothing, which reads as `team`.
+    { name: "none", access: null, expected: undefined },
+  ];
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    for (const { name, access, expected } of cases) {
+      const commandId = CommandId.make(`command:launch:scheduled-access:${name}`);
+      yield* launches.launch({
+        ...launchInput({
+          command: commandId,
+          thread: `thread:launch:scheduled-access:${name}`,
+          message: "Run the suite",
+          workspace: { type: "root" },
+        }),
+        ownerId: owner,
+        cloudPlacement: true,
+        ...(access === undefined ? {} : { sandboxAccess: access }),
+      });
+      const sandbox = yield* projections.getSandbox(CloudPreparation.sandboxIdForLaunch(commandId));
+      assert.equal(sandbox?.ownerMemberId, owner);
+      assert.deepEqual(
+        sandbox?.access === undefined
+          ? undefined
+          : { audience: sandbox.access.audience, memberIds: sandbox.access.memberIds },
+        expected,
+      );
     }
   }).pipe(Effect.provide(harness.layer));
 });

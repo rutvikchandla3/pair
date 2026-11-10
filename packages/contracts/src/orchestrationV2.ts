@@ -518,6 +518,13 @@ export const SandboxAccess = Schema.Struct({
 });
 export type SandboxAccess = typeof SandboxAccess.Type;
 
+/** The two parts of `SandboxAccess` a caller chooses, as a scheduled task or a new machine carries them. */
+export const SandboxAccessGrant = Schema.Struct({
+  audience: SandboxAccessAudience,
+  memberIds: Schema.Array(MemberId),
+});
+export type SandboxAccessGrant = typeof SandboxAccessGrant.Type;
+
 const SandboxAccessJson = SandboxAccess.mapFields((fields) => ({
   ...fields,
   updatedAt: Schema.DateTimeUtcFromString,
@@ -4089,6 +4096,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     size: SandboxSize,
     discardOnSettle: Schema.optionalKey(Schema.Boolean),
     imageBuild: Schema.optionalKey(SandboxImageBuildRef),
+    /** A scheduled run's machine starts with its task's audience; null records none (`team`). Absent: private. */
+    access: Schema.optionalKey(Schema.NullOr(SandboxAccessGrant)),
   }),
   Schema.Struct({ type: Schema.Literal("sandbox.admit"), ...SandboxGenerationCommandFields }),
   Schema.Struct({

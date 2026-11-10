@@ -3,7 +3,9 @@ import * as Schema from "effect/Schema";
 import {
   CommandId,
   ForwardCompatibleArray,
+  ForwardCompatibleNullable,
   IsoDateTime,
+  MemberId,
   ProjectId,
   ScheduledTaskId,
   SecretRef,
@@ -15,6 +17,8 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  SandboxAccessAudience,
+  SandboxAccessGrant,
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
@@ -226,6 +230,15 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+/** Who can open the machine each run starts: the same two parts a cloud session's Share dialog sets. */
+export const ScheduledTaskAccess = Schema.Struct({
+  /** An audience from a newer server decodes to null: nothing shows and nobody can change it here. */
+  audience: ForwardCompatibleNullable(SandboxAccessAudience),
+  /** Besides the task's creator. */
+  memberIds: Schema.Array(MemberId),
+});
+export type ScheduledTaskAccess = typeof ScheduledTaskAccess.Type;
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -254,6 +267,10 @@ export const ScheduledTask = Schema.Struct({
   discardOnSettle: Schema.optionalKey(Schema.Boolean),
   /** The thread the last run started or sent to; a cloud run's machine state is read from it. */
   lastRunThreadId: Schema.optionalKey(ThreadId),
+  /** The member who created it, whose runs they are; absent on tasks from before teams. */
+  createdByMemberId: Schema.optionalKey(MemberId),
+  /** Who can open each run's machine. Absent on tasks from before private threads, which read as `team`. */
+  access: Schema.optionalKey(ScheduledTaskAccess),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -285,6 +302,11 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   /** Absent keeps the stored value, so a client that predates it does not reset it. */
   discardOnSettle: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Who can open the machine of each run started after this save. Absent keeps the stored value;
+   * a new task starts private. Only the task's creator may change it.
+   */
+  access: Schema.optionalKey(SandboxAccessGrant),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 

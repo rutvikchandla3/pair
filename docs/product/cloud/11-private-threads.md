@@ -453,9 +453,22 @@ member Ada who was shared thread A could ask A's agent to read the owner's priva
   that changes access. A prompt injection must not be able to widen who reads a thread. `t3` on the
   server's host keeps acting as the server's owner with the host's access, which section 1 already
   counts as open.
-- **Scheduled and webhook runs** belong to the task's creator and start private. A task gains the
-  same `access` value, "Share runs with", applied to each run's machine at creation. Existing tasks
-  read as `team`.
+- **Scheduled and webhook runs** belong to the task's creator and start private. A task carries
+  the same two-part `access` (`audience`, `memberIds`; `ScheduledTask.access`, stored in migration
+  098), and each run's machine is created with it (`sandbox.provision` takes an `access`, which
+  reaches the decider as `inheritedAccess`, the path delegated children use). A task from before
+  records none, which reads as `team`; a task created after starts `members` with no one added.
+  - Only the task's creator changes it (`createdByMemberId` on the wire; the server's owner when
+    none was recorded). An admin may still edit or delete the task, but a save that changes
+    `access` from anyone else is refused, and one that omits it keeps the stored value. Listed
+    members must be active, at most 50, and the creator is dropped from the list.
+  - A task an agent creates over MCP has no `access` argument: it copies its thread's session
+    (`inheritedRunAccess`), with the machine's owner listed when the agent's thread is someone
+    else's. `t3` has no scheduled task command. A task bound to a thread starts no machine, so
+    the editor hides the control for it.
+  - A member who cannot open a run still sees the task and that it ran (section 4's
+    "Scheduled tasks" row). Setting: Settings → Scheduled tasks → **Share runs with**, on a team
+    Pair Cloud server only. Mobile's task editor has no control yet.
 
 ## 6. Clients and contracts
 

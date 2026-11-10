@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MemberId,
   ProjectId,
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
@@ -20,6 +21,7 @@ import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  runAccessForSave,
   scheduleFromDraft,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
@@ -167,6 +169,40 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+  });
+});
+
+describe("sharing a task's runs", () => {
+  const ada = MemberId.make("ada");
+  const grace = MemberId.make("grace");
+  const editable = { access: { audience: "members", memberIds: [ada] }, creatorId: grace } as const;
+  const control = (canEdit: boolean) => ({ ...editable, canEdit });
+  const picked = { audience: "team", memberIds: [ada] } as const;
+
+  it("reads a task from before as everyone and a stored audience as it is", () => {
+    expect(taskToDraft(legacyTask).runAccess).toEqual({ audience: "team", memberIds: [] });
+    expect(
+      taskToDraft({ ...legacyTask, access: { audience: "members", memberIds: [ada] } }).runAccess,
+    ).toEqual({ audience: "members", memberIds: [ada] });
+  });
+
+  it("sends what a new task's creator picked, and an edit only when it changed", () => {
+    expect(runAccessForSave({ control: control(true), editing: false, runAccess: picked })).toEqual(
+      picked,
+    );
+    expect(runAccessForSave({ control: control(true), editing: true, runAccess: picked })).toEqual(
+      picked,
+    );
+    expect(
+      runAccessForSave({ control: control(true), editing: true, runAccess: editable.access }),
+    ).toBeUndefined();
+  });
+
+  it("sends nothing from someone who is not the creator, or where it does not show", () => {
+    expect(
+      runAccessForSave({ control: control(false), editing: true, runAccess: picked }),
+    ).toBeUndefined();
+    expect(runAccessForSave({ control: null, editing: false, runAccess: picked })).toBeUndefined();
   });
 });
 
