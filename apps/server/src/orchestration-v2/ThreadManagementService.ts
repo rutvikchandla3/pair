@@ -154,6 +154,10 @@ export function withActor(
     case "thread.runtime-mode.set":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
+    case "sandbox.wake":
+    case "sandbox.sleep":
+    case "sandbox.retry":
+    case "sandbox.discard":
     case "sandbox.access.set":
       return { ...command, actorId: memberId };
     default:

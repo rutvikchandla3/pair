@@ -124,6 +124,14 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
   });
 });
 
+/** The socket stamps every member's command, so one without an actor did not come from a member. */
+const withoutActor = (command: SandboxClientCommand) =>
+  new Orchestrator.OrchestratorCommandRejectedError({
+    commandId: command.commandId,
+    commandType: command.type,
+    cause: `${command.type} needs the member who sent it.`,
+  });
+
 /**
  * Sends a machine command from the thread the user acts in to the sandbox owner's stream, so its
  * receipt and events land there (04 §1). Sleep and discard need the owner thread's owner or an
@@ -155,7 +163,8 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
       // Without a record the orchestrator refuses on the acting thread.
       const ownerThreadId = acting.sandbox?.ownerThreadId ?? command.threadId;
       // Not an admin either: one who could share a thread with themselves could read it.
-      if (command.type === "sandbox.access.set" && command.actorId !== undefined) {
+      if (command.type === "sandbox.access.set") {
+        if (command.actorId === undefined) return yield* withoutActor(command);
         const owner =
           ownerThreadId === acting.id ? acting : yield* threads.getThreadShell(ownerThreadId);
         if (owner !== null && owner.ownerId !== command.actorId) {
@@ -166,16 +175,15 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
           });
         }
       }
-      if (
-        (command.type === "sandbox.sleep" || command.type === "sandbox.discard") &&
-        command.actorId !== undefined &&
-        !(yield* actorOwnsThreadOrAdmin(command.actorId, ownerThreadId))
-      ) {
-        return yield* new ThreadMessageIntakeForbiddenError({
-          threadId: ownerThreadId,
-          memberId: command.actorId,
-          reason: "machine_not_owner_or_admin",
-        });
+      if (command.type === "sandbox.sleep" || command.type === "sandbox.discard") {
+        if (command.actorId === undefined) return yield* withoutActor(command);
+        if (!(yield* actorOwnsThreadOrAdmin(command.actorId, ownerThreadId))) {
+          return yield* new ThreadMessageIntakeForbiddenError({
+            threadId: ownerThreadId,
+            memberId: command.actorId,
+            reason: "machine_not_owner_or_admin",
+          });
+        }
       }
       return yield* threads.dispatch({ ...command, threadId: ownerThreadId });
     });

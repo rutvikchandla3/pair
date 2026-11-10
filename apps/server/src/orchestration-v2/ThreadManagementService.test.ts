@@ -167,6 +167,20 @@ it("attributes client commands to the session's member, never to a member the cl
       alice,
     ),
   ).toMatchObject({ actorId: alice, memberIds: [forged] });
+  for (const type of [
+    "sandbox.wake",
+    "sandbox.sleep",
+    "sandbox.retry",
+    "sandbox.discard",
+  ] as const) {
+    const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+    expect(
+      ThreadManagementService.withActor(
+        { type, commandId, threadId, sandboxId, actorId: forged },
+        alice,
+      ),
+    ).toEqual({ type, commandId, threadId, sandboxId, actorId: alice });
+  }
   expect(
     ThreadManagementService.withActor(
       { type: "thread.interaction-mode.set", commandId, threadId, interactionMode: "plan" },

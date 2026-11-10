@@ -478,7 +478,11 @@ it.effect(
           ),
           Effect.flip,
           Effect.map((error) =>
-            error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
+            error._tag === "ThreadMessageIntakeForbiddenError"
+              ? error.reason
+              : error._tag === "OrchestratorCommandRejectedError"
+                ? "rejected"
+                : "dispatched",
           ),
         );
       const deleteBy = (actorId: string | undefined) =>
@@ -500,27 +504,31 @@ it.effect(
       expect(yield* deleteBy("member-bob")).toBe("dispatched");
       expect(yield* deleteBy("member-owner")).toBe("dispatched");
       expect(yield* deleteBy(undefined)).toBe("dispatched");
-      const sleepBy = (actorId: string) =>
+      const sleepBy = (actorId: string | undefined, type: "sandbox.sleep" | "sandbox.discard") =>
         attempt({
-          type: "sandbox.sleep",
-          commandId: CommandId.make(`sleep-${actorId}`),
+          type,
+          commandId: CommandId.make(`${type}-${actorId}`),
           threadId: sideChatId,
           sandboxId,
-          actorId: MemberId.make(actorId),
+          ...(actorId === undefined ? {} : { actorId: MemberId.make(actorId) }),
         });
-      expect(yield* sleepBy("member-carol")).toBe("machine_not_owner_or_admin");
-      expect(yield* sleepBy("member-owner")).toBe("dispatched");
-      const shareBy = (actorId: string, memberIds: ReadonlyArray<string>) =>
+      expect(yield* sleepBy("member-carol", "sandbox.sleep")).toBe("machine_not_owner_or_admin");
+      expect(yield* sleepBy("member-owner", "sandbox.sleep")).toBe("dispatched");
+      // Without an actor nobody vouches for the sender, so the owner check cannot pass.
+      expect(yield* sleepBy(undefined, "sandbox.sleep")).toBe("rejected");
+      expect(yield* sleepBy(undefined, "sandbox.discard")).toBe("rejected");
+      const shareBy = (actorId: string | undefined, memberIds: ReadonlyArray<string>) =>
         attempt({
           type: "sandbox.access.set",
           commandId: CommandId.make(`share-${actorId}-${memberIds.join()}`),
           threadId: sideChatId,
           sandboxId,
-          actorId: MemberId.make(actorId),
+          ...(actorId === undefined ? {} : { actorId: MemberId.make(actorId) }),
           audience: "members",
           memberIds: memberIds.map((id) => MemberId.make(id)),
         });
       expect(yield* shareBy("member-carol", ["member-carol"])).toBe("not_owner");
+      expect(yield* shareBy(undefined, ["member-carol"])).toBe("rejected");
       expect(yield* shareBy("member-owner", ["member-owner"])).toBe("not_owner");
       expect(yield* shareBy("member-bob", ["member-carol", "member-gone"])).toBe("inactive_member");
       expect(yield* shareBy("member-bob", ["member-unknown"])).toBe("inactive_member");
@@ -532,7 +540,7 @@ it.effect(
         "delete-member-bob",
         "delete-member-owner",
         "delete-undefined",
-        "sleep-member-owner",
+        "sandbox.sleep-member-owner",
         "share-member-bob-member-carol",
         "assign-member-carol",
       ]);
