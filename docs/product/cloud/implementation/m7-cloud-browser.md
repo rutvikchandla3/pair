@@ -184,11 +184,14 @@ with the same windows and resume rules as a forward's connection.
 - **Files:**
   - `packages/contracts/src/runner.ts`:
     - `RUNNER_METHODS.tcpConnect: "tcp.connect"` beside `tcpRead` (79).
-    - `RunnerTcpConnectRpc`: payload `{ port }` (an integer 1–65535; reuse the port schema the
-      file or `preview.ts`'s `LocalServerPort` already has), success
-      `{ connectionId: RunnerHandleId }`, error `RunnerCallError`. Add it to `RunnerCoreRpcGroup`
-      beside `RunnerTcpReadRpc` (973). No host field: the runner dials `127.0.0.1` and nothing
-      else, so the method cannot be turned into a way out of the machine.
+    - `RunnerTcpConnectRpc`: payload `{ port, host? }` (`PortSchema`; `host` is the literal
+      `127.0.0.1`, the default, or `::1`), success `{ connectionId: RunnerHandleId }`, error
+      `RunnerCallError`. Add it to `RunnerCoreRpcGroup` beside `RunnerTcpReadRpc` (973). No
+      hostname and no other address: the runner's decode refuses them and its handle table checks
+      again, so the method cannot be turned into a way out of the machine.
+    - `RunnerUnsupportedError { method }`, not on the wire: what the server reads from a runner
+      built before `tcp.connect`, which answers `Unknown request tag`. The build check at connect
+      replaces such a runner whenever the server has a bundle to serve.
     - Rewrite the comment above the forward RPCs (744–746) so it also covers a connection the
       server opened.
   - `apps/server/src/sandbox/runner/HandleTable.ts`:
@@ -197,7 +200,8 @@ with the same windows and resume rules as a forward's connection.
       `registerSocket(socket)`. `acceptTcp` keeps `unclaimed` and the `forward.accepted` event.
     - `connectTcp(port)` on the service: refuse when drained, as `openListener` does (962);
       `NodeNet.connect({ host: "127.0.0.1", port, allowHalfOpen: true })`, wait for `connect` or
-      fail with `netError("tcp.connect", error)`, then `registerSocket` and return the handle.
+      fail with `netError("tcp.connect", error)` (`ECONNREFUSED` is `NotFound`), then
+      `registerSocket` and return the handle.
   - `apps/server/src/sandbox/runner/handlers.ts`: `[RUNNER_METHODS.tcpConnect]` beside
     `forwardClose` (367).
   - `apps/server/src/sandbox/runnerHub/RunnerConnection.ts`:
@@ -209,24 +213,27 @@ with the same windows and resume rules as a forward's connection.
       `tcp.write` and `tcp.close`, `read: output(connectionId, "tcp")`. Lift that into one helper
       both use. The scope's finalizer sends `tcp.close` and ignores its failure.
   - `apps/server/src/workspaceHost/WorkspaceHost.ts`: an optional member
-    `readonly ports?: { readonly connect: (port: number) => Effect<RunnerTcpConnection-shaped, WorkspaceHostError, Scope.Scope> }`,
+    `readonly ports?: { readonly connect: (port, host?) => Effect<WorkspaceHostTcpConnection, PortConnectError, Scope.Scope> }`,
     documented "Absent on the local host: local code connects to its own loopback directly."
-    Define the connection's shape in `WorkspaceHost.ts` so `preview/` never imports from
-    `sandbox/`; `RunnerTcpConnection` then satisfies it. This is 02 §2's `ports.connect`;
-    `ports.listeners` stays where it is, on `invoke`.
-  - `apps/server/src/workspaceHost/SandboxWorkspaceHost.ts`: `ports: { connect }` beside `invoke`
-    (861), mapping runner errors as its neighbours do.
+    The connection's shape lives in `WorkspaceHost.ts` so `preview/` never imports from
+    `sandbox/`; `RunnerTcpConnection` satisfies it. Its errors are the runner's
+    (`RunnerCallError | RunnerUnsupportedError`), as `invoke`'s are, so a caller can tell a lost
+    boot from a closed port. This is 02 §2's `ports.connect`; `ports.listeners` stays where it
+    is, on `invoke`.
+  - `apps/server/src/workspaceHost/SandboxWorkspaceHost.ts`: `ports: { connect: connection.connectTcp }`
+    beside `invoke`.
   - [03 §4](../03-runner.md) and [02](../02-workspace-host.md): the "Later" marks on `tcp.connect`
     and `ports.connect` become what landed.
 - **Types and services:** `RunnerConnection.connectTcp`, `WorkspaceHost.ports`.
 - **Commands and events:** none. **Migrations:** none.
 - **Tests:**
-  - `apps/server/src/sandbox/runner/handlers.test.ts`, in the table that covers forward
-    connections: against a `NodeNet` echo server on port 0, `tcp.connect` then write, read and
-    close round-trips bytes and reaches EOF; a port nobody listens on fails with the runner's
-    system error; a drained runner refuses.
-  - `RunnerHub.test.ts` or wherever a forward connection's resume across a socket drop is tested:
-    add the server-opened connection as a row, not a new `it`, if the case fits.
+  - `apps/server/src/sandbox/runner/forwards.test.ts`, beside the forward connections: against a
+    `NodeNet` server on port 0, `tcp.connect` then write, read and close round-trips bytes and
+    reaches EOF; another host, a port nobody listens on and a drained runner are refused. The
+    contracts test refuses non-loopback hosts at decode.
+  - `RunnerResume.test.ts`: a dialed connection is a row of the stalled-reader case; it resumes
+    across a replaced socket and fails `RunnerLostError` when its boot's lease expires; a runner
+    without the method fails `RunnerUnsupportedError` and stays usable.
   - No test at the workspace host: it is a pass-through.
 - **Verify:** `vp test run` on the files above; a transcript from a dev cloud session on Docker:
   start `python3 -m http.server 8123` in the machine's terminal and fetch it from a server-side

@@ -365,6 +365,10 @@ export const layer = RunnerCoreRpcGroup.toLayer(
         return opened;
       }),
       [RUNNER_METHODS.forwardClose]: ({ forwardId }) => table.closeListener(forwardId),
+      [RUNNER_METHODS.tcpConnect]: ({ port, host }) =>
+        table
+          .connectTcp(port, host ?? "127.0.0.1")
+          .pipe(Effect.map((connectionId) => ({ connectionId }))),
       [RUNNER_METHODS.tcpRead]: ({ connectionId, fromSeq }) =>
         table.output(connectionId, "tcp", fromSeq),
       [RUNNER_METHODS.tcpWrite]: ({ connectionId, seq, data }) =>

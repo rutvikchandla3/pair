@@ -858,6 +858,7 @@ export const make = Effect.fn("SandboxWorkspaceHost.make")(function* (
         ),
     },
     exposeServerEndpoint,
+    ports: { connect: connection.connectTcp },
     invoke: connection.ops,
   } satisfies WorkspaceHost;
 });

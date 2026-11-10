@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import {
   CheckpointRef,
   NonNegativeInt,
+  PortSchema,
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
@@ -76,6 +77,7 @@ export const RUNNER_METHODS = {
   filesRemoveEmptyDirectory: "files.removeEmptyDirectory",
   forwardOpen: "forward.open",
   forwardClose: "forward.close",
+  tcpConnect: "tcp.connect",
   tcpRead: "tcp.read",
   tcpWrite: "tcp.write",
   tcpClose: "tcp.close",
@@ -182,6 +184,20 @@ export class RunnerSystemError extends Schema.TaggedError<RunnerSystemError>()(
     pathOrDescriptor: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number])),
   },
 ) {}
+
+/**
+ * Not on the wire: the server's answer when the runner's build predates `method`. A runner keeps
+ * the build it booted with, and the build check at connect replaces it only when the server has a
+ * bundle to serve (`not-bundled` skips the check), so this is the one way an older runner shows.
+ */
+export class RunnerUnsupportedError extends Schema.TaggedError<RunnerUnsupportedError>()(
+  "RunnerUnsupportedError",
+  { method: Schema.String },
+) {
+  override get message(): string {
+    return `This machine's runner is older than the server and does not support ${this.method}.`;
+  }
+}
 
 export const RunnerCallError = Schema.Union([RunnerLostError, RunnerSystemError]);
 export type RunnerCallError = typeof RunnerCallError.Type;
@@ -740,8 +756,9 @@ const RunnerFilesRemoveEmptyDirectoryRpc = Rpc.make(RUNNER_METHODS.filesRemoveEm
 });
 
 // A forward is a listener in the sandbox whose target the server fixes by name. Accepts arrive on
-// `runner.events`; the server closes the forward when its own scope closes. An accepted
-// connection is a handle, so its streams resume as a process's do.
+// `runner.events`; the server closes the forward when its own scope closes. `tcp.connect` is the
+// other direction: the server dials a port on the sandbox's own loopback. Either connection is a
+// handle, so its streams resume as a process's do.
 
 export const RunnerForwardName = Schema.Literals(["mcp", "codex-token", "git-credential"]);
 export type RunnerForwardName = typeof RunnerForwardName.Type;
@@ -754,6 +771,20 @@ const RunnerForwardOpenRpc = Rpc.make(RUNNER_METHODS.forwardOpen, {
 
 const RunnerForwardCloseRpc = Rpc.make(RUNNER_METHODS.forwardClose, {
   payload: Schema.Struct({ forwardId: RunnerForwardId }),
+  error: RunnerCallError,
+});
+
+/** Never a hostname or another address: the runner must not become a way out of the machine. */
+const RunnerLoopbackHost = Schema.Literals(["127.0.0.1", "::1"]);
+export type RunnerLoopbackHost = typeof RunnerLoopbackHost.Type;
+
+const RunnerTcpConnectRpc = Rpc.make(RUNNER_METHODS.tcpConnect, {
+  payload: Schema.Struct({
+    port: PortSchema,
+    /** Default 127.0.0.1. */
+    host: Schema.optionalKey(RunnerLoopbackHost),
+  }),
+  success: Schema.Struct({ connectionId: RunnerHandleId }),
   error: RunnerCallError,
 });
 
@@ -970,6 +1001,7 @@ export const RunnerCoreRpcGroup = RpcGroup.make(
   RunnerFilesRemoveEmptyDirectoryRpc,
   RunnerForwardOpenRpc,
   RunnerForwardCloseRpc,
+  RunnerTcpConnectRpc,
   RunnerTcpReadRpc,
   RunnerTcpWriteRpc,
   RunnerTcpCloseRpc,

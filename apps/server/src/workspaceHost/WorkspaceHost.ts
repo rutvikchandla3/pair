@@ -10,10 +10,13 @@ import {
   SandboxId,
 } from "@t3tools/contracts";
 import {
+  type RunnerCallError,
+  type RunnerLoopbackHost,
   RunnerLostError,
   type RunnerOpsCheckpointCaptureInput,
   type RunnerOpsCheckpointCaptureResult,
   type RunnerOpsError,
+  type RunnerUnsupportedError,
 } from "@t3tools/contracts/runner";
 import type { AgentScopeShape } from "@t3tools/shared/AgentScope";
 import type * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -126,6 +129,14 @@ export interface WorkspaceHost {
   readonly exposeServerEndpoint: (
     endpoint: ServerEndpoint,
   ) => Effect.Effect<string, WorkspaceHostUnavailableError, Scope.Scope>;
+  /** Absent on the local host: local code connects to its own loopback directly. */
+  readonly ports?: {
+    /** A byte stream to a port on the host's own loopback, open until the scope closes. */
+    readonly connect: (
+      port: number,
+      host?: RunnerLoopbackHost,
+    ) => Effect.Effect<WorkspaceHostTcpConnection, PortConnectError, Scope.Scope>;
+  };
   readonly processes: {
     /** kill(-pid, signal): the whole group, on the machine that owns the pid. */
     readonly signalGroup: (
@@ -251,4 +262,15 @@ export class WorkspaceHostUnavailableError extends Schema.TaggedError<WorkspaceH
   override get message(): string {
     return "This thread's machine is not connected.";
   }
+}
+
+/** `RunnerUnsupportedError`: the machine's runner predates `tcp.connect`. */
+export type PortConnectError = RunnerCallError | RunnerUnsupportedError;
+
+export interface WorkspaceHostTcpConnection {
+  /** Ends at the other side's EOF; fails `RunnerLostError` once the machine's runner boot is gone. */
+  readonly read: Stream.Stream<Uint8Array, RunnerCallError>;
+  readonly write: (data: Uint8Array) => Effect.Effect<void, RunnerCallError>;
+  /** Ends the connection after everything written. Closing the scope instead drops unsent bytes. */
+  readonly close: Effect.Effect<void, RunnerCallError>;
 }

@@ -4,9 +4,11 @@ import {
   type RunnerForwardName,
   type RunnerHandleId,
   type RunnerInfo,
+  type RunnerLoopbackHost,
   RunnerLostError,
   type RunnerRpcGroup,
   type RunnerSignal,
+  RunnerUnsupportedError,
 } from "@t3tools/contracts/runner";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -48,7 +50,7 @@ export interface RunnerPtyWriter {
   readonly failed: Effect.Effect<never, RunnerCallError>;
 }
 
-/** One connection accepted by a forward in the sandbox. */
+/** One connection accepted by a forward in the sandbox, or dialed by `connectTcp`. */
 export interface RunnerTcpConnection {
   /** What the sandbox side sent, resumed across socket drops; ends at its EOF. */
   readonly read: Stream.Stream<Uint8Array, RunnerCallError>;
@@ -100,6 +102,14 @@ export interface RunnerConnection {
     readonly ownerKey: string;
     readonly serve: (connection: RunnerTcpConnection) => Effect.Effect<void, never, Scope.Scope>;
   }) => Effect.Effect<string, RunnerCallError, Scope.Scope>;
+  /**
+   * Dials `port` on the sandbox's loopback until the scope closes. Like every handle, the
+   * connection lasts one boot: past it, reads and writes fail with `RunnerLostError`.
+   */
+  readonly connectTcp: (
+    port: number,
+    host?: RunnerLoopbackHost,
+  ) => Effect.Effect<RunnerTcpConnection, RunnerCallError | RunnerUnsupportedError, Scope.Scope>;
   /** Completes once this boot is gone. */
   readonly ended: Effect.Effect<void>;
 }
@@ -132,6 +142,10 @@ const markFirstByte = (handle: RunnerHandleId, stream: RunnerOutputKey) =>
     ),
     Effect.ignore,
   );
+
+/** What `RpcServer` answers for a method it does not serve, read back as the client decodes it. */
+const isUnknownMethod = (defect: unknown, method: string) =>
+  String(defect).includes(`Unknown request tag: ${method}`);
 
 const sliceFrom = <A extends Uint8Array | string>(data: A, offset: number): A =>
   (typeof data === "string" ? data.slice(offset) : data.subarray(offset)) as A;
@@ -427,30 +441,58 @@ export const makeRunnerConnection = (
     return events(undefined).pipe(Stream.runDrain, Effect.ignore, Effect.forkIn(boot.scope));
   });
 
+  const tcpConnection = Effect.fnUntraced(function* (connectionId: RunnerHandleId) {
+    const writer = yield* byteWriter((client, seq, op) =>
+      op._tag === "data"
+        ? client["tcp.write"]({ connectionId, seq, data: op.data })
+        : client["tcp.close"]({ connectionId }),
+    );
+    return { read: output(connectionId, "tcp"), ...writer } satisfies RunnerTcpConnection;
+  });
+
+  // Idempotent on the runner; after a `close` this one fails and is ignored.
+  const releaseTcp = (connectionId: RunnerHandleId) =>
+    awaitClient(undefined).pipe(
+      Effect.flatMap((client) => client["tcp.close"]({ connectionId })),
+      Effect.ignore,
+    );
+
   const serveConnection = Effect.fn("RunnerConnection.serveForwardConnection")(
     function* (
       connectionId: RunnerHandleId,
       serve: (connection: RunnerTcpConnection) => Effect.Effect<void, never, Scope.Scope>,
     ) {
-      const writer = yield* byteWriter((client, seq, op) =>
-        op._tag === "data"
-          ? client["tcp.write"]({ connectionId, seq, data: op.data })
-          : client["tcp.close"]({ connectionId }),
-      );
-      yield* serve({ read: output(connectionId, "tcp"), ...writer });
+      yield* serve(yield* tcpConnection(connectionId));
     },
     Effect.scoped,
-    // Idempotent on the runner; after a `close` this one fails and is ignored.
     (effect, connectionId) =>
       effect.pipe(
-        Effect.ensuring(
-          awaitClient(undefined).pipe(
-            Effect.flatMap((client) => client["tcp.close"]({ connectionId })),
-            Effect.ignore,
-          ),
-        ),
+        Effect.ensuring(releaseTcp(connectionId)),
         Effect.ensuring(Effect.sync(() => routed.delete(connectionId))),
       ),
+  );
+
+  const connectTcp: RunnerConnection["connectTcp"] = Effect.fn("RunnerConnection.connectTcp")(
+    function* (port, host) {
+      // Not retried: a lost answer would leave a connection nobody reads.
+      const { connectionId } = yield* Effect.acquireRelease(
+        awaitClient(undefined).pipe(
+          Effect.flatMap((client) =>
+            client["tcp.connect"](host === undefined ? { port } : { port, host }),
+          ),
+          Effect.catchTags({
+            RpcClientError: () => Effect.fail(new RunnerLostError({ reason: "runner-restarted" })),
+          }),
+          Effect.catchDefect((defect) =>
+            isUnknownMethod(defect, "tcp.connect")
+              ? Effect.fail(new RunnerUnsupportedError({ method: "tcp.connect" }))
+              : Effect.die(defect),
+          ),
+        ),
+        ({ connectionId }) => releaseTcp(connectionId),
+      );
+      return yield* tcpConnection(connectionId);
+    },
   );
 
   const openForward: RunnerConnection["openForward"] = Effect.fn("RunnerConnection.openForward")(
@@ -498,6 +540,7 @@ export const makeRunnerConnection = (
     pipeWriter,
     ptyWriter,
     openForward,
+    connectTcp,
     ended: boot.ended,
   };
 };

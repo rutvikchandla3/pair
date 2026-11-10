@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the test plays a server on the machine's loopback.
+import * as NodeNet from "node:net";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { SandboxId } from "@t3tools/contracts";
@@ -129,6 +132,29 @@ const exitedEvent = (table: HandleTable.HandleTable["Service"], handle: RunnerHa
     Effect.forkChild({ startImmediately: true }),
   );
 
+/** A server on the runner's loopback, as Chrome's CDP port or a dev server would be. */
+const listen = (onConnection: (socket: NodeNet.Socket) => void) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeNet.Server>((resume) => {
+      const server = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
+        socket.on("error", () => undefined);
+        onConnection(socket);
+      });
+      server.listen({ host: "127.0.0.1", port: 0 }, () => resume(Effect.succeed(server)));
+    }),
+    (server) => Effect.sync(() => server.close()),
+  ).pipe(Effect.map((server) => (server.address() as NodeNet.AddressInfo).port));
+
+/** Writes as fast as the connection drains, like `yes` on a pipe. */
+const flood = (socket: NodeNet.Socket) => {
+  const chunk = new Uint8Array(64 * KiB).fill(0x79);
+  const fill = () => {
+    while (!socket.destroyed && socket.write(chunk));
+  };
+  socket.on("drain", fill);
+  fill();
+};
+
 const NUMBERED_LINES = 16 * KiB;
 const numbered = Array.from(
   { length: NUMBERED_LINES },
@@ -234,17 +260,33 @@ it.effect("a drop during hello neither attaches nor loses the boot", () =>
   ),
 );
 
-it.effect("a stalled reader pauses the source at its buffer limit and resumes it", () =>
-  // `yes` outruns any ingress budget on a clock that never moves.
+it.effect.each([
+  {
+    source: "a process",
+    open: (connection: RunnerConnection) =>
+      spawn(connection, shell("exec yes", { stdin: "ignore" })).pipe(
+        Effect.map(({ handle }) => connection.output(handle, "fd:1")),
+      ),
+  },
+  {
+    source: "a dialed connection",
+    open: (connection: RunnerConnection) =>
+      listen(flood).pipe(
+        Effect.flatMap((port) => connection.connectTcp(port)),
+        Effect.map((tcp) => tcp.read),
+      ),
+  },
+])("a stalled reader pauses $source at its buffer limit and resumes it", ({ open }) =>
+  // Both outrun any ingress budget on a clock that never moves.
   run(
     limitsWith({ handleBufferBytes: 64 * KiB }),
     Number.POSITIVE_INFINITY,
   )(
     Effect.gen(function* () {
       const { runner, first, connection } = yield* boot();
-      const { handle } = yield* spawn(connection, shell("exec yes", { stdin: "ignore" }));
+      const output = yield* open(connection);
       yield* first.stallReader;
-      yield* connection.output(handle, "fd:1").pipe(Stream.runDrain, Effect.forkChild);
+      yield* output.pipe(Stream.runDrain, Effect.forkChild);
 
       yield* awaitPressure(runner.table, (pressure) => pressure.pausedHandles === 1);
       const stats = yield* runner.table.stats;
@@ -406,6 +448,64 @@ it.effect("a new serverBootId kills the old boot's handles before hello answers"
       assert.deepInclude(yield* client["process.wait"]({ handle }).pipe(Effect.flip), {
         _tag: "RunnerLostError",
       });
+    }),
+  ),
+);
+
+it.effect(
+  "a dialed connection resumes on a new socket and fails, never hangs, once its boot ends",
+  () =>
+    run()(
+      Effect.gen(function* () {
+        const { runner, first, connection, bearer } = yield* boot();
+        const port = yield* listen((socket) => socket.pipe(socket));
+        const tcp = yield* connection.connectTcp(port);
+        const received = yield* Queue.unbounded<string>();
+        const reading = yield* tcp.read.pipe(
+          Stream.runForEach((data) => Queue.offer(received, decoder.decode(data))),
+          Effect.flip,
+          Effect.forkChild,
+        );
+        yield* tcp.write(encoder.encode("one\n"));
+        assert.equal(yield* takeText(received, 4), "one\n");
+
+        yield* first.halfOpen;
+        yield* tcp.write(encoder.encode("two\n"));
+        const second = yield* runner.connect(bearer);
+        assert.equal(yield* takeText(received, 4), "two\n");
+
+        // The machine's runner goes for good: the connection ends with its boot (6.13).
+        yield* second.drop;
+        yield* second.runnerEnded;
+        yield* awaitStatus("reconnecting");
+        yield* TestClock.adjust("120 seconds");
+        assert.deepInclude(yield* Fiber.join(reading), {
+          _tag: "RunnerLostError",
+          reason: "lease-expired",
+        });
+        assert.deepInclude(yield* tcp.close.pipe(Effect.flip), { _tag: "RunnerLostError" });
+        assert.deepInclude(yield* connection.connectTcp(port).pipe(Effect.flip), {
+          _tag: "RunnerLostError",
+        });
+      }),
+    ),
+);
+
+it.effect("a runner from before tcp.connect refuses it with a typed error and stays usable", () =>
+  run()(
+    Effect.gen(function* () {
+      const hub = yield* RunnerHub.RunnerHub;
+      const runner = yield* RunnerHubTesting.makeRunner(yield* hub.mintEnrollment(sandbox, 1), {
+        without: ["tcp.connect"],
+      });
+      yield* runner.connect();
+      const connection = yield* hub.connection(sandbox);
+      assert.deepInclude(yield* connection.connectTcp(9).pipe(Effect.flip), {
+        _tag: "RunnerUnsupportedError",
+        method: "tcp.connect",
+      });
+      const { handle } = yield* spawn(connection, shell("echo ok", { stdin: "ignore" }));
+      assert.equal(yield* readText(connection, handle), "ok\n");
     }),
   ),
 );

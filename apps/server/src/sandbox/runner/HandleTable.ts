@@ -30,6 +30,7 @@ import {
   type RunnerEvent,
   type RunnerHandleState,
   type RunnerLimits,
+  type RunnerLoopbackHost,
   type RunnerProcessExit,
   type RunnerProcessSpawnInput,
   type RunnerPtyExit,
@@ -105,7 +106,7 @@ const netError = (method: string, cause: unknown) => {
         ? "AlreadyExists"
         : code === "EACCES" || code === "EPERM"
           ? "PermissionDenied"
-          : code === "ENOENT"
+          : code === "ENOENT" || code === "ECONNREFUSED"
             ? "NotFound"
             : "Unknown",
     module: "Net",
@@ -505,7 +506,12 @@ export class HandleTable extends Context.Service<
     >;
     /** Stops listening and drops the accepts no one has claimed. Idempotent. */
     readonly closeListener: (forwardId: RunnerForwardId) => Effect.Effect<void>;
-    /** Ends an accepted connection after its applied writes and frees the handle. */
+    /** Dials a port on this machine's own loopback; the connection is a `tcp` handle. */
+    readonly connectTcp: (
+      port: number,
+      host: RunnerLoopbackHost,
+    ) => Effect.Effect<RunnerHandleId, RunnerCallError>;
+    /** Ends a connection after its applied writes and frees the handle. */
     readonly closeTcp: (handle: RunnerHandleId) => Effect.Effect<void, RunnerCallError>;
     /** Units from `fromSeq`; ends after the source's EOF is read. Never holds the handle's scope. */
     readonly output: <K extends StreamKey>(
@@ -900,7 +906,8 @@ const make = Effect.fn("HandleTable.make")(function* () {
       Effect.flatMap((entry) => entry.commit),
     );
 
-  const acceptTcp = (forwardId: RunnerForwardId, socket: NodeNet.Socket) =>
+  /** A connected socket as a `tcp` handle; the caller still owns the socket if this fails. */
+  const registerSocket = (socket: NodeNet.Socket) =>
     allocate.pipe(
       Effect.flatMap((allocated) =>
         register(
@@ -915,6 +922,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
             );
             socket.once("end", () => buffer.end());
             socket.once("close", () => buffer.end());
+            if (socket.destroyed) buffer.end();
             // Writes resolve once flushed, so ending here loses nothing the server sent.
             yield* Scope.addFinalizer(
               allocated.scope,
@@ -947,6 +955,10 @@ const make = Effect.fn("HandleTable.make")(function* () {
           }),
         ),
       ),
+    );
+
+  const acceptTcp = (forwardId: RunnerForwardId, socket: NodeNet.Socket) =>
+    registerSocket(socket).pipe(
       Effect.tap((connectionId) =>
         Effect.sync(() => {
           unclaimed.set(connectionId, forwardId);
@@ -955,6 +967,32 @@ const make = Effect.fn("HandleTable.make")(function* () {
       ),
       Effect.catch(() => Effect.sync(() => socket.destroy())),
     );
+
+  const connectTcp: HandleTable["Service"]["connectTcp"] = Effect.fn("HandleTable.connectTcp")(
+    function* (port, host) {
+      if (drained) return yield* new RunnerLostError({ reason: "drained" });
+      // The schema already refuses any other host; this keeps every caller in the runner honest.
+      if (host !== "127.0.0.1" && host !== "::1") {
+        return yield* runnerBadArgument("tcp.connect", "only a loopback address can be dialed");
+      }
+      const socket = yield* Effect.callback<NodeNet.Socket, RunnerSystemError>((resume) => {
+        // Nagle against delayed ACKs stalls small request and answer traffic such as CDP.
+        const socket = NodeNet.connect({ host, port, allowHalfOpen: true, noDelay: true });
+        // Kept for the socket's life: an error before `registerSocket` must not throw.
+        socket.on("error", () => undefined);
+        const onError = (error: Error) => resume(Effect.fail(netError("tcp.connect", error)));
+        socket.once("error", onError);
+        socket.once("connect", () => {
+          socket.off("error", onError);
+          resume(Effect.succeed(socket));
+        });
+        return Effect.sync(() => socket.destroy());
+      });
+      return yield* registerSocket(socket).pipe(
+        Effect.onError(() => Effect.sync(() => socket.destroy())),
+      );
+    },
+  );
 
   const openListener: HandleTable["Service"]["openListener"] = Effect.fn(
     "HandleTable.openListener",
@@ -1223,6 +1261,7 @@ const make = Effect.fn("HandleTable.make")(function* () {
     closeFileWriter,
     openListener,
     closeListener,
+    connectTcp,
     closeTcp,
     output,
     write,

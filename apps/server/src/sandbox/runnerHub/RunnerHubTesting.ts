@@ -1,4 +1,8 @@
-import { RUNNER_PROTOCOL_VERSION, RunnerRpcGroup } from "@t3tools/contracts/runner";
+import {
+  type RUNNER_METHODS,
+  RUNNER_PROTOCOL_VERSION,
+  RunnerRpcGroup,
+} from "@t3tools/contracts/runner";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -21,6 +25,8 @@ import { RunnerConfig } from "../runner/RunnerConfig.ts";
 import { RunnerCredential } from "../runner/RunnerSocketServer.ts";
 import * as RunnerTesting from "../runner/runnerTesting.ts";
 import { RunnerHub } from "./RunnerHub.ts";
+
+type RunnerMethod = (typeof RUNNER_METHODS)[keyof typeof RUNNER_METHODS];
 
 const closed = new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) });
 
@@ -128,7 +134,10 @@ export interface TestRunner {
  */
 export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
   enrollment: Redacted.Redacted<string>,
-  options: RunnerTesting.RunnerTestingOptions = {},
+  options: RunnerTesting.RunnerTestingOptions & {
+    /** Methods this runner does not serve, as a build from before they existed. */
+    readonly without?: ReadonlyArray<RunnerMethod>;
+  } = {},
 ) {
   const sockets = yield* Queue.unbounded<readonly [Socket.Socket, Deferred.Deferred<void>]>();
   const socketServer = SocketServer.SocketServer.of({
@@ -145,7 +154,7 @@ export const makeRunner = Effect.fn("RunnerHubTesting.makeRunner")(function* (
     }),
   });
   const context = yield* Layer.build(
-    RpcServer.layer(RunnerRpcGroup).pipe(
+    RpcServer.layer(RunnerRpcGroup.omit(...(options.without ?? []))).pipe(
       Layer.provide(RunnerMain.layerProtocol),
       Layer.provide(Layer.succeed(SocketServer.SocketServer, socketServer)),
       Layer.provide(RpcSerialization.layerSchemaBinary({ maxFrameSize: 256 * 1024 + 1024 })),

@@ -3,6 +3,7 @@ import * as NodeNet from "node:net";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
@@ -10,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 import { RunnerRpcGroup, type RunnerEvent } from "@t3tools/contracts/runner";
 
+import * as HandleTable from "./HandleTable.ts";
 import * as RunnerTesting from "./runnerTesting.ts";
 
 const encoder = new TextEncoder();
@@ -18,7 +20,9 @@ const decoder = new TextDecoder();
 const makeClient = RpcTest.makeClient(RunnerRpcGroup);
 type Client = Effect.Success<typeof makeClient>;
 
-const withRunner = <A, E>(body: (client: Client) => Effect.Effect<A, E, Scope.Scope>) =>
+const withRunner = <A, E>(
+  body: (client: Client) => Effect.Effect<A, E, Scope.Scope | HandleTable.HandleTable>,
+) =>
   Effect.gen(function* () {
     return yield* body(yield* makeClient);
   }).pipe(Effect.scoped, Effect.provide(RunnerTesting.layer));
@@ -61,6 +65,16 @@ const accepts = (client: Client) =>
     );
     return queue;
   });
+
+/** A server on the runner's loopback, as Chrome's CDP port or a dev server would be. */
+const listen = (onConnection: (socket: NodeNet.Socket) => void) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeNet.Server>((resume) => {
+      const server = NodeNet.createServer({ allowHalfOpen: true }, onConnection);
+      server.listen({ host: "127.0.0.1", port: 0 }, () => resume(Effect.succeed(server)));
+    }),
+    (server) => Effect.sync(() => server.close()),
+  ).pipe(Effect.map((server) => (server.address() as NodeNet.AddressInfo).port));
 
 describe("runner forwards", () => {
   it.live("splices an accepted connection to tcp.read and tcp.write, applying each seq once", () =>
@@ -132,6 +146,65 @@ describe("runner forwards", () => {
         const accepted = yield* accepts(client);
         yield* dial(second.address);
         expect(yield* Queue.take(accepted)).toMatchObject({ forwardId: second.forwardId });
+      }),
+    ),
+  );
+});
+
+describe("runner tcp.connect", () => {
+  it.live("dials the loopback and carries bytes both ways to the other side's EOF", () =>
+    withRunner((client) =>
+      Effect.gen(function* () {
+        // Answers the first request with itself, then ends its side.
+        const port = yield* listen((socket) => socket.once("data", (data) => socket.end(data)));
+        const { connectionId } = yield* client["tcp.connect"]({ port });
+        const write = client["tcp.write"]({ connectionId, seq: 1, data: encoder.encode("ping") });
+        expect(yield* write).toEqual({ appliedThrough: 1 });
+        const answer = yield* client["tcp.read"]({ connectionId, fromSeq: 0 }).pipe(
+          Stream.runCollect,
+        );
+        expect(decoder.decode(Buffer.concat(answer.map((chunk) => chunk.data)))).toBe("ping");
+
+        yield* client["tcp.close"]({ connectionId });
+        const afterClose = yield* client["tcp.read"]({ connectionId, fromSeq: 0 }).pipe(
+          Stream.runDrain,
+          Effect.flip,
+        );
+        expect(afterClose).toMatchObject({ _tag: "RunnerLostError" });
+      }),
+    ),
+  );
+
+  it.live("refuses any other host, a closed port, and a drained runner", () =>
+    withRunner((client) =>
+      Effect.gen(function* () {
+        const table = yield* HandleTable.HandleTable;
+        const port = yield* listen(() => undefined);
+        // The runner's decode refuses these off the wire, and the handle table again behind it.
+        for (const host of ["169.254.169.254", "localhost", "10.0.0.2"]) {
+          const sent = yield* client["tcp.connect"]({ port, host: host as "::1" }).pipe(
+            Effect.exit,
+          );
+          expect(Exit.isFailure(sent), host).toBe(true);
+          expect(yield* table.connectTcp(port, host as "::1").pipe(Effect.flip)).toMatchObject({
+            _tag: "RunnerSystemError",
+            reason: "BadArgument",
+          });
+        }
+
+        const closed = yield* Effect.scoped(listen(() => undefined));
+        expect(yield* client["tcp.connect"]({ port: closed }).pipe(Effect.flip)).toMatchObject({
+          _tag: "RunnerSystemError",
+          reason: "NotFound",
+          module: "Net",
+          method: "tcp.connect",
+        });
+
+        yield* table.drain(0);
+        expect(yield* client["tcp.connect"]({ port }).pipe(Effect.flip)).toMatchObject({
+          _tag: "RunnerLostError",
+          reason: "drained",
+        });
       }),
     ),
   );

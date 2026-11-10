@@ -356,6 +356,11 @@ const fixtures: Record<string, Fixture> = {
     success: undefined,
     error: lost,
   },
+  [RUNNER_METHODS.tcpConnect]: {
+    payload: { port: 9222, host: "::1" },
+    success: { connectionId: handle },
+    error: new RunnerSystemError({ reason: "NotFound", module: "Net", method: "tcp.connect" }),
+  },
   [RUNNER_METHODS.tcpRead]: {
     payload: { connectionId: handle, fromSeq: 0 },
     success: { seq: 0, data: allBytes },
@@ -506,6 +511,24 @@ describe("runner protocol codec", () => {
     }) as { sandboxToken: unknown };
     expect(Redacted.isRedacted(decoded.sandboxToken)).toBe(true);
     expect(Redacted.value(decoded.sandboxToken as Redacted.Redacted<string>)).toBe("sandbox-token");
+  });
+
+  it("dials only a port on the loopback: no hostname, other address or mapped form", () => {
+    const decode = Schema.decodeUnknownExit(
+      RunnerRpcGroup.requests.get(RUNNER_METHODS.tcpConnect)!.payloadSchema,
+    );
+    expect(decode({ port: 9222 })._tag).toBe("Success");
+    for (const payload of [
+      { port: 9222, host: "localhost" },
+      { port: 80, host: "169.254.169.254" },
+      { port: 22, host: "10.0.0.2" },
+      { port: 9222, host: "0.0.0.0" },
+      { port: 9222, host: "::ffff:127.0.0.1" },
+      { port: 0 },
+      { port: 65536 },
+    ]) {
+      expect(decode(payload)._tag, JSON.stringify(payload)).toBe("Failure");
+    }
   });
 
   it.effect("fits a page of a 25,000-entry listing in one frame", () =>
