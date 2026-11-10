@@ -9,6 +9,8 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import type { PresentMember } from "@t3tools/client-runtime/state/presence";
+import type { SandboxAccessChip } from "@t3tools/client-runtime/state/sandbox";
+import { ThreadAccessChip } from "./ThreadAccessChip";
 import { ThreadViewerStack } from "./ThreadViewerStack";
 import {
   ThreadGitControls,
@@ -61,6 +63,8 @@ export function useThreadHeaderOptions(props: {
   readonly machineMenu?: AppBarMenu | null;
   /** Teammates viewing this thread; empty outside team mode. */
   readonly viewers?: ReadonlyArray<PresentMember>;
+  /** Who can open this cloud thread; null while it is private. */
+  readonly accessChip?: SandboxAccessChip | null;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -75,6 +79,18 @@ export function useThreadHeaderOptions(props: {
     ...(props.teamMenu ? [nativeHeaderMenu(props.teamMenu, "thread-right-team")] : []),
   ];
   const viewers = props.viewers ?? [];
+  const accessChip = props.accessChip ?? null;
+  const accessHeaderItems: NativeHeaderItems =
+    accessChip === null
+      ? []
+      : [
+          {
+            element: <ThreadAccessChip chip={accessChip} />,
+            hidesSharedBackground: true,
+            identifier: "thread-right-access",
+            type: "custom",
+          },
+        ];
   const viewerHeaderItems: NativeHeaderItems =
     viewers.length > 0
       ? [
@@ -89,11 +105,13 @@ export function useThreadHeaderOptions(props: {
   const compactRightHeaderItems = [
     ...gitRightHeaderItems,
     ...teamHeaderItems,
+    ...accessHeaderItems,
     ...viewerHeaderItems,
   ];
   const threadCenterHeaderItems = [
     ...gitCenterHeaderItems,
     ...teamHeaderItems,
+    ...accessHeaderItems,
     ...viewerHeaderItems,
   ];
   const splitLeftHeaderItems: NativeHeaderItems = [
@@ -168,6 +186,7 @@ export function useThreadHeaderOptions(props: {
       compactRightHeaderItems,
       props.teamMenu,
       props.machineMenu,
+      accessChip?.label,
       viewers.map((viewer) => `${viewer.id}:${viewer.away}`).join(","),
       usesDuoHeader,
       environmentId,

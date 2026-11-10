@@ -582,6 +582,24 @@ describe("buildThreadListV2Items", () => {
       expect(collapsed.teamCount).toBe(1);
     });
 
+    it("keeps the Team shelf in team mode when nothing is shared", () => {
+      const nothingShared = {
+        ...input,
+        threads: [threads[0]!, threads[4]!],
+        teamViewers: new Map([[environmentId, viewer]]),
+      };
+      const layout = buildThreadListV2Items(nothingShared);
+      expect(layout.teamCount).toBe(0);
+      expect(layout.teamShelfHeaderIndex).toBe(1);
+      const listed = buildThreadListV2ListItems({
+        items: layout.items,
+        pendingTasks: [],
+        teamCount: layout.teamCount,
+        teamShelfHeaderIndex: layout.teamShelfHeaderIndex,
+      });
+      expect(listed.map((entry) => entry.type)).toEqual(["v2-thread", "v2-team-shelf"]);
+    });
+
     it("lists a solo server exactly as before", () => {
       const solo = buildThreadListV2Items({ ...input, teamViewers: new Map() });
 

@@ -45,7 +45,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell } from "../../state/entities";
+import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import {
@@ -62,7 +62,16 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useThreadOwner, useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
+import {
+  THREAD_ACCESS_REVOKED_MESSAGE,
+  THREAD_PRIVATE_OR_GONE_MESSAGE,
+} from "@t3tools/client-runtime/state/share-thread";
+import {
+  useIsTeamMode,
+  useThreadOwner,
+  useThreadTeamActions,
+  useThreadTeamMenu,
+} from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
 import { buildThreadTeamHeaderMenu } from "./thread-team-menu";
 import { buildThreadCloudHeaderMenu, buildThreadMachineHeaderMenu } from "./thread-machine-menu";
@@ -70,6 +79,7 @@ import {
   useContinueInCloudOffer,
   useSandboxActionRunner,
   useSandboxThreadMachine,
+  useThreadShare,
 } from "../../state/sandbox";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
@@ -105,6 +115,7 @@ import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
 import {
   threadDetailErrorIsCurrent,
+  threadRouteAccessNotice,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -202,6 +213,36 @@ function ThreadUnavailableScreen(props: {
   );
 }
 
+/** A thread this member cannot open; it never says which thread, or whose. */
+function ThreadAccessNoticeScreen(props: { readonly reason: "revoked" | "private" }) {
+  const goBack = useWorkspaceBackNavigation("threads");
+  return (
+    <ThreadRouteFallbackLayout>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 24,
+          paddingVertical: 32,
+        }}
+        className="bg-screen flex-1 android:bg-transparent"
+      >
+        <EmptyState
+          variant="plain"
+          title={
+            props.reason === "revoked"
+              ? THREAD_ACCESS_REVOKED_MESSAGE
+              : THREAD_PRIVATE_OR_GONE_MESSAGE
+          }
+          actionLabel="Back to threads"
+          onAction={goBack}
+        />
+      </ScrollView>
+    </ThreadRouteFallbackLayout>
+  );
+}
+
 /** A thread that can't load opens a new task in its environment instead of a dead end. */
 function UnavailableThreadDraftRedirect(props: { readonly environmentId: EnvironmentId }) {
   const navigation = useNavigation();
@@ -267,6 +308,10 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const teamMode = useIsTeamMode(environmentId);
+  const cloudLaunch =
+    useEnvironmentServerConfig(environmentId)?.environment.capabilities.cloudLaunch === true;
+  const teamCloud = teamMode && cloudLaunch;
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
     routeConnectionState === "connected" ? Option.none<string>() : detailError,
@@ -315,6 +360,16 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
 
   if (stillHydrating) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
+  }
+
+  const accessNotice = threadRouteAccessNotice({
+    accessRevoked: selectedThreadDetailState.accessRevoked === true,
+    connectionState: routeConnectionState,
+    detailStatus: selectedThreadDetailState.status,
+    teamCloud,
+  });
+  if (accessNotice !== null) {
+    return withInspectorHeader(<ThreadAccessNoticeScreen reason={accessNotice} />);
   }
 
   if (
@@ -519,12 +574,27 @@ function ThreadRouteContent(
       ? null
       : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
   ).viewers;
+  const threadShare = useThreadShare(
+    selectedThread === null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+  );
   const teamHeaderMenu =
     selectedThread !== null && threadTeamMenu !== null && canOperateThread
-      ? buildThreadTeamHeaderMenu(threadTeamMenu, {
-          setFollowed: (following) => void threadTeamActions.setFollowed(selectedThread, following),
-          assign: (ownerId) => void threadTeamActions.assign(selectedThread, ownerId),
-        })
+      ? buildThreadTeamHeaderMenu(
+          threadTeamMenu,
+          {
+            setFollowed: (following) =>
+              void threadTeamActions.setFollowed(selectedThread, following),
+            assign: (ownerId) => void threadTeamActions.assign(selectedThread, ownerId),
+            share: () =>
+              navigation.navigate("ThreadShare", {
+                environmentId: String(selectedThread.environmentId),
+                threadId: String(selectedThread.id),
+              }),
+          },
+          threadShare,
+        )
       : null;
   const threadMachine = useSandboxThreadMachine(
     selectedThread === null
@@ -1042,6 +1112,7 @@ function ThreadRouteContent(
                 teamMenu={teamHeaderMenu}
                 machineMenu={machineHeaderMenu ?? cloudHeaderMenu}
                 viewers={threadViewers}
+                accessChip={threadShare?.access.chip ?? null}
                 hasThreadCwd={selectedThreadCwd !== null}
                 hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
                 fileInspectorSupported={fileInspector.supported}

@@ -1,11 +1,23 @@
 import { useAtomValue } from "@effect/atom-react";
-import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
-  PROVIDER_DISPLAY_NAMES,
-  type MemberId,
-  type ScopedThreadRef,
-  type TeamMember,
-} from "@t3tools/contracts";
+  applyShareChange,
+  exceedsShareCap,
+  removalWarning,
+  SHARE_FAILURE_TITLE,
+  sameShareAccess,
+  shareAudienceLabel,
+  shareCandidates,
+  shareCapMessage,
+  shareMachineContext,
+  shareTrustSentence,
+  unsettledShares,
+  visibleShareAccess,
+  type PendingShare,
+  type ShareAccess,
+  type ShareChange,
+} from "@t3tools/client-runtime/state/share-thread";
+import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import type { MemberId, ScopedThreadRef, TeamMember } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -38,19 +50,6 @@ import {
 } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { MemberAvatar } from "./MemberAvatar";
-import {
-  applyShareChange,
-  exceedsShareCap,
-  removalWarning,
-  sameShareAccess,
-  shareCandidates,
-  shareCapMessage,
-  unsettledShares,
-  visibleShareAccess,
-  type PendingShare,
-  type ShareAccess,
-  type ShareChange,
-} from "./ShareThreadDialog.logic";
 import { shareThreadDialogThreadAtom } from "./shareThreadDialogTarget";
 import { toastCommandFailure } from "./toastCommandFailure";
 
@@ -80,22 +79,12 @@ function ShareThreadDialog({
   const teamName = useEnvironment(environmentId)?.label.trim() || "the team";
   const sandboxId = shell?.source.sandboxId;
   const ownerThreadId = shell?.source.sandbox?.ownerThreadId;
-  const machineThreads = useAtomValue(
-    environmentThreadShells.environmentThreadsAtom(environmentId),
-  ).filter((thread) => sandboxId !== undefined && thread.sandboxId === sandboxId);
-  const ownerThread = machineThreads.find((thread) => thread.id === ownerThreadId);
-  const related = machineThreads.filter((thread) => thread.id !== ownerThreadId);
+  const threads = useAtomValue(environmentThreadShells.environmentThreadsAtom(environmentId));
+  const providerInstances = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.providerInstances,
+  );
   const ownerId = summary?.ownerId ?? null;
-  const ownAccountProvider = useEnvironmentSettings(environmentId, (settings) => {
-    const instance =
-      ownerThread === undefined
-        ? undefined
-        : settings.providerInstances[ownerThread.providerInstanceId];
-    if (instance === undefined || ownerId === null || instance.ownerMemberId !== ownerId) {
-      return null;
-    }
-    return PROVIDER_DISPLAY_NAMES[instance.driver] ?? instance.displayName ?? null;
-  });
   const share = useOrchestrationCommand(sandboxEnvironment.shareThreadCommand, {
     reportFailure: false,
   });
@@ -108,6 +97,13 @@ function ShareThreadDialog({
   const [capMessage, setCapMessage] = useState<string | null>(null);
 
   if (shell === null || sandboxId === undefined || summary?.canShare !== true) return null;
+  const { relatedThreadOwnerIds, ownAccountProvider } = shareMachineContext({
+    threads,
+    sandboxId,
+    ownerThreadId,
+    ownerId,
+    providerInstances,
+  });
   const server: ShareAccess = {
     audience: summary.audience ?? "members",
     memberIds: summary.memberIds,
@@ -144,7 +140,7 @@ function ShareThreadDialog({
     });
     if (result._tag === "Failure") {
       setPending((current) => current.filter((entry) => entry.id !== id));
-      toastCommandFailure("Could not change who can open this thread", result);
+      toastCommandFailure(SHARE_FAILURE_TITLE, result);
       return;
     }
     setPending((current) =>
@@ -163,20 +159,13 @@ function ShareThreadDialog({
     removalWarning({
       access,
       member,
-      threadOwnerIds: related.map((thread) => thread.ownerId ?? null),
+      threadOwnerIds: relatedThreadOwnerIds,
     });
 
   const remove = (member: TeamMember) => {
     setConfirming(null);
     void apply({ kind: "remove", memberId: member.id });
   };
-
-  const relatedSentence =
-    related.length === 0
-      ? ""
-      : related.length === 1
-        ? " Sharing also covers its side chat or fork."
-        : ` Sharing also covers its ${related.length} side chats and forks.`;
 
   return (
     <Dialog
@@ -335,9 +324,7 @@ function ShareThreadDialog({
                 }}
               >
                 <SelectTrigger size="sm" aria-label="General access">
-                  <SelectValue>
-                    {access.audience === "team" ? `Everyone on ${teamName}` : "Only people added"}
-                  </SelectValue>
+                  <SelectValue>{shareAudienceLabel(access.audience, teamName)}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectItem value="members">Only people added</SelectItem>
@@ -347,12 +334,12 @@ function ShareThreadDialog({
             </section>
 
             <p className="text-muted-foreground text-xs">
-              {access.audience === "team"
-                ? `Everyone on ${teamName} can open this thread, including people who join later. They`
-                : "People you add"}{" "}
-              can prompt this thread and use its terminal. That reaches{" "}
-              {ownAccountProvider === null ? "the provider" : `your ${ownAccountProvider}`} sign-in
-              and git token on its machine.{relatedSentence}
+              {shareTrustSentence({
+                audience: access.audience,
+                teamName,
+                ownAccountProvider,
+                relatedCount: relatedThreadOwnerIds.length,
+              })}
             </p>
           </div>
         </DialogPanel>

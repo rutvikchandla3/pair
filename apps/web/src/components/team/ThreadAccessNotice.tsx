@@ -1,3 +1,7 @@
+import {
+  THREAD_ACCESS_REVOKED_MESSAGE,
+  THREAD_PRIVATE_OR_GONE_MESSAGE,
+} from "@t3tools/client-runtime/state/share-thread";
 import { useNavigate } from "@tanstack/react-router";
 import { LockIcon } from "lucide-react";
 
@@ -14,9 +18,7 @@ export function ThreadAccessNotice({ reason }: { readonly reason: "revoked" | "p
           <LockIcon />
         </EmptyMedia>
         <EmptyTitle>
-          {reason === "revoked"
-            ? "You no longer have access to this thread."
-            : "This thread is private, or it no longer exists. Ask its owner to share it with you."}
+          {reason === "revoked" ? THREAD_ACCESS_REVOKED_MESSAGE : THREAD_PRIVATE_OR_GONE_MESSAGE}
         </EmptyTitle>
       </EmptyHeader>
       <EmptyContent>

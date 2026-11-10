@@ -640,7 +640,7 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
   }
-  if (teamShelfHeaderIndex !== null && teamCount > 0) {
+  if (teamShelfHeaderIndex !== null) {
     result.push({
       type: "v2-team-shelf",
       key: "v2-team-shelf",
@@ -985,7 +985,11 @@ export function buildThreadListV2Items(input: {
       ...ownerOf(thread),
     });
   }
-  const teamShelfHeaderIndex = orderedTeam.length > 0 ? items.length : null;
+  // In team mode the shelf stays when empty, so it can say what lands there.
+  const teamShelfInScope =
+    teamViewers !== undefined &&
+    (input.environmentId === null || teamViewers.has(input.environmentId));
+  const teamShelfHeaderIndex = orderedTeam.length > 0 || teamShelfInScope ? items.length : null;
   for (const thread of visibleTeam) {
     items.push({
       thread,

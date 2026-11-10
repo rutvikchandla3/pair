@@ -21,6 +21,7 @@ import {
   sameStoppedFiles,
   sharesOtherOwnersMachine,
   stoppedFilesFromProjection,
+  type SandboxAccessSummary,
   type SandboxAction,
   type SandboxThreadMachine,
   type StoppedFiles,
@@ -105,6 +106,31 @@ export function useContinueInCloudOffer(threadRef: ScopedThreadRef | null): Cont
   return useAtomValue(
     threadRef === null ? NO_OFFER_ATOM : continueInCloudOfferFamily(threadKey(threadRef)),
   );
+}
+
+export interface ThreadShare {
+  readonly access: SandboxAccessSummary;
+  /** The owner's alone; everyone else sees Share disabled. */
+  readonly allowed: boolean;
+}
+
+const threadShareFamily = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make((get): ThreadShare | null => {
+    const access = get(sandboxEnvironment.threadAccessAtom(ref));
+    return access === null
+      ? null
+      : { access, allowed: get(sandboxEnvironment.shareThreadCommand.permissionAtom(ref)) };
+  }).pipe(Atom.withLabel(`mobile-thread-share:${key}`));
+});
+
+const NO_SHARE_ATOM = Atom.make<ThreadShare | null>(null).pipe(
+  Atom.withLabel("mobile-thread-share:none"),
+);
+
+/** Null for a local thread and on a solo server, where nothing about sharing shows. */
+export function useThreadShare(threadRef: ScopedThreadRef | null): ThreadShare | null {
+  return useAtomValue(threadRef === null ? NO_SHARE_ATOM : threadShareFamily(threadKey(threadRef)));
 }
 
 const NO_MACHINE_ATOM = Atom.make<SandboxThreadMachine | null>(null).pipe(

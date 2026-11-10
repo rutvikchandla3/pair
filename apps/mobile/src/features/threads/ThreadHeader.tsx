@@ -7,6 +7,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
 import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { ThreadAccessChip } from "./ThreadAccessChip";
 import { ThreadViewerStack } from "./ThreadViewerStack";
 
 export function ThreadHeader(
@@ -90,10 +91,14 @@ export function ThreadHeader(
         onPress={props.onToggleInspector}
       />
     ) : null;
+  const accessChip = props.accessChip == null ? null : <ThreadAccessChip chip={props.accessChip} />;
   const trailing =
-    props.viewers !== undefined && props.viewers.length > 0 ? (
+    accessChip !== null || (props.viewers !== undefined && props.viewers.length > 0) ? (
       <>
-        <ThreadViewerStack viewers={props.viewers} />
+        {accessChip}
+        {props.viewers !== undefined && props.viewers.length > 0 ? (
+          <ThreadViewerStack viewers={props.viewers} />
+        ) : null}
         {inspectorButton}
       </>
     ) : (

@@ -439,8 +439,8 @@ member Ada who was shared thread A could ask A's agent to read the owner's priva
   button and chip; the sidebar glyph; the menu, palette and keybinding entries; the lost-access and
   no-access states; Settings → Cloud's private machine rows; Settings → Team's removal step.
 - **Desktop.** Nothing of its own: it wraps web.
-- **Mobile.** The share sheet, the chip, the two states. The Team shelf needs no change: it lists
-  what the server sends.
+- **Mobile.** The share sheet, the chip, the two states, and the Team shelf's empty state. The shelf
+  otherwise needs no change: it lists what the server sends.
 - **Older clients** keep working. They cannot share, and they see only what they may.
 - **Connection modes.** Access is the destination server's. A client connected to Pair Cloud
   directly, over Tailscale, or through a relay gets the same answers; nothing is decided on the

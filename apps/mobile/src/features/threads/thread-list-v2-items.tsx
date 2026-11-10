@@ -55,9 +55,11 @@ import { useEnvironmentScope } from "../../state/session";
 import { useThreadTeamActions, useThreadTeamMenu } from "../../state/team";
 import {
   useContinueInCloudOffer,
+  useThreadShare,
   useSandboxActionRunner,
   useSandboxThreadMachine,
 } from "../../state/sandbox";
+import { TEAM_SHELF_EMPTY_LABEL } from "@t3tools/client-runtime/state/share-thread";
 import { CONTINUE_IN_CLOUD_LABEL } from "@t3tools/client-runtime/state/threadMove";
 import { useNavigation } from "@react-navigation/native";
 import { SANDBOX_ACTION_MENU_LABELS } from "@t3tools/client-runtime/state/sandbox";
@@ -313,7 +315,23 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
 export const ThreadListV2TeamShelfHeader = memo(function ThreadListV2TeamShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {
-  return <ThreadListV2ShelfHeader {...props} kind="team" />;
+  return (
+    <>
+      <ThreadListV2ShelfHeader {...props} kind="team" />
+      {props.count === 0 && props.expanded ? (
+        <Text
+          className={cn(
+            "pb-2 text-xs",
+            props.pane === "sidebar"
+              ? "px-3 text-drawer-foreground-muted"
+              : "px-5 text-foreground-muted",
+          )}
+        >
+          {TEAM_SHELF_EMPTY_LABEL}
+        </Text>
+      ) : null}
+    </>
+  );
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
@@ -818,6 +836,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const navigation = useNavigation();
   const teamMenu = useThreadTeamMenu(thread);
+  const share = useThreadShare(
+    thread.source.sandboxId === undefined
+      ? null
+      : { environmentId: thread.environmentId, threadId: thread.id },
+  );
   const teamActions = useThreadTeamActions();
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -941,8 +964,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
   const teamMenuItems = useMemo<MenuAction[]>(
-    () => (teamMenu === null ? [] : buildThreadTeamMenuItems(teamMenu)),
-    [teamMenu],
+    () => (teamMenu === null ? [] : buildThreadTeamMenuItems(teamMenu, share)),
+    [share, teamMenu],
   );
   const deleteMenuItems = teamMenu?.canDelete === false ? NO_MENU_ACTIONS : DELETE_MENU_ACTIONS;
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
@@ -1120,6 +1143,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event === "share") {
+        navigation.navigate("ThreadShare", {
+          environmentId: String(thread.environmentId),
+          threadId: String(thread.id),
+        });
+      }
       if (nativeEvent.event === "follow") void teamActions.setFollowed(thread, true);
       if (nativeEvent.event === "unfollow") void teamActions.setFollowed(thread, false);
       const assignee = resolveThreadAssignMenuSelection(nativeEvent.event, teamMenu);

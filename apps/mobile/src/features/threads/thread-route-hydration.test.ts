@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   threadDetailErrorIsCurrent,
+  threadRouteAccessNotice,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -151,5 +152,29 @@ describe("threadDetailErrorIsCurrent", () => {
         errorBeforeConnected: oldError,
       }),
     ).toBe(true);
+  });
+});
+
+describe("threadRouteAccessNotice", () => {
+  const missing = {
+    accessRevoked: false,
+    connectionState: "connected" as const,
+    detailStatus: "deleted" as const,
+    teamCloud: true,
+  };
+
+  it.each([
+    ["revoked access", { ...missing, accessRevoked: true }, "revoked"],
+    [
+      "revoked while reconnecting",
+      { ...missing, accessRevoked: true, connectionState: "reconnecting" },
+      "revoked",
+    ],
+    ["a thread the team's Pair Cloud does not list", missing, "private"],
+    ["a thread on any other server", { ...missing, teamCloud: false }, null],
+    ["a thread missed while offline", { ...missing, connectionState: "offline" }, null],
+    ["a thread still loading", { ...missing, detailStatus: "synchronizing" }, null],
+  ] as const)("%s", (_name, input, expected) => {
+    expect(threadRouteAccessNotice(input)).toBe(expected);
   });
 });

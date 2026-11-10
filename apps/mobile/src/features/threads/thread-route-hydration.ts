@@ -73,3 +73,21 @@ export function threadDetailErrorIsCurrent<E>(input: {
     !(input.connectionState === "connected" && input.error === input.errorBeforeConnected)
   );
 }
+
+/**
+ * Why a thread that is not listed is not shown. A missing thread on a team's Pair Cloud server may
+ * be one nobody shared, so it says so, but only once the server answered: offline is not private.
+ */
+export function threadRouteAccessNotice(input: {
+  readonly accessRevoked: boolean;
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly detailStatus: EnvironmentThreadStatus;
+  readonly teamCloud: boolean;
+}): "revoked" | "private" | null {
+  if (input.accessRevoked) return "revoked";
+  return input.teamCloud &&
+    input.connectionState === "connected" &&
+    input.detailStatus === "deleted"
+    ? "private"
+    : null;
+}

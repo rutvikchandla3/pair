@@ -1,10 +1,26 @@
-import { activeTeamMembers, type TeamMembers } from "@t3tools/client-runtime/state/team";
 import {
+  PROVIDER_DISPLAY_NAMES,
   SANDBOX_ACCESS_MEMBER_LIMIT,
   type MemberId,
+  type ProviderInstanceId,
   type SandboxAccessAudience,
+  type SandboxId,
+  type ServerSettings,
   type TeamMember,
+  type ThreadId,
 } from "@t3tools/contracts";
+
+import { activeTeamMembers, type TeamMembers } from "./team.ts";
+
+export const SHARE_FAILURE_TITLE = "Could not change who can open this thread";
+
+/** Under an open Team shelf with nothing on it. */
+export const TEAM_SHELF_EMPTY_LABEL = "Threads teammates share with you show up here.";
+
+export const THREAD_ACCESS_REVOKED_MESSAGE = "You no longer have access to this thread.";
+/** It never says which, or whose. */
+export const THREAD_PRIVATE_OR_GONE_MESSAGE =
+  "This thread is private, or it no longer exists. Ask its owner to share it with you.";
 
 export interface ShareAccess {
   readonly audience: SandboxAccessAudience;
@@ -109,4 +125,58 @@ export function removalWarning(input: {
   return owned === 1
     ? `${input.member.name} has a thread on this machine and will lose access to it too.`
     : `${input.member.name} has ${owned} threads on this machine and will lose access to them too.`;
+}
+
+export function shareAudienceLabel(audience: SandboxAccessAudience, teamName: string): string {
+  return audience === "team" ? `Everyone on ${teamName}` : "Only people added";
+}
+
+/** The other threads on the machine, and the provider account when it is the owner's own. */
+export function shareMachineContext(input: {
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly sandboxId?: SandboxId | undefined;
+    readonly ownerId?: MemberId | null | undefined;
+    readonly providerInstanceId: ProviderInstanceId;
+  }>;
+  readonly sandboxId: SandboxId;
+  readonly ownerThreadId: ThreadId | undefined;
+  readonly ownerId: MemberId | null;
+  readonly providerInstances: ServerSettings["providerInstances"];
+}) {
+  const onMachine = input.threads.filter((thread) => thread.sandboxId === input.sandboxId);
+  const ownerThread = onMachine.find((thread) => thread.id === input.ownerThreadId);
+  const related = onMachine.filter((thread) => thread.id !== input.ownerThreadId);
+  const instance =
+    ownerThread === undefined ? undefined : input.providerInstances[ownerThread.providerInstanceId];
+  const ownAccountProvider =
+    instance === undefined || input.ownerId === null || instance.ownerMemberId !== input.ownerId
+      ? null
+      : (PROVIDER_DISPLAY_NAMES[instance.driver] ?? instance.displayName ?? null);
+  return {
+    relatedThreadOwnerIds: related.map((thread) => thread.ownerId ?? null),
+    ownAccountProvider,
+  };
+}
+
+/** What sharing reaches. It names the provider only on the owner's own account. */
+export function shareTrustSentence(input: {
+  readonly audience: SandboxAccessAudience;
+  readonly teamName: string;
+  readonly ownAccountProvider: string | null;
+  readonly relatedCount: number;
+}): string {
+  const lead =
+    input.audience === "team"
+      ? `Everyone on ${input.teamName} can open this thread, including people who join later. They`
+      : "People you add";
+  const provider =
+    input.ownAccountProvider === null ? "the provider" : `your ${input.ownAccountProvider}`;
+  const related =
+    input.relatedCount === 0
+      ? ""
+      : input.relatedCount === 1
+        ? " Sharing also covers its side chat or fork."
+        : ` Sharing also covers its ${input.relatedCount} side chats and forks.`;
+  return `${lead} can prompt this thread and use its terminal. That reaches ${provider} sign-in and git token on its machine.${related}`;
 }

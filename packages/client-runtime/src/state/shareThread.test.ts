@@ -1,5 +1,12 @@
-import type { TeamMembers } from "@t3tools/client-runtime/state/team";
-import { MemberId, SANDBOX_ACCESS_MEMBER_LIMIT, type TeamMember } from "@t3tools/contracts";
+import {
+  MemberId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  SANDBOX_ACCESS_MEMBER_LIMIT,
+  SandboxId,
+  ThreadId,
+  type TeamMember,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,10 +14,13 @@ import {
   exceedsShareCap,
   removalWarning,
   shareCandidates,
+  shareMachineContext,
+  shareTrustSentence,
   visibleShareAccess,
   type PendingShare,
   type ShareAccess,
-} from "./ShareThreadDialog.logic";
+} from "./shareThread.ts";
+import type { TeamMembers } from "./team.ts";
 
 const createdAt = "2036-04-07T00:00:00.000Z" as TeamMember["createdAt"];
 const member = (id: string, name: string, extra: Partial<TeamMember> = {}): TeamMember => ({
@@ -122,5 +132,72 @@ describe("removalWarning", () => {
     ["keeps access through Everyone", { ...shared, audience: "team" }, [ada.id], null],
   ] as const)("%s", (_name, access, threadOwnerIds, expected) => {
     expect(removalWarning({ access, member: ada, threadOwnerIds })).toBe(expected);
+  });
+});
+
+describe("shareTrustSentence", () => {
+  const base = {
+    audience: "members" as const,
+    teamName: "Acme",
+    ownAccountProvider: null,
+    relatedCount: 0,
+  };
+  it.each([
+    [
+      "people added, team account",
+      base,
+      "People you add can prompt this thread and use its terminal. That reaches the provider sign-in and git token on its machine.",
+    ],
+    [
+      "the owner's own account and two side chats",
+      { ...base, ownAccountProvider: "Claude", relatedCount: 2 },
+      "People you add can prompt this thread and use its terminal. That reaches your Claude sign-in and git token on its machine. Sharing also covers its 2 side chats and forks.",
+    ],
+    [
+      "Everyone with one fork",
+      { ...base, audience: "team" as const, relatedCount: 1 },
+      "Everyone on Acme can open this thread, including people who join later. They can prompt this thread and use its terminal. That reaches the provider sign-in and git token on its machine. Sharing also covers its side chat or fork.",
+    ],
+  ])("%s", (_name, input, expected) => {
+    expect(shareTrustSentence(input)).toBe(expected);
+  });
+});
+
+describe("shareMachineContext", () => {
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const instanceId = ProviderInstanceId.make("claude");
+  const thread = (id: string, ownerId: string | null, onBox = true) => ({
+    id: ThreadId.make(id),
+    sandboxId: onBox ? sandboxId : undefined,
+    ownerId: ownerId === null ? null : MemberId.make(ownerId),
+    providerInstanceId: instanceId,
+  });
+  const threads = [thread("t1", "rutvik"), thread("t2", "ada"), thread("t3", null, false)];
+  const instances = (ownerMemberId: MemberId) => ({
+    [instanceId]: { driver: ProviderDriverKind.make("claudeAgent"), ownerMemberId },
+  });
+
+  it("counts the other threads on the machine and names the owner's own account", () => {
+    expect(
+      shareMachineContext({
+        threads,
+        sandboxId,
+        ownerThreadId: ThreadId.make("t1"),
+        ownerId: rutvik.id,
+        providerInstances: instances(rutvik.id),
+      }),
+    ).toEqual({ relatedThreadOwnerIds: [ada.id], ownAccountProvider: "Claude" });
+  });
+
+  it("names no provider when the account belongs to someone else", () => {
+    expect(
+      shareMachineContext({
+        threads,
+        sandboxId,
+        ownerThreadId: ThreadId.make("t1"),
+        ownerId: rutvik.id,
+        providerInstances: instances(ada.id),
+      }).ownAccountProvider,
+    ).toBeNull();
   });
 });

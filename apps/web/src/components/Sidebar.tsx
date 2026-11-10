@@ -7,6 +7,7 @@ import {
   type TeamViewer,
 } from "@t3tools/client-runtime/state/team";
 import { sandboxAccessSummary } from "@t3tools/client-runtime/state/sandbox";
+import { TEAM_SHELF_EMPTY_LABEL } from "@t3tools/client-runtime/state/share-thread";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -3780,7 +3781,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label="Team"
                                 count={teamThreads.length}
-                                emptyLabel="Threads teammates share with you show up here."
+                                emptyLabel={TEAM_SHELF_EMPTY_LABEL}
                                 toggle={{
                                   expanded: teamShelfExpanded,
                                   onToggle: toggleTeamShelf,

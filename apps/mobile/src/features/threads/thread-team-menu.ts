@@ -1,13 +1,18 @@
+import { SHARE_THREAD_OWNER_ONLY_REASON } from "@t3tools/client-runtime/state/sandbox";
 import type { MemberId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
+import type { ThreadShare } from "../../state/sandbox";
 import type { ThreadTeamMenu } from "../../state/team";
 
 const ASSIGN_PREFIX = "assign:";
 
-/** Follow or Unfollow where it applies, then Assign to… listing the active members. */
-export function buildThreadTeamMenuItems(menu: ThreadTeamMenu): MenuAction[] {
+/** Follow or Unfollow where it applies, then Assign to… listing the active members, then Share…. */
+export function buildThreadTeamMenuItems(
+  menu: ThreadTeamMenu,
+  share: Pick<ThreadShare, "allowed"> | null = null,
+): MenuAction[] {
   return [
     ...(menu.following === null
       ? []
@@ -26,6 +31,18 @@ export function buildThreadTeamMenuItems(menu: ThreadTeamMenu): MenuAction[] {
         state: member.id === menu.ownerId ? "on" : "off",
       })),
     },
+    ...(share === null
+      ? []
+      : [
+          {
+            id: "share",
+            title: "Share…",
+            image: "person.badge.plus",
+            ...(share.allowed
+              ? {}
+              : { attributes: { disabled: true }, subtitle: SHARE_THREAD_OWNER_ONLY_REASON }),
+          } satisfies MenuAction,
+        ]),
   ];
 }
 
@@ -45,7 +62,9 @@ export function buildThreadTeamHeaderMenu(
   actions: {
     readonly setFollowed: (following: boolean) => void;
     readonly assign: (ownerId: MemberId) => void;
+    readonly share: () => void;
   },
+  share: Pick<ThreadShare, "allowed"> | null = null,
 ): AppBarMenu {
   return {
     title: "Team",
@@ -74,6 +93,19 @@ export function buildThreadTeamHeaderMenu(
           },
         })),
       },
+      ...(share === null
+        ? []
+        : [
+            {
+              id: "share",
+              title: "Share…",
+              icon: "person.badge.plus",
+              ...(share.allowed
+                ? {}
+                : { disabled: true, subtitle: SHARE_THREAD_OWNER_ONLY_REASON }),
+              onPress: actions.share,
+            },
+          ]),
     ],
   };
 }

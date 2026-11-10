@@ -6,7 +6,7 @@ import { Button } from "./Button";
 
 export function EmptyState(props: {
   readonly title: string;
-  readonly detail: string;
+  readonly detail?: string;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
   readonly action?: ReactNode;
@@ -18,12 +18,14 @@ export function EmptyState(props: {
         <Text textRole="title" className="text-center font-t3-bold text-foreground">
           {props.title}
         </Text>
-        <Text
-          textRole="body"
-          className="mt-2 text-center font-sans leading-normal text-foreground-muted"
-        >
-          {props.detail}
-        </Text>
+        {props.detail === undefined ? null : (
+          <Text
+            textRole="body"
+            className="mt-2 text-center font-sans leading-normal text-foreground-muted"
+          >
+            {props.detail}
+          </Text>
+        )}
         {props.action ? (
           <View className="mt-5">{props.action}</View>
         ) : props.actionLabel && props.onAction ? (

@@ -339,6 +339,10 @@
       "types": "./src/state/usageAccess.ts",
       "default": "./src/state/usageAccess.ts"
     },
+    "./state/share-thread": {
+      "types": "./src/state/shareThread.ts",
+      "default": "./src/state/shareThread.ts"
+    },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",
       "default": "./src/state/sharedSettings.ts"
