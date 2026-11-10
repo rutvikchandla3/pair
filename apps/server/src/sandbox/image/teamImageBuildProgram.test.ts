@@ -58,6 +58,7 @@ const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (
   yield* fs.writeFileString(
     `${home}/.t3-build/t3-build.sh`,
     teamImageBuildProgram({
+      buildId: "tib_0123",
       repos: [
         {
           projectId: "project-1",
@@ -143,6 +144,7 @@ describe("teamImageBuildProgram", () => {
         "manifest",
       ]);
       const result = build.result!;
+      assert.strictEqual(result.buildId, "tib_0123");
       assert.match(result.imageEnv.PATH ?? "", /\/home\/\.local\/bin:/);
       assert.strictEqual(result.imageEnv.TOOL_HOME, "/opt/tool");
       assert.notProperty(result.imageEnv, "NPM_TOKEN");

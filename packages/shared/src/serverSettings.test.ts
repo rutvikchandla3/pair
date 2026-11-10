@@ -667,6 +667,17 @@ describe("serverSettings helpers", () => {
       "sandbox",
     );
 
+    const teamImage = { keepSucceeded: 1 };
+    const keeping = applyServerSettingsPatch(removed, { sandbox: { teamImage } });
+    expect(keeping.sandbox).toEqual({ drivers: [remote], teamImage });
+    const keptAlone = applyServerSettingsPatch(keeping, {
+      sandbox: { drivers: { [remote.id]: null } },
+    });
+    expect(keptAlone.sandbox).toEqual({ drivers: [], teamImage });
+    expect(
+      applyServerSettingsPatch(keptAlone, { sandbox: { teamImage: null } }),
+    ).not.toHaveProperty("sandbox");
+
     const emptied = applyServerSettingsPatch(removed, {
       sandbox: { drivers: { [remote.id]: null } },
     });

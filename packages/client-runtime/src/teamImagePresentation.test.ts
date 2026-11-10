@@ -181,6 +181,17 @@ describe("teamImageFailureMessage", () => {
       message: "A recipe project (p) no longer exists.",
     },
     { phase: "capture", detail: " ", message: "The build failed during capture." },
+    {
+      phase: "verify",
+      exitCode: 1,
+      detail: "d",
+      message: "A provider is not runnable in this build. The log shows which command failed.",
+    },
+    {
+      phase: "verify",
+      detail: "The saved image doesn't contain the build.",
+      message: "The saved image doesn't contain the build.",
+    },
   ] as const)("reads a $phase failure", ({ message, ...failure }) => {
     expect(teamImageFailureMessage({ ...failure, logTail: [] })).toBe(message);
   });

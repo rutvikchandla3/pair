@@ -22,6 +22,8 @@ export const secretFragments = (value: string): ReadonlyArray<string> =>
 
 /** What the program writes to `/etc/t3/build.json`; the server trusts nothing past this schema. */
 export const TeamImageBuildOutput = Schema.Struct({
+  /** Which build wrote it, so the server can tell this build's image from one without it. */
+  buildId: Schema.String,
   pairVersion: Schema.String,
   providers: Schema.Record(Schema.String, Schema.String),
   repos: Schema.Array(
@@ -32,6 +34,7 @@ export const TeamImageBuildOutput = Schema.Struct({
 export type TeamImageBuildOutput = typeof TeamImageBuildOutput.Type;
 
 export interface TeamImageBuildProgramInput {
+  readonly buildId: string;
   readonly repos: ReadonlyArray<{
     readonly projectId: string;
     readonly url: string;
@@ -203,8 +206,8 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     "",
     "  phase manifest",
     `  sudo install -d -m 0755 "$(dirname ${quote(paths.output)})"`,
-    `  jq -n --argjson imageEnv "$image_env" --slurpfile base ${quote(paths.baseInfo)} ${repoArgs.join(" ")} \\`,
-    `    '{pairVersion: $base[0].pairVersion, providers: $base[0].providers, repos: [${repoList}], imageEnv: $imageEnv}' \\`,
+    `  jq -n --arg buildId ${quote(input.buildId)} --argjson imageEnv "$image_env" --slurpfile base ${quote(paths.baseInfo)} ${repoArgs.join(" ")} \\`,
+    `    '{buildId: $buildId, pairVersion: $base[0].pairVersion, providers: $base[0].providers, repos: [${repoList}], imageEnv: $imageEnv}' \\`,
     `    | sudo tee ${quote(paths.output)} >/dev/null`,
     `  sudo chmod 0644 ${quote(paths.output)}`,
     // `imageEnv` is only on disk now.

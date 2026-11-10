@@ -246,6 +246,8 @@ const fakeEngine = (
   const createdImages = new Map<string, string | undefined>();
   /** Committed images by tag and by id; a commit keeps the container's labels, as the daemon does. */
   const committed = new Map<string, { Id: string; Size: number; Config: { Labels: object } }>();
+  /** Files in an image's layers by image id, for containers created from it. */
+  const imageFiles = new Map<string, Map<string, string>>();
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       const path = decodeURIComponent(url.pathname.replace(/^\/v1\.41/, ""));
@@ -322,6 +324,15 @@ const fakeEngine = (
           Mounts: existing.mounts,
         });
       }
+      const files = imageFiles.get(createdImages.get(container!) ?? "");
+      if (path.endsWith("/archive") && request.method === "GET" && files !== undefined) {
+        const content = files.get(url.searchParams.get("path")!);
+        if (content === undefined) return reply(404, {});
+        const tar = ustar([
+          { name: "file", mode: 0o644, content: new TextEncoder().encode(content) },
+        ]);
+        return HttpClientResponse.fromWeb(request, new Response(tar, { status: 200 }));
+      }
       if (path.endsWith("/archive") && request.method === "GET") {
         const tar = ustar([
           {
@@ -355,6 +366,7 @@ const fakeEngine = (
     archives,
     createdImages,
     committed,
+    imageFiles,
   };
 };
 
@@ -478,6 +490,65 @@ describe("DockerComputeDriver", () => {
         }),
       { runtimes: { runc: {}, runsc: { path: "/usr/bin/runsc" } } },
     ),
+  );
+
+  it.effect("runs an image build on runc, which reaches the socket, beside gVisor sessions", () => {
+    const containers = new Map<string, FakeContainer>();
+    const buildName = `${name}-build`;
+    return withDriver(
+      containers,
+      (driver, fake) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(driver.create(createInput));
+          assert.strictEqual(error.reason, "unsupported");
+
+          yield* driver.create({ ...createInput, name: buildName, purpose: "image-build" });
+          assert.strictEqual(containers.get(buildName)?.runtime, "runc");
+          const env = new TextDecoder().decode(readFirstTarFile(fake.archives.at(-1)!)!);
+          assert.include(env, "PAIR_RUNNER_URL='unix:/run/pair-host/runner.sock'\n");
+          assert.notInclude(env, "PAIR_DNS");
+        }),
+      { runtimes: { runc: {}, runsc: { path: "/usr/bin/runsc" } } },
+    );
+  });
+
+  it.effect("refuses an image build on a daemon with no runc, before making anything", () =>
+    withDriver(
+      new Map(),
+      (driver, fake) =>
+        Effect.gen(function* () {
+          const session = yield* driver.create(createInput);
+          assert.strictEqual(session.driverRef, name);
+          fake.calls.length = 0;
+          const buildName = `${name}-build`;
+          const error = yield* Effect.flip(
+            driver.create({ ...createInput, name: buildName, purpose: "image-build" }),
+          );
+          assert.deepStrictEqual([error.reason, error.retryable], ["unsupported", false]);
+          assert.include(error.message, "can't save a team image");
+          assert.notInclude(fake.calls, "POST /volumes/create");
+          assert.notInclude(fake.calls, "POST /containers/create");
+        }),
+      {
+        runtimes: { runsc: { path: "/usr/bin/runsc", runtimeArgs: ["--host-uds=open"] } },
+      },
+    ),
+  );
+
+  it.effect(
+    "reads a file from an image's layers without starting it, then removes the reader",
+    () =>
+      withDriver(new Map(), (driver, fake) =>
+        Effect.gen(function* () {
+          fake.imageFiles.set("sha256:built", new Map([["/etc/t3/build.json", '{"buildId":"b"}']]));
+          const file = yield* driver.readImageFile("sha256:built", "/etc/t3/build.json");
+          assert.strictEqual(new TextDecoder().decode(file as Uint8Array), '{"buildId":"b"}');
+          assert.isNull(yield* driver.readImageFile("sha256:built", "/etc/missing"));
+          const reader = `pair-${installId.slice(0, 8)}-image-read`;
+          assert.notInclude(fake.calls, `POST /containers/${reader}/start`);
+          assert.strictEqual(fake.calls.at(-1), `DELETE /containers/${reader}`);
+        }),
+      ),
   );
 
   it.effect("start leaves a runner of the same generation alone and replaces an older one", () => {

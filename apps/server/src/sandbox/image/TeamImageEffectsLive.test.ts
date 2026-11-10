@@ -141,6 +141,10 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
   readonly snapshot: "succeed" | "fail";
   /** What every build secret reference reads as. */
   readonly secretValue?: string;
+  /** "empty": the saved image lacks the machine's writes, as a commit under gVisor does. */
+  readonly savedImage?: "complete" | "empty";
+  /** How the driver refuses to create the build machine. */
+  readonly createFailure?: ComputeDriverError;
 }) {
   const fake = yield* ComputeDriverTesting.make(docker);
   const boots = yield* Queue.unbounded<RunnerBoot>();
@@ -149,6 +153,8 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
   const killed = yield* Deferred.make<void>();
   const destroyed: Array<string> = [];
   const snapshots: Array<string> = [];
+  const purposes: Array<string | undefined> = [];
+  const deletedImages: Array<string> = [];
   const revokedTokens: Array<SandboxId> = [];
   const revokedGrants: Array<SandboxId> = [];
   const files = new Map<string, string>([[TEAM_IMAGE_BUILD_OUTPUT, buildOutput]]);
@@ -158,6 +164,10 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
     Effect.flatMap((call) => {
       switch (call._tag) {
         case "create":
+          purposes.push(call.input.purpose);
+          if (input.createFailure !== undefined) {
+            return Deferred.fail(call.reply, input.createFailure);
+          }
           return Deferred.succeed(created, {
             sandboxId: call.input.sandboxId,
             driverRef: call.input.name,
@@ -182,6 +192,16 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
                   retryable: true,
                 }),
               );
+        case "readImageFile": {
+          const text = input.savedImage === "empty" ? undefined : files.get(call.path);
+          return Deferred.succeed(
+            call.reply,
+            text === undefined ? null : new TextEncoder().encode(text),
+          );
+        }
+        case "deleteImage":
+          deletedImages.push(call.ref);
+          return Deferred.succeed(call.reply, undefined);
         case "health":
           return Deferred.succeed(call.reply, {
             isolation: "container",
@@ -303,6 +323,8 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
     files,
     destroyed,
     snapshots,
+    purposes,
+    deletedImages,
     revokedTokens,
     revokedGrants,
   };
@@ -411,6 +433,9 @@ const startProgram = Effect.fn("TeamImageEffectsLive.test.startProgram")(functio
     input: { recipeRevision: revision },
     activateOnSuccess: true,
   });
+  // The program stamps its build on the manifest it writes.
+  const output = JSON.parse(world.files.get(TEAM_IMAGE_BUILD_OUTPUT) ?? "{}");
+  world.files.set(TEAM_IMAGE_BUILD_OUTPUT, JSON.stringify({ ...output, buildId: build.id }));
   yield* worker.drain();
   assert.strictEqual((yield* service.snapshot).builds[0]?.status, "launching");
   yield* world.boot();
@@ -468,6 +493,8 @@ describe("TeamImageEffectsLive", () => {
           ["claudeAgent@2.0.0", "codex@0.50.0"],
         );
         assert.deepStrictEqual(world.snapshots, ["t3-team-image:1"]);
+        assert.deepStrictEqual(world.purposes, ["image-build"]);
+        assert.deepStrictEqual(world.deletedImages, []);
         assert.deepStrictEqual(world.destroyed, [machine.driverRef]);
         assert.isNotNull(result.destroyedAt);
         assert.deepStrictEqual(world.revokedGrants, [machine.sandboxId]);
@@ -486,6 +513,70 @@ describe("TeamImageEffectsLive", () => {
 
         const log = yield* Stream.runCollect(buildLog.read(1));
         assert.deepStrictEqual(log, [{ text: "Cloning into web\n", done: true }]);
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a saved image without the build's manifest fails at verify and is deleted", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({
+        program: succeeding,
+        snapshot: "succeed",
+        savedImage: "empty",
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* TeamImageService.TeamImageService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const { build, machine } = yield* startProgram(world);
+        yield* awaitStatus("capturing");
+        yield* worker.drain();
+
+        const result = yield* finished(build);
+        assert.strictEqual(result.build?.status, "failed");
+        assert.deepStrictEqual(result.build?.failure?.phase, "verify");
+        assert.include(result.build?.failure?.detail, "The saved image doesn't contain the build");
+        assert.deepStrictEqual(world.deletedImages, ["image:t3-team-image:1"]);
+        assert.isNull((yield* service.snapshot).activeBuildId);
+        assert.deepStrictEqual(world.destroyed, [machine.driverRef]);
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a driver that can't save an image fails the build at launch in its words", () =>
+    Effect.gen(function* () {
+      const setupHint = "This Docker host can't save a team image.";
+      const world = yield* makeWorld({
+        program: succeeding,
+        snapshot: "succeed",
+        createFailure: new ComputeDriverError({
+          driverId: docker,
+          operation: "create",
+          reason: "unsupported",
+          retryable: false,
+          setupHint,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* TeamImageService.TeamImageService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const { revision } = yield* service.saveRecipe({
+          by: { kind: "member", memberId: admin },
+          input: { baseRevision: null, recipe },
+        });
+        const build = yield* service.startBuild({
+          by: { kind: "member", memberId: admin },
+          input: { recipeRevision: revision },
+          activateOnSuccess: true,
+        });
+        yield* worker.drain();
+
+        const result = yield* finished(build);
+        assert.deepStrictEqual(result.build?.failure, {
+          phase: "launch",
+          detail: setupHint,
+          logTail: [],
+        });
+        assert.lengthOf(world.purposes, 1);
       }).pipe(Effect.provide(layerTest(world)));
     }).pipe(Effect.scoped),
   );

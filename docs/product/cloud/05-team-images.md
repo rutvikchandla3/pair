@@ -184,10 +184,10 @@ Every build runs the same generated program, `t3-build.sh`, in a machine started
 the capture differs. Drivers declare which one they use, as the image build strategy capability in
 README decision 8.
 
-| Strategy             | Drivers                                                                             | How                                                                                                                                                                                                          | Output                                                                                                                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `snapshot` (default) | Docker (M4), GCE then EC2 (M5); Vercel Sandbox and boat if a hosted vendor is added | The build effect asks the driver to create a build machine from the base. The runner connects, the server runs the program through the workspace host, then the driver captures the machine and destroys it. | Docker: an image committed with `docker commit` on the Docker host (local or `DOCKER_HOST`), tagged `t3-team-image:<n>`. EC2: an AMI from `CreateImage`. GCE: an image in a family per team. Vercel: a snapshot id. |
-| `buildImage` (Later) | E2B, Kubernetes                                                                     | Pair generates a single-stage Dockerfile, `FROM <base>` plus one `RUN` of the program, and calls the driver's optional `buildImage`.                                                                         | E2B: a template from `Template.fromDockerfile`. Kubernetes: a digest in the customer's registry, built in-cluster by BuildKit or Kaniko.                                                                            |
+| Strategy             | Drivers                                                                             | How                                                                                                                                                                                                          | Output                                                                                                                                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `snapshot` (default) | Docker (M4), GCE then EC2 (M5); Vercel Sandbox and boat if a hosted vendor is added | The build effect asks the driver to create a build machine from the base. The runner connects, the server runs the program through the workspace host, then the driver captures the machine and destroys it. | Docker: an image committed with `docker commit` from a build machine on runc, on the Docker host (local or `DOCKER_HOST`), tagged `t3-team-image:<n>`. EC2: an AMI from `CreateImage`. GCE: an image in a family per team. Vercel: a snapshot id. |
+| `buildImage` (Later) | E2B, Kubernetes                                                                     | Pair generates a single-stage Dockerfile, `FROM <base>` plus one `RUN` of the program, and calls the driver's optional `buildImage`.                                                                         | E2B: a template from `Template.fromDockerfile`. Kubernetes: a digest in the customer's registry, built in-cluster by BuildKit or Kaniko.                                                                                                          |
 
 `snapshot` covers every driver on the M4 and M5 path with one code path, and runs the M4 build on
 Docker exactly as M5 runs it on EC2. Builds always go through the driver, never as a `docker build`
@@ -211,8 +211,31 @@ interface ComputeDriver {
     readonly onOutput: (chunk: string) => Effect.Effect<void>;
   }) => Effect.Effect<{ readonly imageRef: string }, ComputeDriverError, Scope.Scope>;
   readonly deleteImage: (imageRef: string) => Effect.Effect<void, ComputeDriverError>; // landed in M1
+  // 4.25. One file of a saved image, read without booting it. A whole-disk snapshot answers unread.
+  readonly readImageFile: (
+    imageRef: string,
+    path: string,
+  ) => Effect.Effect<Uint8Array | null | "whole-disk", ComputeDriverError>;
 }
+// `create` takes `purpose: "image-build"` for a build machine, whose writes `snapshot` must see.
 ```
+
+**Decision (lead, 4.25): build machines run on runc, sessions stay on gVisor.** The install script
+is written by an admin, not by an agent, and runs in an ordinary container so its result can be
+saved. gVisor's rootfs overlay (`--overlay2=root:self`) keeps a machine's writes inside the
+sandbox, so `docker commit` of a gVisor machine saves the base unchanged. The Docker driver picks
+runc for a machine created with `purpose: "image-build"`, and Docker's resolver instead of
+`PAIR_DNS`. A Docker host with no runc refuses the build at launch ("This Docker host can't save a
+team image: …") before it makes anything. Sessions boot from the saved image on whatever runtime
+the server uses, gVisor included. VM drivers (M5) snapshot the whole disk, which holds every
+write, so the purpose changes nothing there.
+
+**The server proves the image.** After the capture, the server reads `/etc/t3/build.json` out of
+the saved image with `readImageFile` and compares its `buildId` with the build's id. Docker reads
+it from a container created from the image and never started. A missing file or another build's
+id deletes the image and fails the build at `verify`: "The saved image doesn't contain the build,
+so Pair Cloud deleted it. …". A driver whose images are whole-disk snapshots answers
+`"whole-disk"` and is trusted.
 
 ### What the build program does
 
@@ -225,8 +248,8 @@ interface ComputeDriver {
 | 4. Capture env | Diff `bash -lc 'env -0'` against the base's. Save additions, such as `PATH` appended in `~/.profile`, as `imageEnv`.                                                                                                                                                                                                                                                                                                            | Never.                                                                           |
 | 5. Verify      | Each cloud-supported provider CLI's `--version`, repo heads, and `t3 runner prefetch` of Pair Cloud's current bundle.                                                                                                                                                                                                                                                                                                           | A cloud-supported CLI is missing or broken.                                      |
 | 6. Clean       | Clear shell history, run the leak check (section 6).                                                                                                                                                                                                                                                                                                                                                                            | A build secret's value is on disk.                                               |
-| 7. Manifest    | Write `/etc/t3/build.json`; the server reads it back.                                                                                                                                                                                                                                                                                                                                                                           | Never.                                                                           |
-| 8. Capture     | Commit, `CreateImage` or snapshot; or finish `buildImage`.                                                                                                                                                                                                                                                                                                                                                                      | The driver fails.                                                                |
+| 7. Manifest    | Write `/etc/t3/build.json` with the build's id; the server reads it back.                                                                                                                                                                                                                                                                                                                                                       | Never.                                                                           |
+| 8. Capture     | Commit, `CreateImage` or snapshot; or finish `buildImage`. Then read the manifest back out of the saved image.                                                                                                                                                                                                                                                                                                                  | The driver fails, or the saved image lacks this build's manifest (at `verify`).  |
 
 The workspace host applies `imageEnv` to every process in a sandbox from that build, login shell or not.
 
@@ -596,6 +619,7 @@ starts an image thread whose first message carries the failure.
 | clone       | "Could not clone acme/api. Check that the GitHub App can read it."            |
 | install     | "The install script exited with 100 at line 12."                              |
 | verify      | "Claude is not runnable in this build: `claude --version` failed."            |
+| verify      | "The saved image doesn't contain the build, so Pair Cloud deleted it. …"      |
 | clean       | "NPM_TOKEN's value was found in /home/t3/.npmrc. Use `${NPM_TOKEN}` instead." |
 | interrupted | "The server restarted during this build."                                     |
 

@@ -57,7 +57,10 @@ export function teamImageFailureMessage(failure: TeamImageBuildFailure): string 
         ? detail || "The install script failed."
         : `The install script exited with ${failure.exitCode}.`;
     case "verify":
-      return "A provider is not runnable in this build. The log shows which command failed.";
+      // Without an exit code the program passed and the server's check of the saved image failed.
+      return failure.exitCode === undefined && detail
+        ? detail
+        : "A provider is not runnable in this build. The log shows which command failed.";
     case "interrupted":
       return "The server restarted during this build.";
     case "timed-out":

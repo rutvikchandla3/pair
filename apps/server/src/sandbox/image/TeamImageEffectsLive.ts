@@ -71,6 +71,9 @@ import {
 
 const GENERATION = 1;
 const UNREACHABLE = "Pair Cloud could not reach the build machine's driver.";
+const NOT_IN_IMAGE =
+  "The saved image doesn't contain the build, so Pair Cloud deleted it. The Docker host kept the " +
+  "machine's changes out of the image; check its runtime against Set up Docker in the Pair Cloud guide.";
 
 /** Ends the program with this failure; anything else unexpected ends it as a lost machine. */
 class BuildStopped extends Schema.TaggedError<BuildStopped>()("BuildStopped", {
@@ -85,6 +88,7 @@ const isPermanent = Schema.is(
   Schema.Union([TeamImageError, ComputeDriverNotConfiguredError, ComputeDriverError]),
 );
 const decodeOutput = Schema.decodeUnknownEffect(Schema.fromJsonString(TeamImageBuildOutput));
+const decodeOutputOption = Schema.decodeUnknownOption(Schema.fromJsonString(TeamImageBuildOutput));
 
 interface Leak {
   readonly name: string;
@@ -172,26 +176,39 @@ const make = Effect.gen(function* () {
       generation: GENERATION,
       driverId: build.driverId,
     });
-    const created = yield* driver.create({
-      name: sandboxBackendName(installId, machine.sandboxId, GENERATION),
-      sandboxId: machine.sandboxId,
-      generation: GENERATION,
-      image: { type: "base" },
-      size: config?.size ?? "default",
-      tags: sandboxTags({
-        installId,
+    const created = yield* driver
+      .create({
+        purpose: "image-build",
+        name: sandboxBackendName(installId, machine.sandboxId, GENERATION),
         sandboxId: machine.sandboxId,
         generation: GENERATION,
-        driverId: build.driverId,
-      }),
-      bootstrap,
-    });
-    baseImages.set(imageBuildId, created.baseImage);
+        image: { type: "base" },
+        size: config?.size ?? "default",
+        tags: sandboxTags({
+          installId,
+          sandboxId: machine.sandboxId,
+          generation: GENERATION,
+          driverId: build.driverId,
+        }),
+        bootstrap,
+      })
+      .pipe(Effect.result);
+    if (created._tag === "Failure") {
+      // A host that can't run this build says how to fix it; retrying won't change it.
+      const { setupHint } = created.failure;
+      if (setupHint === undefined) return yield* created.failure;
+      return yield* failBuild(imageBuildId, "launch", {
+        phase: "launch",
+        detail: setupHint,
+        logTail: [],
+      });
+    }
+    baseImages.set(imageBuildId, created.success.baseImage);
     yield* dispatch({
       type: "team-image.build.launched",
       commandId: commandId("launched", imageBuildId),
       imageBuildId,
-      driverRef: created.driverRef,
+      driverRef: created.success.driverRef,
     });
   });
 
@@ -354,6 +371,7 @@ const make = Effect.gen(function* () {
     const home = (yield* host.info).homeDirectory;
     const buildDir = `${home}/.t3-build`;
     const program = teamImageBuildProgram({
+      buildId: build.id,
       repos,
       excludedEnvNames: [
         ...Object.keys(recipe.buildEnv),
@@ -537,6 +555,23 @@ const make = Effect.gen(function* () {
       machine.driverRef ?? (yield* backendName(machine.sandboxId)),
       `t3-team-image:${build.number}`,
     );
+    // The machine's own check can't see what the commit missed, so read the saved image itself.
+    const file = yield* driver.readImageFile(image.imageRef, TEAM_IMAGE_BUILD_OUTPUT);
+    const saved =
+      file === "whole-disk" ||
+      (file !== null &&
+        Option.exists(
+          decodeOutputOption(new TextDecoder().decode(file)),
+          (output) => output.buildId === build.id,
+        ));
+    if (!saved) {
+      yield* driver.deleteImage(image.imageRef);
+      return yield* failBuild(imageBuildId, "capture", {
+        phase: "verify",
+        detail: NOT_IN_IMAGE,
+        logTail: [],
+      });
+    }
     yield* dispatch({
       type: "team-image.build.captured",
       commandId: commandId("captured", imageBuildId),

@@ -40,9 +40,11 @@ under gVisor:
    Do this before you install the service, which keeps the groups it started with.
 3. Check that `docker info` works without `sudo` and lists `runsc` under its runtimes.
 
-Pair starts every machine with `runsc` whenever Docker lists it. Rootless Docker also works: set
-`DOCKER_HOST` to its socket in `service.env` below. To keep machines off the server's host entirely,
-point the driver at another host's Docker instead (see [Turn on Cloud](./cloud.md#turn-on-cloud)).
+Pair starts every session's machine with `runsc` whenever Docker lists it, and a team image build
+with Docker's default `runc` ([Build a team image](#build-a-team-image)). Rootless Docker also
+works: set `DOCKER_HOST` to its socket in `service.env` below. To keep machines off the server's
+host entirely, point the driver at another host's Docker instead (see
+[Turn on Cloud](./cloud.md#turn-on-cloud)).
 
 ## Install the release
 
@@ -215,10 +217,12 @@ secret. A build that leaves a secret's value in the image fails, and the failure
 ### Build, activate and roll back
 
 **Build** builds the saved recipe on the server's Docker driver and shows its log as it runs. You
-can leave the page. Only one build runs at a time, and it takes one machine slot, so with every
-slot in use Pair asks you to build when one frees up. When a build you started finishes, you get a
-notification on web and desktop unless Team image is open, and a push on your phone, which opens
-**Settings → Machines** where the active build and the last build's status are shown.
+can leave the page. Because an admin writes the install script, the build runs in an ordinary
+container (Docker's runc runtime), so what it installs can be saved; sessions still run in gVisor.
+Only one build runs at a time, and it takes one machine slot, so with every slot in use Pair asks
+you to build when one frees up. When a build you started finishes, you get a notification on web
+and desktop unless Team image is open, and a push on your phone, which opens **Settings →
+Machines** where the active build and the last build's status are shown.
 
 A build you start on the page becomes active as soon as it succeeds. To go back, choose **Activate**
 on an older succeeded build; new sessions use it from then on. **Restore recipe** loads a build's

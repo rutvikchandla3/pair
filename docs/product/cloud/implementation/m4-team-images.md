@@ -1490,6 +1490,56 @@ where a provider is set up. Before this row, a secret build variable could not b
   an error. Members learn only the recipe's names. No MCP tool sets, reads or lists values, and
   tool descriptions are unchanged. Surfaces: web and desktop; mobile has no recipe editor.
 
+### 4.25 `fix(server): team image builds capture what they installed on gVisor`
+
+**Critical.** A build on a gVisor server saves what its install script installed. Before this
+row, gVisor's rootfs overlay (`--overlay2=root:self`) kept every write inside the sandbox, so
+`docker commit` saved the base unchanged and the build still read as succeeded. **Keep succeeded
+builds** also saves now; before, the server dropped it.
+
+**Decision (lead): build machines run on runc, sessions stay on gVisor.** The install script is
+an admin's, not an agent's, and runs in an ordinary container so its result can be saved. Runc
+reaches the bind-mounted runner socket without `--host-uds=open`. A Docker host with no runc
+refuses the build at launch, before it makes anything.
+
+- **Needs:** 4.14, 4.17. **Unblocks:** the integrated pass's steps 1 and 2 on `pair-cloud-pass`.
+- **Files:**
+  - `apps/server/src/sandbox/compute/ComputeDriver.ts`: `create` takes an optional `purpose`
+    (`"session"` when absent, or `"image-build"`). New `readImageFile(imageRef, path)` returns the
+    file, null when the image lacks it, or `"whole-disk"` unread from a driver whose images are
+    whole-disk snapshots (M5's VM drivers; the fake driver).
+  - `DockerComputeDriver.ts`: an image-build machine gets runtime `runc`, so no `PAIR_DNS` and no
+    `--host-uds` check; with no runc in `docker info`'s runtimes, `create` fails with a
+    `setupHint` ("This Docker host can't save a team image: …"). `readImageFile` creates a
+    container from the image on network `none`, never starts it, reads the file with the archive
+    API, and removes it.
+  - `teamImageBuildProgram.ts`: `/etc/t3/build.json` carries the build's `buildId`.
+  - `TeamImageEffectsLive.ts`: `launch` creates with `purpose: "image-build"` and turns a driver's
+    `setupHint` into a launch failure in its words. `capture` reads the manifest back from the
+    saved image; a missing file or another build's id deletes the image and fails the build at
+    `verify`, "The saved image doesn't contain the build, so Pair Cloud deleted it. …".
+  - `packages/shared/src/serverSettings.ts`: `mergeSandboxPatch` keeps `teamImage`.
+  - `packages/client-runtime/src/teamImagePresentation.ts`: a `verify` failure with no exit code
+    shows the server's detail, so web and mobile show the new message.
+- **Types and services:** `ComputeDriverCreateInput.purpose`, `ComputeDriver.readImageFile`;
+  `TeamImageBuildOutput.buildId`.
+- **Commands and events, Migrations:** none. The verify failure is the existing `build.fail`.
+- **Tests:** `DockerComputeDriver.test.ts` (a build on runc beside runsc sessions with no host
+  sockets, without `PAIR_DNS`; a daemon without runc refused before anything is made; an image
+  file read without starting the reader, which is removed); `TeamImageEffectsLive.test.ts` (a
+  build creates an image-build machine; an image without this build's manifest is deleted and
+  fails at verify; a driver's hint fails the launch); `serverSettings.test.ts` (`keepSucceeded`
+  round trip and removal); `teamImagePresentation.test.ts` (verify rows). The Docker contract
+  suite adds an image-content case: a build machine on runc whose commit holds a file it wrote
+  and lacks the bootstrap file it deleted (`T3_TEST_DOCKER=1`).
+- **Verify:** the tests; the contract suite with `T3_TEST_DOCKER=1` on a Docker host; on the VM,
+  the pass's step 1 (the image has `psql`, the pre-cloned project under `/t3-sandbox/.image` and
+  `/etc/t3/build.json` with the build's id) and step 2 (a gVisor session boots from it, with a
+  copy and a fetch in the checkout trace).
+- **Reviewer checks:** sessions never get runc; only `purpose: "image-build"` does. The image
+  reader never starts and is removed on every path. A failed check deletes the image. Surfaces:
+  web, desktop and mobile read the failure through client-runtime; no RPC or contract change.
+
 ## M4 integrated pass
 
 One run of [G4](../10-delivery-plan.md#g4-after-m4-and-m5) step 1 after the last M4 wave, by the
@@ -1522,7 +1572,9 @@ Cloud. Subagents don't start their own servers.
    - the build succeeds and becomes **Active** without a click (a page build);
    - the row shows the base, the provider versions, one pre-cloned project and the size;
    - on the VM, `docker image ls t3-team-image` lists `:1`, and `docker image inspect` shows only
-     the build label and no secret in `Config.Env` (capture).
+     the build label and no secret in `Config.Env` (capture);
+   - `docker run --rm --entrypoint cat t3-team-image:1 /etc/t3/build.json` prints this build's id,
+     and the build's container ran on runc (4.25).
      Record the build time and image size.
 2. **A session boots from it (Mac, Credentials).** Start a cloud thread on `pair-cloud-test`.
    Passes when:

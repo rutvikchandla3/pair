@@ -72,6 +72,12 @@ export type FakeComputeCall =
       readonly reply: Deferred.Deferred<FakeSnapshot, ComputeDriverError>;
     }
   | {
+      readonly _tag: "readImageFile";
+      readonly imageRef: string;
+      readonly path: string;
+      readonly reply: Deferred.Deferred<Uint8Array | null | "whole-disk", ComputeDriverError>;
+    }
+  | {
       readonly _tag: "health";
       readonly reply: Deferred.Deferred<ComputeDriverHealth, ComputeDriverError>;
     };
@@ -145,6 +151,14 @@ export const make = Effect.fn("FakeComputeDriver.make")(function* (
     ),
     snapshot: Effect.fn("FakeComputeDriver.snapshot")((driverRef: string, name: string) =>
       ask<FakeSnapshot>((reply) => ({ _tag: "snapshot", driverRef, name, reply })),
+    ),
+    readImageFile: Effect.fn("FakeComputeDriver.readImageFile")((imageRef: string, path: string) =>
+      ask<Uint8Array | null | "whole-disk">((reply) => ({
+        _tag: "readImageFile",
+        imageRef,
+        path,
+        reply,
+      })),
     ),
     health: ask<ComputeDriverHealth>((reply) => ({ _tag: "health", reply })).pipe(
       Effect.withSpan("FakeComputeDriver.health"),
@@ -320,6 +334,9 @@ export const answerFromMemory: (
                 sizeBytes: null,
               })
             : yield* Deferred.fail(call.reply, failure("snapshot", "not-found"));
+        // Memory keeps every write, like a whole-disk snapshot.
+        case "readImageFile":
+          return yield* Deferred.succeed(call.reply, "whole-disk");
         case "status": {
           const sandbox = sandboxes.get(call.driverRef);
           const missing: BackendSandbox = {

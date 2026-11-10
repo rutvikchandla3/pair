@@ -39,6 +39,7 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
       "list",
       "deleteImage",
       "snapshot",
+      "readImageFile",
       "health",
     ]),
     reason: ComputeDriverErrorReason,
@@ -147,6 +148,8 @@ export interface ComputeDriverCreateInput {
   /** From `sandboxTags`. */
   readonly tags: Readonly<Record<string, string>>;
   readonly bootstrap: SandboxBootstrap;
+  /** Absent: a session. An image build's disk is captured by `snapshot`, which must see its writes. */
+  readonly purpose?: "session" | "image-build";
 }
 
 export interface ComputeDriverCreateResult {
@@ -193,6 +196,14 @@ export class ComputeDriver extends Context.Service<
       { readonly imageRef: string; readonly sizeBytes: number | null },
       ComputeDriverError
     >;
+    /**
+     * One file of an image, read without booting it; null when the image lacks it. A driver whose
+     * images are whole-disk snapshots, which hold every write, may answer "whole-disk" unread.
+     */
+    readonly readImageFile: (
+      imageRef: string,
+      path: string,
+    ) => Effect.Effect<Uint8Array | null | "whole-disk", ComputeDriverError>;
     /** What Settings → Cloud's Test button shows. */
     readonly health: Effect.Effect<ComputeDriverHealth, ComputeDriverError>;
   }

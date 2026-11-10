@@ -114,6 +114,18 @@ const runscReachesHostSockets = (runsc: unknown) => {
 /** gVisor's own network stack cannot reach Docker's embedded resolver on a user-defined network. */
 const GVISOR_RESOLVERS = "1.1.1.1 8.8.8.8";
 
+/**
+ * The runtime an image build runs on. gVisor keeps a sandbox's root filesystem writes in its own
+ * file inside the container, so `docker commit` of a runsc machine saves none of them; runc's
+ * writable layer is what a commit captures. Null when the daemon offers no runc.
+ */
+const imageBuildRuntime = (info: Pick<EngineInfo, "Runtimes">): "runc" | null =>
+  info.Runtimes == null || "runc" in info.Runtimes ? "runc" : null;
+
+const NO_IMAGE_BUILD_RUNTIME =
+  "This Docker host can't save a team image: it has no runc runtime, and a gVisor machine's " +
+  "changes never reach a saved image. An admin can restore Docker's default runc runtime.";
+
 /** gVisor whenever the daemon offers it. */
 export const isolationFromInfo = (
   info: Pick<EngineInfo, "Runtimes" | "SecurityOptions">,
@@ -668,10 +680,21 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     const { image, baseImage } = yield* bootImage(engine, input.image);
     const info = yield* engine.info;
     const isolation = isolationFromInfo(info);
+    const runtime = input.purpose === "image-build" ? imageBuildRuntime(info) : isolation.runtime;
+    if (runtime === null) {
+      return yield* new ComputeDriverError({
+        driverId,
+        operation: "create",
+        reason: "unsupported",
+        retryable: false,
+        setupHint: NO_IMAGE_BUILD_RUNTIME,
+      });
+    }
     const socketPath = input.bootstrap.serverUrl.startsWith("unix:")
       ? input.bootstrap.serverUrl.slice("unix:".length)
       : null;
-    if (local && socketPath !== null && !isolation.hostSockets) {
+    // runc reaches the bind-mounted socket as any process does; only runsc needs its flag.
+    if (local && socketPath !== null && runtime === "runsc" && !isolation.hostSockets) {
       return yield* new ComputeDriverError({
         driverId,
         operation: "create",
@@ -721,7 +744,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
         volume: input.name,
         network: network.Id,
         limits: limitsFor(input.size, info),
-        runtime: isolation.runtime,
+        runtime,
         local:
           local && socketPath !== null
             ? Option.some({
@@ -859,6 +882,30 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     yield* engine.removeImage(imageRef);
   }, run("deleteImage"));
 
+  const imageReadLock = yield* Semaphore.make(1);
+  const imageReader = `${networkName}-image-read`;
+
+  const readImageFile = Effect.fn("DockerComputeDriver.readImageFile")(function* (
+    imageRef: string,
+    path: string,
+  ) {
+    const { engine } = yield* engineFor("readImageFile");
+    return yield* imageReadLock.withPermits(1)(
+      Effect.gen(function* () {
+        // Removed by name first, so a reader a crash left behind cannot block this one.
+        yield* engine.removeContainer(imageReader);
+        // Never started, so no runtime sees it: the archive reads only the image's layers.
+        yield* engine.createContainer(imageReader, {
+          Image: imageRef,
+          Labels: { "pair.install": installId, "pair.role": "image-read" },
+          HostConfig: { NetworkMode: "none" },
+        });
+        const archive = yield* engine.getArchive(imageReader, path);
+        return archive === null ? null : readFirstTarFile(archive);
+      }).pipe(Effect.ensuring(engine.removeContainer(imageReader).pipe(Effect.ignore))),
+    );
+  }, run("readImageFile"));
+
   const snapshot = Effect.fn("DockerComputeDriver.snapshot")(function* (
     driverRef: string,
     name: string,
@@ -929,6 +976,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
     list,
     deleteImage,
     snapshot,
+    readImageFile,
     health,
   });
 });

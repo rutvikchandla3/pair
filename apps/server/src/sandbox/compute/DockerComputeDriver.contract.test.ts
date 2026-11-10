@@ -268,4 +268,48 @@ describe.runIf(process.env.T3_TEST_DOCKER === "1")("DockerComputeDriver on a rea
       });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  // Under gVisor's rootfs overlay, a commit saves none of what the machine changed inside itself.
+  it.live("an image build's commit holds what its machine changed inside itself", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProbeServer;
+      const installId = EnvironmentId.make(NodeCrypto.randomUUID());
+      const driver = yield* makeContractDriver(installId);
+      const sandboxId = SandboxId.make(`sbx_${NodeCrypto.randomBytes(10).toString("hex")}`);
+      const machine = sandboxBackendName(installId, sandboxId, 1);
+      const name = `t3-team-image-contract:${installId.slice(0, 8)}`;
+      yield* Effect.addFinalizer(() =>
+        driver.deleteImage(name).pipe(Effect.andThen(driver.destroy(machine)), Effect.ignore),
+      );
+      const { driverRef } = yield* driver.create({
+        name: machine,
+        sandboxId,
+        generation: 1,
+        image: { type: "base" },
+        size: "small",
+        tags: sandboxTags({ installId, sandboxId, generation: 1, driverId: driver.driverId }),
+        bootstrap: {
+          sandboxId,
+          generation: 1,
+          runnerBuildId: "contract",
+          serverUrl: probe.serverUrl,
+          enrollmentSecret: Redacted.make("enroll"),
+        },
+        purpose: "image-build",
+      });
+      const container = yield* testEngine.pipe(
+        Effect.flatMap((engine) => engine.inspectContainer(driverRef)),
+        Effect.scoped,
+      );
+      assert.strictEqual(container?.HostConfig?.Runtime, "runc");
+      // The stand-in deletes its bootstrap file, then asks for probes and posts their results.
+      yield* Deferred.succeed(probe.targets, []);
+      yield* Deferred.await(probe.results);
+
+      const { imageRef } = yield* driver.snapshot(driverRef, name);
+      const generation = yield* driver.readImageFile(imageRef, "/etc/pair-runner/generation");
+      assert.strictEqual(new TextDecoder().decode(generation as Uint8Array), "1\n");
+      assert.isNull(yield* driver.readImageFile(imageRef, "/etc/pair-runner/bootstrap.env"));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
