@@ -68,7 +68,8 @@ is the maintainer's request to make a cloud thread private to its owner until sh
 members. It holds the UX, the access model, where the server enforces it and rows 6.1 to 6.9. It
 reverses "everyone sees every thread" on Pair Cloud. The maintainer said to build it (2026-11-10),
 with the doc's open questions answered as proposed. Rows have no per-row spec page: the lead's
-worker prompt is each row's scope. Landed: 6.1 (5bc3e5646).
+worker prompt is each row's scope. Landed: 6.1 (5bc3e5646), 6.5 (d9178ebd5), 6.2 (fb41bbbd5),
+6.6 (31f9befd8), 6.3 (0edf33475, dace0d081, edc976924) and 6.4 (4cbcc7c05, 45269cd73).
 
 **M7 cloud browser, specs written 2026-11-10:** [m7-cloud-browser.md](./m7-cloud-browser.md), rows
 7.1 to 7.7. The maintainer asked for the Browser tab on cloud sessions and chose Chrome on the
@@ -2627,6 +2628,94 @@ Built without 5.8's proxy and CA fields and without 5.13's metrics.
   `actorId` past the owner-or-admin check (6.3 fixes it, test first).
 - Also fixed: `reconcileV2PreviewMigration.test.ts` lacked migration 96. Still failing on
   `feat/pair` and untouched: `mcp/toolkits/core.test.ts` (its fixture sets `lastRunThreadId: null`).
+
+## 6.5 share a cloud thread, web (landed d9178ebd5)
+
+- client-runtime: `sandboxAccessSummary`, `SHARE_THREAD_OWNER_ONLY_REASON`, `threadAccessAtom`,
+  `shareThreadCommand` (true only for the owner of the machine's owner thread), `setSandboxAccess`
+  (sends the whole list each time); a `ThreadAccessRevoked` failure marks the thread deleted with
+  `accessRevoked: true`. Contracts: the `thread.share` keybinding, unbound.
+- Web: `ShareThreadDialog`, the header chip and Share button, `ThreadAccessNotice`, and entries in
+  the thread menu, sidebar menu, command palette and Keybindings.
+- Deviations: menu items have no tooltip, so a non-owner's reads "Share… (owner only)"; the team
+  name is the environment's label; the Team shelf header shows in every team-mode environment so
+  its empty line can show; the private-or-gone notice has a Back to threads button and shows only
+  on a team Pair Cloud server.
+- Owed: the `test-t3-app` pass; `Sidebar`, `CommandPalette` and `ChatView` browser tests were
+  touched and not run on this Mac.
+
+## 6.2 hide cloud threads from members without access (landed fb41bbbd5)
+
+- `ThreadAccess` now indexes each thread's machine and owner on cloud-only servers and owns
+  `EventSink`'s publish lane: a database read takes the lane once (`caughtUp`) before checking, so
+  every commit it saw is in the index. That closes 6.1's timing gap; a test fails without it.
+- `threadAllowsSql` is the rule in SQL, used by the older-settled pages and thread search.
+- `MemberThreadView`: the viewer's optional `access`, `visibleToViewer`, `assertViewerThread`,
+  `titlesVisibleToViewer`. `ShellStream`: the snapshot filters before it trims and counts;
+  `mayShowShellEvent` is the per-event check, by map lookup. The stored `sandbox.access-changed`
+  re-sends the machine's threads as `thread.updated` or `thread.removed`; a member who never had
+  access gets nothing.
+- Contracts: `ThreadAccessRevoked` on the thread subscription's error union.
+- Guarded: the shell subscription, `getThreadTitles`, `getOlderSettledThreads`,
+  `getWorktreeThreadIds`, archive, families, thread search, `getThreadProjection`, the thread
+  subscription, and `http.ts`'s five reads (404 exactly as a missing thread).
+- A refused subscription that resumes from sequence 0 behaves as a missing thread does there: an
+  open, empty stream.
+
+## 6.6 share a cloud thread, mobile (landed 31f9befd8)
+
+- Web's dialog logic moved to `client-runtime/state/shareThread.ts` with the shared strings.
+- `ShareThreadSheet` (route `ThreadShare`, the picker as a second view), Share in the row menu and
+  the header Team menu, `ThreadAccessChip`, both notices, and the Team shelf's empty line.
+- The private notice shows only when a connected team Pair Cloud server returns a deleted thread,
+  so offline is never reported as private.
+- Owed: the `test-t3-mobile` pass. Nothing was run on a phone or simulator.
+
+## 6.3 guard every thread, machine and path RPC (landed 0edf33475, dace0d081, edc976924)
+
+- **A gap from before M6, fixed test first (0edf33475):** `sandbox.sleep` and `sandbox.discard`
+  were not stamped with the session's actor, so a client could forge `actorId` past "Only the
+  owner or an admin".
+- `packages/contracts/src/rpcThreadTargets.ts`: 77 methods in `RPC_THREAD_TARGETS` and 13 in
+  `RPC_THREAD_TARGET_EXEMPT`, all 90 the schema walk matches. The middleware is `RpcThreadAccess`;
+  the server side is `auth/RpcThreadAccessGuard.ts`. Unknown threads, invalid ids and paths under
+  `/t3-sandbox` that name no machine are refused; refusals log `access_denied`.
+- Every target is a map lookup against 6.2's index (`resolveThreadTarget` waits for `caughtUp` only
+  for an id the index does not know). The guard follows `ThreadAccess.enforced`, so writes refuse
+  whatever reads hide, on a solo cloud-only server too.
+- `ThreadMessageIntake.assertCommandAccess` checks each command kind's threads, paths and machine.
+- Streams that end on revoke: `terminal.attach`, `terminal.observe`, `subscribeVcsStatus`,
+  `subscribeWorktreeSetup`, `git.runStackedAction`, `searchThreadStream`,
+  `subscribeCommandOutput`. HTTP: the three continue-locally routes and the preview stream.
+- **Two leaks found and fixed test first (edc976924):** `subscribeTerminalMetadata` and
+  `subscribePreviewEvents` sent every thread's items to every member; `thread.create` and
+  `launchThread` with another member's thread id answered "already exists".
+- Deviation: an RPC refusal is `EnvironmentResourceNotFoundError` (`thread_not_found`), since a
+  middleware adds one error to every method; commands fail with exactly a missing thread's error.
+- `ThreadAccess.makeTest` and `layerTest` are the shared test helper.
+- `cli/invocation.test.ts` fails two npm-global cases on this Mac, on `feat/pair` too.
+
+## 6.4 agents, push, presence and the rest (landed 4cbcc7c05, 45269cd73)
+
+- **Reach rule:** `sessionReaches` and `agentReaches` in `ThreadAccess`; MCP passes it as the
+  scope's `reach`. A child inherits its parent's access through `inheritedAccess`.
+- **Fails closed:** a cloud-only server built without `ThreadAccess` refuses to start.
+- 6.2's gaps: native subagent rows are re-sent on a change; an owner change removes the thread from
+  the old owner; `threadAllowsSql` refuses a removed member. Archived rows never travel in the
+  shell stream, so that one needed nothing.
+- Push recipients go through `allowsThread`; each member added, except the owner, gets "Shared
+  with you". Presence takes a `mayOpen` filter. Quiet lines read "Rutvik shared this thread with
+  Ada", with no "You" (no client swaps it in).
+- Pull requests leave out a linked thread the reader cannot open, and a review guide uses only
+  machines the requester can reach. Scheduled tasks keep the run and drop a last run's thread the
+  reader cannot open. The storage report keeps counts and drops ids and titles.
+- **Not as the design said:** usage has no per-thread rows, and `sandbox.overview` sends only
+  counts, so neither needed a filter. The per-machine rows of 11 §2 "Admins" do not exist yet.
+- The client-runtime fix (4cbcc7c05): a shell item re-sent at the sequence last applied was
+  dropped, which lost the threads of an access change.
+- Left: a thread with no machine and no owner, when assigned, leaves a stale row for other members
+  until reload; an open archive page keeps a row just lost; children made through
+  `peer/RemoteDelegation.ts` do not inherit access.
 
 ## Open follow-ups and risks
 
