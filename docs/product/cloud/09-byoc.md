@@ -3,6 +3,12 @@
 Status: M0 and M1 landed; the rest is a proposal, rewritten 2026-11-08 for local-first Pair Cloud.
 Read the [plan](./README.md) first; this doc follows its decisions, milestones and words.
 
+Order changed on 2026-11-10: BYOC launches on Google Cloud first, then AWS. This doc was written
+AWS-first. Its summary, tables and work breakdown carry the new order; sections 4 to 6 still draw
+AWS in full and Google Cloud as a table of equivalents.
+[m5-byoc.md](./implementation/m5-byoc.md) has the Google Cloud reference architecture, the kits'
+two ingress modes, and where the code differs from this doc.
+
 Audience: maintainers deciding what the BYOC offering is, and the engineers building M5. Doc 04
 owns the compute driver interface and how each vendor's API maps onto it. This doc owns
 deployment, networking, operations and the offering itself.
@@ -10,15 +16,16 @@ deployment, networking, operations and the offering itself.
 ## Summary
 
 - **BYOC puts Pair Cloud and its machines in the customer's account.** The team's Pair Cloud
-  server, in cloud-only mode, and the EC2 instances its cloud sessions run on live in the
-  customer's AWS account and VPC. Members keep working locally in the Pair Mac app, whose local
+  server, in cloud-only mode, and the VMs its cloud sessions run on live in the
+  customer's own cloud account and VPC: Google Cloud first, then AWS. Members keep working locally in the Pair Mac app, whose local
   server stays on their own machine. Only cloud sessions run in the account.
 - **Pair is self-hosted already.** From M2 a team runs its one Pair Cloud server on a VM it
   controls, with Docker machines. A team that puts that VM in its own cloud keeps transcripts, code
   and credentials there. M5 adds machines as VMs of their own, a deployment kit that makes the whole
   thing a `terraform apply`, and the network hardening around it.
-- **M5 is BYOC on AWS, then GCP.** The first driver is a plain-VM driver on EC2, the second the same
-  driver on GCE (decision 8). Each machine is one VM from an AMI built in the customer's account,
+- **M5 is BYOC on Google Cloud, then AWS.** The first driver is a plain-VM driver on GCE, the second
+  the same driver on EC2 (decision 8; order set 2026-11-10). Each machine is one VM from an image
+  built in the customer's account,
   shared by its cloud thread's side chats and forks (decision 6). Stop keeps the disk. Kubernetes
   waits for a customer who asks.
 - **Private by default** (D10). Members reach Pair Cloud on the team's own domain over VPN or
@@ -44,12 +51,12 @@ so does the code those Macs already hold. A team that wants its laptops locked d
 
 ### Offerings
 
-| Offering                       | Pair Cloud server                                                                    | Machines                                                  | Model it copies                                                             | Milestone            |
-| ------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------- |
-| **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST` | Coder, E2B Embed                                                            | M2                   |
-| **B. BYOC**                    | The customer's AWS VPC, installed by the kit; GCP later                              | EC2 instances in private subnets of that VPC; GCE on GCP  | Coder, self-managed Buildkite                                               | M5                   |
-| **C. Hosted machines**         | A VM the team runs                                                                   | A sandbox vendor's cloud                                  | Conductor on Vercel                                                         | Later, by demand     |
-| Pair-hosted control plane      | Pair                                                                                 | The customer's account; runners dial out to Pair          | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
+| Offering                       | Pair Cloud server                                                                    | Machines                                                    | Model it copies                                                             | Milestone            |
+| ------------------------------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------- |
+| **A. Pair Cloud on a team VM** | A VM the team runs, in any cloud or on its own hardware (Pair's dogfood is a GCE VM) | Docker on that VM, or a Docker host through `DOCKER_HOST`   | Coder, E2B Embed                                                            | M2                   |
+| **B. BYOC**                    | The customer's VPC, installed by the kit: Google Cloud first, then AWS               | VMs in private subnets of that VPC: GCE instances, then EC2 | Coder, self-managed Buildkite                                               | M5                   |
+| **C. Hosted machines**         | A VM the team runs                                                                   | A sandbox vendor's cloud                                    | Conductor on Vercel                                                         | Later, by demand     |
+| Pair-hosted control plane      | Pair                                                                                 | The customer's account; runners dial out to Pair            | Ona runners, E2B BYOC, GitHub Actions self-hosted runners, Buildkite hybrid | Rejected (section 7) |
 
 A and B run the same cloud-only server, launch gate and lifecycle. They differ in where machines
 run and how much of the network the kit sets up. A server holds several configured driver instances
@@ -63,8 +70,8 @@ This replaces the BYOC tiers table in [conductor-cloud.md](../conductor-cloud.md
 | ------ | -------------------- | ---------------------------------------------- | -------------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
 | 0      | None                 | Members' own Macs, through their local servers | Each member's own machine        | Local work, today and after                                 | Shipped                                      |
 | 1      | A team VM            | Docker driver on that VM                       | Container                        | Teams that want shared cloud sessions with no new vendor    | M2 (M1 built the machinery on a team server) |
-| 2a     | Customer AWS account | EC2 driver (offering B)                        | Full VM                          | Teams whose code and credentials must stay in their account | M5                                           |
-| 2b     | Customer GCP project | GCE driver                                     | Full VM                          | The same, on GCP                                            | M5, after AWS                                |
+| 2a     | Customer AWS account | EC2 driver (offering B)                        | Full VM                          | Teams whose code and credentials must stay in their account | M5, after GCP                                |
+| 2b     | Customer GCP project | GCE driver                                     | Full VM                          | The same, on GCP                                            | M5, first                                    |
 | 3      | Customer cloud       | Kubernetes driver                              | gVisor or Kata                   | Enterprises with a platform team                            | Later, by demand                             |
 | Hosted | A team VM            | Hosted vendor (offering C)                     | Vendor VM                        | Fastest Conductor-like setup                                | Later, by demand                             |
 | Embed  | Customer cloud       | E2B Embed node, through an E2B driver          | Firecracker microVM              | Small teams that want fast boots in their account           | Later, only with an E2B driver               |
@@ -186,11 +193,11 @@ hosted vendors are Later, by demand.
 
 ### Recommendation
 
-1. **First M5 driver: `aws-ec2`, a plain-VM driver.** Hardware isolation, Docker works inside,
+1. **An M5 driver: `aws-ec2`, a plain-VM driver** (second to land since 2026-11-10). Hardware isolation, Docker works inside,
    no cluster, every operation maps to one API call, and the customer already knows how to audit
    and pay for EC2. It fits a five-person team and an enterprise alike.
-2. **Second M5 driver: `gce`,** the same driver shape on Compute Engine. It completes the "AWS, then
-   GCP" promise of M5 for little extra code, since both drivers share their sleep, wake and
+2. **The other M5 driver, and the first to land: `gce`,** the same driver shape on Compute Engine.
+   It costs little extra code, since both drivers share their sleep, wake and
    orphan-cleanup logic through doc 04's interface.
 3. **E2B Embed only with an E2B driver.** If a hosted E2B driver ever ships (Later), pointing it at
    an Embed node is configuration, tested once. Vercel Sandbox runs only in Vercel's cloud, so it
@@ -508,7 +515,7 @@ What Pair ships for M5. It lives in a new `infra/sandbox/` folder (decision 14),
 | Artifact                             | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Milestone                |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | `infra/sandbox/aws` Terraform module | A dedicated VPC (or an existing one by id), machine subnets with their NACLs, the Pair Cloud server's ASG of one with its data volume and the hourly DLM policy, the internal ALB with its member and runner listeners, the public client listener (off by default), security groups, the KMS key, the server's IAM role, the machine launch template, an optional Network Firewall. Hands the server the driver settings it created and outputs the server's URL | M5                       |
-| `infra/sandbox/gcp` Terraform module | The same on GCP                                                                                                                                                                                                                                                                                                                                                                                                                                                   | M5, after AWS            |
+| `infra/sandbox/gcp` Terraform module | The same on GCP                                                                                                                                                                                                                                                                                                                                                                                                                                                   | M5, first                |
 | Server bootstrap                     | Cloud-init that installs the pinned Pair Cloud release (decision 15), writes `service.env` (host, port, OTLP endpoints, `T3CODE_RELEASE_BASE_URL`), turns on cloud-only mode, writes `/etc/t3code/policy.json` with `connect: false`, `telemetry: false` and, once 4.9 lands, `cloudOnly`, and runs `t3 service install`                                                                                                                                          | M5                       |
 | Base AMI                             | Built in the customer's account at driver setup (next section). No machine boots from stock Ubuntu                                                                                                                                                                                                                                                                                                                                                                | M5                       |
 | Image build pipeline                 | No separate pipeline: a build is a machine the driver launches, runs the recipe in, and saves with `CreateImage` (doc 05 owns the recipe)                                                                                                                                                                                                                                                                                                                         | M4 pipeline, M5 for AMIs |
@@ -643,7 +650,9 @@ customer's VPC to them. It is rejected: Pair Cloud runs in an account the team c
 
 ### M5 pull requests
 
-Ids are those of [m2-m5.md](./implementation/m2-m5.md). AWS first:
+Ids are those of [m2-m5.md](./implementation/m2-m5.md). The tables keep their first order, AWS then
+GCP. Since 2026-11-10 the GCP rows land first; [m5-byoc.md](./implementation/m5-byoc.md) has the
+build order and the full specs.
 
 | #   | Id             | Pull request                                                                                                                                                                                                                                                                                              | Depends on                                      |
 | --- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -662,7 +671,7 @@ Ids are those of [m2-m5.md](./implementation/m2-m5.md). AWS first:
 | 13  | 5.17           | `limits.cloud.allowedDrivers`                                                                                                                                                                                                                                                                             | 5.20                                            |
 | 14  | 5.18           | User guide: "Run Pair Cloud in your own AWS account": the ingress choices, restore and upgrades                                                                                                                                                                                                           | 5.10                                            |
 
-Then GCP:
+Google Cloud, first to land:
 
 | #   | Id   | Pull request                                                                  | Depends on           |
 | --- | ---- | ----------------------------------------------------------------------------- | -------------------- |

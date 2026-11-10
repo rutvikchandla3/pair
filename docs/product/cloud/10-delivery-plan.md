@@ -19,7 +19,7 @@ always-on, cloud-only Pair Cloud server with Docker machines, members keep worki
 Mac app, and clients route a Cloud launch on a local project to Pair Cloud, from a branch already
 pushed to GitHub. Machines sleep when idle and wake on demand. M3 moves sessions between a member's
 Mac and Pair Cloud and links local agents to it. M4 gives admins the team image. M5 runs Pair Cloud
-and its machines in the customer's AWS account, then GCP. Everything else waits for a team that
+and its machines in the customer's own cloud account: Google Cloud first, then AWS. Everything else waits for a team that
 asks.
 
 Inside M2, four tracks run side by side once cloud-only mode (2.22) and the launch gate (2.23) land:
@@ -42,7 +42,7 @@ review and verification included. They exclude waiting on vendors or terms. Trea
 | M2 Pair Cloud on Docker (first release) | One always-on, cloud-only Pair Cloud server per team. Members work locally and start cloud sessions there.  | An admin installs a versioned Pair Cloud release on a VM and adds Docker and the GitHub App. A local project whose origin matches a Pair Cloud project offers **Cloud** in the Mac app, and a cloud session starts from a pushed branch while local work is untouched. A teammate joins and prompts from web, desktop or mobile. The phone drives local work through the Mac and starts a cloud session on Pair Cloud. Idle machines sleep and wake on send. Scheduled tasks and webhooks launch cloud sessions. One server drives 30 machines in the load test. | L, 14–18 weeks | Outside teams on Docker. M3 and M4. |
 | M3 Continue in cloud                    | Sessions move between a member's Mac and Pair Cloud, and local agents reach Pair Cloud.                     | **Continue in cloud** moves a local thread with unpushed commits, uncommitted files and its conversation. **Continue locally** brings a session back, and a non-owner gets a copy. A local agent's `delegate_task` starts a cloud session.                                                                                                                                                                                                                                                                                                                       | M, 8–10 weeks  | ICs who share before pushing        |
 | M4 Team images                          | Admins own the machine.                                                                                     | An admin builds, activates and rolls back a team image, and an agent's build waits for **Activate**.                                                                                                                                                                                                                                                                                                                                                                                                                                                             | L, 10–12 weeks | AMI builds in M5                    |
-| M5 BYOC on AWS                          | Pair Cloud and its machines run in the customer's AWS account.                                              | `terraform apply` in a fresh AWS account gives a Pair Cloud server whose cloud sessions run on EC2, reached over VPN or Tailscale, in under two hours. GCP follows.                                                                                                                                                                                                                                                                                                                                                                                              | L, 9–12 weeks  | BYOC customers                      |
+| M5 BYOC                                 | Pair Cloud and its machines run in the customer's own cloud account, Google Cloud first.                    | `terraform apply` in a fresh Google Cloud project gives a Pair Cloud server whose cloud sessions run on Compute Engine VMs, reached over VPN or Tailscale, in under two hours. AWS follows with the same kit shape.                                                                                                                                                                                                                                                                                                                                              | L, 9–12 weeks  | BYOC customers                      |
 | Later, by demand                        | Unscheduled rows at the end of section 2.                                                                   | Built when a team asks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —              | —                                   |
 
 ## 2. Pull request plan
@@ -217,46 +217,58 @@ The full specs and their reasoning are in
 also needs 4.15, 4.20 needs 4.18, 4.21 needs 4.16, and 4.22 needs 4.18, so 4.18 lands before 4.19
 in wave 5.
 
-### M5 BYOC on AWS
+### M5 BYOC
 
-EC2 waits for team images, because the driver builds its machine images through M4's pipeline. M2
+Google Cloud launches first and AWS follows (the maintainer's answer of 2026-11-10). The tables
+below keep the order the rows were numbered in, AWS first; the waves, and the full specs in
+[m5-byoc.md](./implementation/m5-byoc.md), put the gce driver, the GCP kit and the GCP Secret
+Manager provider on the critical path. The VM drivers wait for team images, because they capture
+machine images through M4's pipeline. M2
 lands what the driver needs first: cloud-only mode and the gate, idle sleep and retention,
 `retryAfterMs`, restore mode, the release with the runner, and member-safe driver config. M5 PRs
 merge after G3 passes, beside M4's.
 
-| #              | Title                                                                                                                                                                                | Owner                                  | Needs                      | Parallel      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- | -------------------------- | ------------- |
-| 5.2            | `feat(secrets): add an AWS Secrets Manager secret provider`                                                                                                                          | 09 §9 #1                               | —                          | Yes, any time |
-| 5.4            | `feat(server): add the aws-ec2 compute driver` (refuses a server that isn't cloud-only)                                                                                              | 09 §3, §9 #2; 04 §10 #18               | 1.4, 2.1, 2.4, 2.22        | Critical      |
-| 5.5            | `feat(contracts): add aws-ec2 driver settings` (every key past `kind`, `id`, `label` and `size` optional, for member redaction)                                                      | 09 §9 #3; 08 §9                        | 5.4                        | Critical      |
-| 5.6            | `feat(server,web): check the EC2 and runner network paths and show driver health`                                                                                                    | 09 §9 #4; 08 §9                        | 5.4                        | Yes           |
-| 5.7            | `feat(server): build team images as AMIs in the customer's account` (provision on stock Ubuntu at driver setup; a CI job runs `provision.sh` on a plain Ubuntu VM each release; D13) | 09 §6, §9 #5; 05 §9                    | 4.14, 5.4                  | Critical      |
-| 5.8            | `feat(server): trust private CAs and egress proxies in the runner`                                                                                                                   | 03 §11 #13; 09 §9 #6                   | M1                         | Yes           |
-| 5.9            | `feat(infra): add the AWS deployment kit` (VPC, server, internal ALB, the optional public client listener, hourly DLM snapshots, KMS)                                                | 09 §6, §9 #9                           | 2.36, 5.5, 5.7, 5.19, 5.20 | Critical      |
-| 5.10           | `ci: apply the AWS kit and run a cloud session in a test account` (a terminal command and one cheapest-model turn; a restore from a snapshot in restore mode)                        | 09 §9 #10                              | 5.9                        | Critical      |
-| 5.13           | `feat(server): export compute driver metrics`                                                                                                                                        | 09 §9 #11                              | 5.4                        | Yes           |
-| 5.14           | `perf(server): measure mirror sync, seeds and rebuild on the AWS kit's network`                                                                                                      | 07 §10 #25; 09 §9 #12                  | 5.10                       | Yes           |
-| 5.17           | `feat(contracts): restrict drivers with limits.cloud.allowedDrivers`                                                                                                                 | 09 §9 #13; 08 §9                       | 5.20                       | Yes           |
-| 5.18           | `docs: run Pair Cloud in your own AWS account` (GCP joins with 5.12)                                                                                                                 | 09 §9 #14                              | 5.10                       | Last          |
-| 5.19 (was 4.8) | `feat(server): serve /runner/* and sandbox forwards from internal-only listeners`                                                                                                    | 03 §3.2, §8, §11 #12; 06 §11; 09 §9 #7 | 2.22, 2.33                 | Critical      |
-| 5.20 (was 4.9) | `feat(contracts): add limits.cloud and cloudOnly to managed policy`                                                                                                                  | 09 §9 #8; 08 §9; 01 J10                | 2.22                       | Yes           |
+| #              | Title                                                                                                                                                                                                                     | Owner                                  | Needs                      | Parallel      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------- | ------------- |
+| 5.2            | `feat(secrets): add an AWS Secrets Manager secret provider`                                                                                                                                                               | 09 §9 #1                               | —                          | Yes, any time |
+| 5.4            | `feat(server): add the aws-ec2 compute driver` (refuses a server that isn't cloud-only)                                                                                                                                   | 09 §3, §9 #2; 04 §10 #18               | 1.4, 2.1, 2.4, 2.22        | Critical      |
+| 5.5            | `feat(contracts,server,web): add VM driver settings` (`gce` first, then `aws-ec2`; every key past `kind`, `id`, `label` and `size` optional, for member redaction)                                                        | 09 §9 #3; 08 §9                        | 1.36, 2.25                 | Critical      |
+| 5.6            | `feat(server,web): check the driver's cloud and runner paths and show health`                                                                                                                                             | 09 §9 #4; 08 §9                        | 5.4                        | Yes           |
+| 5.7            | `feat(server,infra): build machine images in the customer's account` (GCE custom images first, then AMIs; provision on stock Ubuntu at driver setup; a CI job runs `provision.sh` on a plain Ubuntu VM each release; D13) | 09 §6, §9 #5; 05 §9                    | 4.14, 5.4                  | Critical      |
+| 5.8            | `feat(server): trust private CAs and egress proxies in the runner`                                                                                                                                                        | 03 §11 #13; 09 §9 #6                   | M1                         | Yes           |
+| 5.9            | `feat(infra): add the AWS deployment kit` (VPC, server, internal ALB, the optional public client listener, hourly DLM snapshots, KMS)                                                                                     | 09 §6, §9 #9                           | 2.36, 5.5, 5.7, 5.19, 5.20 | Critical      |
+| 5.10           | `ci: apply the AWS kit and run a cloud session in a test account` (a terminal command and one cheapest-model turn; a restore from a snapshot in restore mode)                                                             | 09 §9 #10                              | 5.9                        | Critical      |
+| 5.13           | `feat(server): export compute driver metrics`                                                                                                                                                                             | 09 §9 #11                              | 5.4                        | Yes           |
+| 5.14           | `perf(server): measure mirror sync, seeds and rebuild on each kit's network`                                                                                                                                              | 07 §10 #25; 09 §9 #12                  | 5.10                       | Yes           |
+| 5.17           | `feat(contracts): restrict drivers with limits.cloud.allowedDrivers`                                                                                                                                                      | 09 §9 #13; 08 §9                       | 5.20                       | Yes           |
+| 5.18           | `docs: run Pair Cloud in your own cloud account` (Google Cloud first; the AWS section follows 5.10)                                                                                                                       | 09 §9 #14                              | 5.10                       | Last          |
+| 5.19 (was 4.8) | `feat(server): serve /runner/* and sandbox forwards from internal-only listeners`                                                                                                                                         | 03 §3.2, §8, §11 #12; 06 §11; 09 §9 #7 | 2.22, 2.33                 | Critical      |
+| 5.20 (was 4.9) | `feat(contracts): add limits.cloud and cloudOnly to managed policy`                                                                                                                                                       | 09 §9 #8; 08 §9; 01 J10                | 2.22                       | Yes           |
 
-Then GCP:
+Google Cloud, first to land:
 
-| #    | Title                                                     | Owner                 | Needs | Parallel      |
-| ---- | --------------------------------------------------------- | --------------------- | ----- | ------------- |
-| 5.3  | `feat(secrets): add a GCP Secret Manager secret provider` | 09 §9 #15             | —     | Yes, any time |
-| 5.11 | `feat(server): add the gce compute driver`                | 09 §9 #16; 04 §10 #18 | 5.4   | Yes           |
-| 5.12 | `feat(infra): add the GCP deployment kit and its CI job`  | 09 §9 #17             | 5.11  | Yes           |
+| #    | Title                                                     | Owner                 | Needs          | Parallel      |
+| ---- | --------------------------------------------------------- | --------------------- | -------------- | ------------- |
+| 5.3  | `feat(secrets): add a GCP Secret Manager secret provider` | 09 §9 #15             | —              | Yes, any time |
+| 5.11 | `feat(server): add the gce compute driver`                | 09 §9 #16; 04 §10 #18 | 5.5, 5.8, 5.19 | Yes           |
+| 5.12 | `feat(infra): add the GCP deployment kit and its CI job`  | 09 §9 #17             | 5.11           | Yes           |
 
-| Wave | PRs                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------- |
-| 1    | 5.2 and 5.3 secret providers, 5.4 aws-ec2 driver, 5.8 CA and proxy, 5.19 internal listeners, 5.20 `limits.cloud` |
-| 2    | 5.5 driver settings, 5.6 health, 5.11 gce driver, 5.13 metrics, 5.17 `allowedDrivers`                            |
-| 3    | 5.7 AMI builds (once 4.14 is in), 5.12 GCP kit                                                                   |
-| 4    | 5.9 AWS kit                                                                                                      |
-| 5    | 5.10 kit CI                                                                                                      |
-| 6    | 5.14 network measurements, 5.18 BYOC guide, then [G4](#g4-after-m4-and-m5)                                       |
+| Wave | PRs                                                                                                |
+| ---- | -------------------------------------------------------------------------------------------------- |
+| 1    | 5.5 gce driver settings, then 5.19 internal runner listener, 5.8 CA and proxy, 5.20 `limits.cloud` |
+| 2    | 5.13 metrics, 5.11 gce driver, 5.3 GCP Secret Manager, 5.17 `allowedDrivers`                       |
+| 3    | 5.7 machine images on GCE (4.14 is in), then 5.6 health                                            |
+| 4    | 5.12 GCP kit and its CI                                                                            |
+| 5    | 5.14 network measurements, 5.18 BYOC guide, then [G4](#g4-after-m4-and-m5) Part 1 on Google Cloud  |
+| 6    | 5.2 AWS Secrets Manager, 5.5 aws-ec2 settings, then 5.4 aws-ec2 driver                             |
+| 7    | 5.7 AMIs                                                                                           |
+| 8    | 5.9 AWS kit                                                                                        |
+| 9    | 5.10 AWS kit CI, the guide's AWS section, then G4 Part 2 on AWS                                    |
+
+The full specs and their reasoning are in [m5-byoc.md](./implementation/m5-byoc.md). They change
+Needs the tables leave out: settings land before drivers (5.5 before 5.11 and 5.4), the gce driver
+needs the runner listener (5.19) and the CA and proxy fields (5.8), and 5.5, 5.7 and 5.18 each
+have a Google Cloud PR and an AWS PR under one number.
 
 ### Later, by demand
 
@@ -336,15 +348,16 @@ flowchart LR
   subgraph M4["M4 Team images"]
     I11["4.11 outbox aggregate key"] ==> I13["4.13 image aggregate"] ==> I14["4.14 Docker builds"] ==> I17["4.17 boot from build"]
   end
-  subgraph M5["M5 BYOC on AWS"]
-    E4["5.4 aws-ec2 driver"] ==> E7["5.7 AMI builds"] ==> E9["5.9 AWS kit"] ==> E10["5.10 kit CI"]
-    E19["5.19 internal listeners"] --> E9
+  subgraph M5["M5 BYOC"]
+    E5["5.5 driver settings"] ==> E19["5.19 runner listener"] ==> E11["5.11 gce driver"] ==> E7["5.7 machine images"] ==> E12["5.12 GCP kit"]
+    E12 --> E4["5.4 aws-ec2 driver"] --> E9["5.9 AWS kit"] --> E10["5.10 AWS kit CI"]
   end
   Q3 ==> I11
-  Q3 --> E4 & E19
+  Q3 --> E5
   I14 ==> E7
   I17 --> Q4(["G4"])
-  E10 ==> Q4
+  E12 ==> Q4
+  E10 --> Q4
 ```
 
 What can overlap:
@@ -376,14 +389,14 @@ on its cheapest model. Each milestone ends with its gate, below.
 
 The shared fixtures, built in M0 and M1 and reused:
 
-| Fixture                                                                                         | Built in | Used for                                                                          |
-| ----------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `layerFromContext`, `layerRecording` hosts                                                      | 0.1      | Op counts; every existing test keeps its fakes                                    |
-| `layerLoopback` host, frame delay on `TestClock`                                                | 1.11     | Runner encoding, cancellation and the latency model, with no network or container |
-| In-process runner over an in-memory socket pair, with fault injection                           | 1.6, 1.8 | Resume, leases, boot ids, revocation, mid-chunk drops                             |
-| `FakeComputeDriver` and fake runner hub                                                         | 1.4      | Every sandbox decision, restore mode and the archive smoke test                   |
-| `computeDriverContract(makeDriver)`                                                             | 1.4      | Docker in CI on Linux; EC2 and GCE nightly with credentials                       |
-| `vp run bench:runner` ([runner-benchmark.ts](../../../apps/server/scripts/runner-benchmark.ts)) | 1.44     | The latency budget, and the base for 2.40's load test                             |
+| Fixture                                                                                         | Built in | Used for                                                                                                   |
+| ----------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `layerFromContext`, `layerRecording` hosts                                                      | 0.1      | Op counts; every existing test keeps its fakes                                                             |
+| `layerLoopback` host, frame delay on `TestClock`                                                | 1.11     | Runner encoding, cancellation and the latency model, with no network or container                          |
+| In-process runner over an in-memory socket pair, with fault injection                           | 1.6, 1.8 | Resume, leases, boot ids, revocation, mid-chunk drops                                                      |
+| `FakeComputeDriver` and fake runner hub                                                         | 1.4      | Every sandbox decision, restore mode and the archive smoke test                                            |
+| `computeDriverContract(makeDriver)`                                                             | 1.4      | Docker in CI on Linux; GCE and EC2 against a fake API in CI, and for real from a VM in the VPC at the gate |
+| `vp run bench:runner` ([runner-benchmark.ts](../../../apps/server/scripts/runner-benchmark.ts)) | 1.44     | The latency budget, and the base for 2.40's load test                                                      |
 
 ### Milestone gates
 
@@ -402,7 +415,7 @@ is done.
   the commit or release, each step's result, the bugs found with their fix PRs, and the video.
 - The Maintainer column marks the steps an agent can't run alone. **Mac**: the maintainer's Mac with
   the desktop app. **Credentials**: real provider or GitHub credentials. **Phone**: a phone or
-  simulator with the Pair app. **AWS**: a real AWS account. Agents run the unmarked steps on the VM.
+  simulator with the Pair app. **Cloud**: a real Google Cloud project or AWS account. Agents run the unmarked steps on the VM.
 
 #### G1: M1, before any M2 PR merges
 
@@ -456,17 +469,20 @@ The G2 server, upgraded to a release with M3, and two members with the desktop a
 
 #### G4: after M4 and M5
 
-M4 and M5 share this gate. The first step runs on the G3 server's Docker driver; the rest run on
-Pair Cloud deployed by the AWS kit, so the machine is an actual cloud VM.
+M4 and M5 share this gate. The first step runs on the G3 server's Docker driver. The rest run
+twice, so the machine is an actual cloud VM: Part 1 on Pair Cloud deployed by the GCP kit, then
+Part 2 on Pair Cloud deployed by the AWS kit.
+[m5-byoc.md](./implementation/m5-byoc.md#m5-integrated-pass) turns each part into steps and says
+what the maintainer provides.
 
-| #   | Step                                                                                                      | Passes when                                                                                                   | Maintainer            |
-| --- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------- |
-| 1   | Build a team image, activate it, start a session, roll back; ask the admin agent for a build              | Sessions boot from the active build; rollback applies in under 10 s; the agent's build waits for **Activate** | Mac                   |
-| 2   | Apply the AWS kit in a real AWS account                                                                   | A ready Pair Cloud server in under two hours, with the aws-ec2 driver                                         | AWS                   |
-| 3   | The desktop app connects over the VPN or Tailscale, with no public listener                               | It connects and lists the projects                                                                            | Mac, AWS              |
-| 4   | A cloud session on an EC2 machine: a Haiku turn, a terminal, **Commit, push & create PR**, sleep and wake | The machine is an EC2 instance in a private subnet; the PR opens; wake works                                  | Mac, AWS, Credentials |
-| 5   | Build the team image as an AMI, activate, roll back                                                       | Sessions boot from the AMI                                                                                    | AWS                   |
-| 6   | Restore the server from a DLM snapshot in restore mode                                                    | No live machine is destroyed                                                                                  | AWS                   |
+| #   | Step                                                                                                                          | Passes when                                                                                                   | Maintainer              |
+| --- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 1   | Build a team image, activate it, start a session, roll back; ask the admin agent for a build                                  | Sessions boot from the active build; rollback applies in under 10 s; the agent's build waits for **Activate** | Mac                     |
+| 2   | Apply the kit in a real cloud account: the GCP kit in a Google Cloud project (Part 1), the AWS kit in an AWS account (Part 2) | A ready Pair Cloud server in under two hours, with the gce driver (Part 1) or the aws-ec2 driver (Part 2)     | Cloud                   |
+| 3   | The desktop app connects over the VPN or Tailscale, with no public listener                                                   | It connects and lists the projects                                                                            | Mac, Cloud              |
+| 4   | A cloud session on a cloud VM: a Haiku turn, a terminal, **Commit, push & create PR**, sleep and wake                         | The machine is a VM in a private subnet with no public address; the PR opens; wake works                      | Mac, Cloud, Credentials |
+| 5   | Build the team image as a machine image (a GCE custom image, then an AMI), activate, roll back                                | Sessions boot from that image                                                                                 | Cloud                   |
+| 6   | Restore the server from an hourly disk snapshot in restore mode                                                               | No live machine is destroyed                                                                                  | Cloud                   |
 
 ### M0
 
@@ -548,15 +564,16 @@ test-t3-mobile, test-t3-app captures) close there.
 
 ### M5
 
-- **Tests.** The `aws-ec2` and `gce` drivers pass the contract suite, and the EC2 driver refuses a
-  server that isn't cloud-only. The IAM policy passes the policy simulator (09 §4). The kit's CI job
-  applies Terraform in a test account, runs a cloud session (a terminal command, one cheapest-model
+- **Tests.** The `gce` and `aws-ec2` drivers pass the contract suite against an in-process fake of
+  their cloud's API on every run, and against the real cloud from a VM in the VPC at the gate. Each
+  refuses a server that isn't cloud-only. The IAM policy passes the policy simulator (09 §4). Each kit's CI job
+  applies Terraform in a test project or account, runs a cloud session (a terminal command, one cheapest-model
   turn) through sleep, wake and destroy, and starts a server from the latest data-volume snapshot in
   restore mode (5.10). The `provision.sh` CI job boots a plain Ubuntu VM on each release.
 - **Performance.** A new team deploys the kit in under two hours (01 §9); 5.14 records sync, seed
   and rebuild times on the kit's network.
 - **Gate.** [G4](#g4-after-m4-and-m5), which closes M4 and M5 together.
-- **Evidence.** The CI log of the apply, and G4's video of the cloud session on EC2.
+- **Evidence.** The CI log of the apply, and G4's video of the cloud session on a cloud VM, for each part.
 
 ## 5. Rollout
 
@@ -583,7 +600,7 @@ readable, and a new cloud launch there is refused with a pointer to Pair Cloud.
 | M2 dogfood         | Pair's team                 | The 2.36 release on an always-on GCE VM, cloud-only, Docker under gVisor, the GitHub App; Mac apps and phones connected | 30% of new threads are cloud sessions within two weeks, under 2% fail to start, idle awake share under 25% (01 §9) |
 | M2 outside         | One outside team, then more | Their own VM                                                                                                            | Running Pair Cloud weekly                                                                                          |
 | M3 dogfood         | Pair's team                 | The same server, upgraded after G3                                                                                      | 95% of moves complete without manual git                                                                           |
-| M5 design partners | Two BYOC teams              | The AWS kit in their account                                                                                            | In production (01 §9)                                                                                              |
+| M5 design partners | Two BYOC teams              | The GCP or AWS kit in their account                                                                                     | In production (01 §9)                                                                                              |
 
 Pair Cloud must stay on. Every upgrade interrupts running agents (R4), so upgrades drain first
 (2.37) and happen outside working hours.
@@ -625,7 +642,7 @@ needs watching, or "open" when it stays a property of the product. Risks M1 reti
 | R5  | Pair Cloud is the only copy of shared sessions. Hourly snapshots lose up to an hour, and a reconciler started from an old snapshot would destroy newer machines as strays.                                             | M   | H   | 04 §5; D11                                 | Hourly snapshots in the install guide (2.21) and the kit (5.9); restore mode (2.38), proved in the M2 pass and 5.10; continuous replication when a customer asks.                 | Open           |
 | R6  | No release form carries the runner tree until 2.36, so teams can't install or upgrade Pair Cloud.                                                                                                                      | H   | H   | Decision 15; 09 §6                         | 2.36 starts on day one of M2, with the archive smoke test.                                                                                                                        | M2             |
 | R7  | Plain runc Docker is not a security boundary, and Pair Cloud's Docker machines usually share its host, database and secret store.                                                                                      | H   | H   | 06 §9, §10                                 | Isolation detection and a warning; the install guide sets up gVisor or a separate `DOCKER_HOST`; dropped capabilities, no socket.                                                 | Open on Docker |
-| R8  | EC2 isolation depends on the kit getting IMDSv2, instance profiles, security groups and private subnets right.                                                                                                         | M   | H   | 09 §4, §6                                  | Driver defaults (hop limit 1, no instance profile), the IAM policy simulator, the kit's CI (5.10).                                                                                | M5             |
+| R8  | VM isolation depends on the kit getting the metadata endpoint, machine identities (no service account, no instance profile), firewalls and private subnets right.                                                      | M   | H   | 09 §4, §6                                  | Driver defaults (no identity and no public address on a machine; on EC2, hop limit 1), plan assertions in each kit, the IAM policy simulator on AWS, the kits' CI (5.12, 5.10).   | M5             |
 | R9  | Subscription tokens on shared machines: the agent can read a Claude setup token (valid a year), and teammates who prompt spend the owner's subscription.                                                               | H   | M   | 06 §3; D2, D8                              | Accepted and stated in Settings and the user docs; usage shown per sender; company accounts as the option.                                                                        | Open           |
 | R10 | Secrets ride in seeds: an untracked secret that isn't ignored goes along unless excluded.                                                                                                                              | M   | H   | 07 §8; 06                                  | The seed preview with an exclusion list (3.23); setup scripts recreate ignored files.                                                                                             | M3             |
 | R11 | Version skew between a self-hosted Pair Cloud and the auto-updating Mac app.                                                                                                                                           | H   | M   | 08 §2; README decision 17                  | Capability flags (`cloudLaunch`, later `cloudImport`); additive contracts, with `historyOrigin` forward compatible in M2 (2.32).                                                  | Open           |
@@ -670,21 +687,21 @@ Decided for M1, inferring from Conductor Cloud, then Claude Code and Codex cloud
 Decided on 2026-11-08 for local-first Pair Cloud ([README](./README.md#for-local-first-pair-cloud)
 has the full text):
 
-| #   | Decision                                                                                                                                                                                                                      | Where it lands  |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| D7  | Cloud sessions start from a branch already pushed to GitHub; continue in cloud is M3, and M2 keeps it easy to add.                                                                                                            | 2.31, 2.32; M3  |
-| D8  | The owner's own Claude or Codex subscription by default, company accounts as an option; members connect accounts on Pair Cloud.                                                                                               | 2.30            |
-| D9  | GitHub and pull requests as M1 ships them. The PR button opens the PR as the member, else as the server's GitHub sign-in with "Requested by"; an agent's own `gh pr create` uses the installation token or its owner's token. | No new row      |
-| D10 | BYOC ingress over VPN or Tailscale, an optional public listener with client routes only, no T3 Connect.                                                                                                                       | 5.9, 5.19       |
-| D11 | Hourly snapshots and the reconciler's restore mode; continuous replication when a customer asks.                                                                                                                              | 2.21, 2.38, 5.9 |
-| D12 | Desktop and other servers that aren't cloud-only stop offering Cloud.                                                                                                                                                         | 2.24            |
-| D13 | EC2 images built in the customer's account; Pair CI runs `provision.sh` each release.                                                                                                                                         | 5.7             |
-| D14 | One member-scoped agent link, laptop to Pair Cloud only.                                                                                                                                                                      | 3.19            |
-| D15 | Pair Cloud invites the team only, at today's trust level.                                                                                                                                                                     | 2.22            |
-| D16 | One Pair app build receives pushes from any Pair Cloud server.                                                                                                                                                                | 2.35            |
-| D17 | The phone keeps its Mac connection and also pairs with Pair Cloud; anyone starts a cloud session from it in M2.                                                                                                               | 2.29            |
-| D18 | 30 concurrent machines per server, proven by a load test before M2 ships; byte budgets.                                                                                                                                       | 2.40, 2.43      |
-| D19 | M2, M3, M4, M5 in that order; a non-owner's bring-back is a copy.                                                                                                                                                             | This page; 3.25 |
+| #   | Decision                                                                                                                                                                                                                      | Where it lands        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| D7  | Cloud sessions start from a branch already pushed to GitHub; continue in cloud is M3, and M2 keeps it easy to add.                                                                                                            | 2.31, 2.32; M3        |
+| D8  | The owner's own Claude or Codex subscription by default, company accounts as an option; members connect accounts on Pair Cloud.                                                                                               | 2.30                  |
+| D9  | GitHub and pull requests as M1 ships them. The PR button opens the PR as the member, else as the server's GitHub sign-in with "Requested by"; an agent's own `gh pr create` uses the installation token or its owner's token. | No new row            |
+| D10 | BYOC ingress over VPN or Tailscale, an optional public listener with client routes only, no T3 Connect.                                                                                                                       | 5.12, 5.9, 5.19       |
+| D11 | Hourly snapshots and the reconciler's restore mode; continuous replication when a customer asks.                                                                                                                              | 2.21, 2.38, 5.12, 5.9 |
+| D12 | Desktop and other servers that aren't cloud-only stop offering Cloud.                                                                                                                                                         | 2.24                  |
+| D13 | Machine images (GCE custom images, then AMIs) built in the customer's account; Pair CI runs `provision.sh` each release.                                                                                                      | 5.7                   |
+| D14 | One member-scoped agent link, laptop to Pair Cloud only.                                                                                                                                                                      | 3.19                  |
+| D15 | Pair Cloud invites the team only, at today's trust level.                                                                                                                                                                     | 2.22                  |
+| D16 | One Pair app build receives pushes from any Pair Cloud server.                                                                                                                                                                | 2.35                  |
+| D17 | The phone keeps its Mac connection and also pairs with Pair Cloud; anyone starts a cloud session from it in M2.                                                                                                               | 2.29                  |
+| D18 | 30 concurrent machines per server, proven by a load test before M2 ships; byte budgets.                                                                                                                                       | 2.40, 2.43            |
+| D19 | M2, M3, M4, M5 in that order; a non-owner's bring-back is a copy.                                                                                                                                                             | This page; 3.25       |
 
 On 2026-11-08 the maintainer accepted the recommendations below for #1–#6, #9, #10 and #13, so those
 are decided as written. Still open, the earliest first:
@@ -703,7 +720,7 @@ are decided as written. Still open, the earliest first:
 | 10  | Who hears that an agent build is ready                                                        | The run's admins; every admin                                                                                                                               | The admins who wrote the run (01 open questions)                                                                                                                                                                                                               | 4.19                    |
 | 11  | A Viewer role on Pair Cloud                                                                   | Build now; when asked                                                                                                                                       | When a team asks (01 open questions)                                                                                                                                                                                                                           | When asked              |
 | 12  | Bedrock or Vertex model access for BYOC                                                       | Bedrock behind the model proxy, signed by the server's role; no                                                                                             | Not scheduled until a customer asks (09 open question 2)                                                                                                                                                                                                       | 5.15, Later             |
-| 13  | One cloud account per team in the kit                                                         | Dedicated by default; shared                                                                                                                                | Dedicated by default, shared documented (09 open question 3)                                                                                                                                                                                                   | 5.9                     |
+| 13  | One cloud account per team in the kit                                                         | Dedicated by default; shared                                                                                                                                | Dedicated by default, shared documented (09 open question 3)                                                                                                                                                                                                   | 5.12, 5.9               |
 
 Decisions tied to Later rows (the hosted vendor, the model proxy's default, whether members see a
 cost estimate, mirroring provider session files, previews on a cloud-only server, SSH's default)

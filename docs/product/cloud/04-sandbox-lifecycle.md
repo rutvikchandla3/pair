@@ -617,7 +617,7 @@ under gVisor is limited (unverified), so `nestedDocker` is false there. Disk quo
 XFS project quotas, so on most hosts a volume can fill the disk; we document that rather than build
 quota machinery.
 
-### Plain VM on EC2 (M5), then GCE
+### Plain VM on GCE, then EC2 (M5)
 
 Doc 09 owns deployment. The driver refuses to run on a server that is not cloud-only (06 §10): the
 server holds AWS permissions to launch instances, which an agent on the server's own machine could
@@ -628,7 +628,8 @@ volume; `snapshot` is `CreateImage` (`imageBuild: "snapshot"`); `destroy` is `Te
 `list` is `DescribeInstances` by tag. Hibernation would keep RAM, so `memoryOnStop` is true and left
 off. A stopped instance restarts in its own zone, so a capacity error on wake falls back to
 relaunching from a snapshot elsewhere. Instances bill per hour of running, so EC2 gets the 20-minute
-idle default and a cap of 20. GCE follows with the same shape.
+idle default and a cap of 20. GCE has the same shape and, since 2026-11-10, lands first
+([m5-byoc.md](./implementation/m5-byoc.md)).
 
 ### Hosted vendors (Later)
 
@@ -794,7 +795,7 @@ money, so from M5 they run nightly against a test account.
 | 15  | Editable caps, an optional member cap, and sandbox hours in Settings: `TeamUsageResult.sandboxRows`, per-driver rates (old 2.17).                                                                                                                        | Later       |
 | 16  | `retryAfterMs` honored by the effect worker for driver errors (old 2.4).                                                                                                                                                                                 | M2          |
 | 17  | `snapshot` on the driver interface and `docker commit` builds; `deleteImage` in use (doc 05 owns the flow).                                                                                                                                              | M4          |
-| 18  | EC2 plain-VM driver, refusing a server that isn't cloud-only, then GCE, passing the contract suite (doc 09 owns deployment).                                                                                                                             | M5          |
+| 18  | GCE plain-VM driver, refusing a server that isn't cloud-only, then EC2, passing the contract suite (doc 09 owns deployment).                                                                                                                             | M5          |
 | 19  | The E2B driver against an Embed node; Kubernetes, on demand.                                                                                                                                                                                             | Later       |
 | 20  | The launch gate: the cloud-only check in `resolveCloudLaunch` and in decisions that create a machine; `delegated_task.request` into `OrchestrationV2InternalCommand`; `rpc.test.ts` rows.                                                                | M2          |
 | 21  | Restore mode in `SandboxReconciler`: the restore-steps setting, the automatic trigger, stop instead of destroy, and the admin list in Settings → Cloud.                                                                                                  | M2          |

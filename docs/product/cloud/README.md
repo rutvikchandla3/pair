@@ -7,8 +7,8 @@ first draft is in [Conductor Cloud and Pair's path to parity](../conductor-cloud
 Engineers work locally in the Pair Mac app. Its bundled local server runs their threads on their
 own machine, as it does today. When they want to share work, they start a cloud session on their
 team's Pair Cloud server: one always-on, cloud-only Pair server per team. Pair Cloud clones the
-repo and checks out the branch on a machine (a Docker container now, an EC2 instance in the
-customer's own AWS account later), runs the agent there, and every teammate can open the session
+repo and checks out the branch on a machine (a Docker container now, a VM in the
+customer's own Google Cloud project or AWS account later), runs the agent there, and every teammate can open the session
 and prompt it. The Pair app on desktop, web and phone connects to both servers and sends each
 launch to the right one. The two servers never sync.
 
@@ -27,7 +27,7 @@ flowchart TB
       Creds["Credential broker"]
       Hub["RunnerHub and ComputeDriver"]
     end
-    subgraph Machines["Machines: Docker now, EC2 for BYOC"]
+    subgraph Machines["Machines: Docker now, cloud VMs for BYOC"]
       Runner["Runner and agent CLI"]
     end
   end
@@ -127,7 +127,7 @@ flowchart TB
    - **M1, Docker (landed):** Pair Cloud's driver, on its own machine or another host through
      `DOCKER_HOST`. Plain runc is not a security boundary, so Settings recommends rootless Docker
      or gVisor and says so when neither is in use.
-   - **M5, the customer's cloud:** a plain-VM driver on EC2, then GCE. It refuses to run on a
+   - **M5, the customer's cloud:** a plain-VM driver on GCE, then EC2 (Google Cloud first, set 2026-11-10). It refuses to run on a
      server that isn't cloud-only.
    - **Later, by demand:** a hosted sandbox vendor (Vercel Sandbox, then E2B, are the analyzed
      options) and Kubernetes.
@@ -224,7 +224,7 @@ milestone's PRs merge only after the gate passes
 | M2 Pair Cloud on Docker (first release) | A team installs one always-on Pair Cloud server with Docker machines. Members keep working locally in the Mac app, connect it to Pair Cloud, and start a cloud session from a pushed branch on a local project. Teammates join and prompt from web, desktop and mobile, and the phone keeps driving local work through the Mac. Machines sleep when idle and wake on demand. Scheduled tasks on Pair Cloud launch cloud sessions. |
 | M3 Continue in cloud                    | Move a local session (unpushed commits, uncommitted files, the conversation) to Pair Cloud, bring a cloud session back to a member's Mac, and let local agents start or delegate cloud sessions through a member-scoped link.                                                                                                                                                                                                     |
 | M4 Team images                          | Admins build, version and roll back the machine image, and an admin agent can help.                                                                                                                                                                                                                                                                                                                                               |
-| M5 BYOC on AWS                          | The EC2 driver and an AWS deployment kit run Pair Cloud and its machines in the customer's own account. GCP follows.                                                                                                                                                                                                                                                                                                              |
+| M5 BYOC                                 | The GCE driver and a GCP deployment kit run Pair Cloud and its machines in the customer's own account. AWS follows with the EC2 driver and its kit.                                                                                                                                                                                                                                                                               |
 | Later, by demand                        | A hosted vendor driver, previews, SSH and open in editor, the model proxy for company API keys, other git hosts, egress allowlists, OpenCode, Grok and Kiro in cloud. [10 §2](./10-delivery-plan.md#2-pull-request-plan) lists them all.                                                                                                                                                                                          |
 
 ## Decided
@@ -255,7 +255,7 @@ Settled on 2026-11-08 by the maintainers:
 | D10 | BYOC members reach Pair Cloud over VPN or Tailscale by default, or an optional public listener that serves only client routes. T3 Connect is off for BYOC.        |
 | D11 | Hourly snapshots and the reconciler's restore mode. Continuous replication waits for a customer who asks.                                                         |
 | D12 | Laptops and other servers that aren't cloud-only no longer offer Cloud.                                                                                           |
-| D13 | EC2 machine images are built in the customer's account when the driver is set up. Pair CI runs `provision.sh` on every release.                                   |
+| D13 | Machine images (GCE custom images, then AMIs) are built in the customer's account when the driver is set up. Pair CI runs `provision.sh` on every release.        |
 | D14 | Local agents reach Pair Cloud through one member-scoped link, from the laptop to Pair Cloud only (M3).                                                            |
 | D15 | Pair Cloud invites the team, at today's trust level, not the whole engineering org.                                                                               |
 | D16 | One Pair app build receives notifications from any Pair Cloud server.                                                                                             |

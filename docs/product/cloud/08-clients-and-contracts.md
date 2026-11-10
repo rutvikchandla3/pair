@@ -822,11 +822,11 @@ Where a row takes over a PR from [m2-m5.md](./implementation/m2-m5.md), it names
 | 4.4 | Build pushes and their routing rule                  | after 4.1                    |
 | 4.5 | Mobile: active build on the machines page            | after 4.1                    |
 
-### M5, BYOC on AWS
+### M5, BYOC
 
 | #   | PR                                                                                                                                                            | Parallel |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 5.1 | The `aws-ec2` member of the driver settings union, with every key past `kind`, `id`, `label` and `size` optional for member redaction; `gce` follows with GCP | yes      |
+| 5.1 | The `gce` member of the driver settings union, with every key past `kind`, `id`, `label` and `size` optional for member redaction; `aws-ec2` follows with AWS | yes      |
 | 5.2 | `limits.cloud` (`cloudOnly`, `allowedDrivers`); read-only policy rows on web and mobile                                                                       | yes      |
 | 5.3 | Driver health in Overview, including the network path check (09)                                                                                              | yes      |
 

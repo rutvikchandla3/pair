@@ -652,7 +652,7 @@ keep.
 | Docker, runc                      | Yes                                              | M1, with a warning          | An escape reaches the Docker host: Pair Cloud's own machine when Docker runs there. |
 | Docker, rootless                  | Yes, but the daemon runs as an unprivileged user | M1 recommended              | Escape lands as that user, not root.                                                |
 | Docker, gVisor (`runsc`)          | No, a user-space kernel intercepts syscalls      | M1 recommended              | Slower on syscall- and file-heavy work such as `npm install`; measure.              |
-| Plain VM (EC2, then GCE)          | No                                               | M5                          | Strongest; slowest to create.                                                       |
+| Plain VM (GCE, then EC2)          | No                                               | M5                          | Strongest; slowest to create.                                                       |
 | Firecracker microVM (Vercel, E2B) | No                                               | Later, with a hosted vendor | The vendor's boundary.                                                              |
 
 What a team on the Docker driver should know, written into Settings → Cloud:

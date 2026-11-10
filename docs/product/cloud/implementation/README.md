@@ -1,6 +1,6 @@
 # Pair Cloud: implementation plan
 
-Status: M0, M1 and M2 landed and G1 and G2 closed; M3 and M4 have full specs; the rest is a proposal,
+Status: M0, M1 and M2 landed and G1 and G2 closed; M3, M4 and M5 have full specs; the rest is a proposal,
 rewritten 2026-11-08 for local-first Pair Cloud.
 The design is the [plan](../README.md) and its ten docs; this folder turns their PR list
 ([10 §2](../10-delivery-plan.md#2-pull-request-plan)) into specs an engineer or agent can implement
@@ -9,15 +9,16 @@ against the repo; the [findings](#verification-findings) are at the end.
 
 ## How to use this set
 
-| File                                                       | What it holds                                                                                                                                   |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                                                 |
-| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                                              |
-| [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md)       | M2's 36 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M2 integrated pass.                        |
-| [m3-continue-in-cloud.md](./m3-continue-in-cloud.md)       | M3's 8 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M3 integrated pass.                         |
-| [m4-team-images.md](./m4-team-images.md)                   | M4's 12 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M4 integrated pass.                        |
-| [m2-m5.md](./m2-m5.md)                                     | M3–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first; M2's rows as first sharpened. |
-| [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                                                        |
+| File                                                       | What it holds                                                                                                                                                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [m0-seam.md](./m0-seam.md)                                 | M0's 11 PRs (0.1–0.11), full specs, and the M0 integrated pass.                                                                                                                                                     |
+| [m1-cloud-threads-docker.md](./m1-cloud-threads-docker.md) | M1's 46 PRs, full specs, the build order in waves, each track's notes, and the M1 integrated pass.                                                                                                                  |
+| [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md)       | M2's 36 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M2 integrated pass.                                                                                            |
+| [m3-continue-in-cloud.md](./m3-continue-in-cloud.md)       | M3's 8 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M3 integrated pass.                                                                                             |
+| [m4-team-images.md](./m4-team-images.md)                   | M4's 12 PRs, full specs, the build order in waves, the names they share, each track's notes, and the M4 integrated pass.                                                                                            |
+| [m5-byoc.md](./m5-byoc.md)                                 | M5's 20 PRs (17 rows, three with a Google Cloud PR and an AWS PR), full specs, the build order in waves with Google Cloud first, the names they share, each track's notes, and the M5 integrated pass in two parts. |
+| [m2-m5.md](./m2-m5.md)                                     | M3–M5 and Later at PR level: scope, the owner rows each takes, its dependencies, and the decision it needs first; M2's rows as first sharpened.                                                                     |
+| [progress.md](./progress.md)                               | Build status, how to resume, notes from every landed PR, and each milestone gate's runs.                                                                                                                            |
 
 To implement a PR: read its spec, then the owner-doc sections its title row in 10 §2 names, then
 re-read every file and symbol the spec cites, since line numbers drift with upstream merges. Every
@@ -35,8 +36,9 @@ Write each milestone's full specs the same way while the previous milestone's ga
 during G1, M3's during G2, and so on. Each milestone settles names and seams the next one depends
 on, so specs written earlier would be guesses. Until then, [m2-m5.md](./m2-m5.md) holds each row at
 PR level. M2's were written during G1, in [m2-pair-cloud-docker.md](./m2-pair-cloud-docker.md),
-M3's after G2 closed, in [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), and M4's during G3,
-in [m4-team-images.md](./m4-team-images.md).
+M3's after G2 closed, in [m3-continue-in-cloud.md](./m3-continue-in-cloud.md), M4's during G3,
+in [m4-team-images.md](./m4-team-images.md), and M5's during G4's first step, in
+[m5-byoc.md](./m5-byoc.md).
 
 ## Build order
 
@@ -50,7 +52,7 @@ run of the real desktop app on a member's Mac, through the Pair Cloud server on 
 - Each bug a gate finds gets its own fix PR with a failing test first (a purely visual bug gets
   before and after captures), and the gate re-runs the steps that failed.
 - Each run is captured as video and recorded in [progress](./progress.md). Steps that need the
-  maintainer (their Mac, real credentials, a phone, an AWS account) are marked in 10 §4.
+  maintainer (their Mac, real credentials, a phone, a cloud account) are marked in 10 §4.
 
 Inside each milestone:
 
@@ -73,10 +75,11 @@ Inside each milestone:
   The critical path runs 3.20 → 3.22 → 3.25 → 3.23 → 3.24 → 3.26. See
   [M3's build order](./m3-continue-in-cloud.md#build-order).
 - **M4 and M5:** merged side by side after G3. M4 starts with the outbox's aggregate key (4.11),
-  which merges before any row that adds effect types; M5 starts with the EC2 driver (5.4), the
-  internal listeners and the policy keys, builds AMIs (5.7) once Docker builds (4.14) are in, and
-  ends with the AWS kit and its CI. See [M4's build order](./m4-team-images.md#build-order) and
-  [M5's waves](../10-delivery-plan.md#m5-byoc-on-aws).
+  which merges before any row that adds effect types; M5 puts Google Cloud first: the gce
+  driver's settings (5.5), the internal runner listener (5.19) and the policy keys, then the gce
+  driver (5.11), machine images (5.7) and the GCP kit (5.12); the AWS driver, AMIs, kit and CI
+  follow. See [M4's build order](./m4-team-images.md#build-order) and
+  [M5's build order](./m5-byoc.md#build-order).
 - **Early starts:** the base image (1.20), the GitHub App key (1.27) and the mirror store (1.30)
   needed nothing from M0 but 0.1. M2's rows that need only M1 can be built while G1 runs. The secret
   providers (5.2, 5.3) and the runner's CA and proxy support (5.8) can be built any time and merge
