@@ -65,6 +65,9 @@ interface FakeInstance {
   labelFingerprint: string;
   metadata: { readonly fingerprint: string; readonly items: ReadonlyArray<GceMetadataItem> };
   readonly disk: FakeGceDisk;
+  /** By `<namespace>/<key>`, as the guest writes them. */
+  readonly guestAttributes: Map<string, string>;
+  serial: string;
 }
 
 interface FakeImage {
@@ -146,6 +149,8 @@ export const make = Effect.fn("GceApiFake.make")(function* (
     readonly pageSize?: number;
     /** Runs, forked in the fake's scope, each time an instance reaches `RUNNING`. */
     readonly onBoot?: (boot: FakeGceBoot) => Effect.Effect<void>;
+    /** A stopped instance answers no guest attributes, as a cloud may; its serial output stays. */
+    readonly stoppedLosesGuestAttributes?: boolean;
   } = {},
 ) {
   const scope = yield* Effect.scope;
@@ -377,6 +382,8 @@ export const make = Effect.fn("GceApiFake.make")(function* (
               labelFingerprint: `fp-${nextId()}`,
               metadata: { fingerprint: `fp-${nextId()}`, items: [...body.metadata.items] },
               disk: { ...source.disk },
+              guestAttributes: new Map(),
+              serial: "",
             };
             instances.set(instanceKey(zone, body.name), instance);
             return yield* operation(
@@ -508,13 +515,30 @@ export const make = Effect.fn("GceApiFake.make")(function* (
             );
           }),
         ),
-      getGuestAttributes: (zone, name) =>
-        call("instances.getGuestAttributes", { zone, name })(
-          requireInstance("instances.getGuestAttributes", zone, name).pipe(Effect.as([])),
+      getGuestAttributes: (zone, name, queryPath) =>
+        call("instances.getGuestAttributes", { zone, name, body: { queryPath } })(
+          Effect.gen(function* () {
+            const instance = yield* requireInstance("instances.getGuestAttributes", zone, name);
+            const enabled = instance.metadata.items.some(
+              (item) => item.key === "enable-guest-attributes" && item.value === "TRUE",
+            );
+            if (!enabled) return yield* refuse("instances.getGuestAttributes", 400, "invalid");
+            if (options.stoppedLosesGuestAttributes === true && instance.status === "TERMINATED") {
+              return [];
+            }
+            return Array.from(instance.guestAttributes)
+              .filter(([path]) => path.startsWith(queryPath))
+              .map(([path, value]) => {
+                const slash = path.indexOf("/");
+                return { namespace: path.slice(0, slash), key: path.slice(slash + 1), value };
+              });
+          }),
         ),
       getSerialPortOutput: (zone, name) =>
         call("instances.getSerialPortOutput", { zone, name })(
-          requireInstance("instances.getSerialPortOutput", zone, name).pipe(Effect.as("")),
+          Effect.gen(function* () {
+            return (yield* requireInstance("instances.getSerialPortOutput", zone, name)).serial;
+          }),
         ),
     },
     disks: {
@@ -722,6 +746,20 @@ export const make = Effect.fn("GceApiFake.make")(function* (
       Array.from(instances.values())
         .filter((instance) => instance.name === name)
         .map((instance) => ({ zone: instance.zone, ...instanceView(instance) })),
+    /** What a guest does: writes a guest attribute (`<namespace>/<key>`). */
+    setGuestAttribute: (zone: string, name: string, path: string, value: string) => {
+      instances.get(instanceKey(zone, name))?.guestAttributes.set(path, value);
+    },
+    /** What a guest does: prints a line on its serial console. */
+    writeSerial: (zone: string, name: string, line: string) => {
+      const instance = instances.get(instanceKey(zone, name));
+      if (instance !== undefined) instance.serial += `${line}\r\n`;
+    },
+    /** What a guest does: powers off, which Compute Engine shows as `TERMINATED`. */
+    powerOff: (zone: string, name: string) => {
+      const instance = instances.get(instanceKey(zone, name));
+      if (instance !== undefined) instance.status = "TERMINATED";
+    },
     snapshot: (name: string) => snapshots.get(name) ?? null,
     image: (name: string) => {
       const image = images.get(imageKey(project, name));
@@ -744,6 +782,8 @@ export const make = Effect.fn("GceApiFake.make")(function* (
         labelFingerprint: `fp-${nextId()}`,
         metadata: { fingerprint: `fp-${nextId()}`, items: [] },
         disk: { marker: null },
+        guestAttributes: new Map(),
+        serial: "",
       });
     }),
   };

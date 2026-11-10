@@ -140,6 +140,7 @@ import * as SandboxCredentialRevocation from "./sandbox/credentials/SandboxCrede
 import * as SandboxProcessEnvironment from "./sandbox/credentials/SandboxProcessEnvironment.ts";
 import * as SandboxBootstrapSource from "./sandbox/lifecycle/SandboxBootstrapSource.ts";
 import * as RunnerBundle from "./sandbox/runnerHub/RunnerBundle.ts";
+import * as SandboxProvisionTree from "./sandbox/image/SandboxProvisionTree.ts";
 import * as RunnerGrants from "./sandbox/runnerHub/RunnerGrants.ts";
 import * as RunnerEndpoint from "./sandbox/runnerHub/RunnerEndpoint.ts";
 import * as RunnerForwards from "./sandbox/runnerHub/RunnerForwards.ts";
@@ -886,7 +887,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       Layer.provideMerge(RunnerHub.layer.pipe(Layer.provide(ProcessRunner.layer))),
     ),
   ),
-  Layer.provideMerge(Layer.mergeAll(RunnerGrants.layer, RunnerBundle.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(RunnerGrants.layer, RunnerBundle.layer, SandboxProvisionTree.layer),
+  ),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(Presence.layer),
   Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),

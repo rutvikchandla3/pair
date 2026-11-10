@@ -1,13 +1,22 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import type { EnvironmentId, GceSandboxDriver } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
+import {
+  SandboxProvisionTree,
+  type SandboxProvisionTreeInfo,
+  type SandboxProvisionTreeUnavailableError,
+} from "../image/SandboxProvisionTree.ts";
 import {
   type BackendSandbox,
   type BackendSandboxStatus,
@@ -33,6 +42,17 @@ import {
   operationError,
 } from "./GceApi.ts";
 import { makeGceMetadata } from "./GceMetadata.ts";
+import {
+  baseImagePairVersion,
+  stepVmBaseImage,
+  type VmBaseImageCloud,
+  VmBaseImageConflictError,
+  type VmBuilder,
+  type VmBuilderLaunch,
+  type VmImage,
+  type VmImageCapture,
+  vmBaseImageNames,
+} from "./VmBaseImage.ts";
 
 /** A driver call never runs past this, so it ends inside a sandbox effect's 60-second bound. */
 const CALL_DEADLINE = "50 seconds";
@@ -60,10 +80,21 @@ const TEAM_IMAGE_MACHINE_LABEL = "pair-team-image-machine";
 const BOOTSTRAP_KEY = "pair-bootstrap";
 const GENERATION_KEY = "pair-generation";
 
+/** Canonical's stock Ubuntu, by family so it is never a deprecated image (D13). */
+const BUILDER_SOURCE_IMAGE = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64";
+/** Every machine's disk is at least its image's, so the base stays small; base-build.sh checks room. */
+const BUILDER_DISK_GB = 20;
+const BUILD_STEP_INTERVAL = "30 seconds";
+const PROVISION_RESULT = /pair-provision-result=(\S+)/g;
+const BUILD_LOG_LINE = /pair-base-build: .*/g;
+
 const NOT_CLOUD_ONLY =
   "The Google Cloud driver runs only on a Pair Cloud server (started with --cloud-only). On any other server, agents could use this machine's Google Cloud access.";
-const NO_BASE_IMAGE_HINT =
-  "No Pair base image is in this project yet. Name one in this driver's Base image setting.";
+// The builder is deleted on failure, so its console lines go to this server's log instead.
+const buildFailedHint = (step: string) =>
+  `The base image build failed at \`${step}\`. The builder's last console lines are in this server's log. Choose Refresh to build it again.`;
+const conflictHint = (resource: string) =>
+  `\`${resource}\` is in this project but this server did not make it, so it is left alone. Delete or rename it, then choose Refresh.`;
 const BASE_IMAGE_SETTING_HINT =
   "The image in this driver's Base image setting was not found, or is not ready. Check its name and project.";
 const NO_FIREWALL_CLAIM = "Set by your VPC's firewall rules.";
@@ -175,14 +206,10 @@ const metadataValue = (instance: GceInstance, key: string) =>
 
 const lastSegment = (link: string) => link.slice(link.lastIndexOf("/") + 1);
 
-/** The Pair version a base image was built from: `pair-version=<v>` in its description. */
-const imageVersion = (image: GceImage) =>
-  /(?:^|\s)pair-version=(\S+)/.exec(image.description ?? "")?.[1] ?? null;
-
 const baseImageInfo = (image: GceImage): BaseImageInfo => ({
   ref: image.selfLink,
   digest: image.id,
-  version: imageVersion(image),
+  version: baseImagePairVersion(image.description),
 });
 
 /** An image reference: a self link, `projects/P/global/images/[family/]X`, `global/images/…` or a name. */
@@ -199,14 +226,37 @@ const parseImageRef = (
   };
 };
 
-/**
- * One resolution of the base image. 5.7 (GCP) adds the builder: it forks in the driver's scope
- * when the image is missing and answers `Building` while it runs.
- */
+/** One resolution of the base image: a named one, or the one this server builds. */
 type BaseImageState =
   | { readonly _tag: "Ready"; readonly image: GceImage }
   | { readonly _tag: "Building"; readonly ref: string }
   | { readonly _tag: "Missing"; readonly ref: string; readonly hint: string };
+
+/** Where the base image build stands; `Failed` is final until `health` starts another. */
+type BuildState =
+  | { readonly _tag: "Building"; readonly image: string }
+  | { readonly _tag: "Ready"; readonly image: GceImage }
+  | { readonly _tag: "Failed"; readonly ref: string; readonly hint: string };
+
+/** One build fiber; readers wait for its first decision, never for the whole build. */
+interface BuildAttempt {
+  readonly state: Ref.Ref<BuildState>;
+  readonly decided: Deferred.Deferred<void>;
+}
+
+type BaseImage = VmImage & { readonly gce: GceImage };
+
+const vmImage = (image: GceImage): BaseImage => ({
+  name: image.name,
+  status: image.status === "READY" ? "ready" : image.status === "FAILED" ? "failed" : "pending",
+  installId: image.labels?.[INSTALL_LABEL] ?? null,
+  createdAtMs: Date.parse(image.creationTimestamp ?? "") || 0,
+  gce: image,
+});
+
+/** The last `pair-provision-result=` base-build.sh printed, for a stopped builder's lost attributes. */
+const serialResult = (output: string) =>
+  Array.from(output.matchAll(PROVISION_RESULT)).at(-1)?.[1] ?? null;
 
 const capabilitiesOf = (config: GceSandboxDriver): ComputeCapabilities => {
   const zone = config.zones?.[0];
@@ -271,6 +321,11 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
     readonly zones: Effect.Effect<ReadonlyArray<string>, GceApiError>;
     /** Test only: a `startup-script` for the contract's stand-in guest. Sessions never get one. */
     readonly guest?: { readonly startupScript: string };
+    /** What the base image build boots with when `config.baseImage` is unset. */
+    readonly provisionTree: Effect.Effect<
+      SandboxProvisionTreeInfo,
+      SandboxProvisionTreeUnavailableError
+    >;
   },
 ) {
   if (!server.cloudOnly) return unsupportedDriver(config);
@@ -390,6 +445,7 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
     readonly labels: Readonly<Record<string, string>>;
     readonly source: { readonly sourceImage: string } | { readonly sourceSnapshot: string };
     readonly items: ReadonlyArray<GceMetadataItem>;
+    readonly diskGb?: number;
   }): GceInstanceInsert => ({
     name: input.name,
     machineType: `zones/${input.zone}/machineTypes/${input.machineType}`,
@@ -404,7 +460,7 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
         type: "PERSISTENT",
         initializeParams: {
           ...input.source,
-          diskSizeGb: String(config.diskGb ?? DEFAULT_DISK_GB),
+          diskSizeGb: String(input.diskGb ?? config.diskGb ?? DEFAULT_DISK_GB),
           diskType: `zones/${input.zone}/diskTypes/pd-balanced`,
           labels: input.labels,
         },
@@ -456,13 +512,298 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
       : mapGceError(stockout, { driverId, operation });
   });
 
-  const resolveBaseImage = Effect.fn("GceComputeDriver.resolveBaseImage")(function* () {
-    if (config.baseImage === undefined) {
-      const image = yield* api.images.getFromFamily(baseFamily);
-      return image === null || image.status !== "READY"
-        ? ({ _tag: "Missing", ref: `family/${baseFamily}`, hint: NO_BASE_IMAGE_HINT } as const)
-        : ({ _tag: "Ready", image } as const);
+  // The base image this server builds itself when `config.baseImage` is unset (D13).
+  const builderMachineType = config.machineTypes?.small ?? DEFAULT_MACHINE_TYPES.small;
+  const notOurs = (resource: string) => new VmBaseImageConflictError({ resource });
+  const isRefused = (error: GceApiError) =>
+    error.failure === "status" && (error.status === 400 || error.status === 404);
+
+  const builderResult = Effect.fn("GceComputeDriver.builderResult")(function* (
+    zone: string,
+    name: string,
+    stopped: boolean,
+  ) {
+    const attributes = yield* api.instances
+      .getGuestAttributes(zone, name, "pair/")
+      .pipe(Effect.catchIf(isRefused, () => Effect.succeed([])));
+    const reported = attributes.find(
+      (entry) => entry.namespace === "pair" && entry.key === "provision",
+    )?.value;
+    if (reported !== undefined) return reported;
+    if (!stopped) return null;
+    // A stopped machine may have lost its attributes; base-build.sh prints its result on the console too.
+    return serialResult(yield* builderConsole(zone, name));
+  });
+  const builderConsole = (zone: string, name: string) =>
+    api.instances
+      .getSerialPortOutput(zone, name)
+      .pipe(Effect.catchIf(isRefused, () => Effect.succeed("")));
+
+  /** One build's view of the cloud; `publish` lets readers go as soon as the image is found or not. */
+  const baseImageCloud = (
+    imageName: string,
+    publish: (state: BuildState) => Effect.Effect<void>,
+  ): VmBaseImageCloud<BaseImage, GceApiError | ComputeDriverError | VmBaseImageConflictError> => {
+    // The result `findBuilder` last read, so a builder deleted short of `ok` leaves its console in the log.
+    let lastResult: string | null = null;
+    return {
+      findImage: Effect.fn("GceComputeDriver.findBaseImage")(function* (name: string) {
+        const image = yield* api.images.get(name);
+        // A foreign image is a conflict, which the step answers next.
+        if (image === null || ours(image.labels)) {
+          yield* publish(
+            image?.status === "READY"
+              ? { _tag: "Ready", image }
+              : { _tag: "Building", image: imageName },
+          );
+        }
+        return image === null ? null : vmImage(image);
+      }),
+      listImages: Effect.fn("GceComputeDriver.listBaseImages")(function* (family: string) {
+        const images: Array<BaseImage> = [];
+        let pageToken: string | undefined;
+        do {
+          const page = yield* api.images.list({
+            filter: `(labels.${INSTALL_LABEL} = "${installId}")`,
+            ...(pageToken === undefined ? {} : { pageToken }),
+          });
+          images.push(...page.items.filter((image) => image.family === family).map(vmImage));
+          pageToken = page.nextPageToken ?? undefined;
+        } while (pageToken !== undefined);
+        return images;
+      }),
+      deleteImage: Effect.fn("GceComputeDriver.deleteBaseImage")(function* (name: string) {
+        const image = yield* api.images.get(name);
+        if (image === null) return;
+        if (!ours(image.labels)) return yield* notOurs(name);
+        yield* Effect.logInfo("Deleting a base image", { image: name, status: image.status });
+        yield* api.images.delete(name).pipe(
+          Effect.flatMap(settled("DELETE /global/images/{name}", null)),
+          Effect.catchIf(isMissing, () => Effect.void),
+        );
+      }),
+      findBuilder: Effect.fn("GceComputeDriver.findBuilder")(function* (name: string) {
+        const found = yield* locate(name);
+        if (found === null) return null;
+        const { zone, instance } = found;
+        const status = statusOf(instance.status);
+        const state =
+          status === "stopped" ? "stopped" : status === "starting" ? "starting" : "running";
+        const createdAtMs = Date.parse(instance.creationTimestamp ?? "");
+        // A foreign machine's guest is never read.
+        lastResult = ours(instance.labels)
+          ? yield* builderResult(zone, name, state === "stopped")
+          : null;
+        return {
+          name,
+          installId: instance.labels?.[INSTALL_LABEL] ?? null,
+          state,
+          createdAtMs: Number.isNaN(createdAtMs) ? 0 : createdAtMs,
+          result: lastResult,
+        } satisfies VmBuilder;
+      }),
+      launchBuilder: Effect.fn("GceComputeDriver.launchBuilder")(function* (
+        input: VmBuilderLaunch,
+      ) {
+        yield* Effect.logInfo("Launching the base image builder", {
+          builder: input.name,
+          image: imageName,
+        });
+        // No bootstrap and no identity: the builder reaches nothing of ours.
+        yield* insertInZones("create", yield* server.zones, (zone) =>
+          insertBody({
+            zone,
+            name: input.name,
+            machineType: builderMachineType,
+            // No `pair-sandbox` label, so `list` and the reconciler never see it.
+            labels: { [INSTALL_LABEL]: installId },
+            source: { sourceImage: BUILDER_SOURCE_IMAGE },
+            diskGb: BUILDER_DISK_GB,
+            items: [
+              { key: "startup-script", value: input.startupScript },
+              ...Object.entries(input.metadata).map(([key, value]) => ({ key, value })),
+              { key: "enable-guest-attributes", value: "TRUE" },
+              { key: "block-project-ssh-keys", value: "TRUE" },
+              { key: "enable-oslogin", value: "FALSE" },
+              { key: "serial-port-enable", value: "FALSE" },
+            ],
+          }),
+        );
+      }),
+      captureImage: Effect.fn("GceComputeDriver.captureBaseImage")(function* (
+        input: VmImageCapture,
+      ) {
+        const found = yield* locate(input.builder);
+        if (found === null) return;
+        if (!ours(found.instance.labels)) return yield* notOurs(input.builder);
+        const disk = found.instance.disks?.find((entry) => entry.boot === true)?.source;
+        if (disk === undefined) return;
+        yield* Effect.logInfo("Capturing the base image from its builder", {
+          builder: input.builder,
+          image: input.name,
+        });
+        yield* api.images
+          .insert({
+            name: input.name,
+            sourceDisk: disk,
+            family: input.family,
+            description: input.description,
+            labels: { [INSTALL_LABEL]: installId },
+            storageLocations: [regionOf(found.zone)],
+            ...(kms === undefined ? {} : { imageEncryptionKey: kms }),
+          })
+          .pipe(
+            Effect.flatMap(settled("POST /global/images", null)),
+            Effect.catchIf(isConflict, () => Effect.void),
+          );
+      }),
+      deleteBuilder: Effect.fn("GceComputeDriver.deleteBuilder")(function* (name: string) {
+        const found = yield* locate(name);
+        if (found === null) return;
+        if (!ours(found.instance.labels)) return yield* notOurs(name);
+        if (lastResult !== "ok") {
+          const output = yield* builderConsole(found.zone, name);
+          yield* Effect.logWarning("The base image builder's last console lines", {
+            builder: name,
+            result: lastResult,
+            lines: Array.from(output.matchAll(BUILD_LOG_LINE), (line) => line[0].trim()).slice(-20),
+          });
+        }
+        yield* Effect.logInfo("Deleting the base image builder", { builder: name });
+        yield* api.instances.delete(found.zone, name).pipe(
+          Effect.flatMap(settled("DELETE /zones/{zone}/instances/{name}", found.zone)),
+          Effect.catchIf(isMissing, () => Effect.void),
+        );
+        zoneOf.delete(name);
+      }),
+    };
+  };
+
+  /** Steps the build every 30 seconds until the image is ready and settled, or the build fails. */
+  const runBuild = Effect.fn("GceComputeDriver.buildBaseImage")(function* (attempt: BuildAttempt) {
+    let shown = "";
+    const publish = Effect.fn("GceComputeDriver.publishBaseImageState")(function* (
+      state: BuildState,
+    ) {
+      yield* Ref.set(attempt.state, state);
+      yield* Deferred.succeed(attempt.decided, undefined);
+      // Logged once per change, never once per step.
+      if (state._tag === shown || state._tag === "Failed") return;
+      shown = state._tag;
+      yield* state._tag === "Ready"
+        ? Effect.logInfo("The base image is ready", { image: state.image.name })
+        : Effect.logInfo("Building the base image", { image: state.image });
+    });
+    const fail = (ref: string, hint: string, detail: Readonly<Record<string, string>>) =>
+      Effect.logWarning("The base image build failed", { image: ref, ...detail }).pipe(
+        Effect.andThen(publish({ _tag: "Failed", ref, hint })),
+      );
+
+    const tree = yield* Effect.result(server.provisionTree);
+    if (tree._tag === "Failure") {
+      return yield* fail(baseFamily, tree.failure.message, { reason: tree.failure.reason });
     }
+    const names = vmBaseImageNames(installId, tree.success.sha256);
+    yield* Ref.set(attempt.state, { _tag: "Building", image: names.image });
+    const cloud = baseImageCloud(names.image, publish);
+    let problem = "";
+    while (true) {
+      const stepped = yield* stepVmBaseImage({ cloud, installId, tree: tree.success }).pipe(
+        Effect.map((state) => ({ _tag: "Stepped", state }) as const),
+        Effect.catchTags({
+          VmBaseImageConflictError: (error) =>
+            Effect.succeed({ _tag: "Conflict", resource: error.resource } as const),
+        }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) => Effect.succeed({ _tag: "Problem", cause } as const),
+        ),
+      );
+      switch (stepped._tag) {
+        case "Conflict":
+          return yield* fail(names.image, conflictHint(stepped.resource), {
+            resource: stepped.resource,
+          });
+        case "Problem": {
+          // A cloud error is tried again next step; the same one is logged once.
+          const squashed = Cause.squash(stepped.cause);
+          const key = squashed instanceof Error ? squashed.message : String(squashed);
+          if (key !== problem) {
+            problem = key;
+            yield* Effect.logWarning("A base image build step failed", stepped.cause);
+          }
+          yield* Deferred.succeed(attempt.decided, undefined);
+          break;
+        }
+        case "Stepped": {
+          problem = "";
+          const state = stepped.state;
+          if (state._tag === "Failed") {
+            return yield* fail(names.image, buildFailedHint(state.step), { step: state.step });
+          }
+          if (state._tag === "Ready") {
+            yield* publish({ _tag: "Ready", image: state.image.gce });
+            if (state.settled) return;
+          } else {
+            yield* publish({ _tag: "Building", image: state.image });
+          }
+        }
+      }
+      yield* Effect.sleep(BUILD_STEP_INTERVAL);
+    }
+  });
+
+  const buildScope = yield* Effect.scope;
+  const buildLock = yield* Semaphore.make(1);
+  // Only touched while holding `buildLock`.
+  let build: BuildAttempt | undefined;
+
+  const startBuild = Effect.fn("GceComputeDriver.startBaseImageBuild")(function* () {
+    const attempt = {
+      state: yield* Ref.make<BuildState>({ _tag: "Building", image: baseFamily }),
+      decided: yield* Deferred.make<void>(),
+    } satisfies BuildAttempt;
+    // A build takes minutes, far past any caller's bound, so it never runs inside one.
+    yield* runBuild(attempt).pipe(
+      Effect.ensuring(Deferred.succeed(attempt.decided, undefined)),
+      Effect.forkIn(buildScope),
+    );
+    return attempt;
+  });
+
+  /** The current build, or a new one in place of `failed`. */
+  const currentBuild = (failed?: BuildAttempt) =>
+    buildLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (build === undefined || build === failed) build = yield* startBuild();
+        return build;
+      }),
+    );
+
+  /** With `retryFailed`, a failure is answered once and the next build starts behind it. */
+  const builtBaseImage = Effect.fn("GceComputeDriver.builtBaseImage")(function* (
+    retryFailed: boolean,
+  ) {
+    const current = yield* currentBuild();
+    yield* Deferred.await(current.decided);
+    const state = yield* Ref.get(current.state);
+    if (retryFailed && state._tag === "Failed") yield* currentBuild(current);
+    switch (state._tag) {
+      case "Ready":
+        return { _tag: "Ready", image: state.image } as const;
+      case "Building":
+        return { _tag: "Building", ref: state.image } as const;
+      case "Failed":
+        return { _tag: "Missing", ref: state.ref, hint: state.hint } as const;
+    }
+  });
+
+  if (config.baseImage === undefined) yield* currentBuild();
+
+  const resolveBaseImage = Effect.fn("GceComputeDriver.resolveBaseImage")(function* (
+    retryFailedBuild: boolean,
+  ) {
+    if (config.baseImage === undefined) return yield* builtBaseImage(retryFailedBuild);
     const reference = parseImageRef(config.baseImage);
     if (reference === null) {
       return { _tag: "Missing", ref: config.baseImage, hint: BASE_IMAGE_SETTING_HINT } as const;
@@ -489,7 +830,7 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
       }
       return { sourceImage: image.selfLink, baseImage: null };
     }
-    const state = (yield* resolveBaseImage()) as BaseImageState;
+    const state: BaseImageState = yield* resolveBaseImage(false);
     switch (state._tag) {
       case "Ready":
         // A machine boots from the image it resolved, never from a family that could move.
@@ -500,7 +841,7 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
           operation: "create",
           reason: "unavailable",
           retryable: true,
-          image: { ref: state.ref, state: "pulling" },
+          image: { ref: state.ref, state: "building" },
         });
       case "Missing":
         return yield* new ComputeDriverError({
@@ -918,7 +1259,7 @@ export const makeWithApi = Effect.fn("GceComputeDriver.makeWithApi")(function* (
       filter: `(labels.${INSTALL_LABEL} = "${installId}")`,
       maxResults: 1,
     });
-    const state = (yield* resolveBaseImage()) as BaseImageState;
+    const state: BaseImageState = yield* resolveBaseImage(true);
     return {
       isolation: "vm",
       privateNetworkBlock: { applied: false, reason: NO_FIREWALL_CLAIM },
@@ -976,5 +1317,6 @@ export const make = Effect.fn("GceComputeDriver.make")(function* (config: GceSan
     cloudOnly: true,
     project,
     zones,
+    provisionTree: (yield* SandboxProvisionTree).current,
   });
 });

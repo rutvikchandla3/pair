@@ -21,6 +21,7 @@ import {
 import { GceApiError, mapGceError } from "./GceApi.ts";
 import * as GceApiFake from "./GceApiTesting.ts";
 import { cloudSafeName, makeWithApi, teamImageName, vmBootstrapText } from "./GceComputeDriver.ts";
+import type { SandboxProvisionTreeInfo } from "../image/SandboxProvisionTree.ts";
 
 const INSTALL = EnvironmentId.make("3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f");
 const SANDBOX = SandboxId.make("sbx_0123456789abcdef0123");
@@ -29,6 +30,14 @@ const DRIVER_ID = ComputeDriverId.make("gce-test");
 const ZONE_A = "asia-south1-a";
 const ZONE_B = "asia-south1-b";
 const BASE_FAMILY = "pair-3f2a9c1e-base";
+const BASE_IMAGE = `${BASE_FAMILY}-0a1b2c3d4e5f`;
+const BUILDER = "pair-3f2a9c1e-basebuild-0a1b2c3d4e5f";
+const TREE: SandboxProvisionTreeInfo = {
+  tarGzBase64: "H4sIAAAAAAAAA+3BAQ0AAADCoPdPbQ8HFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwN8GAAAAAA==",
+  sha256: `0a1b2c3d4e5f${"0".repeat(52)}`,
+  pairVersion: "1.2.3",
+  baseBuildScript: "#!/bin/bash\n# vm/base-build.sh\n",
+};
 const SECRET = "enroll-secret-value";
 
 const config: GceSandboxDriver = { kind: "gce", id: DRIVER_ID, label: "Compute Engine" };
@@ -38,25 +47,37 @@ const setup = Effect.fn("GceComputeDriverTest.setup")(function* (
     readonly config?: Partial<GceSandboxDriver>;
     readonly zones?: ReadonlyArray<string>;
     readonly cloudOnly?: boolean;
-    readonly baseImage?: boolean;
+    /** Absent: this tree's base image is built and ready. */
+    readonly baseImage?: false | "foreign";
     readonly pageSize?: number;
+    readonly stoppedLosesGuestAttributes?: boolean;
   } = {},
 ) {
-  const fake = yield* GceApiFake.make(
-    options.pageSize === undefined ? {} : { pageSize: options.pageSize },
-  );
+  const fake = yield* GceApiFake.make({
+    ...(options.pageSize === undefined ? {} : { pageSize: options.pageSize }),
+    ...(options.stoppedLosesGuestAttributes === undefined
+      ? {}
+      : { stoppedLosesGuestAttributes: options.stoppedLosesGuestAttributes }),
+  });
+  yield* fake.addImage({
+    name: "ubuntu-2404-noble-amd64-v20261101",
+    project: "ubuntu-os-cloud",
+    family: "ubuntu-2404-lts-amd64",
+  });
   const base =
     options.baseImage === false
       ? null
       : yield* fake.addImage({
-          name: `${BASE_FAMILY}-0a1b2c3d4e5f`,
+          name: BASE_IMAGE,
           family: BASE_FAMILY,
-          description: "Pair base image. pair-version=1.2.3",
+          description: `Pair base image. pair-version=1.2.3 provision-sha256=${TREE.sha256}`,
+          ...(options.baseImage === "foreign" ? {} : { labels: { "pair-install": INSTALL } }),
         });
   const driver = yield* makeWithApi({ ...config, ...options.config }, INSTALL, fake.api, {
     cloudOnly: options.cloudOnly ?? true,
     project: Effect.succeed(fake.project),
     zones: Effect.succeed(options.zones ?? [ZONE_A]),
+    provisionTree: Effect.succeed(TREE),
   });
   return { fake, driver, base };
 });
@@ -284,24 +305,156 @@ describe("GceComputeDriver", () => {
         assert.strictEqual(countOf(fake, "instances.insert"), 0);
       }),
     );
+  });
 
-    it.effect("a create with no base image, and health says how to get one", () =>
+  describe("builds its base image", () => {
+    const failedHint =
+      "The base image build failed at `provision`. The builder's last console lines are in this server's log. Choose Refresh to build it again.";
+
+    it.effect("on a builder that reaches nothing of ours, and says so while it runs", () =>
       Effect.gen(function* () {
-        const { driver } = yield* setup({ baseImage: false });
+        const { fake, driver } = yield* setup({ baseImage: false });
+        yield* Queue.take(fake.waits);
+
+        const [body] = GceApiFake.insertBodies(fake);
+        assert.strictEqual(body!.name, BUILDER);
+        assert.deepStrictEqual(body!.labels, { "pair-install": INSTALL });
+        assert.deepStrictEqual(body!.serviceAccounts, []);
+        assert.deepStrictEqual(body!.networkInterfaces, [{ network: "global/networks/default" }]);
+        assert.deepStrictEqual(body!.scheduling, {
+          automaticRestart: false,
+          onHostMaintenance: "MIGRATE",
+        });
+        assert.deepStrictEqual(body!.disks[0]!.initializeParams, {
+          sourceImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64",
+          diskSizeGb: "20",
+          diskType: `zones/${ZONE_A}/diskTypes/pd-balanced`,
+          labels: { "pair-install": INSTALL },
+        });
+        assert.deepStrictEqual(body!.metadata.items, [
+          { key: "startup-script", value: TREE.baseBuildScript },
+          { key: "pair-role", value: "base" },
+          { key: "pair-provision", value: TREE.tarGzBase64 },
+          { key: "pair-version", value: "1.2.3" },
+          { key: "enable-guest-attributes", value: "TRUE" },
+          { key: "block-project-ssh-keys", value: "TRUE" },
+          { key: "enable-oslogin", value: "FALSE" },
+          { key: "serial-port-enable", value: "FALSE" },
+        ]);
+
+        assert.deepStrictEqual((yield* driver.health).baseImage, { pulling: BASE_IMAGE });
         const error = yield* Effect.flip(driver.create(createInput()));
-        assert.strictEqual(error.reason, "not-found");
-        assert.strictEqual(error.image?.state, "missing");
-        assert.strictEqual(error.image?.ref, `family/${BASE_FAMILY}`);
-        assert.isDefined(error.image?.hint);
-        const health = yield* driver.health;
-        assert.deepStrictEqual(health.baseImage, {
-          missing: `family/${BASE_FAMILY}`,
-          hint: error.image!.hint!,
+        assert.strictEqual(error.reason, "unavailable");
+        assert.strictEqual(error.retryable, true);
+        assert.deepStrictEqual(error.image, { ref: BASE_IMAGE, state: "building" });
+        assert.deepStrictEqual(yield* driver.list({ "pair.install": INSTALL }), []);
+        assert.strictEqual(countOf(fake, "instances.insert"), 1);
+      }),
+    );
+
+    it.effect("captures the builder's disk once it reports ok, then deletes the builder", () =>
+      Effect.gen(function* () {
+        const { fake, driver } = yield* setup({ baseImage: false });
+        yield* Queue.take(fake.waits);
+        fake.setGuestAttribute(ZONE_A, BUILDER, "pair/provision", "ok");
+        fake.powerOff(ZONE_A, BUILDER);
+
+        yield* TestClock.adjust("30 seconds");
+        const image = fake.image(BASE_IMAGE);
+        assert.strictEqual(image?.family, BASE_FAMILY);
+        assert.deepStrictEqual(image?.labels, { "pair-install": INSTALL });
+        yield* TestClock.adjust("30 seconds");
+        assert.deepStrictEqual(fake.instancesNamed(BUILDER), []);
+        yield* TestClock.adjust("30 seconds");
+
+        assert.deepStrictEqual((yield* driver.health).baseImage, {
+          ref: image!.selfLink,
+          digest: image!.id,
+          version: "1.2.3",
         });
-        assert.deepStrictEqual(health.privateNetworkBlock, {
-          applied: false,
-          reason: "Set by your VPC's firewall rules.",
+        yield* driver.create(createInput());
+        const [, machine] = GceApiFake.insertBodies(fake);
+        assert.strictEqual(machine!.disks[0]!.initializeParams.sourceImage, image!.selfLink);
+        // Ready and settled: it stops stepping.
+        const reads = countOf(fake, "images.get");
+        yield* TestClock.adjust("10 minutes");
+        assert.strictEqual(countOf(fake, "images.get"), reads);
+      }),
+    );
+
+    it.effect("reads a stopped builder's result from its console, past a failed step", () =>
+      Effect.gen(function* () {
+        const { fake } = yield* setup({ baseImage: false, stoppedLosesGuestAttributes: true });
+        yield* Queue.take(fake.waits);
+        fake.setGuestAttribute(ZONE_A, BUILDER, "pair/provision", "ok");
+        fake.writeSerial(ZONE_A, BUILDER, "pair-base-build: finished");
+        fake.writeSerial(ZONE_A, BUILDER, "pair-provision-result=ok");
+        fake.powerOff(ZONE_A, BUILDER);
+        fake.failNext(
+          "images.insert",
+          new GceApiError({ endpoint: "POST /global/images", failure: "status", status: 503 }),
+        );
+
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(fake.image(BASE_IMAGE), null);
+        yield* TestClock.adjust("30 seconds");
+        assert.notStrictEqual(fake.image(BASE_IMAGE), null);
+      }),
+    );
+
+    it.effect("names the step that failed, then waits for health to start again", () =>
+      Effect.gen(function* () {
+        const { fake, driver } = yield* setup({ baseImage: false });
+        yield* Queue.take(fake.waits);
+        fake.setGuestAttribute(ZONE_A, BUILDER, "pair/provision", "failed:provision");
+        fake.powerOff(ZONE_A, BUILDER);
+        yield* TestClock.adjust("30 seconds");
+        assert.deepStrictEqual(fake.instancesNamed(BUILDER), []);
+
+        const error = yield* Effect.flip(driver.create(createInput()));
+        assert.strictEqual(error.retryable, false);
+        assert.deepStrictEqual(error.image, {
+          ref: BASE_IMAGE,
+          state: "missing",
+          hint: failedHint,
         });
+        yield* TestClock.adjust("10 minutes");
+        assert.strictEqual(countOf(fake, "instances.insert"), 1);
+
+        yield* Queue.clear(fake.waits);
+        assert.deepStrictEqual((yield* driver.health).baseImage, {
+          missing: BASE_IMAGE,
+          hint: failedHint,
+        });
+        yield* Queue.take(fake.waits);
+        assert.strictEqual(countOf(fake, "instances.insert"), 2);
+        assert.deepStrictEqual((yield* driver.health).baseImage, { pulling: BASE_IMAGE });
+      }),
+    );
+
+    it.effect("leaves an image of its name that this install did not make", () =>
+      Effect.gen(function* () {
+        const { fake, driver } = yield* setup({ baseImage: "foreign" });
+        assert.deepStrictEqual((yield* driver.health).baseImage, {
+          missing: BASE_IMAGE,
+          hint: `\`${BASE_IMAGE}\` is in this project but this server did not make it, so it is left alone. Delete or rename it, then choose Refresh.`,
+        });
+        assert.notStrictEqual(fake.image(BASE_IMAGE), null);
+        assert.strictEqual(countOf(fake, "images.delete"), 0);
+        assert.strictEqual(countOf(fake, "instances.insert"), 0);
+      }),
+    );
+
+    it.effect("never when one is named", () =>
+      Effect.gen(function* () {
+        const { fake, driver, base } = yield* setup({ config: { baseImage: BASE_IMAGE } });
+        assert.deepStrictEqual((yield* driver.health).baseImage, {
+          ref: base!.selfLink,
+          digest: base!.id,
+          version: "1.2.3",
+        });
+        assert.strictEqual(countOf(fake, "instances.get"), 0);
+        assert.strictEqual(countOf(fake, "images.list"), 0);
       }),
     );
   });

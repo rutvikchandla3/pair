@@ -1,6 +1,5 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { SandboxProvisionTreeInfo } from "../image/SandboxProvisionTree.ts";
@@ -104,21 +103,13 @@ export class VmBaseImageConflictError extends Schema.TaggedError<VmBaseImageConf
   }
 }
 
-const BaseImageDescription = Schema.fromJsonString(
-  Schema.Struct({ pairVersion: Schema.String, provisionSha256: Schema.String }),
-);
-const encodeDescription = Schema.encodeSync(BaseImageDescription);
-const decodeDescription = Schema.decodeUnknownOption(BaseImageDescription);
-
 /** A label value takes no dot, so the image's description carries the version it was built from. */
 const baseImageDescription = (tree: SandboxProvisionTreeInfo): string =>
-  encodeDescription({ pairVersion: tree.pairVersion, provisionSha256: tree.sha256 });
+  `Pair base image. pair-version=${tree.pairVersion} provision-sha256=${tree.sha256}`;
 
+/** `pair-version=<v>` in an image's description (m5-byoc.md, Shared names). */
 export const baseImagePairVersion = (description: string | undefined): string | null =>
-  Option.match(decodeDescription(description), {
-    onNone: () => null,
-    onSome: (value) => value.pairVersion,
-  });
+  /(?:^|\s)pair-version=(\S+)/.exec(description ?? "")?.[1] ?? null;
 
 const failedStep = (result: string): string => {
   const step = result.startsWith("failed:") ? result.slice("failed:".length) : "";

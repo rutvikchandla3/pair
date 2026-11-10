@@ -1,4 +1,5 @@
 import {
+  SANDBOX_VM_DRIVER_KINDS,
   SandboxDriverCheckError,
   type SandboxDriverCheckInput,
   type SandboxDriverCheckResult,
@@ -164,7 +165,9 @@ const make = Effect.gen(function* () {
           ? Effect.succeed(baseImage)
           : Effect.fail(
               "pulling" in baseImage
-                ? "The base image is still downloading. Test again in a few minutes."
+                ? SANDBOX_VM_DRIVER_KINDS.has(driver.kind)
+                  ? "The base image is still being built. Test again in a few minutes."
+                  : "The base image is still downloading. Test again in a few minutes."
                 : `Machine image not found. ${baseImage.hint}`,
             ),
       ),

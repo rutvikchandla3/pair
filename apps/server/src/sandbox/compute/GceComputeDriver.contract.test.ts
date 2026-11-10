@@ -18,6 +18,7 @@ import { makeGceApi } from "./GceApi.ts";
 import * as GceApiFake from "./GceApiTesting.ts";
 import * as GceComputeDriver from "./GceComputeDriver.ts";
 import { makeGceMetadata } from "./GceMetadata.ts";
+import { SandboxProvisionTreeUnavailableError } from "../image/SandboxProvisionTree.ts";
 
 const config: GceSandboxDriver = {
   kind: "gce",
@@ -26,6 +27,11 @@ const config: GceSandboxDriver = {
 };
 
 const ZONES = ["fake-zone-a", "fake-zone-b"];
+
+// Both name their base image, so nothing builds one.
+const noProvisionTree = Effect.fail(
+  new SandboxProvisionTreeUnavailableError({ reason: "not-bundled" }),
+);
 
 /** The `NAME='value'` lines `vmBootstrapText` writes. */
 const parseBootstrap = (text: string) =>
@@ -66,11 +72,17 @@ const makeFakeDriver = (installId: EnvironmentId, runner: StandInRunnerServer) =
     }
     const family = `pair-${installId.slice(0, 8)}-base`;
     yield* fake.addImage({ name: `${family}-contract`, family });
-    return yield* GceComputeDriver.makeWithApi(config, installId, fake.api, {
-      cloudOnly: true,
-      project: Effect.succeed(fake.project),
-      zones: Effect.succeed(ZONES),
-    });
+    return yield* GceComputeDriver.makeWithApi(
+      { ...config, baseImage: `${family}-contract` },
+      installId,
+      fake.api,
+      {
+        cloudOnly: true,
+        project: Effect.succeed(fake.project),
+        zones: Effect.succeed(ZONES),
+        provisionTree: noProvisionTree,
+      },
+    );
   });
 
 computeDriverContract("GceComputeDriver", makeFakeDriver, {
@@ -113,6 +125,7 @@ describe.runIf(process.env.T3_TEST_GCE === "1")("GceComputeDriver on Compute Eng
             project: metadata.projectId,
             zones: Effect.succeed(realConfig.zones ?? []),
             guest: { startupScript },
+            provisionTree: noProvisionTree,
           },
         );
       }).pipe(Effect.provide([NodeServices.layer, NodeHttpClient.layerUndici]), Effect.orDie),

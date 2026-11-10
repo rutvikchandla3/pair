@@ -1333,13 +1333,17 @@ VM in CI, with no cloud account.
        stopped builder with no report is `Failed("no-report")`.
   - `apps/server/src/sandbox/compute/GceComputeDriver.ts`: `make` requires
     `SandboxProvisionTree`. When `config.baseImage` is unset, a scoped fiber runs `step` every 30
-    seconds until `Ready` or `Failed`, and again when `health` is called after `Failed`, as
-    Docker forks its pull when the driver is built and retries from `health`
-    (DockerComputeDriver.ts 909, 885–905). `health.baseImage` is the image, `{ pulling: <image
-    name> }` while `Building`, or `{ missing, hint }` after `Failed`, with the hint "The base
-    image build failed at `<step>`. Read the builder's serial output in the Google Cloud
-    console, then choose Refresh." `create` with `{ type: "base" }` while `Building` fails with
-    `image: { ref, state: "building" }`, retryable.
+    seconds until `Ready` and settled, or `Failed`, as Docker forks its pull when the driver is
+    built (DockerComputeDriver.ts 909, 885–905). The builder is the `small` machine type on a
+    20 GB disk, with the driver's subnetwork and network tags. `health.baseImage` is the image,
+    `{ pulling: <image name> }` while `Building`, or `{ missing, hint }` after `Failed`, with the
+    hint "The base image build failed at `<step>`. The builder's last console lines are in this
+    server's log. Choose Refresh to build it again." A `health` that answers `Failed` starts the
+    next build behind it, so the failure is shown once and the reconciler's ten-minute `health`
+    also retries. The builder is deleted on failure, so the driver logs its last
+    `pair-base-build:` console lines first. `create` with `{ type: "base" }` while `Building`
+    fails with `image: { ref, state: "building" }`, retryable; it boots from this tree's image
+    by name, never from the family.
   - `apps/server/src/sandbox/compute/ComputeDriver.ts` 51–57, 66–68: `image.state` gains
     `"building"`, whose message is "The machine image is still being built. Retry in a few
     minutes." Docker's `pulling` text is unchanged.

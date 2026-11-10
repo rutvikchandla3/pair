@@ -5,6 +5,7 @@ import {
   type SandboxDriverIsolation,
   type SandboxOverview as SandboxOverviewResult,
   SandboxOverviewError,
+  SANDBOX_VM_DRIVER_KINDS,
   type TeamImageCurrentBase,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -63,9 +64,16 @@ const unreachableMessage = (error: ComputeDriverError, kind: ComputeDriverKind):
   }
 };
 
-const baseImageMessage = (baseImage: ComputeDriverHealth["baseImage"]): string | undefined => {
+const baseImageMessage = (
+  baseImage: ComputeDriverHealth["baseImage"],
+  kind: ComputeDriverKind,
+): string | undefined => {
   if (baseImage === null) return undefined;
-  if ("pulling" in baseImage) return "Downloading the base image.";
+  if ("pulling" in baseImage) {
+    return SANDBOX_VM_DRIVER_KINDS.has(kind)
+      ? "Building the base image. This takes about 10 minutes."
+      : "Downloading the base image.";
+  }
   if ("missing" in baseImage) return `Machine image not found. ${baseImage.hint}`;
   return undefined;
 };
@@ -124,7 +132,7 @@ const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
     return { report, baseImage: null };
   }
   const { isolation, baseImage } = health.success.value;
-  const message = baseImageMessage(baseImage);
+  const message = baseImageMessage(baseImage, driver.kind);
   const report: SandboxDriverHealth = {
     ...base,
     reachable: true,

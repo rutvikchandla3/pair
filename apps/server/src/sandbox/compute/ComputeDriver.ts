@@ -52,7 +52,7 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
     image: Schema.optionalKey(
       Schema.Struct({
         ref: Schema.String,
-        state: Schema.Literals(["pulling", "missing"]),
+        state: Schema.Literals(["pulling", "building", "missing"]),
         hint: Schema.optionalKey(Schema.String),
       }),
     ),
@@ -66,6 +66,9 @@ export class ComputeDriverError extends Schema.TaggedError<ComputeDriverError>()
     if (this.setupHint !== undefined) return this.setupHint;
     if (this.image?.state === "pulling") {
       return "The machine image is still downloading. Retry in a few minutes.";
+    }
+    if (this.image?.state === "building") {
+      return "The machine image is still being built. Retry in a few minutes.";
     }
     if (this.image?.hint !== undefined) return `Machine image not found. ${this.image.hint}`;
     return `Compute driver ${this.driverId} failed to ${this.operation}: ${this.reason}.`;
