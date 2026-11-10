@@ -68,7 +68,7 @@ const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
   image: "Base image",
   create: "Create machine",
   runner: "Runner connects",
-  git: "Run git and reach github.com",
+  git: "Run git and sudo, and reach github.com",
   discard: "Discard machine",
 };
 

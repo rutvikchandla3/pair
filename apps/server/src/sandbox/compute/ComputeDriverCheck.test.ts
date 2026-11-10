@@ -132,12 +132,13 @@ const outline = (result: SandboxDriverCheckResult) =>
   result.steps.map(({ step, ok }) => `${step}:${ok ? "ok" : "failed"}`);
 
 it.effect.each([
-  { curlExit: 0, git: "ok", message: /^git version / },
-  { curlExit: 6, git: "failed", message: /look up github\.com/ },
-  { curlExit: 7, git: "failed", message: /connect to github\.com/ },
-  { curlExit: 35, git: "failed", message: /curl exit 35/ },
+  { curlExit: 0, sudoExit: 0, git: "ok", message: /^git version / },
+  { curlExit: 6, sudoExit: 0, git: "failed", message: /look up github\.com/ },
+  { curlExit: 7, sudoExit: 0, git: "failed", message: /connect to github\.com/ },
+  { curlExit: 35, sudoExit: 0, git: "failed", message: /curl exit 35/ },
+  { curlExit: 0, sudoExit: 1, git: "failed", message: /can't use sudo.*--allow-suid/ },
 ] as const)(
-  "boots a machine, reaches its runner, runs git and curl there, then destroys it (curl exit $curlExit)",
+  "boots a machine, reaches its runner, runs git, sudo and curl there, then destroys it (curl exit $curlExit, sudo exit $sudoExit)",
   (row) =>
     Effect.gen(function* () {
       const { driver, calls } = yield* FakeComputeDriver.make(driverId);
@@ -150,6 +151,10 @@ it.effect.each([
             Effect.provideService(
               ComputeDriverCheck.MachineNetworkProbe,
               ChildProcess.make("sh", ["-c", `exit ${row.curlExit}`]),
+            ),
+            Effect.provideService(
+              ComputeDriverCheck.MachineSudoProbe,
+              ChildProcess.make("sh", ["-c", `exit ${row.sudoExit}`]),
             ),
             Effect.forkChild,
           );

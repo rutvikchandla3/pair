@@ -43,6 +43,22 @@ export const MachineNetworkProbe = Context.Reference<ChildProcess.Command>(
   },
 );
 
+/** What the Test runs in the machine to see that its agent user can use `sudo`. Only tests replace it. */
+export const MachineSudoProbe = Context.Reference<ChildProcess.Command>(
+  "t3/sandbox/compute/ComputeDriverCheck/MachineSudoProbe",
+  {
+    defaultValue: () =>
+      ChildProcess.make("sudo", ["-n", "true"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+  },
+);
+
+const SUDO_FAILURE =
+  "Machines can't use sudo, which agents and setup scripts need. Under gVisor, add --allow-suid to its arguments (see Set up Docker in the Pair Cloud guide).";
+
 const networkFailure = (curlExit: number) => {
   switch (curlExit) {
     case 6:
@@ -184,7 +200,7 @@ const make = Effect.gen(function* () {
         failed: () => "The machine's runner did not connect to this server.",
       });
       if (Option.isNone(runner)) return;
-      // The network probe reports inside `git`; see `SandboxDriverCheckStep`.
+      // The sudo and network probes report inside `git`; see `SandboxDriverCheckStep`.
       const machine = Effect.gen(function* () {
         const gitFailed = "git --version did not run in the machine.";
         const host = yield* hosts
@@ -193,6 +209,10 @@ const make = Effect.gen(function* () {
         const version = yield* host.spawner
           .string(ChildProcess.make("git", ["--version"], { stdin: "ignore", stderr: "ignore" }))
           .pipe(Effect.mapError(() => gitFailed));
+        const sudoExit = yield* host.spawner
+          .exitCode(yield* MachineSudoProbe)
+          .pipe(Effect.mapError(() => SUDO_FAILURE));
+        if (sudoExit !== 0) return yield* Effect.fail(SUDO_FAILURE);
         const curlExit = yield* host.spawner
           .exitCode(yield* MachineNetworkProbe)
           .pipe(Effect.mapError(() => "curl did not run in the machine."));

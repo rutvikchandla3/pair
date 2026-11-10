@@ -63,6 +63,8 @@ import * as TeamImageStore from "./TeamImageStore.ts";
 import {
   TEAM_IMAGE_BUILD_OUTPUT,
   TEAM_IMAGE_LEAK_MARKER,
+  TEAM_IMAGE_NO_SUDO_DETAIL,
+  TEAM_IMAGE_NO_SUDO_EXIT_CODE,
   TEAM_IMAGE_PHASE_MARKER,
 } from "./teamImageBuildProgram.ts";
 
@@ -572,6 +574,25 @@ describe("TeamImageEffectsLive", () => {
         const [log] = yield* Stream.runCollect(buildLog.read(1));
         assert.notInclude(log?.text, NPM_SECRET);
         assert.notInclude(log?.text, "installation-token");
+      }).pipe(Effect.provide(layerTest(world)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a preflight that finds no sudo fails the build in product words", () =>
+    Effect.gen(function* () {
+      const world = yield* makeWorld({
+        program: { lines: [phaseLine("preflight")], exitCode: TEAM_IMAGE_NO_SUDO_EXIT_CODE },
+        snapshot: "succeed",
+      });
+      yield* Effect.gen(function* () {
+        const { build } = yield* startProgram(world);
+        yield* awaitStatus("failed");
+
+        const result = yield* finished(build);
+        assert.deepInclude(result.build?.failure, {
+          phase: "preflight",
+          detail: TEAM_IMAGE_NO_SUDO_DETAIL,
+        });
       }).pipe(Effect.provide(layerTest(world)));
     }).pipe(Effect.scoped),
   );

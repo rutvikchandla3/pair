@@ -30,8 +30,12 @@ and kernel, and on Pair Cloud that host holds the server's database and secrets.
 under gVisor:
 
 1. Install gVisor following [gVisor's install guide](https://gvisor.dev/docs/user_guide/install/),
-   and register it with Docker under the name `runsc`, letting machines reach Pair's socket:
-   `sudo runsc install -- --host-uds=open`, then `sudo systemctl restart docker`.
+   and register it with Docker under the name `runsc`, letting machines reach Pair's socket and
+   use `sudo`, which agents and setup scripts rely on:
+   `sudo runsc install -- --host-uds=open --allow-suid`, then `sudo systemctl restart docker`.
+   On a server set up without `--allow-suid`, add it to `runsc`'s `runtimeArgs` in
+   `/etc/docker/daemon.json` and run `sudo systemctl reload docker`. New machines pick it up;
+   running ones keep their old sandbox until they next start.
 2. Let Pair's user reach Docker: `sudo usermod -aG docker "$(id -un)"`, then log out and back in.
    Do this before you install the service, which keeps the groups it started with.
 3. Check that `docker info` works without `sudo` and lists `runsc` under its runtimes.
@@ -104,10 +108,11 @@ app. It works once.
 ## Turn on Cloud
 
 In **Settings → Cloud**, choose **Add Docker driver**, leave **Docker host** empty, and choose
-**Test**. The test starts a machine, checks that it connects back, runs git and reaches github.com,
-and removes it. The driver's row under **Overview** then says **gVisor**; on plain Docker it says
-**Plain Docker (runc)** and the page warns. [Turn on Cloud](./cloud.md#turn-on-cloud) covers other
-Docker hosts, machine sizes, the base image and variables.
+**Test**. The test starts a machine, checks that it connects back, runs git, checks that `sudo`
+works, reaches github.com, then removes it. The driver's row under **Overview** then says
+**gVisor**; on plain Docker it says **Plain Docker (runc)** and the page warns.
+[Turn on Cloud](./cloud.md#turn-on-cloud) covers other Docker hosts, machine sizes, the base image
+and variables.
 
 ## Connect GitHub
 

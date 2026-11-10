@@ -26,8 +26,8 @@ them up in its **Settings → Cloud**:
    `ssh://` is not supported, so forward the socket instead. A remote host also needs a
    **Runner URL**: an address of this Pair server that its machines can reach.
 3. Pick a **Machine size** and save.
-4. Choose **Test**. It starts a machine, checks that it connects back, runs git and reaches
-   github.com, removes it, and shows how long each step took.
+4. Choose **Test**. It starts a machine, checks that it connects back, runs git, checks that
+   `sudo` works and reaches github.com, removes it, and shows how long each step took.
 
 Plain Docker is not a security boundary: an agent in a machine can reach the host's Docker network
 and kernel. Use rootless Docker or gVisor. The driver's row shows which one is in use, and the

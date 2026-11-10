@@ -679,7 +679,7 @@ export const makeWithEngine = Effect.fn("DockerComputeDriver.makeWithEngine")(fu
         retryable: false,
         setupHint:
           "Docker's gVisor runtime blocks machines from reaching this server. An admin can fix it " +
-          "with `sudo runsc install -- --host-uds=open` and a Docker restart.",
+          "with `sudo runsc install -- --host-uds=open --allow-suid` and a Docker restart.",
       });
     }
     const network = yield* setupLock.withPermits(1)(

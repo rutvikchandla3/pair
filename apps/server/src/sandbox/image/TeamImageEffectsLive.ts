@@ -59,6 +59,8 @@ import {
   secretFragments,
   TEAM_IMAGE_BUILD_OUTPUT,
   TEAM_IMAGE_LEAK_MARKER,
+  TEAM_IMAGE_NO_SUDO_DETAIL,
+  TEAM_IMAGE_NO_SUDO_EXIT_CODE,
   TEAM_IMAGE_ROOT,
   TeamImageBuildOutput,
   teamImageBuildProgram,
@@ -388,7 +390,10 @@ const make = Effect.gen(function* () {
     if (exitCode !== 0) {
       return yield* new BuildStopped({
         phase: progress.phase,
-        detail: `The build failed during ${progress.phase} (exit ${exitCode}).`,
+        detail:
+          exitCode === TEAM_IMAGE_NO_SUDO_EXIT_CODE
+            ? TEAM_IMAGE_NO_SUDO_DETAIL
+            : `The build failed during ${progress.phase} (exit ${exitCode}).`,
         exitCode,
       });
     }

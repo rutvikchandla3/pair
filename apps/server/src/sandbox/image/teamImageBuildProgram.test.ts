@@ -7,12 +7,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { TeamImageBuildOutput, teamImageBuildProgram } from "./teamImageBuildProgram.ts";
+import {
+  TEAM_IMAGE_NO_SUDO_EXIT_CODE,
+  TeamImageBuildOutput,
+  teamImageBuildProgram,
+} from "./teamImageBuildProgram.ts";
 
 const STUBS: Record<string, string> = {
   id: "echo t3",
   // Ownership and system paths are the machine's; here they are plain directories.
   sudo: [
+    // `sudo -n` fails when SUDO_BROKEN is set, as on a machine whose setuid bits are ignored.
+    'if [ "$1" = -n ]; then [ -z "${SUDO_BROKEN:-}" ] || exit 1; shift; fi',
     'case "$1" in',
     '  install) for last; do :; done; mkdir -p "$last" ;;',
     "  chown) ;;",
@@ -31,7 +37,10 @@ const STUBS: Record<string, string> = {
   codex: "echo 0.50.0",
 };
 
-const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (install: string) {
+const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (
+  install: string,
+  env: Record<string, string> = {},
+) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-build-program-" });
@@ -74,6 +83,7 @@ const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (ins
         PATH: `${root}/bin:${yield* Config.String("PATH").pipe(Config.withDefault("/usr/bin:/bin"))}`,
         NPM_TOKEN: "npm-secret-value",
         T3_CLONE_TOKEN_0: "clone-token-value",
+        ...env,
       },
     }),
   );
@@ -107,7 +117,7 @@ const runBuild = Effect.fn("teamImageBuildProgram.test.runBuild")(function* (ins
         line.slice("::t3-leak::".length).replace(home, "$HOME").replace(root, "$ROOT"),
       ),
     result,
-    gitCalls: yield* fs.readFileString(`${root}/git-calls`),
+    gitCalls: yield* fs.readFileString(`${root}/git-calls`).pipe(Effect.orElseSucceed(() => "")),
     buildDirLeft: yield* fs.exists(`${home}/.t3-build`),
   };
 });
@@ -146,6 +156,14 @@ describe("teamImageBuildProgram", () => {
       assert.notInclude(build.gitCalls, "clone-token-value");
       assert.notInclude(build.output, "npm-secret-value");
       assert.isFalse(build.buildDirLeft);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops at preflight when the build user can't use sudo", () =>
+    Effect.gen(function* () {
+      const build = yield* runBuild("exit 0", { SUDO_BROKEN: "1" });
+      assert.strictEqual(build.exitCode, TEAM_IMAGE_NO_SUDO_EXIT_CODE);
+      assert.deepStrictEqual(build.phases, ["preflight"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

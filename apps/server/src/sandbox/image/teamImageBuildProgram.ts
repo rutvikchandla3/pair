@@ -7,6 +7,10 @@ export const TEAM_IMAGE_PHASE_MARKER = "::t3-phase::";
 /** `::t3-leak::<NAME>::<path>`, one per file that holds a secret's value. */
 export const TEAM_IMAGE_LEAK_MARKER = "::t3-leak::";
 const TEAM_IMAGE_LEAK_EXIT_CODE = 3;
+/** Preflight exits with this when the build user can't use `sudo`. */
+export const TEAM_IMAGE_NO_SUDO_EXIT_CODE = 4;
+export const TEAM_IMAGE_NO_SUDO_DETAIL =
+  "Machines on this server can't use sudo, which the build needs. Under gVisor, add --allow-suid to its arguments (see Set up Docker in the Pair Cloud guide).";
 
 /** Shorter lines would star ordinary text in a log and match anywhere in a file. */
 const MIN_SECRET_FRAGMENT_LENGTH = 4;
@@ -160,6 +164,7 @@ export const teamImageBuildProgram = (input: TeamImageBuildProgramInput): string
     "  local free_kb",
     "  free_kb=\"$(df -Pk / | awk 'NR == 2 { print $4 }')\"",
     '  [ "$free_kb" -ge 2097152 ] || fail "The build machine has less than 2 GiB free on /."',
+    `  sudo -n true 2>/dev/null || exit ${TEAM_IMAGE_NO_SUDO_EXIT_CODE}`,
     // The server writes these files through the runner, which runs as root.
     '  sudo chown -R t3:t3 "$build_dir"',
     "",

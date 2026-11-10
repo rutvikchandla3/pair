@@ -202,7 +202,7 @@ export type SandboxViewingInput = typeof SandboxViewingInput.Type;
 export const SandboxDriverCheckInput = Schema.Struct({ driverId: ComputeDriverId });
 export type SandboxDriverCheckInput = typeof SandboxDriverCheckInput.Type;
 
-/** Closed: a new step fails older clients' whole decode, so `git` also reaches github.com. */
+/** Closed: a new step fails older clients' whole decode, so `git` also runs sudo and reaches github.com. */
 export const SandboxDriverCheckStep = Schema.Literals([
   "image",
   "create",
