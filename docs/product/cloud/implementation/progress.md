@@ -36,12 +36,12 @@ prereleases; the VM runs V5 and is stopped. G3 ran by the spec's
 [G3 on real hardware](#g3-on-real-hardware-2026-11-10-mac--pair-cloud-pass-release-v4). Owed: step
 5 on a phone, 3.24's `test-t3-mobile` pass, G3's video, and the steps listed there as not run.
 
-**M4 (10 of 12), specs written 2026-11-10:** full specs in
+**M4 (11 of 12), specs written 2026-11-10:** full specs in
 [m4-team-images.md](./m4-team-images.md) (aa324bef9), written from the code at `d01e81c56`, so
 before 3.23. Its open questions are answered as proposed (the maintainer is away); the list is
 under that page's "What the code changed in 10 §2". Landed on `feat/pair` after G3 passed: 4.11 (4ea5eddd1), 4.12
 (52233856a), 4.13 (109a0876b), 4.14 (549574f63) and 4.15 (fd44a033d). 4.16 (4d285e557), 4.17 (0cac39638) and 4.18 (1637e447c) landed too, then 4.21 (e756fae13) and 4.22
-(0ee7304c3). In flight: 4.19 (critical); 4.20 follows it. Then a release with M4 and the M4 integrated pass (G4
+(0ee7304c3) and 4.19 (54967e437). In flight: 4.20, the last row. Then a release with M4 and the M4 integrated pass (G4
 step 1).
 `land.sh` and `mkwt.sh` take `BASE` and `LEAD` if an integration branch is needed again.
 
@@ -2165,6 +2165,26 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
   versions when both exist. It tests "differs", not "older", so a server rolled back to an older
   release also shows the hint. Web shows it on the active row for admins, with **Build**.
 - To see it on the VM: a build made on one release, then an upgrade to the next.
+
+## 4.19 agent tools for the team image (landed 54967e437)
+
+- `mcp/toolkits/sandboxImage/`: `t3_team_image_read`, `t3_team_image_build_log`,
+  `t3_team_image_recipe_update`, `t3_team_image_build_start`, `t3_team_image_build_cancel`, hidden
+  on servers without team images (`McpInvocationScope.teamImages`). `mcpToolListJsonBytes` 48,788
+  → 50,313: the PR needs the `agent-context-increase` label.
+- `TeamImageAuthority.forCaller(scope)` runs in each write handler after `writesEnvironment`; the
+  service's `ensureAdmin` is the backstop. `saveRecipe`, `startBuild` and `cancelBuild` take
+  `by: TeamImageRequester`, and every person it names must be an active admin. Stricter than the
+  spec: any message in the run that no person wrote (a notification, a delegated task's result)
+  removes authority.
+- An agent's build records `requestedBy: { kind: "agent", threadId, runId, authorIds }` with
+  `activateOnSuccess: false`. `startBuild` takes the flag explicitly, so a build from an outside
+  client token doesn't go live by itself. No tool activates.
+- A linked caller is refused by `writesEnvironment`, so an admin's agent link can't change the
+  image yet, though 05 §7 allows it. A client token with no member acts as the owner in solo mode
+  and is refused in team mode.
+- Eval cases in `team-image.ndjson`: `team-image-admin-adds-postgres`,
+  `team-image-member-asks-to-build`, `team-image-ordinary-work-control`.
 
 ## Open follow-ups and risks
 
