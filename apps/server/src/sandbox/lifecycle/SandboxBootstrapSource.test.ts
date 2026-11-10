@@ -36,7 +36,7 @@ it.effect("mints a grant only once the route and the runner build are known", ()
       Layer.provide(
         Layer.succeed(RunnerEndpoint, {
           planFor: (driver) =>
-            driver.dockerHost === undefined
+            driver.kind === "docker" && driver.dockerHost === undefined
               ? Effect.succeed({ serverUrl: "unix:/srv/t3/runner-socket/runner.sock" })
               : Effect.fail(
                   new RunnerRouteError({ driverId: driver.id, reason: "runner-url-required" }),

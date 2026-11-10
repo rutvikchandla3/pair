@@ -6,7 +6,11 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { assert, describe, it } from "@effect/vitest";
-import { ComputeDriverId, type DockerSandboxDriver } from "@t3tools/contracts";
+import {
+  ComputeDriverId,
+  type DockerSandboxDriver,
+  type SandboxDriverInstance,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -31,7 +35,7 @@ const refused = (reason: RunnerEndpoint.RunnerRouteError["reason"]) => Result.fa
 interface RouteRow {
   readonly name: string;
   readonly runnerUrl: string | undefined;
-  readonly dockerHost: DockerHost;
+  readonly dockerHost: DockerHost | null;
   readonly platform: NodeJS.Platform;
   readonly hostSocketDir?: string;
   readonly expected: ReturnType<typeof RunnerEndpoint.chooseRunnerRoute>;
@@ -81,6 +85,20 @@ describe("chooseRunnerRoute", () => {
       platform: "linux",
       hostSocketDir: `/srv/${"x".repeat(90)}`,
       expected: refused("socket-path-too-long"),
+    },
+    {
+      name: "a VM driver dials its runner URL",
+      runnerUrl: "http://10.0.0.2:3774",
+      dockerHost: null,
+      platform: "linux",
+      expected: Result.succeed({ _tag: "url", url: "http://10.0.0.2:3774" }),
+    },
+    {
+      name: "a VM driver without a runner URL cannot mount the server's disk",
+      runnerUrl: undefined,
+      dockerHost: null,
+      platform: "linux",
+      expected: refused("runner-url-required"),
     },
   ])("$name", ({ runnerUrl, dockerHost, platform, hostSocketDir, expected }) => {
     assert.deepStrictEqual(
@@ -177,3 +195,36 @@ it.live("opens the runner socket once and serves only the runner routes on it", 
     assert.deepStrictEqual((yield* fs.stat(socketPath)).ino, inode);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+const gce = (runnerUrl?: string): SandboxDriverInstance => ({
+  kind: "gce",
+  id: ComputeDriverId.make("gce"),
+  label: "Google Cloud",
+  ...(runnerUrl === undefined ? {} : { runnerUrl }),
+});
+
+describe("dialsOverTcp", () => {
+  it.effect.each([
+    { name: "a VM driver with a runner URL", driver: gce("http://10.0.0.2:3773"), expected: true },
+    { name: "a VM driver without one", driver: gce(), expected: false },
+  ])("$name", ({ driver, expected }) =>
+    Effect.gen(function* () {
+      const services = yield* Layer.build(
+        RunnerEndpoint.layer.pipe(
+          Layer.provide(
+            Layer.mock(ServerConfig)({ stateDir: "/srv/t3" } as ServerConfig["Service"]),
+          ),
+          Layer.provide(ServerSettings.layerTest({ sandbox: { drivers: [driver] } })),
+          Layer.provide(NodeHttpServer.layerTest),
+          Layer.provide(Layer.mock(RunnerBundle.RunnerBundle)({})),
+          Layer.provide(Layer.mock(RunnerHub.RunnerHub)({})),
+        ),
+      );
+      const endpoint = Context.get(services, RunnerEndpoint.RunnerEndpoint);
+      assert.strictEqual(
+        yield* endpoint.dialsOverTcp.pipe(Effect.provideService(HostProcess.Platform, "linux")),
+        expected,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});

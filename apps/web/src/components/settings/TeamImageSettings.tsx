@@ -195,7 +195,7 @@ export function TeamImageSettings({
   const draft = edit?.draft ?? draftFromRecipe(savedRecipe, storedSecrets);
 
   const buildBlocker = !driversConfigured
-    ? "Add a Docker driver under Compute first."
+    ? "Add a driver under Compute first."
     : buildRunning
       ? "A build is already running."
       : null;

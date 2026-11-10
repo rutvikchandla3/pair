@@ -641,7 +641,10 @@ yet (5.11). Every place that assumed the only driver is Docker now takes any dri
     start the server with a runner listener." `dialsOverTcp` (171–182) also returns true for a VM
     kind with a `runnerUrl`.
   - `apps/server/src/sandbox/lifecycle/SandboxBootstrapSource.ts` 71: compiles unchanged once
-    `planFor` is widened.
+    `planFor` is widened. (As built: `chooseRunnerRoute` takes `dockerHost: null` for a VM kind;
+    `ComputeDriverRegistry.build` looks its factory up through a function generic in the kind,
+    since indexing the factories by a union `kind` no longer type-checks; and the
+    `SandboxBootstrapSource.test.ts` stub narrows on `kind` before reading `dockerHost`.)
   - `apps/web/src/components/settings/CloudSettings.logic.ts`: `nextDriverId(drivers, kind)`
     (42–47) yields `docker`, `docker-2`, `gce`, `gce-2`; `gceDriverFormError({ label, project,
     zones, subnetwork, runnerUrl, runningCap })` (a zone is `[a-z]+-[a-z0-9]+-[a-z]`; a project is

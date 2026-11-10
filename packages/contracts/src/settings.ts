@@ -1213,7 +1213,41 @@ export const DockerSandboxDriver = Schema.Struct({
 });
 export type DockerSandboxDriver = typeof DockerSandboxDriver.Type;
 
-export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver]);
+// Also a Compute Engine label value, so the charset is the label's.
+const GceDriverId = ComputeDriverId.check(Schema.isPattern(/^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/));
+
+/** No credential key: the driver acts as the server VM's own service account. */
+export const GceSandboxDriver = Schema.Struct({
+  kind: Schema.Literal("gce"),
+  id: GceDriverId,
+  label: TrimmedNonEmptyString,
+  size: Schema.optionalKey(SandboxSize),
+  runningCap: Schema.optionalKey(PositiveInt),
+  // Every key below is optional, so the member view (2.25) decodes.
+  /** Absent: the server VM's own project. */
+  project: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Tried in order; absent: the server VM's zone. */
+  zones: Schema.optionalKey(Schema.NonEmptyArray(TrimmedNonEmptyString)),
+  /** `regions/<region>/subnetworks/<name>` or a self link. */
+  subnetwork: Schema.optionalKey(TrimmedNonEmptyString),
+  networkTags: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  machineTypes: Schema.optionalKey(
+    Schema.Struct({
+      small: Schema.optionalKey(TrimmedNonEmptyString),
+      default: Schema.optionalKey(TrimmedNonEmptyString),
+      large: Schema.optionalKey(TrimmedNonEmptyString),
+    }),
+  ),
+  diskGb: Schema.optionalKey(PositiveInt),
+  /** A Cloud KMS key name for disks, snapshots and images. */
+  kmsKey: Schema.optionalKey(TrimmedNonEmptyString),
+  /** An image or family to boot instead of the one the driver builds. */
+  baseImage: Schema.optionalKey(TrimmedNonEmptyString),
+  runnerUrl: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type GceSandboxDriver = typeof GceSandboxDriver.Type;
+
+export const SandboxDriverInstance = Schema.Union([DockerSandboxDriver, GceSandboxDriver]);
 export type SandboxDriverInstance = typeof SandboxDriverInstance.Type;
 
 /** Days a stopped machine keeps its disk; null never destroys it (04 §2). */

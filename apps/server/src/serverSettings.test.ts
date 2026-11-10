@@ -362,9 +362,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         size: "large",
         runningCap: 3,
       } as const;
+      const gce = {
+        kind: "gce",
+        id: "gce",
+        label: "Google Cloud",
+        size: "small",
+        runningCap: 20,
+        project: "vm-provider",
+        zones: ["asia-south1-a", "asia-south1-b"],
+        subnetwork: "regions/asia-south1/subnetworks/pair-machines",
+        networkTags: ["pair-machine"],
+        machineTypes: { default: "e2-standard-4" },
+        diskGb: 50,
+        kmsKey: "projects/vm-provider/locations/asia-south1/keyRings/pair/cryptoKeys/disks",
+        baseImage: "projects/vm-provider/global/images/family/pair-base",
+        runnerUrl: "http://10.0.0.2:3774",
+      } as const;
       const settings = yield* decodeServerSettings({
         sandbox: {
-          drivers: [driver, { kind: "docker", id: "local", label: "This machine" }],
+          drivers: [driver, { kind: "docker", id: "local", label: "This machine" }, gce],
           defaultDriverId: "remote",
           baseImage: "ghcr.io/example/sandbox:1",
           env: [{ name: "TEAM_TOKEN", value: "team-secret", sensitive: true }],
@@ -380,10 +396,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepStrictEqual<unknown>(member?.drivers, [
         { kind: "docker", id: "remote", label: "Remote", size: "large", runningCap: 3 },
         { kind: "docker", id: "local", label: "This machine" },
+        { kind: "gce", id: "gce", label: "Google Cloud", size: "small", runningCap: 20 },
       ]);
+      const memberGce = member?.drivers.find((entry) => entry.kind === "gce");
+      for (const key of [
+        "project",
+        "zones",
+        "subnetwork",
+        "kmsKey",
+        "baseImage",
+        "networkTags",
+        "runnerUrl",
+      ]) {
+        assert.isFalse(Object.hasOwn(memberGce ?? {}, key), key);
+      }
       assert.deepStrictEqual<unknown>(admin?.drivers, [
         driver,
         { kind: "docker", id: "local", label: "This machine" },
+        gce,
       ]);
       for (const view of [admin, member]) {
         assert.equal(view?.defaultDriverId, "remote");

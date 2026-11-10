@@ -2,7 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { ComputeDriverId, type DockerSandboxDriver } from "@t3tools/contracts";
+import { ComputeDriverId, type SandboxDriverInstance } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -45,7 +45,7 @@ export class RunnerRouteError extends Schema.TaggedError<RunnerRouteError>()("Ru
   override get message(): string {
     switch (this.reason) {
       case "runner-url-required":
-        return `Sandboxes on a remote Docker host cannot reach this server's disk. Set a runner URL for ${this.driverId}.`;
+        return `Machines on ${this.driverId} cannot reach this server's disk. Set a runner URL for it, or start the server with a runner listener.`;
       case "unsupported-platform":
         return `Sandboxes cannot reach a server on this platform without a runner URL for ${this.driverId}.`;
       case "socket-path-too-long":
@@ -60,10 +60,11 @@ type RunnerDialRoute =
   | { readonly _tag: "unix"; readonly socketPath: string }
   | { readonly _tag: "url"; readonly url: string };
 
-/** 03 3.2: how one Docker driver's sandboxes reach this server. */
+/** 03 3.2: how one driver's sandboxes reach this server. */
 export const chooseRunnerRoute = (input: {
   readonly runnerUrl: string | undefined;
-  readonly dockerHost: DockerHost;
+  /** Null for a VM driver, whose machines never share the server's host. */
+  readonly dockerHost: DockerHost | null;
   readonly serverPlatform: NodeJS.Platform;
   /** The live listener's port, never Vite's; null when it is not a TCP listener. */
   readonly serverPort: number | null;
@@ -71,8 +72,8 @@ export const chooseRunnerRoute = (input: {
   readonly hostSocketDir: string;
 }): Result.Result<RunnerDialRoute, RunnerRouteError["reason"]> => {
   if (input.runnerUrl !== undefined) return Result.succeed({ _tag: "url", url: input.runnerUrl });
-  // A remote daemon cannot mount the server's disk (04 7).
-  if (input.dockerHost._tag !== "Unix") return Result.fail("runner-url-required");
+  // A remote daemon or a VM cannot mount the server's disk (04 7).
+  if (input.dockerHost?._tag !== "Unix") return Result.fail("runner-url-required");
   if (input.serverPlatform === "darwin" && input.serverPort !== null) {
     // Docker Desktop's VM reaches the host's loopback through this name.
     return Result.succeed({
@@ -93,7 +94,7 @@ export class RunnerEndpoint extends Context.Service<
   {
     /** Opens the Unix listener on first use of a "unix" route; it lives as long as the server. */
     readonly planFor: (
-      driver: DockerSandboxDriver,
+      driver: SandboxDriverInstance,
     ) => Effect.Effect<RunnerDialPlan, RunnerRouteError>;
     /** Whether any configured driver's sandboxes reach `/runner/*` on the TCP listener. */
     readonly dialsOverTcp: Effect.Effect<boolean>;
@@ -134,21 +135,24 @@ const make = Effect.gen(function* () {
     yield* Effect.logInfo("runner socket listening", { socketPath });
   });
 
-  const routeFor = Effect.fnUntraced(function* (driver: DockerSandboxDriver) {
+  const routeFor = Effect.fnUntraced(function* (driver: SandboxDriverInstance) {
     return chooseRunnerRoute({
       runnerUrl: driver.runnerUrl,
-      dockerHost: parseDockerHost(
-        driver.dockerHost,
-        yield* HostProcess.Environment,
-        yield* HostProcess.HomeDirectory,
-      ),
+      dockerHost:
+        driver.kind === "docker"
+          ? parseDockerHost(
+              driver.dockerHost,
+              yield* HostProcess.Environment,
+              yield* HostProcess.HomeDirectory,
+            )
+          : null,
       serverPlatform: yield* HostProcess.Platform,
       serverPort,
       hostSocketDir,
     });
   });
 
-  const planFor = Effect.fn("RunnerEndpoint.planFor")(function* (driver: DockerSandboxDriver) {
+  const planFor = Effect.fn("RunnerEndpoint.planFor")(function* (driver: SandboxDriverInstance) {
     const route = yield* routeFor(driver);
     if (Result.isFailure(route)) {
       return yield* new RunnerRouteError({ driverId: driver.id, reason: route.failure });
@@ -174,7 +178,6 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => []),
     );
     for (const driver of drivers) {
-      if (driver.kind !== "docker") continue;
       const route = yield* routeFor(driver);
       if (Result.isSuccess(route) && route.success._tag === "url") return true;
     }

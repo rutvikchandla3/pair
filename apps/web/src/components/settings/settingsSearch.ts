@@ -1243,7 +1243,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Docker driver",
     to: "/settings/cloud",
     searchTerms: [
-      "docker host DOCKER_HOST rootless gvisor runc isolation machine compute driver runner url size add remove",
+      "docker host DOCKER_HOST rootless gvisor runc isolation machine compute driver runner url size add remove google cloud gce compute engine project zone subnetwork",
     ],
     environmentOnly: true,
     cloudSettingsOnly: true,

@@ -67,8 +67,11 @@ export const isReservedSandboxEnvName = (name: string): boolean =>
 export const ComputeDriverId = TrimmedNonEmptyString.pipe(Schema.brand("ComputeDriverId"));
 export type ComputeDriverId = typeof ComputeDriverId.Type;
 
-export const ComputeDriverKind = Schema.Literals(["docker"]);
+export const ComputeDriverKind = Schema.Literals(["docker", "gce"]);
 export type ComputeDriverKind = typeof ComputeDriverKind.Type;
+
+/** Kinds whose machines are cloud VMs: they never share the server's disk or Docker network. */
+export const SANDBOX_VM_DRIVER_KINDS: ReadonlySet<ComputeDriverKind> = new Set(["gce"]);
 
 export const SandboxState = Schema.Literals([
   "provisioning",

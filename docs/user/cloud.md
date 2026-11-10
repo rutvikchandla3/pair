@@ -20,7 +20,7 @@ remain, so an admin can remove them.
 Cloud machines are Docker containers. Once [Pair Cloud is installed](./pair-cloud.md), admins set
 them up in its **Settings → Cloud**:
 
-1. Choose **Add Docker driver**.
+1. Choose **Add driver**, then **Docker**.
 2. Leave **Docker host** empty to use Docker on the server's own machine (or the server's
    `DOCKER_HOST`). For another Docker host, enter its `tcp://` address or a `unix://` socket;
    `ssh://` is not supported, so forward the socket instead. A remote host also needs a
@@ -43,6 +43,9 @@ runs.
 
 **Environment variables** in **Settings → Cloud** are set in every machine's terminals, scripts and
 agents. Projects can add their own.
+
+A Pair Cloud server that runs in your own Google Cloud project can use that project's Compute
+Engine VMs as machines instead: choose **Add driver**, then **Google Cloud**.
 
 Removing a driver stops the cloud threads on its machines.
 

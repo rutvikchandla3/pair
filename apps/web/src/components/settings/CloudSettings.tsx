@@ -1,9 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ComputeDriverId,
+  ComputeDriverKind,
   type DockerSandboxDriver,
   EnvironmentId,
+  type GceSandboxDriver,
   isReservedSandboxEnvName,
+  SANDBOX_VM_DRIVER_KINDS,
   type SandboxDiskRetention,
   type SandboxDriverCheckResult,
   type SandboxDriverCheckStep,
@@ -40,10 +43,14 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
   cloudSettingsVisible,
   dockerDriverFormError,
+  type GceDriverForm,
+  gceDriverFormError,
+  gceDriverFromForm,
   isRemoteDockerHost,
   nextDriverId,
 } from "./CloudSettings.logic";
@@ -62,6 +69,11 @@ const SIZE_LABELS: Readonly<Record<SandboxSize, string>> = {
   small: "Small",
   default: "Default",
   large: "Large",
+};
+
+const DRIVER_KIND_LABELS: Readonly<Record<ComputeDriverKind, string>> = {
+  docker: "Docker",
+  gce: "Google Cloud",
 };
 
 const STEP_LABELS: Readonly<Record<SandboxDriverCheckStep, string>> = {
@@ -132,8 +144,55 @@ export function CloudSettings() {
 }
 
 type DriverForm =
-  | { readonly mode: "add" }
+  | { readonly mode: "add"; readonly kind: ComputeDriverKind }
   | { readonly mode: "edit"; readonly id: ComputeDriverId };
+
+function AddDriverMenu({
+  size,
+  onAdd,
+}: {
+  readonly size: "xs" | "sm";
+  readonly onAdd: (kind: ComputeDriverKind) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger render={<Button size={size} variant="outline" />}>Add driver</MenuTrigger>
+      <MenuPopup align="end">
+        {ComputeDriverKind.literals.map((kind) => (
+          <MenuItem key={kind} onClick={() => onAdd(kind)}>
+            {DRIVER_KIND_LABELS[kind]}
+          </MenuItem>
+        ))}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function driverDescription(driver: SandboxDriverInstance): string {
+  const size = `${SIZE_LABELS[driver.size ?? "default"]} machines`;
+  switch (driver.kind) {
+    case "docker":
+      return [
+        driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this machine",
+        isRemoteDockerHost(driver.dockerHost ?? "") && driver.runnerUrl
+          ? `runner URL ${driver.runnerUrl}`
+          : null,
+        size,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    case "gce":
+      return [
+        DRIVER_KIND_LABELS.gce,
+        driver.project,
+        driver.zones?.join(", "),
+        driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
+        size,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+  }
+}
 
 function CloudEnvironmentSettings({
   environmentId,
@@ -183,7 +242,7 @@ function CloudEnvironmentSettings({
       "Disk retention not saved",
     );
 
-  const saveDriver = async (driver: DockerSandboxDriver) => {
+  const saveDriver = async (driver: SandboxDriverInstance) => {
     if (await save({ sandbox: { drivers: { [driver.id]: driver } } }, "Driver not saved"))
       setForm(null);
   };
@@ -222,6 +281,7 @@ function CloudEnvironmentSettings({
   const healths = new Map(overview.data?.drivers.map((health) => [health.driverId, health]) ?? []);
   const plainDocker = drivers.filter((driver) => healths.get(driver.id)?.isolation === "runc");
   const editing = form?.mode === "edit" ? drivers.find((driver) => driver.id === form.id) : null;
+  const formKind = form?.mode === "add" ? form.kind : editing?.kind;
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const formatTime = (time: DateTime.Utc) =>
     formatDayAwareTimestamp(DateTime.formatIso(time), timestampFormat);
@@ -319,9 +379,7 @@ function CloudEnvironmentSettings({
             description="Cloud runs each cloud thread on its own machine. Nothing changes until you add a driver."
             control={
               canEdit ? (
-                <Button size="sm" variant="outline" onClick={() => setForm({ mode: "add" })}>
-                  Add Docker driver
-                </Button>
+                <AddDriverMenu size="sm" onAdd={(kind) => setForm({ mode: "add", kind })} />
               ) : (
                 <span className="text-xs text-muted-foreground">An admin can set it up.</span>
               )
@@ -384,35 +442,34 @@ function CloudEnvironmentSettings({
           title="Compute"
           headerAction={
             canEdit && configured && form === null ? (
-              <Button size="xs" variant="outline" onClick={() => setForm({ mode: "add" })}>
-                Add Docker driver
-              </Button>
+              <AddDriverMenu size="xs" onAdd={(kind) => setForm({ mode: "add", kind })} />
             ) : undefined
           }
         >
-          {form !== null ? (
+          {formKind === "docker" ? (
             <DockerDriverFormRow
-              key={form.mode === "edit" ? form.id : "add"}
-              initial={editing ?? null}
-              id={editing?.id ?? nextDriverId(drivers)}
+              key={form?.mode === "edit" ? form.id : "add"}
+              initial={editing?.kind === "docker" ? editing : null}
+              id={editing?.id ?? nextDriverId(drivers, "docker")}
+              onCancel={() => setForm(null)}
+              onSave={saveDriver}
+            />
+          ) : formKind === "gce" ? (
+            <GceDriverFormRow
+              key={form?.mode === "edit" ? form.id : "add"}
+              initial={editing?.kind === "gce" ? editing : null}
+              id={editing?.id ?? nextDriverId(drivers, "gce")}
               onCancel={() => setForm(null)}
               onSave={saveDriver}
             />
           ) : null}
           {drivers.map((driver) => {
             const check = checks[driver.id];
-            const remote = isRemoteDockerHost(driver.dockerHost ?? "");
             return (
               <SettingsRow
                 key={driver.id}
                 title={driver.label}
-                description={[
-                  driver.dockerHost ? `Docker at ${driver.dockerHost}` : "Docker on this machine",
-                  remote && driver.runnerUrl ? `runner URL ${driver.runnerUrl}` : null,
-                  `${SIZE_LABELS[driver.size ?? "default"]} machines`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+                description={driverDescription(driver)}
                 control={
                   <div className="flex items-center gap-1.5">
                     {canEdit ? (
@@ -482,9 +539,11 @@ function CloudEnvironmentSettings({
                           {drivers.length > 1 ? `${driver.label}: ` : "Team: "}
                           {cap === undefined ? "…" : `${cap} machine${cap === 1 ? "" : "s"}`} at
                           once{" "}
-                          {driver.runningCap === undefined
-                            ? "(a quarter of the host's vCPUs)"
-                            : "(set by an admin)"}
+                          {driver.runningCap !== undefined
+                            ? "(set by an admin)"
+                            : SANDBOX_VM_DRIVER_KINDS.has(driver.kind)
+                              ? "(the driver's default)"
+                              : "(a quarter of the host's vCPUs)"}
                         </span>
                       );
                     })}
@@ -687,6 +746,125 @@ function DockerDriverFormRow({
             onChange={(event) => setRunningCap(event.target.value)}
           />
         </div>
+        {error !== null ? (
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {error}
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-1.5">
+          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={error !== null || saving}>
+            {saving ? "Saving…" : "Save driver"}
+          </Button>
+        </div>
+      </form>
+    </SettingsRow>
+  );
+}
+
+function GceDriverFormRow({
+  initial,
+  id,
+  onSave,
+  onCancel,
+}: {
+  readonly initial: GceSandboxDriver | null;
+  readonly id: ComputeDriverId;
+  readonly onSave: (driver: GceSandboxDriver) => Promise<void>;
+  readonly onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<GceDriverForm>({
+    label: initial?.label ?? DRIVER_KIND_LABELS.gce,
+    project: initial?.project ?? "",
+    zones: initial?.zones?.join(", ") ?? "",
+    subnetwork: initial?.subnetwork ?? "",
+    runnerUrl: initial?.runnerUrl ?? "",
+    size: initial?.size ?? "default",
+    runningCap: initial?.runningCap?.toString() ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const error = gceDriverFormError(draft);
+  const field = (name: string) => `cloud-driver-${id}-${name}`;
+  const text = (name: Exclude<keyof GceDriverForm, "size">, label: string, placeholder: string) => (
+    <div className="grid gap-1.5">
+      <Label htmlFor={field(name)}>{label}</Label>
+      <Input
+        id={field(name)}
+        size="sm"
+        placeholder={placeholder}
+        spellCheck={false}
+        value={draft[name]}
+        onChange={(event) => setDraft({ ...draft, [name]: event.target.value })}
+      />
+    </div>
+  );
+
+  return (
+    <SettingsRow
+      title={initial ? `Edit ${initial.label}` : "Add Google Cloud driver"}
+      description="Compute Engine VMs in this server's Google Cloud project, created as the server's own service account."
+    >
+      <form
+        className="grid gap-3 pb-3"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (error !== null || saving) return;
+          setSaving(true);
+          await onSave(gceDriverFromForm(initial, id, draft));
+          setSaving(false);
+        }}
+      >
+        {text("label", "Name", "")}
+        {text("project", "Project", "This server's project")}
+        {text("zones", "Zones", "This server's zone, or zones separated by commas")}
+        {text("subnetwork", "Subnetwork", "regions/<region>/subnetworks/<name>")}
+        <div className="grid gap-1.5">
+          <Label htmlFor={field("size")}>Machine size</Label>
+          <Select
+            value={draft.size}
+            onValueChange={(value) => {
+              if (value === "small" || value === "default" || value === "large")
+                setDraft({ ...draft, size: value });
+            }}
+          >
+            <SelectTrigger id={field("size")} size="sm" aria-label="Machine size">
+              <SelectValue>
+                {(value: string | null) =>
+                  value === "small" || value === "default" || value === "large"
+                    ? SIZE_LABELS[value]
+                    : ""
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="start" alignItemWithTrigger={false}>
+              {(["small", "default", "large"] as const).map((option) => (
+                <SelectItem key={option} value={option}>
+                  {SIZE_LABELS[option]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor={field("runningCap")}>Machines at once</Label>
+          <Input
+            id={field("runningCap")}
+            size="sm"
+            inputMode="numeric"
+            placeholder="The driver's default"
+            value={draft.runningCap}
+            onChange={(event) => setDraft({ ...draft, runningCap: event.target.value })}
+          />
+        </div>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Advanced</summary>
+          <div className="mt-3">
+            {text("runnerUrl", "Runner URL", "Uses this server's runner listener")}
+          </div>
+        </details>
         {error !== null ? (
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <InfoIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />

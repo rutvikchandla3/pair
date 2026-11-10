@@ -508,6 +508,33 @@ describe("ServerSettings sandbox", () => {
     expect(decoded.worktreesDirectory).toBe("/work");
     expect(decoded.sandbox).toEqual({ drivers: [driver], defaultDriverId: "local" });
   });
+
+  it("round-trips a gce driver and refuses an id Compute Engine labels cannot carry", () => {
+    const gce = {
+      kind: "gce",
+      id: "gce-2",
+      label: "Google Cloud",
+      project: "vm-provider",
+      zones: ["asia-south1-a", "asia-south1-b"],
+      subnetwork: "regions/asia-south1/subnetworks/pair-machines",
+      networkTags: ["pair-machine"],
+      machineTypes: { small: "e2-standard-2", large: "e2-standard-8" },
+      diskGb: 50,
+      kmsKey: "projects/p/locations/asia-south1/keyRings/pair/cryptoKeys/disks",
+      baseImage: "projects/p/global/images/family/pair-base",
+      runnerUrl: "http://10.0.0.2:3774",
+    };
+    const document = { sandbox: { drivers: [driver, gce] } };
+    expect(encodeServerSettings(decodeServerSettings(document)).sandbox).toEqual(document.sandbox);
+    expect(decodeServerSettingsPatch({ sandbox: { drivers: { "gce-2": gce } } })).toEqual({
+      sandbox: { drivers: { "gce-2": gce } },
+    });
+    for (const id of ["gce_2", "Gce"]) {
+      expect(() =>
+        decodeServerSettingsPatch({ sandbox: { drivers: { [id]: { ...gce, id } } } }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("resolveProjectProviderInstanceEnabled", () => {

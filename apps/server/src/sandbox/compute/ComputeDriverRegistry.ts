@@ -74,11 +74,19 @@ const make = Effect.fn("ComputeDriverRegistry.make")(function* <R>(
   // Only touched while holding `lock`.
   const entries = new Map<ComputeDriverId, Entry>();
 
+  // Generic in the kind, so TypeScript pairs each config with its own kind's factory.
+  const factoryFor = <K extends ComputeDriverKind>(
+    config: Extract<SandboxDriverInstance, { readonly kind: K }>,
+  ) => {
+    const factory: ComputeDriverFactory<K, R> | undefined = factories[config.kind as K];
+    return factory === undefined ? undefined : () => factory(config);
+  };
+
   const build = Effect.fn("ComputeDriverRegistry.build")(function* (config: SandboxDriverInstance) {
-    const factory = factories[config.kind];
+    const factory = factoryFor(config);
     if (factory === undefined) return;
     const scope = yield* Scope.fork(registryScope);
-    const driver = yield* factory(config).pipe(
+    const driver = yield* factory().pipe(
       Scope.provide(scope),
       Effect.provideContext(context),
       Effect.onError(() => Scope.close(scope, Exit.void)),
