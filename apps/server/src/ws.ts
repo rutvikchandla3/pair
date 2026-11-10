@@ -180,6 +180,8 @@ import {
   makeThreadViewers,
   olderSettledReaderOf,
   overlayForViewer,
+  providersForViewer,
+  providerStreamForViewer,
   terminalMetadataForViewer,
   titlesVisibleToViewer,
   viewerMayOpen,
@@ -2120,7 +2122,7 @@ export const layerWsRpc = (
           : currentProviders;
         const providers = options.workspaceSnapshotsOnDemand
           ? withoutWorkspaceSnapshots(commandProviders)
-          : commandProviders;
+          : providersForViewer(threadViewer, commandProviders);
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
           client,
@@ -2872,7 +2874,9 @@ export const layerWsRpc = (
                 providers = yield* providerRegistry.refreshInstance(instance.instanceId);
               }
             }
-            if (input.workspaceSnapshotsOnDemand !== true) return { providers };
+            if (input.workspaceSnapshotsOnDemand !== true) {
+              return { providers: providersForViewer(threadViewer, providers) };
+            }
             const commandProviders =
               input.usageLimitsCommand === true
                 ? withUsageLimitsCommands(providers, yield* usageLimitSources.current)
@@ -3745,6 +3749,14 @@ export const layerWsRpc = (
                   .pipe(Effect.catchCause(() => directEndpoints.resolveAvailable())),
                 { startImmediately: true },
               );
+              const memberProviders = yield* providerStreamForViewer(
+                threadViewer,
+                // Seed the changes-only stream so early source refreshes pair with current providers.
+                Stream.concat(
+                  Stream.fromEffect(providerRegistry.getProviders),
+                  providerRegistry.streamChanges,
+                ),
+              );
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
@@ -3761,11 +3773,7 @@ export const layerWsRpc = (
                 })),
               );
               const providerStatuses = Stream.zipLatestWith(
-                // Seed the changes-only stream so early source refreshes pair with current providers.
-                Stream.concat(
-                  Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
-                ),
+                memberProviders,
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,

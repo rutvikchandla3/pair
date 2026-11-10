@@ -731,7 +731,7 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   error: EnvironmentAuthorizationError,
 });
 
-const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
+export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),

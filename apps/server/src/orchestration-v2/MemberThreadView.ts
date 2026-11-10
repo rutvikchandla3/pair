@@ -4,6 +4,7 @@ import {
   type OrchestrationV2DomainEvent,
   type SandboxAccessChange,
   type SandboxId,
+  type ServerProvider,
   type TerminalMetadataStreamEvent,
   ThreadId,
   type ThreadMemberState,
@@ -15,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as TeamState from "../team/TeamState.ts";
+import { sandboxOfPath } from "../workspaceHost/WorkspaceHosts.ts";
 import {
   holderOf,
   isMemberThreadEvent,
@@ -184,6 +186,50 @@ export function terminalMetadataForViewer(
     case "remove":
       return viewerMayOpen(viewer, event.threadId) ? event : null;
   }
+}
+
+/** Provider config without the workspace snapshots of machines the viewer cannot open. */
+export function providersForViewer(
+  viewer: ThreadViewer | null,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  const access = viewer?.access;
+  if (access === undefined) return providers;
+  return providers.map((provider) =>
+    provider.workspaceSnapshots === undefined
+      ? provider
+      : {
+          ...provider,
+          workspaceSnapshots: provider.workspaceSnapshots.filter(({ cwd }) => {
+            const sandboxId = sandboxOfPath(cwd);
+            return (
+              sandboxId === "local" || (sandboxId !== undefined && access.allowsSandbox(sandboxId))
+            );
+          }),
+        },
+  );
+}
+
+/**
+ * `providersForViewer` over a provider stream, sent again when a change may have given or taken
+ * this viewer a machine. Subscribed here, so a change after the caller's snapshot still counts.
+ */
+export function providerStreamForViewer(
+  viewer: ThreadViewer | null,
+  providers: Stream.Stream<ReadonlyArray<ServerProvider>>,
+): Effect.Effect<Stream.Stream<ReadonlyArray<ServerProvider>>, never, Scope.Scope> {
+  const access = viewer?.access;
+  if (access === undefined) return Effect.succeed(providers);
+  return Effect.map(access.subscribeChanges, (changes) =>
+    Stream.zipLatestWith(
+      providers,
+      Stream.concat(
+        Stream.succeed(undefined),
+        Stream.fromSubscription(changes).pipe(Stream.filter(access.affectedBy)),
+      ),
+      (latest) => providersForViewer(viewer, latest),
+    ),
+  );
 }
 
 /** Titles by thread id, without threads the viewer may not open. */

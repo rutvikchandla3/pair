@@ -12,7 +12,9 @@ import {
   ThreadId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SandboxId,
   WS_METHODS,
+  WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   AcpRegistryListSessionsInput,
@@ -1100,129 +1102,171 @@ it.effect.each([
     ),
 );
 
+/** The config RPCs over `layerWsRpc` for one member, with a fixed provider registry. */
+const configRpcServer = Effect.fn("test.configRpcServer")(function* (options: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly providerChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+  readonly access?: ThreadAccess.ThreadAccess["Service"];
+}) {
+  const responses = yield* Queue.unbounded<unknown>();
+  const configRpcServices = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ExternalLauncher.ExternalLauncher)({
+      resolveAvailableEditors: () => Effect.succeed([]),
+      resolveFileManagerRevealKind: () => Effect.undefined,
+    }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed(options.providers),
+      streamChanges: options.providerChanges,
+      refreshWorkspaceSnapshot: () => Effect.succeed(options.providers),
+      refresh: () => Effect.succeed(options.providers),
+    }),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({
+      current: Effect.succeed([]),
+      streamChanges: Stream.make([]),
+      refresh: Effect.void,
+    }),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+      resolveTargets: () => Effect.succeed([]),
+    }),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({
+      resolve: () => Effect.succeed([]),
+      resolveAvailable: () => Effect.succeed([]),
+    }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      scratchRoot: Effect.succeedNone,
+      namedProjectsRoot: process.cwd(),
+    }),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId: EnvironmentId.make("config-test"),
+        label: "Config test",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      }),
+    }),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      getDescriptor: () =>
+        Effect.succeed({
+          policy: "loopback-browser",
+          bootstrapMethods: [],
+          sessionMethods: ["browser-session-cookie"],
+          sessionCookieName: "config-test-session",
+        }),
+    }),
+    options.access === undefined
+      ? Layer.empty
+      : Layer.succeed(ThreadAccess.ThreadAccess)(options.access),
+  );
+  const server = yield* RpcServer.makeNoSerialization(
+    RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc, WsServerGetConfigRpc),
+    {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
+              discard: true,
+            })
+          : response._tag === "Exit" && response.exit._tag === "Success"
+            ? Queue.offer(responses, response.exit.value)
+            : Effect.void,
+    },
+  ).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("config-test"),
+          subject: "config-test",
+          memberId: MemberId.make("member-test"),
+          method: "browser-session-cookie",
+          scopes: [],
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        { secretReferences: true },
+      ).pipe(Layer.provide(configRpcServices)),
+    ),
+  );
+  const request = (
+    id: string,
+    tag:
+      | typeof WS_METHODS.subscribeServerConfig
+      | typeof WS_METHODS.serverRefreshProviders
+      | typeof WS_METHODS.serverGetConfig,
+    payload: object,
+  ) =>
+    server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId(id),
+      tag,
+      payload,
+      headers: Headers.empty,
+    });
+  const ack = (id: string) => server.write(0, { _tag: "Ack", requestId: RpcMessage.RequestId(id) });
+  const interrupt = (id: string) =>
+    server.write(0, { _tag: "Interrupt", requestId: RpcMessage.RequestId(id), interruptors: [] });
+  return { responses, request, ack, interrupt };
+});
+
+const layerConfigRpcTest = Layer.mergeAll(
+  Layer.fresh(layerConfigSources),
+  Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ServerBrowser.ServerBrowser)({}),
+);
+
+const workspaceSnapshot = (cwd: string, checkedAt: string) => ({
+  cwd,
+  checkedAt,
+  slashCommands: [{ name: `${cwd.split("/").at(-1)}-command` }],
+  skills: [],
+});
+
+const configTestProvider = (
+  workspaceSnapshots: ServerProvider["workspaceSnapshots"],
+): ServerProvider => ({
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-25T00:00:00.000Z",
+  models: [],
+  slashCommands: [{ name: "machine-command" }],
+  skills: [],
+  ...(workspaceSnapshots === undefined ? {} : { workspaceSnapshots }),
+});
+
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("claudeAgent");
-    const snapshotFor = (cwd: string, checkedAt: string) => ({
-      cwd,
-      checkedAt,
-      slashCommands: [{ name: `${cwd.slice(1)}-command` }],
-      skills: [],
-    });
-    const provider: ServerProvider = {
-      instanceId,
-      driver: ProviderDriverKind.make("claudeAgent"),
-      enabled: true,
-      installed: true,
-      version: "1.0.0",
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-10-25T00:00:00.000Z",
-      models: [],
-      slashCommands: [{ name: "machine-command" }],
-      skills: [],
-      workspaceSnapshots: [
-        snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
-        snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
-      ],
-    };
+    const provider = configTestProvider([
+      workspaceSnapshot("/a", "2026-10-25T00:00:00.000Z"),
+      workspaceSnapshot("/b", "2026-10-25T00:00:00.000Z"),
+    ]);
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
-    const responses = yield* Queue.unbounded<unknown>();
-    const configRpcServices = Layer.mergeAll(
-      layerUnusedConfigRpcServices,
-      Layer.mock(ExternalLauncher.ExternalLauncher)({
-        resolveAvailableEditors: () => Effect.succeed([]),
-        resolveFileManagerRevealKind: () => Effect.undefined,
-      }),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([provider]),
-        streamChanges: Stream.fromQueue(providerChanges).pipe(
-          Stream.tap(() => Queue.offer(pulled, undefined)),
-        ),
-        refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
-      }),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({
-        current: Effect.succeed([]),
-        streamChanges: Stream.make([]),
-      }),
-      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
-        resolveTargets: () => Effect.succeed([]),
-      }),
-      Layer.mock(DirectEndpoints.DirectEndpoints)({
-        resolve: () => Effect.succeed([]),
-        resolveAvailable: () => Effect.succeed([]),
-      }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        scratchRoot: Effect.succeedNone,
-        namedProjectsRoot: process.cwd(),
-      }),
-      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
-      Layer.mock(ServerEnvironment.ServerEnvironment)({
-        getDescriptor: Effect.succeed({
-          environmentId: EnvironmentId.make("config-test"),
-          label: "Config test",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0",
-          capabilities: { repositoryIdentity: false },
-        }),
-      }),
-      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-        getDescriptor: () =>
-          Effect.succeed({
-            policy: "loopback-browser",
-            bootstrapMethods: [],
-            sessionMethods: ["browser-session-cookie"],
-            sessionCookieName: "config-test-session",
-          }),
-      }),
-    );
-    const server = yield* RpcServer.makeNoSerialization(
-      RpcGroup.make(WsSubscribeServerConfigRpc, WsServerRefreshProvidersRpc),
-      {
-        ...WS_RPC_SERVER_OPTIONS,
-        onFromServer: (response) =>
-          response._tag === "Chunk"
-            ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
-                discard: true,
-              })
-            : response._tag === "Exit" && response.exit._tag === "Success"
-              ? Queue.offer(responses, response.exit.value)
-              : Effect.void,
-      },
-    ).pipe(
-      Effect.provide(
-        layerWsRpc(
-          {
-            sessionId: AuthSessionId.make("config-test"),
-            subject: "config-test",
-            memberId: MemberId.make("member-test"),
-            method: "browser-session-cookie",
-            scopes: [],
-          },
-          {},
-          yield* ServerBrowser.ServerBrowser,
-          () => Effect.void,
-          { secretReferences: true },
-        ).pipe(Layer.provide(configRpcServices)),
+    const { responses, request, ack, interrupt } = yield* configRpcServer({
+      providers: [provider],
+      providerChanges: Stream.fromQueue(providerChanges).pipe(
+        Stream.tap(() => Queue.offer(pulled, undefined)),
       ),
-    );
-    const configRequest = RpcMessage.RequestId("config");
-    yield* server.write(0, {
-      _tag: "Request",
-      id: configRequest,
-      tag: WS_METHODS.subscribeServerConfig,
-      payload: { workspaceSnapshotsOnDemand: true },
-      headers: Headers.empty,
+    });
+    yield* request("config", WS_METHODS.subscribeServerConfig, {
+      workspaceSnapshotsOnDemand: true,
     });
     const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
     if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
     assert.isUndefined(snapshot.config.providers[0]?.workspaceSnapshots);
-    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    yield* ack("config");
 
     // A rescan that only touches a snapshot sends nothing; the next real change does.
     yield* Queue.offer(providerChanges, [
-      { ...provider, workspaceSnapshots: [snapshotFor("/a", "2026-10-25T00:05:00.000Z")] },
+      { ...provider, workspaceSnapshots: [workspaceSnapshot("/a", "2026-10-25T00:05:00.000Z")] },
     ]);
     yield* Queue.take(pulled);
     yield* TestClock.adjust("1 second");
@@ -1234,31 +1278,94 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
 
-    yield* server.write(0, {
-      _tag: "Request",
-      id: RpcMessage.RequestId("refresh"),
-      tag: WS_METHODS.serverRefreshProviders,
-      payload: { instanceId, cwd: "/b", workspaceSnapshotsOnDemand: true },
-      headers: Headers.empty,
+    yield* request("refresh", WS_METHODS.serverRefreshProviders, {
+      instanceId,
+      cwd: "/b",
+      workspaceSnapshotsOnDemand: true,
     });
     const refreshed = (yield* Queue.take(responses)) as {
       readonly providers: ReadonlyArray<ServerProvider>;
     };
     assert.deepEqual(
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
-      [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
+      [[[workspaceSnapshot("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
-    yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.fresh(layerConfigSources),
-        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
-        Layer.mock(ServerBrowser.ServerBrowser)({}),
+    yield* interrupt("config");
+  }).pipe(Effect.provide(layerConfigRpcTest), Effect.scoped),
+);
+
+it.effect("a member's server config names only machines they can open", () =>
+  Effect.gen(function* () {
+    const member = MemberId.make("member-test");
+    const mine = SandboxId.make("sbx_00000000000000000001");
+    const theirs = SandboxId.make("sbx_00000000000000000002");
+    const machines = new Map<SandboxId, ThreadAccess.SandboxAccessEntry>([
+      [mine, { ownerMemberId: member, audience: "members", memberIds: new Set() }],
+      [
+        theirs,
+        {
+          ownerMemberId: MemberId.make("member-other"),
+          audience: "members",
+          memberIds: new Set(),
+        },
+      ],
+    ]);
+    const cwdOf = (sandboxId: SandboxId) => `/t3-sandbox/${sandboxId}/worktrees/fix`;
+    const provider = configTestProvider([
+      workspaceSnapshot(cwdOf(mine), "2026-10-25T00:00:00.000Z"),
+      workspaceSnapshot(cwdOf(theirs), "2026-10-25T00:00:00.000Z"),
+    ]);
+    const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+    const pulled = yield* Queue.unbounded<void>();
+    const { responses, request, ack, interrupt } = yield* configRpcServer({
+      providers: [provider],
+      providerChanges: Stream.fromQueue(providerChanges).pipe(
+        Stream.tap(() => Queue.offer(pulled, undefined)),
       ),
-    ),
-    Effect.scoped,
-  ),
+      access: ThreadAccess.makeTest({ serverOwnerId: member, machines }),
+    });
+    const cwds = (providers: ReadonlyArray<ServerProvider>) =>
+      providers.flatMap((entry) => (entry.workspaceSnapshots ?? []).map(({ cwd }) => cwd));
+
+    yield* request("get", WS_METHODS.serverGetConfig, {});
+    assert.deepEqual(cwds(((yield* Queue.take(responses)) as ServerConfig).providers), [
+      cwdOf(mine),
+    ]);
+    yield* request("refresh", WS_METHODS.serverRefreshProviders, {});
+    const refreshed = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(cwds(refreshed.providers), [cwdOf(mine)]);
+
+    yield* request("config", WS_METHODS.subscribeServerConfig, {});
+    const snapshot = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+    assert.deepEqual(cwds(snapshot.config.providers), [cwdOf(mine)]);
+    yield* ack("config");
+
+    // A rescan of a machine the member cannot open sends them nothing; the next real change does.
+    yield* Queue.offer(providerChanges, [
+      configTestProvider([
+        workspaceSnapshot(cwdOf(mine), "2026-10-25T00:00:00.000Z"),
+        workspaceSnapshot(cwdOf(theirs), "2026-10-25T00:05:00.000Z"),
+      ]),
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    yield* Queue.offer(providerChanges, [
+      {
+        ...configTestProvider([workspaceSnapshot(cwdOf(theirs), "2026-10-25T00:06:00.000Z")]),
+        status: "warning",
+      },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const update = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (update.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
+    assert.equal(update.payload.providers[0]?.status, "warning");
+    assert.deepEqual(cwds(update.payload.providers), []);
+    yield* interrupt("config");
+  }).pipe(Effect.provide(layerConfigRpcTest), Effect.scoped),
 );
 
 // Pruned history cannot be replayed: a cursor below the boundary must resync from a snapshot.

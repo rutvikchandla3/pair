@@ -6,12 +6,18 @@ import {
   OrchestrationV2DomainEventJson,
   type OrchestrationV2DomainEvent,
   OrchestrationV2ThreadShellJson,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type SandboxAccessChange,
   SandboxId,
+  type ServerProvider,
   ThreadId,
   type ThreadMemberState,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -24,6 +30,7 @@ import { EMPTY_MEMBER_STATE } from "./MemberThreadState.ts";
 import {
   makeThreadEventView,
   overlayForViewer,
+  providerStreamForViewer,
   terminalMetadataForViewer,
   type ThreadViewer,
   type ViewerAccess,
@@ -332,4 +339,87 @@ describe("terminalMetadataForViewer and viewerMayOpen", () => {
     expect(terminalMetadataForViewer(unchecked, snapshot)).toBe(snapshot);
     expect(viewerMayOpen(null, "thread-unknown")).toBe(true);
   });
+});
+
+describe("providerStreamForViewer", () => {
+  const other = SandboxId.make("sbx_bbbbbbbbbbbbbbbbbbbb");
+  const provider = (...sandboxIds: ReadonlyArray<SandboxId>): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-01T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    workspaceSnapshots: sandboxIds.map((sandboxId) => ({
+      cwd: `/t3-sandbox/${sandboxId}/worktrees/fix`,
+      checkedAt: "2026-10-01T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+    })),
+  });
+  const machinesOf = (providers: ReadonlyArray<ServerProvider>) =>
+    providers.flatMap((entry) =>
+      (entry.workspaceSnapshots ?? []).map(({ cwd }) => cwd.split("/")[2]),
+    );
+  const change = (added: ReadonlyArray<MemberId>): SandboxAccessChange => ({
+    sandboxId: machine,
+    access: {
+      audience: "members",
+      memberIds: added,
+      updatedBy: alice,
+      updatedAt: DateTime.makeUnsafe(0),
+    },
+    added,
+    removed: [],
+    audienceChanged: false,
+    actorId: alice,
+  });
+
+  it.effect("sends a member's providers again when a change gives them a machine", () =>
+    Effect.gen(function* () {
+      const machines = new Map<SandboxId, SandboxAccessEntry>([
+        [machine, { ownerMemberId: alice, audience: "members", memberIds: new Set() }],
+        [other, { ownerMemberId: bob, audience: "members", memberIds: new Set() }],
+      ]);
+      const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+      const access = viewerAccessOf(
+        makeThreadAccess({ serverOwnerId: owner, machines, changes }),
+        bob,
+      );
+      const viewer: ThreadViewer = { ...viewerWith(bob, new Map(), []), ...(access && { access }) };
+      const source = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
+      const sent = yield* Queue.unbounded<ReadonlyArray<string | undefined>>();
+      const stream = yield* providerStreamForViewer(viewer, Stream.fromQueue(source));
+      yield* stream.pipe(
+        Stream.runForEach((providers) => Queue.offer(sent, machinesOf(providers))),
+        Effect.forkScoped,
+      );
+
+      yield* Queue.offer(source, [provider(machine, other)]);
+      expect(yield* Queue.take(sent)).toEqual([other]);
+      machines.set(machine, {
+        ownerMemberId: alice,
+        audience: "members",
+        memberIds: new Set([bob]),
+      });
+      yield* PubSub.publish(changes, change([bob]));
+      expect(yield* Queue.take(sent)).toEqual([machine, other]);
+      // A change that names someone else sends nothing; the next provider update does.
+      yield* PubSub.publish(changes, change([owner]));
+      yield* Queue.offer(source, [provider(machine)]);
+      expect(yield* Queue.take(sent)).toEqual([machine]);
+
+      // Off a cloud-only server, and for guests, the stream is the provider stream itself.
+      const unchecked = Stream.fromQueue(source);
+      expect(yield* providerStreamForViewer(viewerWith(bob, new Map(), []), unchecked)).toBe(
+        unchecked,
+      );
+      expect(yield* providerStreamForViewer(null, unchecked)).toBe(unchecked);
+    }).pipe(Effect.scoped),
+  );
 });
