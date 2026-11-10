@@ -1,4 +1,5 @@
 import {
+  type EnvironmentResourceNotFoundError,
   type ServerConfig,
   type ServerConfigStreamEvent,
   WsSubscribeServerConfigRpc,
@@ -83,6 +84,8 @@ type InitialConfigError = Effect.Error<
 type ProbeError = Effect.Error<ReturnType<WsRpcProtocolClient[typeof WS_METHODS.serverProbe]>>;
 type ServerConfigSubscriptionError =
   | Rpc.ErrorExit<typeof WsSubscribeServerConfigRpc>
+  // The socket's thread-access middleware adds it to every method; it never refuses this one.
+  | EnvironmentResourceNotFoundError
   | RpcClientError.RpcClientError;
 type ServerConfigSubscription = Stream.Stream<
   ServerConfigStreamEvent,
@@ -146,6 +149,7 @@ function mapSessionRpcError(
       });
     case "KeybindingsConfigParseError":
     case "ServerSettingsError":
+    case "EnvironmentResourceNotFoundError":
       return new ConnectionTransientErrorClass({
         reason: "remote-unavailable",
         detail: error.message,

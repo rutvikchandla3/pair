@@ -35,7 +35,7 @@ import * as TeamState from "../team/TeamState.ts";
 /** As long as the pre-sleep snapshot may take (2.7). */
 const SNAPSHOT_TIMEOUT = Duration.seconds(15);
 
-const CLOUD_MOVE_SOURCE_MESSAGES = {
+export const CLOUD_MOVE_SOURCE_MESSAGES = {
   "not-found": "This cloud thread no longer exists.",
   "side-chat": "Continue locally from the thread this one belongs to.",
   "not-cloned": "This thread's machine hasn't cloned the repository yet.",

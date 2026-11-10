@@ -12,7 +12,10 @@ import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
+import { sandboxOfPath } from "../workspaceHost/WorkspaceHosts.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -193,6 +196,112 @@ export const dispatchSandboxCommand = Effect.fn("ThreadMessageIntake.dispatchSan
     );
   },
 );
+
+/** The existing threads and the workspace paths one command reads or changes. */
+const commandTargets = (
+  command: Exclude<OrchestrationV2Command, SandboxClientCommand>,
+): {
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  readonly paths: ReadonlyArray<string | null | undefined>;
+} => {
+  switch (command.type) {
+    // A new thread names nothing yet; its workspace still must be the member's.
+    case "thread.create":
+      return { threadIds: [], paths: [command.worktreePath] };
+    case "thread.fork":
+      return { threadIds: [command.sourceThreadId], paths: [] };
+    case "thread.merge_back":
+      return { threadIds: [command.sourceThreadId, command.targetThreadId], paths: [] };
+    case "thread.created.record":
+      return { threadIds: [command.parentThreadId, command.targetThreadId], paths: [] };
+    case "delegated_task.wake-policy":
+    case "delegated_task.completion-delivery.acknowledge":
+    case "delegated_task.completion-delivery.dispose":
+      return { threadIds: [command.parentThreadId], paths: [] };
+    case "message.dispatch": {
+      const workspace =
+        command.dispatchMode.type === "defer_start"
+          ? command.dispatchMode.workspaceStrategy
+          : undefined;
+      return {
+        threadIds: [
+          command.threadId,
+          ...(command.senderThreadId === undefined ? [] : [command.senderThreadId]),
+          ...(command.sourcePlanRef === undefined ? [] : [command.sourcePlanRef.threadId]),
+        ],
+        paths: [workspace?.type === "existing_worktree" ? workspace.worktreePath : undefined],
+      };
+    }
+    case "thread.metadata.update":
+      return {
+        threadIds: [command.threadId],
+        paths: [command.worktreePath, command.expectedWorktreePath],
+      };
+    case "thread.pull-request.sync":
+      return {
+        threadIds: [command.threadId],
+        paths: [command.expected.workspaceRoot, command.expected.worktreePath],
+      };
+    default:
+      return { threadIds: [command.threadId], paths: [] };
+  }
+};
+
+/**
+ * A member's command may name only threads, machines and paths they can open (11 §4). A refusal is
+ * the error a missing thread or machine gives; the log says why. Where `ThreadAccess` is not
+ * enforced every command passes.
+ */
+export const assertCommandAccess = Effect.fn("ThreadMessageIntake.assertCommandAccess")(function* (
+  command: OrchestrationV2Command,
+  memberId: MemberId,
+) {
+  const access = yield* ThreadAccess.ThreadAccess;
+  if (!access.enforced) return;
+  const denied = (target: Record<string, unknown>) =>
+    Effect.logWarning("access_denied", { memberId, commandType: command.type, ...target });
+  const missing = (threadId: ThreadId) =>
+    new Orchestrator.OrchestratorProjectionError({
+      threadId,
+      cause: new ProjectionStoreThreadNotFoundError({ threadId }),
+    });
+  if (isSandboxClientCommand(command)) {
+    const acting = yield* ThreadAccess.resolveThreadTarget(access, command.threadId);
+    if (
+      acting !== undefined &&
+      access.allowsThread(memberId, acting) &&
+      access.allowsSandbox(memberId, command.sandboxId)
+    ) {
+      return;
+    }
+    yield* denied({ threadId: command.threadId, sandboxId: command.sandboxId });
+    return yield* new Orchestrator.OrchestratorCommandRejectedError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: `Thread ${command.threadId} does not use machine ${command.sandboxId}.`,
+    });
+  }
+  const { threadIds, paths } = commandTargets(command);
+  for (const threadId of threadIds) {
+    const target = yield* ThreadAccess.resolveThreadTarget(access, threadId);
+    if (target !== undefined && access.allowsThread(memberId, target)) continue;
+    yield* denied({ threadId, sandboxId: target?.sandboxId });
+    return yield* missing(threadId);
+  }
+  for (const path of paths) {
+    if (!path) continue;
+    const sandboxId = sandboxOfPath(path);
+    if (sandboxId === "local") continue;
+    if (sandboxId !== undefined && access.allowsSandbox(memberId, sandboxId)) continue;
+    yield* denied({ path, sandboxId });
+    return yield* new Orchestrator.OrchestratorCommandRejectedError({
+      commandId: command.commandId,
+      commandType: command.type,
+      // What a path on a machine that is not there gives (WorkspaceHostUnavailableError).
+      cause: "This thread's machine is not connected.",
+    });
+  }
+});
 
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);

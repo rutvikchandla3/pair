@@ -24,6 +24,8 @@ import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as CloudMoveHttp from "./CloudMoveHttp.ts";
 import * as CloudMoveLaunch from "./CloudMoveLaunch.ts";
 import * as CloudMoveSource from "./CloudMoveSource.ts";
@@ -82,6 +84,8 @@ const serve = (options: {
   readonly stage?: Stage;
   readonly source?: Partial<Source>;
   readonly launch?: Partial<CloudMoveLaunch.CloudMoveLaunch["Service"]>;
+  /** Threads the link's member cannot open. */
+  readonly hidden?: ReadonlyArray<string>;
 }) =>
   Effect.gen(function* () {
     const services = yield* Layer.build(
@@ -95,6 +99,15 @@ const serve = (options: {
         ),
         Layer.provide(Layer.mock(CloudMoveSource.CloudMoveSource)(options.source ?? {})),
         Layer.provide(Layer.mock(CloudMoveLaunch.CloudMoveLaunch)(options.launch ?? {})),
+        Layer.provide(
+          Layer.succeed(ThreadAccess.ThreadAccess)({
+            ...ThreadAccess.makeTest(),
+            assertThread: (_memberId, threadId) =>
+              options.hidden?.includes(threadId)
+                ? Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }))
+                : Effect.void,
+          }),
+        ),
         Layer.provide(NodeServices.layer),
         Layer.provide(layerConfig(options.cloudOnly)),
       ),
@@ -328,6 +341,37 @@ it.live.each(
     else assert.equal(decodeFailure(response.body.toString()).reason !== null, true);
     assert.equal(reached, 0);
   }).pipe(Effect.scoped),
+);
+
+it.live.each(threadRoutes)(
+  "$route: answers a thread the member cannot open as one that is gone",
+  ({ method, route }) =>
+    Effect.gen(function* () {
+      let reached = 0;
+      const reach = () => Effect.sync(() => void reached++).pipe(Effect.andThen(Effect.never));
+      const port = yield* serve({
+        cloudOnly: true,
+        hidden: [THREAD],
+        source: { contextExport: reach, seed: reach, continued: reach },
+      });
+
+      const response = yield* call(
+        port,
+        method,
+        `/api/cloud-moves/threads/${THREAD}/${route}`,
+        bearer("link"),
+      );
+
+      assert.deepEqual(
+        { status: response.status, ...decodeFailure(response.body.toString()) },
+        {
+          status: 404,
+          reason: "not-found",
+          message: CloudMoveSource.CLOUD_MOVE_SOURCE_MESSAGES["not-found"],
+        },
+      );
+      assert.equal(reached, 0);
+    }).pipe(Effect.scoped),
 );
 
 it.live("streams a seed's bundle with its facts and removes the file once sent", () =>

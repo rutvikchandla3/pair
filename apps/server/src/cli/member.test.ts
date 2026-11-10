@@ -27,6 +27,7 @@ import { type RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 import * as TestConsole from "effect/testing/TestConsole";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import * as RpcThreadAccessGuard from "../auth/RpcThreadAccessGuard.ts";
 import { cli } from "../binCli.ts";
 import {
   makePersistedServerRuntimeState,
@@ -106,7 +107,12 @@ const serveTeam = Effect.fn("MemberCliTest.serveTeam")(function* (calls: Array<s
     { disableListenLog: true, disableLogger: true },
   ).pipe(
     Layer.provide(
-      Layer.mergeAll(handlers, RpcAuthorization.layer(ADMIN_SCOPES), RpcSerialization.layerJson),
+      Layer.mergeAll(
+        handlers,
+        RpcAuthorization.layer(ADMIN_SCOPES),
+        RpcThreadAccessGuard.passThrough,
+        RpcSerialization.layerJson,
+      ),
     ),
     Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 })),
     Layer.build,

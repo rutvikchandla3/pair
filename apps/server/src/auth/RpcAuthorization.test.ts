@@ -8,6 +8,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentAuthorizationError,
+  type EnvironmentResourceNotFoundError,
   MEMBER_SCOPES,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -20,6 +21,7 @@ import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   WS_METHODS,
+  RpcThreadAccess,
   WsRpcGroup,
   clientRpcRequiredScopes,
 } from "@t3tools/contracts";
@@ -35,6 +37,7 @@ import {
   requiredScopeForDeviceList,
 } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
+import * as RpcThreadAccessGuard from "./RpcThreadAccessGuard.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -199,6 +202,7 @@ describe("RPC scope middleware", () => {
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
         Effect.provide(
           Layer.mergeAll(
             group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
@@ -240,6 +244,7 @@ describe("settings mutation authorization", () => {
     Effect.gen(function* () {
       let handled = 0;
       const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
         Effect.provide(
           Layer.mergeAll(
             group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
@@ -289,6 +294,7 @@ describe("settings mutation authorization", () => {
     Effect.gen(function* () {
       let handled = false;
       const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
         Effect.provide(
           Layer.mergeAll(
             group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
@@ -362,6 +368,7 @@ describe("provider sign-in on a member's own account", () => {
           return idle(instanceId);
         });
       const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
         Effect.provide(
           Layer.mergeAll(
             group.toLayerHandler(WS_METHODS.providerAuthStart, (input) =>
@@ -391,7 +398,10 @@ describe("provider sign-in on a member's own account", () => {
       const instanceId = target;
       const flowId = "flow";
       const calls: ReadonlyArray<
-        Effect.Effect<unknown, EnvironmentAuthorizationError | ProviderSetupError>
+        Effect.Effect<
+          unknown,
+          EnvironmentAuthorizationError | EnvironmentResourceNotFoundError | ProviderSetupError
+        >
       > = [
         client[WS_METHODS.providerAuthStart]({ instanceId }),
         client[WS_METHODS.providerAuthRespond]({
@@ -439,6 +449,7 @@ it.effect("requires task permission before attaching a prepared worktree to a th
     );
     let handled = false;
     const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
       Effect.provide(
         Layer.mergeAll(
           group.toLayerHandler(WS_METHODS.gitPreparePullRequestThread, () =>
@@ -481,6 +492,7 @@ describe("thread context authorization", () => {
           Stream.fromEffect(Effect.sync(() => handled.push(actionId))).pipe(Stream.drain),
         );
         const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
           Effect.provide(
             Layer.merge(handler, RpcAuthorization.layer([AuthSourceControlWriteScope])),
           ),
@@ -500,6 +512,7 @@ describe("thread context authorization", () => {
           expect(handled).toEqual(["without-thread", "with-thread"]);
         }
         const reader = yield* RpcTest.makeClient(group).pipe(
+          Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
           Effect.provide(
             Layer.merge(
               handler,
@@ -527,6 +540,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
     );
     let handled = 0;
     const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
       Effect.provide(
         Layer.mergeAll(
           group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
@@ -572,6 +586,7 @@ it.effect("denies manual cleanup before the handler without settings permission"
     );
     let handled = false;
     const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provideService(RpcThreadAccess, RpcThreadAccessGuard.allow),
       Effect.provide(
         Layer.mergeAll(
           group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>

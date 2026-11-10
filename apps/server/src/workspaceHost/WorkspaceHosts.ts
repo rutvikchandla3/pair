@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- sandbox paths are POSIX on every server.
 import * as NodePath from "node:path";
 
+import type { SandboxId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,6 +40,15 @@ const normalize = (path: string) =>
   path.startsWith("/") && (path.includes("/.") || path.includes("//"))
     ? NodePath.posix.resolve(path)
     : path;
+
+/**
+ * The machine `forPath` sends a path to: "local" off the sandbox root, else its sandbox, or
+ * undefined when the path names none (which `forPath` refuses).
+ */
+export const sandboxOfPath = (raw: string): SandboxId | "local" | undefined => {
+  const path = normalize(raw);
+  return isUnder(path, SANDBOX_ROOT) ? sandboxIdFromPath(path) : "local";
+};
 
 export const make = Effect.gen(function* () {
   const local = yield* LocalWorkspaceHost.make;

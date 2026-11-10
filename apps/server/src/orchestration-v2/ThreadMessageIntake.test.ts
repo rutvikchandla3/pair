@@ -32,12 +32,13 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { MemberRecord } from "../persistence/Members.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import { assertCommandAccess, dispatchCommand } from "./ThreadMessageIntake.ts";
 
 function member(id: string, overrides: Partial<MemberRecord> = {}): MemberRecord {
   return {
@@ -550,4 +551,149 @@ it.effect(
         threadId,
       );
     }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+const PRIVATE_SANDBOX = SandboxId.make("sbx_aaaaaaaaaaaaaaaaaaaa");
+const SHARED_SANDBOX = SandboxId.make("sbx_bbbbbbbbbbbbbbbbbbbb");
+
+/** Bob's machine is his alone; the team machine is everyone's. Carol asks. */
+const bobsAccess = ThreadAccess.layerTest({
+  serverOwnerId: MemberId.make("member-owner"),
+  machines: new Map<SandboxId, ThreadAccess.SandboxAccessEntry>([
+    [
+      PRIVATE_SANDBOX,
+      { ownerMemberId: MemberId.make("member-bob"), audience: "members", memberIds: new Set() },
+    ],
+    [
+      SHARED_SANDBOX,
+      { ownerMemberId: MemberId.make("member-bob"), audience: "team", memberIds: new Set() },
+    ],
+  ]),
+  threads: new Map([
+    [
+      ThreadId.make("thread-private"),
+      { ownerId: MemberId.make("member-bob"), sandboxId: PRIVATE_SANDBOX },
+    ],
+    [
+      ThreadId.make("thread-shared"),
+      { ownerId: MemberId.make("member-bob"), sandboxId: SHARED_SANDBOX },
+    ],
+  ]),
+});
+
+it.effect("refuses a member's command that names a thread, machine or path they cannot open", () =>
+  Effect.gen(function* () {
+    const carol = MemberId.make("member-carol");
+    const check = (command: Record<string, unknown>) =>
+      assertCommandAccess(
+        { commandId: CommandId.make("access"), ...command } as OrchestrationV2Command,
+        carol,
+      ).pipe(
+        Effect.as("allowed"),
+        Effect.catchTags({
+          OrchestratorProjectionError: (error) => Effect.succeed(`missing ${error.threadId}`),
+          OrchestratorCommandRejectedError: () => Effect.succeed("rejected"),
+        }),
+      );
+    const privateRoot = `/t3-sandbox/${PRIVATE_SANDBOX}/repo`;
+    const sharedRoot = `/t3-sandbox/${SHARED_SANDBOX}/repo`;
+    const byKind = (thread: string, root: string): ReadonlyArray<Record<string, unknown>> => [
+      { type: "thread.archive", threadId: thread },
+      { type: "thread.fork", sourceThreadId: thread, targetThreadId: "thread-new" },
+      { type: "thread.merge_back", sourceThreadId: "thread-shared", targetThreadId: thread },
+      { type: "thread.created.record", parentThreadId: thread, targetThreadId: "thread-shared" },
+      { type: "delegated_task.wake-policy", parentThreadId: thread },
+      { type: "delegated_task.completion-delivery.acknowledge", parentThreadId: thread },
+      { type: "delegated_task.completion-delivery.dispose", parentThreadId: thread },
+      {
+        type: "message.dispatch",
+        threadId: "thread-shared",
+        senderThreadId: thread,
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "message.dispatch",
+        threadId: "thread-shared",
+        sourcePlanRef: { threadId: thread, planId: "plan" },
+        dispatchMode: { type: "start_immediately" },
+      },
+      {
+        type: "message.dispatch",
+        threadId: "thread-shared",
+        dispatchMode: {
+          type: "defer_start",
+          workspaceStrategy: { type: "existing_worktree", worktreePath: root },
+        },
+      },
+      { type: "thread.create", threadId: "thread-new", worktreePath: root },
+      { type: "thread.metadata.update", threadId: "thread-shared", expectedWorktreePath: root },
+      {
+        type: "thread.pull-request.sync",
+        threadId: "thread-shared",
+        expected: { workspaceRoot: root, worktreePath: null },
+      },
+      { type: "prepared-run.retry", threadId: thread },
+      { type: "sandbox.wake", threadId: thread, sandboxId: SHARED_SANDBOX },
+      { type: "sandbox.access.set", threadId: "thread-shared", sandboxId: PRIVATE_SANDBOX },
+    ];
+
+    const refused = yield* Effect.forEach(byKind("thread-private", privateRoot), check);
+    expect(refused).toEqual([
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "missing thread-private",
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      "missing thread-private",
+      "rejected",
+      "rejected",
+    ]);
+    const shared = byKind("thread-shared", sharedRoot).slice(0, -1);
+    expect(yield* Effect.forEach(shared, check)).toEqual(shared.map(() => "allowed"));
+    // An unknown thread is refused like one she cannot open, and `..` cannot climb into Bob's machine.
+    expect(yield* check({ type: "thread.archive", threadId: "thread-unknown" })).toBe(
+      "missing thread-unknown",
+    );
+    expect(
+      yield* check({
+        type: "thread.create",
+        threadId: "thread-new",
+        worktreePath: `/t3-sandbox/${SHARED_SANDBOX}/../${PRIVATE_SANDBOX}/repo`,
+      }),
+    ).toBe("rejected");
+    expect(
+      yield* check({
+        type: "thread.create",
+        threadId: "thread-new",
+        worktreePath: "/t3-sandbox/x",
+      }),
+    ).toBe("rejected");
+    expect(
+      yield* check({
+        type: "thread.create",
+        threadId: "thread-new",
+        worktreePath: "/home/carol/repo",
+      }),
+    ).toBe("allowed");
+  }).pipe(Effect.provide(bobsAccess)),
+);
+
+// Off a cloud-only server the index tracks no thread, so a check would refuse every one.
+it.effect("checks no command where access is not enforced", () =>
+  Effect.gen(function* () {
+    const archive = {
+      type: "thread.archive",
+      commandId: CommandId.make("access"),
+      threadId: ThreadId.make("thread-private"),
+    } as OrchestrationV2Command;
+    yield* assertCommandAccess(archive, MemberId.make("member-carol"));
+  }).pipe(Effect.provide(ThreadAccess.layerTest())),
 );

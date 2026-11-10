@@ -33,6 +33,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { makeByteBudget } from "../sandbox/runnerHub/ByteBudget.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as CloudMoveLaunch from "./CloudMoveLaunch.ts";
 import * as CloudMoveSource from "./CloudMoveSource.ts";
 import * as StagedCloudImports from "./StagedCloudImports.ts";
@@ -209,6 +210,21 @@ const threadRoute = <R>(
       const { memberId } = yield* authenticateLinkMember(request);
       const threadId = decodeThreadId((yield* HttpRouter.params).threadId);
       if (Option.isNone(threadId)) return yield* refuse(400, "bad-request")();
+      const access = yield* ThreadAccess.ThreadAccess;
+      // A thread the member cannot open reads as one that is gone (11 §4).
+      yield* access.assertThread(memberId, threadId.value).pipe(
+        Effect.mapError((error) =>
+          error._tag === "ProjectionStoreThreadNotFoundError"
+            ? refuseSource(
+                new CloudMoveSource.CloudMoveSourceError({
+                  threadId: threadId.value,
+                  reason: "not-found",
+                  message: CloudMoveSource.CLOUD_MOVE_SOURCE_MESSAGES["not-found"],
+                }),
+              )
+            : refuse(500, "internal")(error),
+        ),
+      );
       return yield* handle({ request, memberId, threadId: threadId.value });
     }).pipe(Effect.catchTags({ CloudMoveRefusal: respond })),
   );

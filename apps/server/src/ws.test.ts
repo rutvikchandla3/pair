@@ -106,6 +106,7 @@ import * as TeamUsage from "./team/TeamUsage.ts";
 import * as Presence from "./team/Presence.ts";
 import * as TeamMembers from "./team/TeamMembers.ts";
 import * as TeamState from "./team/TeamState.ts";
+import * as ThreadAccess from "./team/ThreadAccess.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import type { ThreadViewer } from "./orchestration-v2/MemberThreadView.ts";
 import * as Members from "./persistence/Members.ts";
@@ -796,6 +797,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(TerminalManager.TerminalManager)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadManagement.ThreadManagementService)({}),
+  ThreadAccess.layerTest(),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),

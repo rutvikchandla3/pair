@@ -4,6 +4,8 @@ import {
   AuthPreviewOperateScope,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
+  type MemberId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -21,6 +23,7 @@ import {
 import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
@@ -51,6 +54,21 @@ const parseMessage = (chunk: Uint8Array | string): unknown => {
   }
 };
 
+const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
+
+/** A thread the member cannot open gets what a missing tab gets (11 §4). Checked on connect only. */
+const canOpenThread = Effect.fnUntraced(function* (memberId: MemberId, threadId: string) {
+  const id = decodeThreadId(threadId);
+  if (Option.isNone(id)) return true;
+  const access = yield* ThreadAccess.ThreadAccess;
+  return yield* access
+    .assertThread(memberId, id.value)
+    .pipe(
+      Effect.as(true),
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
+    );
+});
+
 // Request middleware owns tracing, including long-lived WebSocket sessions.
 const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBrowser["Service"]) {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -79,29 +97,36 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
   if (threadId.length === 0 || tabId.length === 0) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
+  const allowed = yield* canOpenThread(session.memberId, threadId);
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      const attached = yield* browser
-        .attachViewer({
-          threadId,
-          tabId,
-          canOperate,
-          maxWidth: intParam(params, "maxWidth", 1280, 7680),
-          maxHeight: intParam(params, "maxHeight", 800, 4320),
-          quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
-        })
-        .pipe(
-          Effect.map((viewer) => ({ _tag: "attached" as const, viewer })),
-          Effect.catchTags({
-            ServerBrowserTabNotFoundError: () => Effect.succeed({ _tag: "gone" as const }),
-            ServerBrowserLaunchError: (error) => {
-              const setup = hostSetup(error.cause);
-              return setup === undefined
-                ? Effect.fail(error)
-                : Effect.succeed({ _tag: "hostSetup" as const, reason: encodeHostSetup(setup) });
-            },
-          }),
-        );
+      const attached = yield* allowed
+        ? browser
+            .attachViewer({
+              threadId,
+              tabId,
+              canOperate,
+              maxWidth: intParam(params, "maxWidth", 1280, 7680),
+              maxHeight: intParam(params, "maxHeight", 800, 4320),
+              quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
+            })
+            .pipe(
+              Effect.map((viewer) => ({ _tag: "attached" as const, viewer })),
+              Effect.catchTags({
+                ServerBrowserTabNotFoundError: () => Effect.succeed({ _tag: "gone" as const }),
+                ServerBrowserLaunchError: (error) => {
+                  const setup = hostSetup(error.cause);
+                  return setup === undefined
+                    ? Effect.fail(error)
+                    : Effect.succeed({
+                        _tag: "hostSetup" as const,
+                        reason: encodeHostSetup(setup),
+                      });
+                },
+              }),
+            )
+        : Effect.succeed({ _tag: "gone" as const });
+      // A thread the member cannot open closes as a missing tab does.
       const incoming = NodeHttpServerRequest.toIncomingMessage(request);
       // JPEGs are already compressed. Disabling deflate also keeps all
       // pending writes in the socket buffer we bound below, not a zlib queue.
@@ -226,7 +251,10 @@ const serveDownload = Effect.fnUntraced(function* (
   browser: ServerBrowser.ServerBrowser["Service"],
   params: URLSearchParams,
 ) {
-  yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  if (!(yield* canOpenThread(session.memberId, params.get("threadId") ?? ""))) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
   const download = yield* browser.openDownload({
     threadId: params.get("threadId") ?? "",
     tabId: params.get("tabId") ?? "",
@@ -247,7 +275,10 @@ const UPLOAD_MAX_FILES = 20;
 // The request span already covers this upload route.
 const receiveUpload = Effect.fnUntraced(
   function* (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) {
-    yield* authenticateMediaRequest(AuthPreviewOperateScope);
+    const session = yield* authenticateMediaRequest(AuthPreviewOperateScope);
+    if (!(yield* canOpenThread(session.memberId, params.get("threadId") ?? ""))) {
+      return HttpServerResponse.text("The page's file picker is no longer open.", { status: 409 });
+    }
     const request = yield* HttpServerRequest.HttpServerRequest;
     const fs = yield* FileSystem.FileSystem;
     const parts = yield* request.multipart.pipe(

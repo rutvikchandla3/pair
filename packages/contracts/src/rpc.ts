@@ -190,6 +190,7 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import { CloudOnlyRefusedError } from "./environment.ts";
+import { EnvironmentResourceNotFoundError } from "./environmentHttp.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -2334,6 +2335,12 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+/** Refuses a member a thread, machine or path they cannot open, as if it were missing (11 §4). */
+export class RpcThreadAccess extends RpcMiddleware.Service<RpcThreadAccess>()(
+  "t3/contracts/RpcThreadAccess",
+  { error: EnvironmentResourceNotFoundError },
+) {}
+
 export const WsRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsTeamSubscribeRpc,
@@ -2583,4 +2590,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
-).middleware(RpcScopeAuthorization);
+)
+  // Scope authorization is added last, so it runs first.
+  .middleware(RpcThreadAccess)
+  .middleware(RpcScopeAuthorization);

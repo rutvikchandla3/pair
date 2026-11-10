@@ -284,3 +284,81 @@ export const layer = Layer.effect(
     });
   }),
 ).pipe(Layer.provide(layerIndex));
+
+/**
+ * A thread's machine and owner, waiting for commits in flight only when the index has not seen it:
+ * a known thread costs a map lookup, and only an unknown one waits before it is refused.
+ */
+export const resolveThreadTarget = (
+  access: ThreadAccess["Service"],
+  threadId: ThreadId,
+): Effect.Effect<ThreadAccessTarget | undefined> => {
+  const known = access.threadTarget(threadId);
+  return known === undefined
+    ? Effect.map(access.caughtUp, () => access.threadTarget(threadId))
+    : Effect.succeed(known);
+};
+
+export interface ThreadAccessTestOptions {
+  readonly serverOwnerId: MemberId;
+  readonly machines?: ReadonlyMap<SandboxId, SandboxAccessEntry>;
+  readonly threads?: ReadonlyMap<ThreadId, ThreadAccessTarget>;
+  readonly changes?: PubSub.PubSub<SandboxAccessChange>;
+}
+
+/**
+ * For tests. Without options, a server that is not cloud-only, where every check passes; with
+ * them, the rule enforced over fixed machines and threads, every member active.
+ */
+export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Service"] => {
+  if (options === undefined) {
+    return {
+      enforced: false,
+      allowsSandbox: () => true,
+      allowsThread: () => true,
+      assertThread: () => Effect.void,
+      assertPath: () => Effect.void,
+      threadTarget: () => undefined,
+      caughtUp: Effect.void,
+      changes: Stream.empty,
+      subscribeChanges: Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe),
+    };
+  }
+  const { machines = new Map(), threads = new Map(), changes } = options;
+  const roster: ThreadAccessRoster = {
+    cloudOnly: true,
+    serverOwnerId: options.serverOwnerId,
+    isActive: () => true,
+  };
+  const allowsSandbox = (memberId: MemberId, sandboxId: SandboxId) =>
+    sandboxAllows(roster, machines.get(sandboxId), memberId);
+  const allowsThread = (memberId: MemberId, thread: ThreadAccessTarget) =>
+    threadAllows(
+      roster,
+      thread,
+      thread.sandboxId === undefined ? undefined : machines.get(thread.sandboxId),
+      memberId,
+    );
+  return {
+    enforced: true,
+    allowsSandbox,
+    allowsThread,
+    assertThread: (memberId, threadId) => {
+      const thread = threads.get(threadId);
+      return thread !== undefined && allowsThread(memberId, thread)
+        ? Effect.void
+        : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }));
+    },
+    assertPath: () => Effect.die("unused"),
+    threadTarget: (threadId) => threads.get(threadId),
+    caughtUp: Effect.void,
+    changes: changes === undefined ? Stream.empty : Stream.fromPubSub(changes),
+    subscribeChanges:
+      changes === undefined
+        ? Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe)
+        : PubSub.subscribe(changes),
+  };
+};
+
+export const layerTest = (options?: ThreadAccessTestOptions) =>
+  Layer.succeed(ThreadAccess)(makeTest(options));
