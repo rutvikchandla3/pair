@@ -2022,6 +2022,39 @@ it.layer(layerTest)("delegated cloud tasks", (it) => {
       }).pipe(Effect.provide(layerRecovery));
     }),
   );
+  it.effect("a cloud task's own machine opens to exactly whoever can open its parent", () =>
+    Effect.gen(function* () {
+      const { threadId: parent, sandboxId: parentSandboxId } = yield* provisioned("delegate-heir");
+      const ada = MemberId.make("member-ada");
+      const grace = MemberId.make("member-grace");
+      yield* dispatch({
+        type: "thread.owner.set",
+        commandId: CommandId.make("owner:delegate-heir"),
+        threadId: parent,
+        ownerId: ada,
+      });
+      yield* dispatch({
+        type: "sandbox.access.set",
+        commandId: CommandId.make("access:delegate-heir"),
+        threadId: parent,
+        sandboxId: parentSandboxId,
+        audience: "members",
+        memberIds: [grace],
+        actorId: ada,
+      });
+      const { run: parentRun } = yield* prompt(parent, "delegate-heir");
+      const sandboxId = SandboxId.make("sbx_de1e9a7e0000000000a1");
+      const { child } = yield* delegate(parent, parentRun, "heir", {
+        workspaceStrategy: { type: "worktree", baseRef: "feature/cache" },
+        sandbox: { sandboxId, driverId: ComputeDriverId.make("docker"), size: "default" },
+      });
+
+      assert.equal(child.ownerId, ada);
+      const machine = yield* getSandbox(sandboxId);
+      assert.equal(machine?.ownerMemberId, ada);
+      assert.deepInclude(machine?.access, { audience: "members", memberIds: [grace] });
+    }),
+  );
 });
 
 // A started parent run leaves a provider turn queued, which no other test's worker may claim.

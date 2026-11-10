@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { ViewerAccess } from "../orchestration-v2/MemberThreadView.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
 
@@ -169,6 +170,17 @@ it.effect(
           { id: "active", projectId: "project-1", title: "active", archivedAt: null },
         ],
       });
+      // The pull request stays; a thread the reader cannot open is left out.
+      const reader = {
+        caughtUp: Effect.void,
+        allowsThreadId: (threadId: string) => threadId !== "archived",
+      } as unknown as ViewerAccess;
+      expect(
+        (yield* listLinkedPullRequestThreads(
+          { host: "github.com", repository: "acme/web", number: 7 },
+          reader,
+        )).threads.map((thread) => thread.id),
+      ).toEqual(["active"]);
       assert.deepStrictEqual(
         yield* listLinkedPullRequestThreads({
           host: "github.com",

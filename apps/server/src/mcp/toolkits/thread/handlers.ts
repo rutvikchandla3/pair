@@ -174,8 +174,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { caller } = yield* readCaller();
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const reach = scope.reach;
+      if (reach !== undefined) yield* reach.caughtUp;
       const { matches } = yield* threadSearch
-        .searchThreads({ ...input, projectId: input.projectId ?? caller?.projectId })
+        .searchThreads({
+          ...input,
+          projectId: input.projectId ?? caller?.projectId,
+          ...(reach === undefined ? {} : { reaches: reach.allows }),
+        })
         .pipe(Effect.mapError(unavailable));
       return {
         matches: matches.map((match) => ({

@@ -785,6 +785,13 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       expected: "Pick a team account for Review guide model in Settings → Source Control.",
     },
     {
+      name: "a linked thread the requester can't open",
+      linked: "awake",
+      may: true,
+      opens: false,
+      expected: "none is linked to it",
+    },
+    {
       name: "a linked thread whose machine is asleep",
       linked: "asleep",
       may: true,
@@ -836,7 +843,14 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           context,
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
-        const result = yield* Effect.flip(service.generate(reference, { mayUseMachines: may }));
+        const result = yield* Effect.flip(
+          service.generate(reference, {
+            mayUseMachines: may,
+            ...("opens" in row && {
+              reach: { caughtUp: Effect.void, allowsThreadId: () => false },
+            }),
+          }),
+        );
         assert.include(result.message, expected);
         assert.deepStrictEqual(spawns, []);
         assert.isNull((yield* service.get(reference)).run);

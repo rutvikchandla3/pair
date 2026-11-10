@@ -3,7 +3,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * `threadAllows` for a paged read, over `orchestration_v2_projection_threads` aliased `alias`, for
- * an active member on a cloud-only server. Callers skip it elsewhere. Keep it in step with `ThreadAccess.ts`.
+ * a member on a cloud-only server. Callers skip it elsewhere. Keep it in step with `ThreadAccess.ts`.
  */
 export const threadAllowsSql = (
   sql: SqlClient.SqlClient,
@@ -12,7 +12,10 @@ export const threadAllowsSql = (
   serverOwnerId: MemberId | string | null,
 ) => {
   const t = sql.literal(alias);
-  return sql`(CASE
+  return sql`(NOT EXISTS (
+  SELECT 1 FROM members access_reader
+  WHERE access_reader.id = ${memberId} AND access_reader.removed_at IS NOT NULL
+) AND CASE
   WHEN json_extract(${t}.payload_json, '$.sandboxId') IS NULL
     THEN COALESCE(json_extract(${t}.payload_json, '$.ownerId') = ${memberId}, 1)
   ELSE COALESCE(

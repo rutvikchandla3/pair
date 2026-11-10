@@ -16,11 +16,15 @@ const threadX = ThreadId.make("thread-x");
 const threadY = ThreadId.make("thread-y");
 const threadZ = ThreadId.make("thread-z");
 
-const connect = Effect.fnUntraced(function* (connectionId: string, memberId: MemberId) {
+const connect = Effect.fnUntraced(function* (
+  connectionId: string,
+  memberId: MemberId,
+  mayOpen?: (threadId: ThreadId) => boolean,
+) {
   const presence = yield* Presence.Presence;
   const scope = yield* Scope.fork(yield* Effect.scope);
   const updates = yield* presence
-    .subscribe({ connectionId, memberId })
+    .subscribe({ connectionId, memberId, ...(mayOpen === undefined ? {} : { mayOpen }) })
     .pipe(Effect.flatMap(Stream.toQueue({ capacity: "unbounded" })), Scope.provide(scope));
   return {
     updates,
@@ -115,6 +119,29 @@ describe("Presence", () => {
       yield* b.report({ viewingThreadId: threadY });
       expect(yield* Queue.take(a.updates)).toEqual(nobodyTyping);
       expect(yield* sizesAfter(0, b, c)).toEqual([0, 0]);
+    }).pipe(Effect.scoped, Effect.provide(Presence.layer)),
+  );
+
+  it.effect("tells who views or types in a thread only to a member who can open it", () =>
+    Effect.gen(function* () {
+      const a = yield* connect("a", alice);
+      const c = yield* connect("c", carol, (threadId) => threadId !== threadX);
+      yield* a.report({ viewingThreadId: threadX });
+      yield* c.report({ viewingThreadId: threadX });
+      yield* TestClock.adjust(1_000);
+      expect(yield* Queue.take(c.updates)).toEqual({ members: [online(alice)] });
+      expect(yield* Queue.take(a.updates)).toEqual({
+        members: [online(carol)],
+        viewers: [{ threadId: threadX, memberIds: [carol] }],
+      });
+
+      yield* a.report({ typing: true });
+      yield* a.report({ viewingThreadId: threadY });
+      yield* TestClock.adjust(1_000);
+      expect(yield* Queue.take(c.updates)).toEqual({
+        viewers: [{ threadId: threadY, memberIds: [alice] }],
+      });
+      expect(yield* sizesAfter(0, c)).toEqual([0]);
     }).pipe(Effect.scoped, Effect.provide(Presence.layer)),
   );
 

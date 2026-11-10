@@ -37,6 +37,7 @@ import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { holderOf } from "./MemberThreadState.ts";
 import { threadAllowsSql } from "../team/threadAccessSql.ts";
+import type * as ThreadAccess from "../team/ThreadAccess.ts";
 import type { ThreadViewer } from "./MemberThreadView.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
@@ -320,6 +321,8 @@ export class ThreadSearch extends Context.Service<
       input: OrchestrationSearchThreadsInput & {
         readonly projectId?: ProjectId | undefined;
         readonly viewer?: ThreadSearchViewer;
+        /** The threads an agent may name; it reads for every member who can open its own. */
+        readonly reaches?: (thread: ThreadAccess.ThreadAccessTarget) => boolean;
       },
     ) => Effect.Effect<{ readonly matches: ReadonlyArray<ThreadSearchHit> }, ThreadSearchError>;
     /**
@@ -600,7 +603,9 @@ export const make = Effect.gen(function* () {
     // Agents call this rarely, and a project has hundreds of threads, not
     // millions, so ranking every active thread in memory stays cheap.
     const viewer = searchViewer(input.viewer);
-    const candidates = yield* read(titleCandidates({ projectId: input.projectId ?? null, viewer }));
+    const candidates = (yield* read(
+      titleCandidates({ projectId: input.projectId ?? null, viewer }),
+    )).filter((row) => input.reaches?.(row.thread) ?? true);
     const subjectById = new Map(
       candidates.map((row): [ThreadId, ThreadSearchSubject] => [
         row.thread.id,

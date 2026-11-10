@@ -30,6 +30,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ServerConfig from "../config.ts";
+import type { ViewerAccess } from "../orchestration-v2/MemberThreadView.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -53,6 +54,8 @@ const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 export interface ReviewGuideRequester {
   /** Holds `terminal:operate`: on Pair Cloud the guide runs in a linked thread's machine. */
   readonly mayUseMachines: boolean;
+  /** On a cloud-only server, the threads the requester may open; absent, every thread. */
+  readonly reach?: Pick<ViewerAccess, "caughtUp" | "allowsThreadId">;
 }
 
 /** Where the guide's git and investigation run: the project's checkout, or a cloud thread's. */
@@ -190,7 +193,11 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    const linked = linkedMachineThreads(key, projectId, threads);
+    const reach = requester.reach;
+    if (reach !== undefined) yield* reach.caughtUp;
+    const linked = linkedMachineThreads(key, projectId, threads).filter(
+      (thread) => reach === undefined || reach.allowsThreadId(thread.id),
+    );
     const newest = linked[0];
     if (newest === undefined) {
       return yield* refuse(

@@ -48,6 +48,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { ViewerAccess } from "../orchestration-v2/MemberThreadView.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
@@ -256,7 +257,10 @@ export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
-    readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
+    /** With `reader`, a last run's thread the reader cannot open is left out; the run stays. */
+    readonly subscribeList: (
+      reader?: Pick<ViewerAccess, "caughtUp" | "allowsThreadId">,
+    ) => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     /** `createdByMemberId` stamps a new task's owner; an existing task keeps its own. */
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
@@ -1250,17 +1254,32 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
 
-    const subscribeList: ScheduledTaskService["Service"]["subscribeList"] = () =>
-      Stream.unwrap(
+    const subscribeList: ScheduledTaskService["Service"]["subscribeList"] = (reader) => {
+      const read =
+        reader === undefined
+          ? list()
+          : reader.caughtUp.pipe(
+              Effect.andThen(list()),
+              Effect.map(({ tasks }) => ({
+                tasks: tasks.map((task) => {
+                  if (task.lastRunThreadId === undefined) return task;
+                  if (reader.allowsThreadId(task.lastRunThreadId)) return task;
+                  const { lastRunThreadId: _hidden, ...run } = task;
+                  return run;
+                }),
+              })),
+            );
+      return Stream.unwrap(
         Effect.gen(function* () {
           // Subscribe before reading to buffer concurrent changes.
           const subscription = yield* PubSub.subscribe(changesPubSub);
           return Stream.concat(
-            Stream.fromEffect(list()),
-            Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => list())),
+            Stream.fromEffect(read),
+            Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => read)),
           );
         }),
       );
+    };
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",

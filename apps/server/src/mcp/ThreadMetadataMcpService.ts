@@ -16,7 +16,7 @@ import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { threadNotFound } from "./threadAccess.ts";
+import { reaches, threadNotFound } from "./threadAccess.ts";
 
 export class ThreadMetadataMcpService extends Context.Service<
   ThreadMetadataMcpService,
@@ -131,18 +131,25 @@ const make = Effect.gen(function* () {
         "Pass threadId: this MCP client is not running inside a T3 thread.",
       );
     }
-    const shell = yield* threadManagement
-      .getThreadShell(threadId)
-      .pipe(
-        Effect.mapError((error) =>
-          failure(
-            "orchestration_error",
-            `Unable to locate thread ${threadId}: ${errorMessage(error)}`,
-          ),
-        ),
-      );
+    const shell = (yield* reaches(scope, threadId))
+      ? yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to locate thread ${threadId}: ${errorMessage(error)}`,
+              ),
+            ),
+          )
+      : null;
     if (shell === null || shell.deletedAt !== null) {
-      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        threadManagement,
+        scope,
+        threadId,
+        `Thread ${threadId} was not found.`,
+      );
     }
     const requestKey =
       input.clientRequestId === undefined ? yield* random.uuidV4() : input.clientRequestId;

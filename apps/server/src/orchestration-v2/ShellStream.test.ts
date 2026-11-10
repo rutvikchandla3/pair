@@ -31,6 +31,7 @@ import {
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
   expandSandboxShellEvents,
+  isOtherMembersShellEvent,
   loadSubscriberShellSnapshot,
   mayShowShellEvent,
   omitIdleSubagentShells,
@@ -131,10 +132,13 @@ describe("shell events for a member on a cloud-only server", () => {
   const ownerId = ThreadId.make("owner");
   const forkId = ThreadId.make("fork");
   const localId = ThreadId.make("local");
+  // A provider-native subagent: on the machine, but with no machine row.
+  const childId = ThreadId.make("child");
   const onMachine = { sandboxId, ownerId: alice };
   const shells = new Map([
     [ownerId, shellFixture({ id: ownerId, ...onMachine })],
     [forkId, shellFixture({ id: forkId, ...onMachine })],
+    [childId, shellFixture({ id: childId, ...onMachine })],
     [localId, shellFixture({ id: localId, ownerId: carol })],
   ]);
 
@@ -143,6 +147,7 @@ describe("shell events for a member on a cloud-only server", () => {
     memberId: MemberId,
     audience: "members" | "team",
     memberIds: ReadonlyArray<MemberId>,
+    localOwner = carol,
   ) => {
     const roster = { cloudOnly: true, serverOwnerId: alice, isActive: () => true };
     const entry = { ownerMemberId: alice, audience, memberIds: new Set(memberIds) };
@@ -150,7 +155,8 @@ describe("shell events for a member on a cloud-only server", () => {
     const threads = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
       [ownerId, onMachine],
       [forkId, onMachine],
-      [localId, { ownerId: carol }],
+      [childId, onMachine],
+      [localId, { ownerId: localOwner }],
     ]);
     const allowsThread = (member: MemberId, thread: ThreadAccess.ThreadAccessTarget) =>
       ThreadAccess.threadAllows(
@@ -164,6 +170,7 @@ describe("shell events for a member on a cloud-only server", () => {
         enforced: true,
         allowsSandbox: (member, id) => ThreadAccess.sandboxAllows(roster, entries.get(id), member),
         allowsThread,
+        agentReaches: () => true,
         assertThread: () => Effect.void,
         assertPath: () => Effect.void,
         threadTarget: (threadId) => threads.get(threadId),
@@ -195,6 +202,7 @@ describe("shell events for a member on a cloud-only server", () => {
   const sent = (
     access: ReturnType<typeof accessOf>,
     events: ReadonlyArray<ApplicationStoredEvent>,
+    read = shells,
   ) => {
     const expanded = expandSandboxShellEvents(
       events.filter((event) => mayShowShellEvent(event, access)).map(toShellApplicationEvent),
@@ -208,13 +216,14 @@ describe("shell events for a member on a cloud-only server", () => {
           })),
         ],
       ]),
+      (id) => [childId, localId].filter((threadId) => access.sandboxOf(threadId) === id),
     );
     const revocable = accessChangedThreadIds(expanded);
     return coalesceShellApplicationEvents(expanded).flatMap((event) => {
       if ("aggregateKind" in event) return [];
       const item = shellStreamItemForViewer({
         stored: event,
-        shell: shells.get(event.event.threadId) ?? null,
+        shell: read.get(event.event.threadId) ?? null,
         access,
         accessChangedThreadIds: revocable,
       });
@@ -231,19 +240,15 @@ describe("shell events for a member on a cloud-only server", () => {
     ["thread.removed", ownerId],
     ["thread.removed", forkId],
   ];
+  const gained = [...updated, ["thread.updated", childId]];
+  const lost = [...removed, ["thread.removed", childId]];
 
   it.each([
-    ["added", bob, ["members", [bob]], { added: [bob] }, updated],
-    ["removed", bob, ["members", []], { removed: [bob] }, removed],
-    ["opened to the team", carol, ["team", []], { audienceChanged: true }, updated],
-    ["closed to members", carol, ["members", [bob]], { audienceChanged: true }, removed],
-    [
-      "closed to members, still listed",
-      bob,
-      ["members", [bob]],
-      { audienceChanged: true },
-      updated,
-    ],
+    ["added", bob, ["members", [bob]], { added: [bob] }, gained],
+    ["removed", bob, ["members", []], { removed: [bob] }, lost],
+    ["opened to the team", carol, ["team", []], { audienceChanged: true }, gained],
+    ["closed to members", carol, ["members", [bob]], { audienceChanged: true }, lost],
+    ["closed to members, still listed", bob, ["members", [bob]], { audienceChanged: true }, gained],
     ["someone else added", carol, ["members", [bob]], { added: [bob] }, []],
     ["someone else removed", carol, ["members", []], { removed: [bob] }, []],
   ] as const)(
@@ -274,6 +279,29 @@ describe("shell events for a member on a cloud-only server", () => {
     expect(mayShowShellEvent(unknown, carols)).toBe(true);
     expect(sent(carols, [unknown])).toEqual([]);
     expect(sent(accessOf(bob, "members", [bob]), events.slice(0, 3))).toEqual(updated);
+  });
+
+  it("removes a thread with no machine from the owner it moved away from", () => {
+    const moved = { id: localId, ownerId: bob };
+    const events = [
+      stored(7, { threadId: localId, type: "thread.metadata-updated", payload: moved }),
+      // The old holder's own row, as `transferHolder` emits it.
+      stored(7, {
+        threadId: localId,
+        type: "thread.metadata-updated",
+        payload: moved,
+        member: { memberId: carol },
+      }),
+    ];
+    const read = new Map([...shells, [localId, shellFixture(moved)]]);
+    const sentTo = (memberId: MemberId) =>
+      sent(
+        accessOf(memberId, "members", [], bob),
+        events.filter((event) => !isOtherMembersShellEvent(event, memberId)),
+        read,
+      );
+    expect(sentTo(carol)).toEqual([["thread.removed", localId]]);
+    expect(sentTo(bob)).toEqual([["thread.updated", localId]]);
   });
 
   it.effect("counts and trims only the threads the member can open", () =>

@@ -9,7 +9,6 @@ import {
   type ThreadMemberState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import type * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 
@@ -54,6 +53,8 @@ export interface ViewerAccess {
   readonly allowsThreadId: (threadId: ThreadId) => boolean;
   /** A cheap pre-filter: refuses only a thread the index knows this member cannot open. */
   readonly mayAllowThreadId: (threadId: ThreadId) => boolean;
+  /** The thread's machine as the index last saw it. */
+  readonly sandboxOf: (threadId: ThreadId) => SandboxId | undefined;
   /** The change may have given or taken this member's access. */
   readonly affectedBy: (change: SandboxAccessChange) => boolean;
   readonly caughtUp: Effect.Effect<void>;
@@ -84,6 +85,7 @@ export function viewerAccessOf(
       const target = access.threadTarget(threadId);
       return target === undefined || allows(target);
     },
+    sandboxOf: (threadId) => access.threadTarget(threadId)?.sandboxId,
     affectedBy: (change) =>
       change.audienceChanged ||
       change.added.includes(memberId) ||
@@ -97,8 +99,7 @@ export function viewerAccessOf(
 export const makeThreadViewers = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const { ownerId, isTeamMode } = yield* TeamState.TeamState;
-  // Every server provides it; harnesses without it read as a server that is not cloud-only.
-  const access = Option.getOrUndefined(yield* Effect.serviceOption(ThreadAccess.ThreadAccess));
+  const access = yield* ThreadAccess.optional;
   return (memberId: MemberId | undefined): ThreadViewer | null => {
     if (memberId === undefined) return null;
     const viewerAccess = access === undefined ? undefined : viewerAccessOf(access, memberId);

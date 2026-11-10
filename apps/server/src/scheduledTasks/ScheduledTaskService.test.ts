@@ -21,6 +21,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -676,6 +677,15 @@ it.effect("a cloud task's run launches with discardOnSettle and records its thre
       const [stored] = (yield* service.list()).tasks;
       assert.equal(stored?.lastRunStatus, "succeeded");
       assert.equal(stored?.lastRunThreadId, ThreadId.make("thread:cloud-run"));
+      const forOutsider = yield* service
+        .subscribeList({ caughtUp: Effect.void, allowsThreadId: () => false })
+        .pipe(Stream.runHead);
+      assert.deepEqual(
+        Option.map(forOutsider, ({ tasks }) =>
+          tasks.map((t) => [t.lastRunStatus, t.lastRunThreadId]),
+        ),
+        Option.some([["succeeded", undefined]]),
+      );
 
       const cleared = yield* service.upsert({ ...input, discardOnSettle: false });
       assert.isUndefined(cleared.task.discardOnSettle);

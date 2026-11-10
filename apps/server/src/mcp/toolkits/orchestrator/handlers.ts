@@ -1,11 +1,11 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestrationV2StopWorkflowError, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
-import { readCaller } from "../../threadAccess.ts";
+import { reaches, readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -44,8 +44,12 @@ const handlers = {
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
-        const { threads } = yield* readCaller();
-        return yield* threads.stopWorkflow(input).pipe(
+        const { scope, threads } = yield* readCaller();
+        // Refused as a thread with no live task, as a missing thread is.
+        const stop = (yield* reaches(scope, input.threadId))
+          ? threads.stopWorkflow(input)
+          : Effect.fail(new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" }));
+        return yield* stop.pipe(
           Effect.as({}),
           Effect.mapError(
             (cause) =>

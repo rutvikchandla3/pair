@@ -107,6 +107,36 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
+it("keeps every report entry but names only the threads the reader can open", () => {
+  const entry = (threadId: string | null) => ({
+    kind: "worktree" as const,
+    outcome: "kept" as const,
+    reason: "Thread is running.",
+    path: `/t3-sandbox/sbx_00000000000000000aaa/worktrees/${threadId ?? "orphan"}`,
+    projectPath: null,
+    threadId: threadId === null ? null : ThreadId.make(threadId),
+    threadTitle: threadId === null ? null : `Title of ${threadId}`,
+    bytes: null,
+    files: null,
+  });
+  const report = {
+    trigger: "manual" as const,
+    startedAt: "2026-11-10T00:00:00.000Z",
+    finishedAt: "2026-11-10T00:00:01.000Z",
+    entries: [entry("mine"), entry("private"), entry(null)],
+    counts: { removed: 0, kept: 3, failed: 0 },
+    omittedCount: 0,
+    bytesFreed: 0,
+  };
+  const read = StorageCleanup.reportForReader(report, (threadId) => threadId !== "private");
+  expect(read?.entries.map(({ threadId, threadTitle }) => [threadId, threadTitle])).toEqual([
+    ["mine", "Title of mine"],
+    [null, null],
+    [null, null],
+  ]);
+  expect(read?.counts).toEqual(report.counts);
+});
+
 describe("V2 storage cleanup eligibility", () => {
   const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
 

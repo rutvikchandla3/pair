@@ -469,7 +469,10 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId"> & {
         /** Set on `sandbox.updated`, whose summary every thread sharing the machine shows. */
         readonly sandboxId?: SandboxId;
-        /** Set on `sandbox.access-changed`: a thread the viewer can no longer open is removed. */
+        /**
+         * Set on `sandbox.access-changed` and on an event naming one member: a thread the viewer
+         * can no longer open is removed.
+         */
         readonly accessChanged?: true;
       };
     };
@@ -521,6 +524,9 @@ export function mayShowShellEvent(stored: ApplicationStoredEvent, access: Viewer
   const { event } = stored;
   if (event.type === "sandbox.access-changed") return access.affectedBy(event.payload);
   if (event.type === "sandbox.updated") return access.allowsSandbox(event.payload.id);
+  // Names this viewer (`isOtherMembersShellEvent` drops the rest), who knew the thread: an owner
+  // change demotes the old owner this way, and the read removes a thread they lost.
+  if (isMemberThreadEvent(event)) return true;
   return isThreadPayloadEvent(event)
     ? access.allows(event.payload)
     : access.mayAllowThreadId(event.threadId);
@@ -544,30 +550,38 @@ export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellAp
         ? { threadId: event.threadId, sandboxId: event.payload.id }
         : event.type === "sandbox.access-changed"
           ? { threadId: event.threadId, sandboxId: event.payload.sandboxId, accessChanged: true }
-          : { threadId: event.threadId },
+          : isMemberThreadEvent(event)
+            ? { threadId: event.threadId, accessChanged: true }
+            : { threadId: event.threadId },
   };
 }
 
-/** A machine change re-sends the shell of every unarchived thread using it: side chats and forks. */
+/**
+ * A machine change re-sends the shell of every unarchived thread using it: side chats and forks.
+ * An access change also re-sends the subscriber's provider-native subagents on that machine, which
+ * have no machine row.
+ */
 export function expandSandboxShellEvents(
   events: ReadonlyArray<ShellApplicationEvent>,
   threadsBySandbox: ReadonlyMap<SandboxId, ReadonlyArray<SandboxThreadRow>>,
+  subagentsOn: (sandboxId: SandboxId) => ReadonlyArray<ThreadId> = () => [],
 ): ReadonlyArray<ShellApplicationEvent> {
   return events.flatMap((stored) => {
     if ("aggregateKind" in stored || stored.event.sandboxId === undefined) return [stored];
-    const attached = threadsBySandbox.get(stored.event.sandboxId) ?? [];
+    const accessChanged = stored.event.accessChanged === true;
+    const threadIds = (threadsBySandbox.get(stored.event.sandboxId) ?? []).flatMap((row) =>
+      row.archived ? [] : [row.threadId],
+    );
+    if (accessChanged) threadIds.push(...subagentsOn(stored.event.sandboxId));
     return [
       stored,
-      ...attached.flatMap((row) =>
-        row.archived || row.threadId === stored.event.threadId
+      ...threadIds.flatMap((threadId) =>
+        threadId === stored.event.threadId
           ? []
           : [
               {
                 sequence: stored.sequence,
-                event:
-                  stored.event.accessChanged === true
-                    ? { threadId: row.threadId, accessChanged: true as const }
-                    : { threadId: row.threadId },
+                event: accessChanged ? { threadId, accessChanged: true as const } : { threadId },
               },
             ],
       ),

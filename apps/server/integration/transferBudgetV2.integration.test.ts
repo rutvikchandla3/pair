@@ -54,6 +54,7 @@ import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
 import * as TeamState from "../src/team/TeamState.ts";
+import * as ServerConfig from "../src/config.ts";
 import * as ServerHttp from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
 import {
@@ -195,6 +196,7 @@ const layerRoutes = Layer.mergeAll(
     Layer.provide(OrchestrationHttp.layer),
     Layer.provide(layerAuth),
     Layer.provide(TeamState.layerTest()),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-orchestration-http-" })),
   ),
   RpcServer.layerHttp({ group, path: "/ws", protocol: "websocket" }).pipe(
     Layer.provide(layerHandlers),

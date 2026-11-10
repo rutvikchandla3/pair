@@ -130,7 +130,13 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, sendActorId, threadNotFound } from "./threadAccess.ts";
+import {
+  isLiveCallerShell,
+  reachable,
+  reaches,
+  sendActorId,
+  threadNotFound,
+} from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -265,14 +271,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
+function scheduledTaskSummary(
+  task: ScheduledTask,
+  mayRun: boolean,
+  showsThread: boolean,
+): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
     projectId: task.projectId,
-    boundThreadId: task.threadId,
+    boundThreadId: showsThread ? task.threadId : null,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -1035,13 +1045,15 @@ const make = Effect.gen(function* () {
   const threadViewers = yield* makeThreadViewers;
   const team = yield* Effect.serviceOption(TeamState.TeamState);
   // An outside client reads as the member who connected it; an agent's thread reads as the holder.
+  // Which threads either may name is the scope's `reach`, not the viewer's.
   const viewerOf = (scope: McpInvocationScope) =>
     threadViewers(scope.thread === undefined ? scope.client?.memberId : undefined);
   const viewShells = (
     scope: McpInvocationScope,
     shells: ReadonlyArray<OrchestrationV2ThreadShell>,
   ) =>
-    overlayForViewer(viewerOf(scope), shells).pipe(
+    reachable(scope, shells).pipe(
+      Effect.flatMap((visible) => overlayForViewer(viewerOf(scope), visible)),
       Effect.mapError((error) =>
         failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
       ),
@@ -1206,14 +1218,22 @@ const make = Effect.gen(function* () {
           );
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
+    scope: McpInvocationScope,
     threadId: ThreadId,
     includeHistory = true,
   ) {
-    const shell = yield* threadManagement
-      .getThreadShell(threadId)
-      .pipe(Effect.mapError(threadManagementFailure));
+    const shell = (yield* reaches(scope, threadId))
+      ? yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(threadManagementFailure))
+      : null;
     if (shell === null || shell.deletedAt !== null) {
-      return yield* threadNotFound(threadManagement, threadId, `Thread ${threadId} was not found.`);
+      return yield* threadNotFound(
+        threadManagement,
+        scope,
+        threadId,
+        `Thread ${threadId} was not found.`,
+      );
     }
     // Native wait owns its history reads; keep legacy import and project validation here.
     return yield* includeHistory
@@ -1232,7 +1252,7 @@ const make = Effect.gen(function* () {
     const target =
       caller.parent !== undefined && threadId === caller.parent.thread.id
         ? caller.parent
-        : yield* loadTargetThread(threadId, includeHistory);
+        : yield* loadTargetThread(scope, threadId, includeHistory);
     return { ...caller, target } as const;
   });
 
@@ -1287,12 +1307,15 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     const { parent } = yield* loadCaller(scope);
-    const shell = yield* threadManagement
-      .getThreadShell(threadId)
-      .pipe(Effect.mapError(threadManagementFailure));
+    const shell = (yield* reaches(scope, threadId))
+      ? yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(threadManagementFailure))
+      : null;
     if (shell === null || shell.deletedAt !== null) {
       return yield* threadNotFound(
         threadManagement,
+        scope,
         threadId,
         `Thread ${threadId} is no longer available.`,
       );
@@ -1970,6 +1993,7 @@ const make = Effect.gen(function* () {
         live &&
           Option.isSome(modes) &&
           modes.value.every((mode) => withinLimits(caller.limits, mode)),
+        task.threadId === null || (yield* reaches(scope, task.threadId)),
       );
     },
   );

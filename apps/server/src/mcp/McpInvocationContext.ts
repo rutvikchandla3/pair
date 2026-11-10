@@ -15,6 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import type { ThreadAccessTarget } from "../team/ThreadAccess.ts";
+
 const ALL_MCP_CAPABILITIES = [
   "preview",
   "orchestration",
@@ -139,6 +141,19 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** False on a server without team images (not Pair Cloud). `/mcp` sets it per request. */
   readonly teamImages?: boolean;
+  /** Which threads this caller may name, on a cloud-only server. `/mcp` sets it per request. */
+  readonly reach?: McpThreadReach;
+}
+
+/**
+ * A thread caller reaches a session only when everyone who can open its own can open it
+ * (`sessionReaches`); a client reaches what its member can open. Anything else reads as missing.
+ */
+export interface McpThreadReach {
+  readonly allows: (thread: ThreadAccessTarget) => boolean;
+  /** After `caughtUp`. A thread the index has never seen is refused. */
+  readonly allowsThreadId: (threadId: ThreadId) => boolean;
+  readonly caughtUp: Effect.Effect<void>;
 }
 
 /**

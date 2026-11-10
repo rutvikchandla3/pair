@@ -1324,7 +1324,16 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
       events: ReadonlyArray<ShellApplicationEvent>,
     ) {
-      const expanded = expandSandboxShellEvents(events, yield* threadsBySandbox(events));
+      const expanded = expandSandboxShellEvents(
+        events,
+        yield* threadsBySandbox(events),
+        (sandboxId) =>
+          access === undefined
+            ? []
+            : Array.from(subagentThreadIds, (id) => ThreadId.make(id)).filter(
+                (threadId) => access.sandboxOf(threadId) === sandboxId,
+              ),
+      );
       const coalesced = coalesceShellApplicationEvents(expanded);
       const threadIds = coalesced.flatMap((stored) =>
         "aggregateKind" in stored ? [] : [stored.event.threadId],
@@ -2606,7 +2615,9 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+          scheduledTasks
+            .subscribeList(threadViewer?.access)
+            .pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
           scheduledTasks.upsert(input, currentSession.memberId),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
@@ -2652,6 +2663,9 @@ export const layerWsRpc = (
             presence.subscribe({
               connectionId: rpcClientKey(metadata),
               memberId: currentSession.memberId,
+              ...(threadViewer?.access === undefined
+                ? {}
+                : { mayOpen: threadViewer.access.allowsThreadId }),
             }),
           ),
         [WS_METHODS.presenceReport]: (input, metadata) =>
@@ -2996,7 +3010,18 @@ export const layerWsRpc = (
             return yield* keybindings.removeKeybindingRule(rule);
           }),
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
-        [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
+        [WS_METHODS.serverGetStorageCleanupReport]: () => {
+          const access = threadViewer?.access;
+          return access === undefined
+            ? storageCleanup.reports
+            : storageCleanup.reports.pipe(
+                Stream.mapEffect((report) =>
+                  access.caughtUp.pipe(
+                    Effect.as(StorageCleanup.reportForReader(report, access.allowsThreadId)),
+                  ),
+                ),
+              );
+        },
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
@@ -3146,7 +3171,7 @@ export const layerWsRpc = (
             Effect.flatMap((key) =>
               key === null
                 ? Effect.succeed({ threads: [] })
-                : listLinkedPullRequestThreads(key).pipe(
+                : listLinkedPullRequestThreads(key, threadViewer?.access).pipe(
                     Effect.provideService(SqlClient.SqlClient, sql),
                   ),
             ),
@@ -3166,6 +3191,7 @@ export const layerWsRpc = (
             input,
             reviewGuides.generate(input, {
               mayUseMachines: currentSession.scopes.includes(AuthTerminalOperateScope),
+              ...(threadViewer?.access === undefined ? {} : { reach: threadViewer.access }),
             }),
           ),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>

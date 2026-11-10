@@ -2214,6 +2214,13 @@ it.effect("SQL list older settled threads below a cursor", () =>
     assert.deepEqual(yield* countFor(alice), cloudCount(6));
     assert.deepEqual(yield* countFor(bob), cloudCount(4));
     assert.deepEqual(yield* countFor(carol), cloudCount(2));
+    // A removed member opens nothing, even a team machine or their own thread.
+    yield* sql`
+      INSERT INTO members (id, name, role, created_at, removed_at)
+      VALUES (${bob}, 'Bob', 'member', ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)})
+    `;
+    assert.deepEqual(yield* pageIds(bob, null), []);
+    assert.deepEqual(yield* countFor(bob), []);
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -56,6 +56,7 @@ import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ServerConfig from "../config.ts";
 import type { ThreadViewer, ViewerAccess } from "./MemberThreadView.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -440,6 +441,7 @@ const withHttp = <A>(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(auth),
       Layer.provide(TeamState.layerTest()),
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-orchestration-http-" })),
       Layer.provide(access ?? Layer.empty),
       Layer.provide(Layer.succeedContext(context)),
       Layer.provide(NodeHttpPlatform.layer),
@@ -697,6 +699,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         allowsSandbox: () => state.open,
         allowsThreadId: () => state.open,
         mayAllowThreadId: () => state.open,
+        sandboxOf: () => undefined,
         affectedBy: (change) => change.removed.includes(member) || change.added.includes(member),
         caughtUp: Effect.void,
         assertThread: (threadId) => (state.open ? Effect.void : notFound(threadId)),
@@ -817,6 +820,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
               enforced: true,
               allowsSandbox: () => true,
               allowsThread: () => true,
+              agentReaches: () => true,
               assertThread: (_memberId, threadId) =>
                 projections
                   .getThread(threadId)

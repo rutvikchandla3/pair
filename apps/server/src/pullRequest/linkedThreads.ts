@@ -5,6 +5,7 @@ import {
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
+  ThreadId,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,10 +13,13 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { ViewerAccess } from "../orchestration-v2/MemberThreadView.ts";
+
 const decodeLinkedThreads = Schema.decodeUnknownEffect(PullRequestLinkedThreadsResult);
 
+/** `access` is the reader's on a cloud-only server: a thread it refuses is left out. */
 export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThreads")(
-  function* (input: ThreadPullRequestKey) {
+  function* (input: ThreadPullRequestKey, access?: ViewerAccess) {
     const key = normalizeThreadPullRequestKey(input);
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{
@@ -42,8 +46,14 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
         AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
       ORDER BY "updatedAt" DESC, id ASC
     `.pipe(NodeSqliteClient.readOnly);
+    // The rows were read from the database, which can lead the index.
+    if (access !== undefined) yield* access.caughtUp;
     const threads = rows
-      .filter((row) => threadPullRequestKeysEqual(row, key))
+      .filter(
+        (row) =>
+          threadPullRequestKeysEqual(row, key) &&
+          (access === undefined || access.allowsThreadId(ThreadId.make(row.id))),
+      )
       .map(({ id, projectId, title, archivedAt }) => ({ id, projectId, title, archivedAt }));
     return yield* decodeLinkedThreads({ threads });
   },

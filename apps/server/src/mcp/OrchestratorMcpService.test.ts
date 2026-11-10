@@ -80,12 +80,21 @@ import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerServerConfig = (cloudOnly = false) =>
   Layer.succeed(ServerConfig.ServerConfig, { cloudOnly } as ServerConfig.ServerConfig["Service"]);
+// These cases are about where work starts, not who may read it.
+const layerOpenAccess = Layer.mock(ThreadAccess.ThreadAccess)({
+  enforced: false,
+  allowsSandbox: () => true,
+  allowsThread: () => true,
+  agentReaches: () => true,
+  threadTarget: () => undefined,
+});
 
 const orchestratorService = (cloudOnly = false) =>
   OrchestratorMcpService.layer.pipe(
@@ -93,6 +102,7 @@ const orchestratorService = (cloudOnly = false) =>
     Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(layerServerConfig(cloudOnly)),
+    Layer.provide(cloudOnly ? layerOpenAccess : Layer.empty),
   );
 const layerOrchestratorService = orchestratorService();
 
@@ -2067,6 +2077,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         ),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
         Layer.provide(layerServerConfig(true)),
+        Layer.provide(layerOpenAccess),
       );
 
       yield* Effect.gen(function* () {

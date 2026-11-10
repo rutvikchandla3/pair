@@ -39,6 +39,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ServerConfig from "../config.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -140,6 +141,9 @@ const serveOrchestrationHttp = (allowed: () => boolean, memberId = MemberId.make
         ProjectStore.layer,
         ProjectionStore.layer,
         TeamState.layerTest(),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-orchestration-http-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
       ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
     );
     const eventSink = Context.get(services, EventSinkV2);

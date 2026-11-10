@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  SandboxId,
   type TeamImageBuild,
   TeamImageBuildId,
   ComputeDriverId,
@@ -36,6 +37,7 @@ import type { MemberRecord } from "../persistence/Members.ts";
 import * as MemberPushDevices from "../team/MemberPushDevices.ts";
 import * as Presence from "../team/Presence.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as MemberPushNotifier from "./MemberPushNotifier.ts";
 
 const NOW = "2026-11-01T00:00:00.000Z";
@@ -179,6 +181,8 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   readonly endpoint?: string;
   readonly shell?: OrchestrationV2ThreadShell;
   readonly cloudOnly?: boolean;
+  /** `ThreadAccess.allowsThread` on a cloud-only server. */
+  readonly opens?: (memberId: MemberId) => boolean;
 }) {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations();
@@ -258,6 +262,13 @@ const makeHarness = Effect.fnUntraced(function* (options: {
           getEnvironmentId: Effect.succeed(ENVIRONMENT_ID),
         }),
         Layer.mock(ServerConfig.ServerConfig)({ cloudOnly: options.cloudOnly ?? false } as never),
+        Layer.mock(ThreadAccess.ThreadAccess)({
+          enforced: options.cloudOnly ?? false,
+          allowsSandbox: () => true,
+          allowsThread: (memberId) => options.opens?.(memberId) ?? true,
+          agentReaches: () => true,
+          threadTarget: () => undefined,
+        }),
       ),
     ),
     Effect.provideService(HttpClient.HttpClient, http),
@@ -473,6 +484,66 @@ describe("MemberPushNotifier", () => {
       assert.deepStrictEqual(harness.recipients(), recipients);
       assert.deepStrictEqual(harness.shellReads, cloudOnly ? [THREAD_ID] : []);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes a cloud thread only to the members who can open it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cloudOnly: true, opens: (id) => id !== BOB.id });
+      yield* harness.emit(runCompleted);
+
+      assert.deepStrictEqual(harness.recipients(), [token(ALICE)]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect(
+    "pushes Shared with you to each member added, and nothing else an access change does",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cloudOnly: true });
+        const changed = (
+          id: string,
+          change: {
+            added?: ReadonlyArray<MemberId>;
+            removed?: ReadonlyArray<MemberId>;
+            audienceChanged?: boolean;
+          },
+        ) =>
+          harness.emit({
+            id: EventId.make(id),
+            type: "sandbox.access-changed",
+            threadId: THREAD_ID,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              sandboxId: SandboxId.make("sbx_0123456789abcdef0123"),
+              access: {
+                audience: "members",
+                memberIds: [BOB.id],
+                updatedBy: ALICE.id,
+                updatedAt: DateTime.makeUnsafe(NOW),
+              },
+              added: change.added ?? [],
+              removed: change.removed ?? [],
+              audienceChanged: change.audienceChanged ?? false,
+              actorId: ALICE.id,
+            },
+          });
+        // The owner is named when the machine changes hands; Assign already tells them.
+        yield* changed("event-shared", { added: [BOB.id, ALICE.id] });
+        yield* changed("event-removed", { removed: [CAROL.id] });
+        yield* changed("event-team", { audienceChanged: true });
+
+        assert.deepStrictEqual(
+          harness.requests.flat().map(({ to, title, body, data }) => ({ to, title, body, data })),
+          [
+            {
+              to: token(BOB),
+              title: "Shared with you",
+              body: 'Alice shared "Fix the login bug" with you',
+              data: { deepLink: "/threads/env-1/thread-1" },
+            },
+          ],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("pushes a finished build to its recipients with the machines link, not to others", () =>

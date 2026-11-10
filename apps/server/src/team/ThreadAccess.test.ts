@@ -101,6 +101,63 @@ describe("threadAllows", () => {
   });
 });
 
+describe("sessionReaches", () => {
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const team = entry("team", [bob]);
+  const alone = entry("members", []);
+  const withBob = entry("members", [bob]);
+  const withBobAndCarol = entry("members", [bob, carol]);
+  const withRemovedDave = entry("members", [dave]);
+  const bobs = entry("members", [], bob);
+  const bobsWithAlice = entry("members", [alice], bob);
+  // The agent's session first, then the session it names. Alice owns unless said otherwise.
+  it.each([
+    ["team to team", team, entry("team", []), true],
+    ["team to a private session", team, alone, false],
+    ["team to a session shared with everyone listed", team, withBobAndCarol, false],
+    ["private to the owner's other private session", alone, entry("members", []), true],
+    ["private to a team session", alone, team, true],
+    ["private to another member's session", alone, bobs, false],
+    ["private to another member's session shared with the owner", alone, bobsWithAlice, true],
+    ["shared with Bob to the owner's private session", withBob, alone, false],
+    ["shared with Bob to a session Bob can also open", withBob, withBobAndCarol, true],
+    ["shared with Bob to Bob's session shared with the owner", withBob, bobsWithAlice, true],
+    ["shared with Bob and Carol to one shared with Bob only", withBobAndCarol, withBob, false],
+    ["shared with a removed member to the owner's private session", withRemovedDave, alone, true],
+    ["a session to itself, whoever can open it", withBobAndCarol, withBobAndCarol, true],
+    [
+      "an ownerless session to the server owner's",
+      entry("members", [], null),
+      entry("members", [], serverOwner),
+      true,
+    ],
+    [
+      "a removed owner's private session to their other one",
+      entry("members", [], dave),
+      entry("members", [], dave),
+      false,
+    ],
+  ] as const)("%s", (_name, from, to, reaches) => {
+    assert.strictEqual(ThreadAccess.sessionReaches(roster(), from, to), reaches);
+  });
+
+  it("reads a thread with no known machine as its owner's", () => {
+    const local = ThreadAccess.sessionEntryOf({ ownerId: alice }, undefined);
+    const unseen = ThreadAccess.sessionEntryOf({ sandboxId, ownerId: alice }, undefined);
+    for (const to of [local, unseen]) {
+      assert.isTrue(ThreadAccess.sessionReaches(roster(), alone, to));
+      assert.isFalse(ThreadAccess.sessionReaches(roster(), withBob, to));
+    }
+    const ownerless = ThreadAccess.sessionEntryOf({ ownerId: null }, undefined);
+    assert.isTrue(ThreadAccess.sessionReaches(roster(), team, ownerless));
+    assert.isFalse(ThreadAccess.sessionReaches(roster(), ownerless, alone));
+  });
+
+  it("is not consulted off a cloud-only server", () => {
+    assert.isTrue(ThreadAccess.sessionReaches(roster(false), team, alone));
+  });
+});
+
 const member = (
   id: MemberId,
   fields: Partial<Members.MemberRecord> = {},
@@ -352,6 +409,46 @@ describe("ThreadAccess", () => {
         yield* index.lane.release(1);
         assert.isTrue(Exit.isSuccess(yield* Fiber.join(check)));
       }).pipe(Effect.provide(makeLayer([], Deferred.succeed(read, undefined).pipe(Effect.asVoid))));
+    }),
+  );
+
+  it.effect("lets an agent name a session only its readers can all open", () =>
+    Effect.gen(function* () {
+      const access = yield* ThreadAccess.ThreadAccess;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* seed;
+      const teamThreadId = ThreadId.make("thread:access-team");
+      yield* sink.write({
+        events: [
+          {
+            ...at("team-thread"),
+            threadId: teamThreadId,
+            type: "thread.created",
+            payload: { ...thread, id: teamThreadId, sandboxId: legacyId },
+          },
+        ],
+      });
+      assert.isTrue(access.agentReaches(ownerThreadId, { sandboxId: legacyId }));
+      assert.isTrue(access.agentReaches(ownerThreadId, { sandboxId, ownerId: alice }));
+      assert.isFalse(access.agentReaches(teamThreadId, { sandboxId, ownerId: alice }));
+      assert.isFalse(access.agentReaches(ThreadId.make("thread:unknown"), { sandboxId: legacyId }));
+      yield* share("add", [bob], { added: [bob], removed: [] });
+      assert.isFalse(access.agentReaches(ownerThreadId, { ownerId: alice }));
+    }).pipe(Effect.provide(makeLayer([]))),
+  );
+
+  it.effect("fails closed on a cloud-only server that leaves it out", () =>
+    Effect.gen(function* () {
+      const exit = yield* ThreadAccess.optional.pipe(Effect.provide(layerConfig), Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      const elsewhere = yield* ThreadAccess.optional.pipe(
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-access-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      );
+      assert.isUndefined(elsewhere);
     }),
   );
 

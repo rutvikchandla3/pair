@@ -13,6 +13,7 @@ import type {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
@@ -84,6 +85,41 @@ export const threadAllows = (
   if (thread.sandboxId === undefined) return thread.ownerId == null || thread.ownerId === memberId;
   // A machine the index has never seen: only the thread's holder.
   return (thread.ownerId ?? roster.serverOwnerId) === memberId;
+};
+
+const TEAM_ENTRY: SandboxAccessEntry = {
+  ownerMemberId: null,
+  audience: "team",
+  memberIds: new Set(),
+};
+
+/** A thread's session as `threadAllows` reads it, so a thread with no known machine compares too. */
+export const sessionEntryOf = (
+  thread: ThreadAccessTarget,
+  entry: SandboxAccessEntry | undefined,
+): SandboxAccessEntry => {
+  if (thread.sandboxId !== undefined && entry !== undefined) return entry;
+  if (thread.sandboxId === undefined && thread.ownerId == null) return TEAM_ENTRY;
+  return { ownerMemberId: thread.ownerId ?? null, audience: "members", memberIds: new Set() };
+};
+
+/**
+ * Whether an agent in session `from` may list, read or message session `to`: only when every
+ * member who can open `from` can open `to`, so a prompt cannot reach past its readers. `team`
+ * reaches only `team`. The owner always counts; a listed member only while active.
+ */
+export const sessionReaches = (
+  roster: ThreadAccessRoster,
+  from: SandboxAccessEntry,
+  to: SandboxAccessEntry,
+): boolean => {
+  if (!roster.cloudOnly || from === to || to.audience === "team") return true;
+  if (from.audience === "team") return false;
+  if (!sandboxAllows(roster, to, from.ownerMemberId ?? roster.serverOwnerId)) return false;
+  for (const memberId of from.memberIds) {
+    if (roster.isActive(memberId) && !sandboxAllows(roster, to, memberId)) return false;
+  }
+  return true;
 };
 
 const entryOf = (record: OrchestrationV2Sandbox): SandboxAccessEntry => ({
@@ -190,6 +226,8 @@ export class ThreadAccess extends Context.Service<
     readonly enforced: boolean;
     readonly allowsSandbox: (memberId: MemberId, sandboxId: SandboxId) => boolean;
     readonly allowsThread: (memberId: MemberId, thread: ThreadAccessTarget) => boolean;
+    /** `sessionReaches` from the agent's thread, which the index must know. */
+    readonly agentReaches: (agentThreadId: ThreadId, thread: ThreadAccessTarget) => boolean;
     /** Fails as a missing thread does, so a refusal does not confirm the thread exists. */
     readonly assertThread: (
       memberId: MemberId,
@@ -217,6 +255,19 @@ export class ThreadAccess extends Context.Service<
   }
 >()("t3/team/ThreadAccess") {}
 
+/**
+ * `ThreadAccess` for a reader built where a test layer may leave it out. Off a cloud-only server
+ * that reads as nothing enforced; on one it is a defect, never "everyone sees everything".
+ */
+export const optional = Effect.gen(function* () {
+  const access = yield* Effect.serviceOption(ThreadAccess);
+  if (Option.isSome(access)) return access.value;
+  if ((yield* ServerConfig.ServerConfig).cloudOnly) {
+    return yield* Effect.die(new Error("A cloud-only server needs ThreadAccess."));
+  }
+  return undefined;
+});
+
 export const layer = Layer.effect(
   ThreadAccess,
   Effect.gen(function* () {
@@ -240,6 +291,16 @@ export const layer = Layer.effect(
         thread.sandboxId === undefined ? undefined : index.entries.get(thread.sandboxId),
         memberId,
       );
+    const sessionOf = (thread: ThreadAccessTarget) =>
+      sessionEntryOf(
+        thread,
+        thread.sandboxId === undefined ? undefined : index.entries.get(thread.sandboxId),
+      );
+    const agentReaches = (agentThreadId: ThreadId, thread: ThreadAccessTarget) => {
+      if (!cloudOnly) return true;
+      const agent = index.threads.get(agentThreadId);
+      return agent !== undefined && sessionReaches(roster, sessionOf(agent), sessionOf(thread));
+    };
 
     const assertThread = Effect.fn("ThreadAccess.assertThread")(function* (
       memberId: MemberId,
@@ -275,6 +336,7 @@ export const layer = Layer.effect(
       enforced: cloudOnly,
       allowsSandbox,
       allowsThread,
+      agentReaches,
       assertThread,
       assertPath,
       threadTarget: (threadId) => index.threads.get(threadId),
@@ -316,6 +378,7 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       enforced: false,
       allowsSandbox: () => true,
       allowsThread: () => true,
+      agentReaches: () => true,
       assertThread: () => Effect.void,
       assertPath: () => Effect.void,
       threadTarget: () => undefined,
@@ -343,6 +406,15 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
     enforced: true,
     allowsSandbox,
     allowsThread,
+    agentReaches: (agentThreadId, thread) => {
+      const agent = threads.get(agentThreadId);
+      const sessionOf = (target: ThreadAccessTarget) =>
+        sessionEntryOf(
+          target,
+          target.sandboxId === undefined ? undefined : machines.get(target.sandboxId),
+        );
+      return agent !== undefined && sessionReaches(roster, sessionOf(agent), sessionOf(thread));
+    },
     assertThread: (memberId, threadId) => {
       const thread = threads.get(threadId);
       return thread !== undefined && allowsThread(memberId, thread)

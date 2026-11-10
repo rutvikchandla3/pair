@@ -27,10 +27,14 @@ import * as Stream from "effect/Stream";
 export class Presence extends Context.Service<
   Presence,
   {
-    /** Registers the connection for the scope. Updates never include the caller's own member. */
+    /**
+     * Registers the connection for the scope. Updates never include the caller's own member, nor
+     * who views or types in a thread `mayOpen` refuses (an in-memory check; absent, every thread).
+     */
     readonly subscribe: (connection: {
       readonly connectionId: string;
       readonly memberId: MemberId;
+      readonly mayOpen?: (threadId: ThreadId) => boolean;
     }) => Effect.Effect<Stream.Stream<PresenceUpdate>, never, Scope.Scope>;
     /** Ignored for a connection that has not subscribed. */
     readonly report: (connectionId: string, input: PresenceReportInput) => Effect.Effect<void>;
@@ -41,6 +45,7 @@ export class Presence extends Context.Service<
 
 interface Connection {
   readonly memberId: MemberId;
+  readonly mayOpen: (threadId: ThreadId) => boolean;
   readonly queue: Queue.Queue<PresenceUpdate>;
   idle: boolean;
   viewingThreadId: ThreadId | null;
@@ -62,8 +67,16 @@ const sameMembers = (left: ReadonlyArray<PresenceMember>, right: ReadonlyArray<P
       member.memberId === right[index]?.memberId && member.status === right[index]?.status,
   );
 
-const othersIn = (memberIds: ReadonlySet<MemberId> | undefined, self: MemberId) =>
-  memberIds === undefined ? [] : [...memberIds].filter((id) => id !== self).toSorted();
+const othersIn = (
+  memberIds: ReadonlySet<MemberId> | undefined,
+  connection: Connection,
+  threadId: ThreadId,
+) =>
+  memberIds === undefined || !connection.mayOpen(threadId)
+    ? []
+    : [...memberIds].filter((id) => id !== connection.memberId).toSorted();
+
+const opensEvery = () => true;
 
 /** Remembers `memberIds` as sent and reports whether they differ from what was sent before. */
 const markSent = (
@@ -95,7 +108,7 @@ const make = Effect.gen(function* () {
   };
 
   const sendTyping = (connection: Connection, threadId: ThreadId, typing: Set<MemberId>) => {
-    const memberIds = othersIn(typing, connection.memberId);
+    const memberIds = othersIn(typing, connection, threadId);
     if (markSent(connection.sentTyping, threadId, memberIds)) {
       Queue.offerUnsafe(connection.queue, { typing: { threadId, memberIds } });
     }
@@ -130,7 +143,7 @@ const make = Effect.gen(function* () {
       if (membersChanged) connection.sentMembers = others;
       const changedViewers: Array<PresenceThreadMembers> = [];
       for (const threadId of new Set([...viewers.keys(), ...connection.sentViewers.keys()])) {
-        const memberIds = othersIn(viewers.get(threadId), connection.memberId);
+        const memberIds = othersIn(viewers.get(threadId), connection, threadId);
         if (markSent(connection.sentViewers, threadId, memberIds)) {
           changedViewers.push({ threadId, memberIds });
         }
@@ -184,12 +197,14 @@ const make = Effect.gen(function* () {
   const subscribe = Effect.fn("Presence.subscribe")(function* (input: {
     readonly connectionId: string;
     readonly memberId: MemberId;
+    readonly mayOpen?: (threadId: ThreadId) => boolean;
   }) {
     const queue = yield* Queue.unbounded<PresenceUpdate>();
     const replaced = connections.get(input.connectionId);
     // A resubscribe from the same client keeps what it reported; the new stream starts empty.
     const connection: Connection = {
       memberId: input.memberId,
+      mayOpen: input.mayOpen ?? opensEvery,
       queue,
       idle: replaced?.idle ?? false,
       viewingThreadId: replaced?.viewingThreadId ?? null,

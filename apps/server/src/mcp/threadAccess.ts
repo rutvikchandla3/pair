@@ -15,9 +15,54 @@ import * as Option from "effect/Option";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type * as ThreadAccess from "../team/ThreadAccess.ts";
 import type * as TeamState from "../team/TeamState.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+
+/** What `/mcp` puts on a request's scope on a cloud-only server: whom this caller reads for. */
+export const threadReachOf = (
+  access: ThreadAccess.ThreadAccess["Service"],
+  scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "client">,
+): McpInvocationContext.McpThreadReach | undefined => {
+  if (!access.enforced) return undefined;
+  const agentThreadId = scope.thread?.threadId;
+  const memberId = scope.client?.memberId;
+  const allows =
+    agentThreadId !== undefined
+      ? (thread: ThreadAccess.ThreadAccessTarget) => access.agentReaches(agentThreadId, thread)
+      : memberId !== undefined
+        ? (thread: ThreadAccess.ThreadAccessTarget) => access.allowsThread(memberId, thread)
+        : () => false;
+  return {
+    allows,
+    allowsThreadId: (threadId) => {
+      const target = access.threadTarget(threadId);
+      return target !== undefined && allows(target);
+    },
+    caughtUp: access.caughtUp,
+  };
+};
+
+/** Whether this caller may name a thread. Check before reading it, and refuse as a missing one. */
+export const reaches = (
+  scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "reach">,
+  threadId: ThreadId,
+): Effect.Effect<boolean> => {
+  const reach = scope.reach;
+  if (reach === undefined || threadId === scope.thread?.threadId) return Effect.succeed(true);
+  return Effect.map(reach.caughtUp, () => reach.allowsThreadId(threadId));
+};
+
+/** The threads among `rows` this caller may name. */
+export const reachable = <T extends ThreadAccess.ThreadAccessTarget>(
+  scope: Pick<McpInvocationContext.McpInvocationScope, "reach">,
+  rows: ReadonlyArray<T>,
+): Effect.Effect<ReadonlyArray<T>> => {
+  const reach = scope.reach;
+  if (reach === undefined) return Effect.succeed(rows);
+  return Effect.map(reach.caughtUp, () => rows.filter(reach.allows));
+};
 
 /**
  * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
@@ -26,11 +71,14 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
+  scope: Pick<McpInvocationContext.McpInvocationScope, "thread" | "reach">,
   threadId: ThreadId,
   message: string,
 ) {
   const prefixed = ThreadId.make(`mcp:${threadId}`);
-  const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
+  const shell = (yield* reaches(scope, prefixed))
+    ? yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null))
+    : null;
   return yield* new OrchestratorMcpFailure({
     code: "thread_not_found",
     message:
@@ -205,9 +253,16 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
 >(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
   const context = yield* readCaller();
   const targetId = yield* resolveThreadId(context, threadId);
-  const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
+  const shell = (yield* reaches(context.scope, targetId))
+    ? yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable))
+    : null;
   if (shell === null || shell.deletedAt !== null) {
-    return yield* threadNotFound(context.threads, targetId, "The thread was not found.");
+    return yield* threadNotFound(
+      context.threads,
+      context.scope,
+      targetId,
+      "The thread was not found.",
+    );
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {

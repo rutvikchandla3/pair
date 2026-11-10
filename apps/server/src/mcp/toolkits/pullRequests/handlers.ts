@@ -28,7 +28,7 @@ import {
 import * as TeamState from "../../../team/TeamState.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { sendActorId } from "../../threadAccess.ts";
+import { reaches, sendActorId } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -233,10 +233,12 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
-    const thread = yield* engine.getThreadShell(threadId).pipe(
-      Effect.map(Option.fromNullishOr),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    const thread = (yield* reaches(scope, threadId))
+      ? yield* engine.getThreadShell(threadId).pipe(
+          Effect.map(Option.fromNullishOr),
+          Effect.mapError((cause) => new Failure({ cause })),
+        )
+      : Option.none();
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
       return yield* new PullRequestThreadNotFoundError({ threadId });
     }
@@ -542,6 +544,7 @@ const make = Effect.gen(function* () {
     unwatch_pull_request: writesThread((input) => setWatching(input, false)),
     write_pull_request_guides: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
         const located = yield* locateAll(input.pullRequests);
         const guides = yield* Effect.forEach(
           located,
@@ -572,9 +575,12 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
-              // A writing caller can already run commands in any thread's machine by prompting it.
+              // A writing caller can already run commands in any machine it reaches by prompting it.
               return yield* reviewGuides
-                .generate(guideReference(entry.project, entry.target), { mayUseMachines: true })
+                .generate(guideReference(entry.project, entry.target), {
+                  mayUseMachines: true,
+                  ...(scope.reach === undefined ? {} : { reach: scope.reach }),
+                })
                 .pipe(
                   Effect.map((result) => ({
                     ...identity,

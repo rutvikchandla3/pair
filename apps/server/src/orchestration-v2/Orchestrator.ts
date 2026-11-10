@@ -74,6 +74,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  type SandboxAccess,
   SandboxId,
   ThreadLinkedPullRequest,
   ThreadId,
@@ -225,6 +226,7 @@ import {
   planSandboxOnDelete,
   type SandboxAttachedThread,
   sandboxAccessChange,
+  sandboxAccessSentence,
   sandboxOwnerMemberChange,
   hasNoDisk,
   sandboxAttachedThread,
@@ -8884,6 +8886,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: childThread,
       });
       if (command.sandbox !== undefined) {
+        // Everyone who can open the parent can open the task, and no one else.
+        const parentMachine =
+          parentSandboxId === undefined
+            ? null
+            : yield* projectionStore
+                .getSandbox(parentSandboxId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+                  ),
+                );
+        const inheritedAccess =
+          parentMachine !== null
+            ? (parentMachine.access ?? null)
+            : parentSandboxId === undefined && parentProjection.thread.ownerId == null
+              ? null
+              : undefined;
         yield* dispatchSandboxCommand(
           {
             type: "sandbox.provision",
@@ -8895,6 +8915,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           events,
           effects,
           childThread,
+          inheritedAccess,
         );
       }
       yield* emitEvent({
@@ -11143,6 +11164,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     /** A thread created earlier in this commit, which the store cannot read yet. */
     pendingThread?: OrchestrationV2AppThread,
+    inheritedAccess?: SandboxAccess | null,
   ) {
     const mapProjection = Effect.mapError(
       (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -11198,6 +11220,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command,
       record,
       ownerMemberId: thread?.ownerId ?? null,
+      ...(inheritedAccess === undefined ? {} : { inheritedAccess }),
       attachedThreads,
       ...(diskRetention === undefined ? {} : { diskRetention }),
       admission,
@@ -11235,6 +11258,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     yield* applySandboxDecision(command, decision, now, events, effects);
+    if (command.type === "sandbox.access.set" && decision.accessChange != null) {
+      const owner = yield* projectionStore.getThread(next.ownerThreadId).pipe(mapProjection);
+      yield* emitLifecycleNotice(
+        command,
+        events,
+        owner,
+        sandboxAccessSentence(decision.accessChange),
+      );
+    }
   });
 
   const applySandboxDecision = Effect.fn("Orchestrator.applySandboxDecision")(function* (

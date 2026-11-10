@@ -103,6 +103,11 @@ export interface SandboxDecisionInput {
   readonly record: OrchestrationV2Sandbox | null;
   /** The commanding thread's owner, for a record `sandbox.provision` creates or `sandbox.adopt` moves. */
   readonly ownerMemberId: MemberId | null;
+  /**
+   * For a task's own machine, its parent session's access (`null`: `team`), so no one the parent
+   * kept out can open the child. Absent, a new machine is private.
+   */
+  readonly inheritedAccess?: SandboxAccess | null;
   /** Read only for sleep, discard, auto-sleep and expire. */
   readonly attachedThreads: ReadonlyArray<SandboxAttachedThread>;
   /** Read only for `sandbox.expire`; absent, nothing expires. */
@@ -441,6 +446,30 @@ export const sandboxAccessChange = (
   };
 };
 
+const listed = (names: ReadonlyArray<string>) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/** The thread's quiet line for an owner's `sandbox.access.set`, in the lifecycle notices' voice. */
+export const sandboxAccessSentence = (
+  change: SandboxAccessChange,
+): ((actor: string, nameOf: (id: MemberId) => string) => string) | null => {
+  if (change.audienceChanged) {
+    return change.access.audience === "team"
+      ? (actor) => `${actor} shared this thread with everyone on the team`
+      : (actor) => `${actor} limited this thread to people added`;
+  }
+  if (change.added.length === 0 && change.removed.length === 0) return null;
+  return (actor, nameOf) => {
+    const shared =
+      change.added.length === 0
+        ? []
+        : [`shared this thread with ${listed(change.added.map(nameOf))}`];
+    const removed =
+      change.removed.length === 0 ? [] : [`removed ${listed(change.removed.map(nameOf))}`];
+    return `${actor} ${[...shared, ...removed].join(" and ")}`;
+  };
+};
+
 export type CloudPromptDecision =
   | { readonly _tag: "Send" }
   /**
@@ -629,7 +658,11 @@ const decideProvision = (
       ...(command.imageBuild === undefined ? {} : { imageBuild: command.imageBuild }),
       // A new session is private; a rebuilt one keeps its audience, or its lack of one (`team`).
       ...(record === null
-        ? { access: { audience: "members", memberIds: [], updatedBy: null, updatedAt: now } }
+        ? input.inheritedAccess === undefined
+          ? { access: { audience: "members", memberIds: [], updatedBy: null, updatedAt: now } }
+          : input.inheritedAccess === null
+            ? {}
+            : { access: { ...input.inheritedAccess, updatedAt: now } }
         : record.access === undefined
           ? {}
           : { access: record.access }),

@@ -30,6 +30,7 @@ import {
   assertTargetWithinLimits,
   type Caller,
   loadCaller,
+  reaches,
   readCaller,
   unavailable,
 } from "./threadAccess.ts";
@@ -183,6 +184,8 @@ export const writesThreads = <P, A, E, R>(
         const caller = yield* writingCaller;
         for (const threadId of threads(params)) {
           if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+          // The handler refuses it as a missing thread; a limits error here would tell.
+          if (!(yield* reaches(caller.scope, threadId))) continue;
           const target = yield* caller.threads
             .getThreadShell(threadId)
             .pipe(Effect.mapError(unavailable));

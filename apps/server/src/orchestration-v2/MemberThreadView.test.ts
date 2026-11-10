@@ -122,6 +122,7 @@ const accessTo = (opens: ReadonlyArray<SandboxId>): ViewerAccess => {
     allowsSandbox: (sandboxId) => opens.includes(sandboxId),
     allowsThreadId: () => false,
     mayAllowThreadId: () => true,
+    sandboxOf: () => undefined,
     affectedBy: () => true,
     caughtUp: Effect.void,
     assertThread: () => Effect.void,

@@ -28,6 +28,7 @@ import {
   type IdleInput,
   planSandboxOnDelete,
   sandboxAccessChange,
+  sandboxAccessSentence,
   type SandboxAttachedThread,
   type SandboxCommand,
   sandboxOwnerMemberChange,
@@ -1358,23 +1359,42 @@ describe("sandbox access", () => {
       shared("members", [bob]),
       set(alice, "members", [carol]),
       { added: [carol], removed: [bob], audienceChanged: false },
+      "Alice shared this thread with carol and removed bob",
+    ],
+    [
+      "adding members lists them",
+      shared("members", []),
+      set(alice, "members", [bob, carol, admin]),
+      { added: [bob, carol, admin], removed: [], audienceChanged: false },
+      "Alice shared this thread with bob, carol and admin",
+    ],
+    [
+      "removing a member names them",
+      shared("members", [bob, carol]),
+      set(alice, "members", [carol]),
+      { added: [], removed: [bob], audienceChanged: false },
+      "Alice removed bob",
     ],
     [
       "switching to team keeps the list and names nobody",
       shared("members", [bob]),
       set(alice, "team", [bob, carol]),
       { added: [], removed: [], audienceChanged: true },
+      "Alice shared this thread with everyone on the team",
     ],
     [
       "switching from team to members names nobody",
       shared("team", [bob]),
       set(alice, "members", [bob]),
       { added: [], removed: [], audienceChanged: true },
+      "Alice limited this thread to people added",
     ],
-  ])("%s", (_name, access, command, change) => {
+  ])("%s", (_name, access, command, change, sentence) => {
     const decision = decide(command, owned(access));
     if (decision._tag !== "Accept") throw new Error(`Expected Accept, got ${decision._tag}`);
     expect(decision.accessChange).toMatchObject(change);
+    const line = decision.accessChange && sandboxAccessSentence(decision.accessChange);
+    expect(line?.("Alice", (id) => id.slice("member-".length))).toBe(sentence);
   });
 
   it.each([

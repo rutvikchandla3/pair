@@ -9,12 +9,14 @@ import {
   DeviceId,
   DeviceOperationError,
   EnvironmentId,
+  MemberId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PreviewTabId,
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
+  SandboxId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -41,6 +43,8 @@ import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReview
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
+import { readThread } from "./threadAccess.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -1199,6 +1203,158 @@ it.effect("hides tools for links and refuses another environment while the beta 
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lets an agent read another session only when everyone who can open its own can", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const ada = MemberId.make("member-ada");
+      const grace = MemberId.make("member-grace");
+      const roster = { cloudOnly: true, serverOwnerId: ada, isActive: () => true };
+      const machines = new Map<SandboxId, ThreadAccess.SandboxAccessEntry>([
+        [
+          SandboxId.make("sbx_00000000000000000001"),
+          { ownerMemberId: ada, audience: "members", memberIds: new Set([grace]) },
+        ],
+        [
+          SandboxId.make("sbx_00000000000000000002"),
+          { ownerMemberId: ada, audience: "members", memberIds: new Set() },
+        ],
+      ]);
+      const shared = ThreadId.make("thread-shared");
+      const narrow = ThreadId.make("thread-private");
+      const targets = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
+        [shared, { sandboxId: SandboxId.make("sbx_00000000000000000001"), ownerId: ada }],
+        [narrow, { sandboxId: SandboxId.make("sbx_00000000000000000002"), ownerId: ada }],
+      ]);
+      const sessionOf = (thread: ThreadAccess.ThreadAccessTarget) =>
+        ThreadAccess.sessionEntryOf(
+          thread,
+          thread.sandboxId === undefined ? undefined : machines.get(thread.sandboxId),
+        );
+      const access = Layer.mock(ThreadAccess.ThreadAccess)({
+        enforced: true,
+        allowsSandbox: () => true,
+        allowsThread: () => true,
+        agentReaches: (agentThreadId, thread) => {
+          const agent = targets.get(agentThreadId);
+          return (
+            agent !== undefined &&
+            ThreadAccess.sessionReaches(roster, sessionOf(agent), sessionOf(thread))
+          );
+        },
+        threadTarget: (threadId) => targets.get(threadId),
+        caughtUp: Effect.void,
+      });
+      const scopeFor = (threadId: ThreadId): McpInvocationContext.McpThreadInvocationScope => ({
+        environmentId,
+        requestNamespace: threadId,
+        thread: {
+          threadId,
+          providerSessionId: threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      });
+      const ReadToolkit = Toolkit.make(
+        Tool.make("read", {
+          description: "Reads a thread's title.",
+          parameters: Schema.Struct({ threadId: ThreadId }),
+          success: Schema.Struct({ title: Schema.String }),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+          dependencies: [
+            McpInvocationContext.McpInvocationContext,
+            ThreadManagementService.ThreadManagementService,
+          ],
+        }),
+      );
+      const shell = McpToolAccessTestkit.liveThreadShell;
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          ReadToolkit,
+          McpToolAccess.toLayer(ReadToolkit, {
+            read: McpToolAccess.reads(({ threadId }) =>
+              readThread(threadId).pipe(Effect.map(({ projection }) => projection.thread)),
+            ),
+          }),
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.effect(
+            ServerConfig.ServerConfig,
+            Effect.map(ServerConfig.ServerConfig, (config) => ({ ...config, cloudOnly: true })),
+          ).pipe(Layer.provide(layerTransportConfig)),
+        ),
+        Layer.provide(access),
+        Layer.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+            getProjectThreadRecords: ({ threadId }) =>
+              Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell(threadId))),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            endpoint: "http://127.0.0.1/mcp",
+            resolve: (presented) =>
+              Effect.succeed(
+                presented === shared || presented === narrow
+                  ? scopeFor(ThreadId.make(presented))
+                  : undefined,
+              ),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const read = Effect.fn(function* (agent: ThreadId, target: ThreadId) {
+        const headers = {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${agent}`,
+        };
+        const initialize = yield* httpClient.post("/mcp", {
+          headers,
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+        const response = yield* httpClient.post("/mcp", {
+          headers: {
+            ...headers,
+            "mcp-session-id": initialize.headers["mcp-session-id"]!,
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 2,
+              method: "tools/call",
+              params: { name: "read", arguments: { threadId: target } },
+            }),
+            "application/json",
+          ),
+        });
+        return ((yield* response.json) as { result: unknown }).result;
+      });
+
+      // Grace can open the shared session, so its agent may not tell her what only Ada can read.
+      expect(yield* read(shared, narrow)).toMatchObject({
+        isError: true,
+        content: [{ text: expect.stringContaining("The thread was not found.") }],
+      });
+      // Everyone who can open the private session (Ada) can open the shared one.
+      expect(yield* read(narrow, shared)).toMatchObject({
+        structuredContent: { title: shared },
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

@@ -3,6 +3,7 @@ import {
   type MemberId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type SandboxAccessChange,
   type ThreadId,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -33,6 +34,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as MemberPushDevices from "../team/MemberPushDevices.ts";
 import * as Presence from "../team/Presence.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 
 const EXPO_PUSH_SEND_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -57,6 +59,7 @@ export class MemberPushNotifier extends Context.Service<
 interface Notification extends ThreadNotificationEvent {
   readonly threadId: ThreadId;
   readonly threadTitle: string;
+  readonly thread: ThreadAccess.ThreadAccessTarget;
 }
 
 type WorkItem =
@@ -77,6 +80,8 @@ const decodeExpoPushResponse = Schema.decodeUnknownEffect(ExpoPushResponse);
 const EXPO_BATCH_SIZE = 100;
 const HANDLED_LIMIT = 4_096;
 const ARCHIVE_DEEP_LINK = "/settings/archive";
+const threadDeepLink = (environmentId: string, threadId: ThreadId) =>
+  `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -89,6 +94,9 @@ export const make = Effect.gen(function* () {
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
   const endpoint = yield* MemberPushEndpoint;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
+  const access = yield* ThreadAccess.optional;
+  const mayOpen = (memberId: MemberId, thread: ThreadAccess.ThreadAccessTarget) =>
+    access === undefined || access.allowsThread(memberId, thread);
   // Pair Cloud skips T3 Connect, so even its first member hears pushes from here.
   const pushes = cloudOnly ? Effect.succeed(true) : team.isTeamMode;
 
@@ -138,6 +146,7 @@ export const make = Effect.gen(function* () {
       ownerId,
       threadId: shell.id,
       threadTitle: shell.title,
+      thread: shell,
     };
   };
 
@@ -219,6 +228,7 @@ export const make = Effect.gen(function* () {
           ownerId,
           threadId: shell.value.id,
           threadTitle: shell.value.title,
+          thread: shell.value,
         };
       }
       case "thread.created":
@@ -230,7 +240,13 @@ export const make = Effect.gen(function* () {
         const previousOwnerId = holders.get(thread.id);
         holders.set(thread.id, ownerId);
         if (!isListedThreadLineage(thread.lineage)) return null;
-        const base = { prompterId: null, ownerId, threadId: thread.id, threadTitle: thread.title };
+        const base = {
+          prompterId: null,
+          ownerId,
+          threadId: thread.id,
+          threadTitle: thread.title,
+          thread,
+        };
         if (event.type === "thread.metadata-updated") {
           if (previousOwnerId === undefined || previousOwnerId === ownerId) return null;
           return { ...base, kind: "assigned", actorId: thread.ownerUpdatedBy ?? ownerId };
@@ -310,6 +326,7 @@ export const make = Effect.gen(function* () {
     const recipients = new Set<MemberId>();
     for (const memberId of new Set(live.map((device) => device.memberId))) {
       if (!shouldNotifyMember(notification, { memberId, teamMode: true })) continue;
+      if (!mayOpen(memberId, notification.thread)) continue;
       if (yield* presence.isViewing(memberId, notification.threadId)) continue;
       recipients.add(memberId);
     }
@@ -322,11 +339,33 @@ export const make = Effect.gen(function* () {
     const deepLink =
       notification.kind === "archived"
         ? ARCHIVE_DEEP_LINK
-        : `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(notification.threadId)}`;
+        : threadDeepLink(environmentId, notification.threadId);
     yield* sendToMembers(recipients, {
       title: threadNotificationTitle(notification.kind, archiverName),
       body: notification.threadTitle,
       deepLink,
+    });
+  });
+
+  /** Each member an access change adds hears of it once; a removal or a team audience is quiet. */
+  const sendShared = Effect.fn("MemberPushNotifier.sendShared")(function* (
+    threadId: ThreadId,
+    change: SandboxAccessChange,
+  ) {
+    if (change.added.length === 0) return;
+    const shell = yield* readShell(threadId);
+    if (Option.isNone(shell)) return;
+    const ownerId = holderOf(shell.value, team.ownerId);
+    // A new owner is added too, and Assign already told them.
+    const recipients = new Set(
+      change.added.filter((memberId) => memberId !== ownerId && mayOpen(memberId, shell.value)),
+    );
+    if (recipients.size === 0) return;
+    const ownerName = (yield* Ref.get(team.members)).get(ownerId)?.name ?? "A teammate";
+    yield* sendToMembers(recipients, {
+      title: "Shared with you",
+      body: `${ownerName} shared "${shell.value.title}" with you`,
+      deepLink: threadDeepLink(yield* environment.getEnvironmentId, threadId),
     });
   });
 
@@ -355,6 +394,10 @@ export const make = Effect.gen(function* () {
         holders.clear();
         yield* Ref.set(seeded, false);
       }
+      return;
+    }
+    if (event.type === "sandbox.access-changed") {
+      yield* sendShared(event.threadId, event.payload);
       return;
     }
     yield* seedHolders;

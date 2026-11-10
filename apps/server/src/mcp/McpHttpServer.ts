@@ -34,6 +34,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as TeamImageAuthority from "../sandbox/image/TeamImageAuthority.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import {
   type AgentThread,
@@ -45,6 +46,7 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import { threadReachOf } from "./threadAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -206,6 +208,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const { cloudOnly } = yield* ServerConfig.ServerConfig;
   const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+  const access = yield* ThreadAccess.optional;
   const labsEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -248,11 +251,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     // A cloud-only server takes links without the beta: each is a member's agent link.
     if (limited.client?.linked === true && !labs && !cloudOnly) return linkedEnvironmentsOff;
     const linkedEnvironments = labs || (yield* hasAgentLinks);
+    const reachOf = (scope: typeof limited) => {
+      const reach = access === undefined ? undefined : threadReachOf(access, scope);
+      return reach === undefined ? {} : { reach };
+    };
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
         linkedEnvironments,
         teamImages: cloudOnly,
+        ...reachOf(limited),
       }),
       Effect.map(normalizeMcpHttpResponse),
     );
