@@ -507,8 +507,44 @@ Findings:
   install-script placeholder reads like a filled recipe.
 - Every boot logs a failed `fs.stat` span under `CloudPreparation.copyImageClone` with no image.
 
-Left on the VM: builds 1–9 failed or cancelled, no active build, the recipe at revision 4, four
-running machines from the pass, and `~/g4-scratch`.
+**Re-run on V6 with `--allow-suid` added on the VM (2026-11-10): still blocked, by finding 3.**
+
+1. **Build: failed.** Build 13 succeeded in 2 m 33 s and went active, but its image holds none of
+   the build's changes (finding 3). Labels are `pair.team-image.build=13` and
+   `pair.team-image.machine=<ref>` plus the container's; `Config.Env` has only `PATH`.
+2. **A session boots from it: failed.** Machines boot from `t3-team-image:13`, but `psql` is
+   missing, `copyImageClone` finds nothing (5–7 ms) and the checkout clones from origin (10.64,
+   9.61, 7.59 s) with "Not in the team image".
+3. **A leak fails the build: not run** (waits for 4.24 on a release).
+4. **Roll back: mechanics passed.** Build 14 built; **Activate** on 13 showed active in 82 ms; a
+   new session booted from `:13` and the session on `:14` kept running.
+5. **The admin agent: passed.** Build 15 was requested by the agent and finished Ready, not
+   active; the toast "Build 15 is ready. Activate it in Team image." fired 30 ms later; Activate
+   took 118 ms. (`jq` is already in the base image, so "a new session has jq" proves nothing.)
+6. **Cancel and restart during `install`: passed.** Cancel in 104 ms, machine destroyed. Restart:
+   failed as `interrupted`, machine gone, no restore mode. `t3 drain` waits for the build.
+7. **Collection: partly passed** at the default of 5 (finding 4): builds 16 and 17 were removed
+   and show "Image removed" with Activate disabled; 13–15, used by live machines, survived.
+
+- **Finding 3 (blocker, fix row 4.25 in flight): on gVisor a committed image is empty.** runsc's
+  default rootfs overlay keeps a container's writes in a `/.gvisor.filestore.<id>` file, so
+  `docker commit` captures that one 1 GB file and none of the build's files; the verify phase runs
+  in the live machine and can't see it. Fix: build machines run on Docker's default runtime, and a
+  build checks the committed image before it succeeds.
+- **Finding 4 (in 4.25): Keep succeeded builds doesn't persist.** The update answers success, but
+  `settings.json` never gets `sandbox.teamImage` and a reload shows 5.
+- A build's time depends on the apt mirror: build 10 failed after 14 minutes in `apt-get update`.
+- A thread started with `t3 thread start` on the VM has no human author, so its agent is refused
+  and files a proposal (4.19's stricter rule). Admin agent work goes through a client.
+
+Fixed since: finding 1 by 4.23 (c94ac4653) and finding 2 by 4.24 (4cb0771a0), both in
+[v0.1.7-pair.7](https://github.com/rutvikchandla3/pair/releases/tag/v0.1.7-pair.7) (prerelease),
+which the VM doesn't run yet.
+
+Left on the VM: build 23 active, the recipe at revision 5, images `t3-team-image:13`–`15` and
+`18`–`23` (all empty of build content), about sixteen G4 sessions, one open proposal, and
+`~/g4-scratch`. `/etc/docker/daemon.json` now carries `--allow-suid` (the copy before it is
+`daemon.json.pre-allow-suid`).
 
 ## How to resume
 
@@ -2250,6 +2286,23 @@ summaries and the harness: `../pair-wt/2.41-r1/` on the lead's Mac (not committe
 - Every snapshot push carries the open proposals' full scripts (20 at 64 KB in the worst case).
 - Follow-up b518c831a: the `team-image.ndjson` cases began their patterns with `(?i)`, which
   `RegExp` rejects, so a live run crashed while grading. Owes the page captures with the M4 pass.
+
+## 4.23 sudo on gVisor (landed c94ac4653)
+
+- The install guide's line is `sudo runsc install -- --host-uds=open --allow-suid`. The Cloud
+  **Test**'s `git` step also runs `sudo -n true` (`MachineSudoProbe`) and fails with "Machines
+  can't use sudo, which agents and setup scripts need. Under gVisor, add --allow-suid…". A build's
+  preflight exits 4 for the same cause and the row shows that sentence.
+
+## 4.24 build secrets on the server (landed 4cb0771a0)
+
+- A recipe's secret is `{ kind: "server" }`; values live in `ServerSecretStore` under
+  `team-image-build-secrets` (`TeamImageBuildSecrets.ts`). `teamImage.setSecret` and
+  `removeSecret` (settings write, admin only, write-only); admins get the stored names in the
+  snapshot. A save naming a missing value is refused ("An admin must add NAME's value on the Team
+  image page first."); removing a value the latest recipe names is refused; a value under 4
+  characters is refused when set. No MCP tool touches values. The page reuses the stored-secret
+  field. Owes the leak step on the VM.
 
 ## Open follow-ups and risks
 
