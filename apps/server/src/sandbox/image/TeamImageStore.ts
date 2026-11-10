@@ -46,6 +46,9 @@ export class TeamImageStore extends Context.Service<
     readonly build: (
       imageBuildId: TeamImageBuildId,
     ) => Effect.Effect<Option.Option<TeamImageBuildRecord>, TeamImageStoreError>;
+    readonly buildByNumber: (
+      number: number,
+    ) => Effect.Effect<Option.Option<TeamImageBuild>, TeamImageStoreError>;
     /** Newest first. */
     readonly recentBuilds: (
       limit: number,
@@ -137,6 +140,14 @@ const make = Effect.gen(function* () {
         machine_driver_ref AS "driverRef", machine_destroyed_at AS "destroyedAt"
       FROM team_image_builds
       WHERE image_build_id = ${imageBuildId}
+    `,
+  });
+
+  const findBuildByNumber = SqlSchema.findOneOption({
+    Request: Schema.Number,
+    Result: Schema.Struct({ build: BuildJson }),
+    execute: (number) => sql`
+      SELECT payload_json AS "build" FROM team_image_builds WHERE number = ${number}
     `,
   });
 
@@ -276,6 +287,12 @@ const make = Effect.gen(function* () {
       findBuild(imageBuildId).pipe(
         Effect.map(Option.map(toRecord)),
         Effect.mapError(toStoreError("TeamImageStore.build")),
+      ),
+    ),
+    buildByNumber: Effect.fn("TeamImageStore.buildByNumber")((number: number) =>
+      findBuildByNumber(number).pipe(
+        Effect.map(Option.map((row) => row.build)),
+        Effect.mapError(toStoreError("TeamImageStore.buildByNumber")),
       ),
     ),
     recentBuilds: Effect.fn("TeamImageStore.recentBuilds")((limit: number) =>

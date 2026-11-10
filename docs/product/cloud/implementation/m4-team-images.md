@@ -127,8 +127,10 @@ give the evidence.
   - 4.13: a build machine counts against the cap, but `SandboxAdmission.snapshot` counts only
     sandbox records (SandboxAdmission.ts 68–75), and `t3 drain` waits for turns only (ServerDrain.ts
     62–80). 4.13 adds the live build to both.
-  - 4.19: six tool descriptions in every session raise `mcpToolListJsonBytes` (now 48,110 in
-    `agentContextBudget.json`), so the PR carries the `agent-context-increase` label.
+  - 4.19: five tool descriptions in every session raise `mcpToolListJsonBytes` from 48,788 to
+    50,313 (+1,525) in `agentContextBudget.json`, so the PR carries the `agent-context-increase`
+    label. They are hidden on a server without `teamImages` (`McpInvocationScope.teamImages`, set
+    from `cloudOnly` per request, read by `hiddenWithoutTeamImages`).
   - 4.21: `MemberPushNotifier` only streams thread domain events (MemberPushNotifier.ts 311–343) and
     builds its deep link from a thread id (264–267); the build push is a second, non-thread path.
 - **Where the code and the design differ.**
@@ -1217,19 +1219,29 @@ agent is refused with a reason it can repeat to the member.
       build, and the last 10 builds with status, requester, failure and manifest. On a server
       without `teamImages`, a failure "Team images need Pair Cloud."
     - `t3_team_image_build_log { build: number, tail?: number ≤ 500, from?: number }`: `reads`;
-      lines from `TeamImageBuildLog`, already redacted.
-    - `t3_team_image_recipe_update { install: string, baseRevision: number }`:
-      `McpToolAccess.writesEnvironment` (full access, not linked; McpToolAccess.ts 288–317), then
-      `TeamImageAuthority`, then `TeamImageService.saveRecipe` with the current recipe's projects,
-      env and secrets unchanged. It cannot change those (05 §7).
+      `TeamImageService.readBuildLog(number)` returns the redacted log so far, and the handler
+      slices it (the last 100 lines by default).
+    - `t3_team_image_recipe_update { install: string, baseRevision: number | null }` (null when
+      there is no recipe yet): `McpToolAccess.writesEnvironment` (full access, not linked;
+      McpToolAccess.ts 288–317), then `TeamImageAuthority`, then `TeamImageService.saveInstall`,
+      which saves `baseRevision`'s projects, env and secrets with the new install. A stale
+      `baseRevision` is refused as `recipe-changed`. It cannot change those (05 §7).
     - `t3_team_image_build_start { recipeRevision }`: the same gate, then `startBuild` with
-      `requestedBy: { kind: "agent", threadId, runId, authorIds }` and `activateOnSuccess: false`.
-      Returns the build number and "It will wait for an admin to activate it."
-    - `t3_team_image_build_cancel { build }`: the same gate, then `cancelBuild`.
-      Descriptions are one or two sentences each; the 05 §7 table is the copy's source.
+      `by: { kind: "agent", threadId, runId, authorIds }` and `activateOnSuccess: false`. The
+      service only lets a member's build from the page go live by itself, so an outside client's
+      tool build waits too. Returns the build number and "It will wait for an admin to activate it
+      on the Team image page."
+    - `t3_team_image_build_cancel { build }`: the same gate, then `cancelBuild` on the build with
+      that number among the snapshot's newest.
+      Descriptions are one or two sentences each; the 05 §7 table is the copy's source. The tools'
+      failure is `OrchestratorMcpFailure | TeamImageError`, so a refusal reaches the agent as the
+      typed `TeamImageError`.
+    - The service's `saveRecipe`, `startBuild` and `cancelBuild` take `by: TeamImageRequester`, and
+      `ensureAdmin` checks every person it names, so the authority rule holds below the tools too.
+      `activateBuild` keeps `actorId: MemberId`, so no agent can activate.
   - New `apps/server/src/sandbox/image/TeamImageAuthority.ts`: `forCaller(scope:
-    McpInvocationScope)` returns `{ requestedBy }` or a `TeamImageError` `not-admin` whose message
-    names the reason:
+    McpInvocationScope)` returns the `TeamImageRequester` or a `TeamImageError` `not-admin` whose
+    message names the reason:
     - A thread caller: the thread's `activeRunId` (none: "Only a running turn can change the team
       image."). Every user message of that run, read through a new
       `ProjectionStore.listRunUserMessages(threadId, runId)` (messages with `role = 'user'` and the
@@ -1237,17 +1249,21 @@ agent is refused with a reason it can repeat to the member.
       `authorId`, no `context.guest` (composerContext.ts 286; a guest's words carry the
       forwarding member's `authorId`, HumanAuthorship.ts 34–35), and an author who is an active
       admin (`TeamState`, the 4.13 rule). Else "`<name>` is not an admin, so this turn cannot
-      change the team image. Ask an admin, or propose the change." A run with no human message
-      (scheduled, delegated) has no authority.
+      change the team image. Ask an admin to make the change." (4.20 adds "or propose the
+      change"). A run with no human message (scheduled, delegated) has no authority, and so does a
+      run with any message no person wrote, such as a notification or a delegated task's result
+      steered into it.
     - A client caller (`scope.client` with a `memberId` and access that is not read-only): that
-      member must be an active admin. A linked caller is refused before this by
-      `writesEnvironment`.
+      member must be an active admin. A client with no `memberId` acts as the owner in solo mode
+      and is refused in team mode. A linked caller is refused before this by `writesEnvironment`,
+      so an admin's agent link cannot change the image yet (05 §7 allows it).
       The check runs at each call, so a steer by a member mid-run takes the authority away.
-  - `agentContextBudget.json`: raise `mcpToolListJsonBytes` (48,110 now) by what
+  - `agentContextBudget.json`: raise `mcpToolListJsonBytes` by what
     `AgentContextBudget.test.ts` measures for the five tools, at most 6,000 bytes (**proposed**);
-    past that, cut the descriptions. The PR needs the `agent-context-increase` label (the CI
+    past that, cut the descriptions. Measured: 48,788 to 50,313. The PR needs the `agent-context-increase` label (the CI
     workflow `.github/workflows/agent-context-budget.yml` 5–54); ask the maintainer for it.
-  - New `evals/mcp-tool-use/cases/team-image.ndjson` with 05 §7's two cases:
+  - New `evals/mcp-tool-use/cases/team-image.ndjson` with 05 §7's two cases and a control,
+    `team-image-ordinary-work-control`, where fixing a failing test calls none of the tools:
     - `team-image-admin-adds-postgres`: an admin asks "add the Postgres client to the team image
       and build it". Expect `t3_team_image_read`, then `t3_team_image_recipe_update` whose
       `install` contains `postgresql-client` and keeps the existing lines, then

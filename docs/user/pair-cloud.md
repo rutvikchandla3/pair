@@ -227,6 +227,14 @@ rebuilds the saved recipe. Nothing rebuilds by itself, and the old build keeps w
 **Edit with an agent** opens a new cloud thread on a project you choose, with a first message you
 can edit before sending.
 
+An agent in any cloud thread can read the recipe (secret names, never values), the builds and their
+logs. When every person who wrote its current turn is an admin, it can also change the install
+script, start a build and cancel the running one. It can't change projects, build variables or
+secrets, and its build waits as **Ready** until an admin chooses **Activate**. If a member wrote any
+part of the turn, including a message sent while it ran, the agent is refused and tells you an
+admin has to make the change. An outside agent connected with an admin's token that is not read-only
+has the same reach.
+
 ## Set the team cap and disk retention
 
 In **Settings → Cloud → Compute** on the web or desktop app:

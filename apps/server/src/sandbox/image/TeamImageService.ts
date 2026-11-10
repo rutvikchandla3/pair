@@ -9,7 +9,9 @@ import {
   type TeamImageBuildLogChunk,
   type TeamImageCurrentBase,
   TeamImageError,
+  type TeamImageRecipe,
   type TeamImageRecipeRevision,
+  type TeamImageRequester,
   type TeamImageSaveRecipeInput,
   type TeamImageSnapshot,
   type TeamImageStartBuildInput,
@@ -79,17 +81,28 @@ export class TeamImageService extends Context.Service<
     readonly snapshot: Effect.Effect<TeamImageSnapshot, TeamImageError>;
     /** The snapshot, then a new one after each committed command. */
     readonly changes: Stream.Stream<TeamImageSnapshot, TeamImageError>;
+    /** `by` is a person on the page, or an agent whose run's authors are all admins (4.19). */
     readonly saveRecipe: (input: {
-      readonly actorId: MemberId;
+      readonly by: TeamImageRequester;
       readonly input: TeamImageSaveRecipeInput;
     }) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
-    /** Takes a machine slot like a session; refused rather than queued when none is free. */
+    /** Replaces only the install script, keeping the base revision's projects, env and secrets. */
+    readonly saveInstall: (input: {
+      readonly by: TeamImageRequester;
+      readonly baseRevision: number | null;
+      readonly install: string;
+    }) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
+    /**
+     * Takes a machine slot like a session; refused rather than queued when none is free. Only the
+     * page's Build goes live by itself; an agent's, or an MCP client's, waits for Activate.
+     */
     readonly startBuild: (input: {
-      readonly actorId: MemberId;
+      readonly by: TeamImageRequester;
       readonly input: TeamImageStartBuildInput;
+      readonly activateOnSuccess: boolean;
     }) => Effect.Effect<TeamImageBuild, TeamImageError>;
     readonly cancelBuild: (input: {
-      readonly actorId: MemberId;
+      readonly by: TeamImageRequester;
       readonly imageBuildId: TeamImageBuildId;
     }) => Effect.Effect<void, TeamImageError>;
     /** What new sandboxes boot from; never waits for a running build, and an older build is the rollback. */
@@ -102,6 +115,10 @@ export class TeamImageService extends Context.Service<
     readonly readRecipeRevision: (
       revision: number,
     ) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
+    /** The redacted log written so far, without waiting for more. */
+    readonly readBuildLog: (
+      number: number,
+    ) => Effect.Effect<{ readonly build: TeamImageBuild; readonly text: string }, TeamImageError>;
     /** The log so far, then its lines while the build runs, then `done`. */
     readonly subscribeBuildLog: (
       imageBuildId: TeamImageBuildId,
@@ -129,6 +146,18 @@ const onlyTeamImageErrors = <A, R>(effect: Effect.Effect<A, TeamImageDispatchErr
   );
 
 const toHex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
+
+/** The people a request speaks for: the member, or every human author of the agent's run. */
+const peopleOf = (by: TeamImageRequester): ReadonlyArray<MemberId> =>
+  by.kind === "member" ? [by.memberId] : by.authorIds;
+
+/** What a first save starts from when no recipe exists yet. */
+const EMPTY_RECIPE: Omit<TeamImageRecipe, "install"> = {
+  base: { type: "pair" },
+  projectIds: [],
+  buildEnv: {},
+  buildSecrets: {},
+};
 
 const make = Effect.gen(function* () {
   const store = yield* TeamImageStore.TeamImageStore;
@@ -189,14 +218,15 @@ const make = Effect.gen(function* () {
   // Decision #10: an agent's build is announced to the admins among its run's authors.
   const recipientsOf = Effect.fnUntraced(function* (
     build: TeamImageBuild,
-    cancelledBy: MemberId | null,
+    cancelledBy: TeamImageRequester | null,
   ) {
     const { requestedBy } = build;
     const candidates =
       requestedBy.kind === "member"
         ? [requestedBy.memberId]
         : yield* Effect.filter(requestedBy.authorIds, isActiveAdmin);
-    return candidates.filter((memberId) => memberId !== cancelledBy);
+    const cancellers = cancelledBy === null ? [] : peopleOf(cancelledBy);
+    return candidates.filter((memberId) => !cancellers.includes(memberId));
   });
 
   const publish = Effect.fnUntraced(function* (
@@ -271,10 +301,11 @@ const make = Effect.gen(function* () {
     ? Effect.void
     : Effect.fail(refusal("not-available", "Team images need a Pair Cloud server."));
 
-  const ensureAdmin = Effect.fnUntraced(function* (actorId: MemberId) {
-    if (!(yield* teamState.isTeamMode)) return;
-    const actor = (yield* Ref.get(teamState.members)).get(actorId);
-    if (actor?.role === "admin" && actor.removedAt === null) return;
+  // TeamImageAuthority names who is missing; this is the backstop for every caller.
+  const ensureAdmin = Effect.fnUntraced(function* (by: TeamImageRequester) {
+    const people = peopleOf(by);
+    const admins = yield* Effect.filter(people, isActiveAdmin);
+    if (people.length > 0 && admins.length === people.length) return;
     return yield* refusal("not-admin", "Only an admin can change the team image.");
   });
 
@@ -340,26 +371,39 @@ const make = Effect.gen(function* () {
 
   const saveRecipe: TeamImageService["Service"]["saveRecipe"] = Effect.fn(
     "TeamImageService.saveRecipe",
-  )(function* ({ actorId, input }) {
+  )(function* ({ by, input }) {
     yield* ensureAvailable;
-    yield* ensureAdmin(actorId);
+    yield* ensureAdmin(by);
     const events = yield* lockedDispatch({
       type: "team-image.recipe.save",
       commandId: yield* freshCommandId("team-image.recipe.save"),
       baseRevision: input.baseRevision,
       recipe: input.recipe,
-      savedBy: { kind: "member", memberId: actorId },
+      savedBy: by,
     });
     const saved = events.find((event) => event.type === "team-image.recipe-saved");
     if (saved === undefined) return yield* Effect.die("A recipe save committed no revision.");
     return saved.revision;
   }, onlyTeamImageErrors);
 
+  const saveInstall: TeamImageService["Service"]["saveInstall"] = Effect.fn(
+    "TeamImageService.saveInstall",
+  )(function* ({ by, baseRevision, install }) {
+    yield* ensureAvailable;
+    const base = baseRevision === null ? Option.none() : yield* store.readRevision(baseRevision);
+    if (baseRevision !== null && Option.isNone(base)) {
+      return yield* refusal("not-found", `Recipe revision ${baseRevision} does not exist.`);
+    }
+    // The save is refused as stale unless `baseRevision` is still the latest, so these are current.
+    const kept = Option.match(base, { onNone: () => EMPTY_RECIPE, onSome: (r) => r.recipe });
+    return yield* saveRecipe({ by, input: { baseRevision, recipe: { ...kept, install } } });
+  }, onlyTeamImageErrors);
+
   const startBuild: TeamImageService["Service"]["startBuild"] = Effect.fn(
     "TeamImageService.startBuild",
-  )(function* ({ actorId, input }) {
+  )(function* ({ by, input, activateOnSuccess }) {
     yield* ensureAvailable;
-    yield* ensureAdmin(actorId);
+    yield* ensureAdmin(by);
     const driverId = yield* buildDriver();
     const imageBuildId = TeamImageBuildId.make(`tib_${yield* randomHex}`);
     const machineSandboxId = SandboxId.make(`sbx_${yield* randomHex}`);
@@ -389,9 +433,8 @@ const make = Effect.gen(function* () {
           machineSandboxId,
           recipeRevision: input.recipeRevision,
           driverId,
-          requestedBy: { kind: "member", memberId: actorId },
-          // A build from the page goes live when it succeeds; 4.19's agent builds pass false.
-          activateOnSuccess: true,
+          requestedBy: by,
+          activateOnSuccess: by.kind === "member" && activateOnSuccess,
         });
         yield* admission.takeStart;
         return committed;
@@ -404,14 +447,14 @@ const make = Effect.gen(function* () {
 
   const cancelBuild: TeamImageService["Service"]["cancelBuild"] = Effect.fn(
     "TeamImageService.cancelBuild",
-  )(function* ({ actorId, imageBuildId }) {
+  )(function* ({ by, imageBuildId }) {
     yield* ensureAvailable;
-    yield* ensureAdmin(actorId);
+    yield* ensureAdmin(by);
     yield* lockedDispatch({
       type: "team-image.build.cancel",
       commandId: yield* freshCommandId("team-image.build.cancel"),
       imageBuildId,
-      by: actorId,
+      by,
     });
   }, onlyTeamImageErrors);
 
@@ -419,7 +462,7 @@ const make = Effect.gen(function* () {
     "TeamImageService.activateBuild",
   )(function* ({ actorId, imageBuildId }) {
     yield* ensureAvailable;
-    yield* ensureAdmin(actorId);
+    yield* ensureAdmin({ kind: "member", memberId: actorId });
     yield* lockedDispatch({
       type: "team-image.build.activate",
       commandId: yield* freshCommandId("team-image.build.activate"),
@@ -437,6 +480,19 @@ const make = Effect.gen(function* () {
       return yield* refusal("not-found", `Recipe revision ${revision} does not exist.`);
     }
     return found.value;
+  }, onlyTeamImageErrors);
+
+  const readBuildLog: TeamImageService["Service"]["readBuildLog"] = Effect.fn(
+    "TeamImageService.readBuildLog",
+  )(function* (number) {
+    yield* ensureAvailable;
+    const build = yield* store.buildByNumber(number);
+    if (Option.isNone(build)) {
+      return yield* refusal("not-found", `Build ${number} does not exist.`);
+    }
+    // The first chunk is everything written so far; later ones would wait for new lines.
+    const first = yield* buildLog.read(number).pipe(Stream.runHead, Effect.orDie);
+    return { build: build.value, text: Option.isSome(first) ? first.value.text : "" };
   }, onlyTeamImageErrors);
 
   const subscribeBuildLog: TeamImageService["Service"]["subscribeBuildLog"] = (imageBuildId) =>
@@ -482,11 +538,13 @@ const make = Effect.gen(function* () {
     snapshot,
     changes: SubscriptionRef.changes(version).pipe(Stream.mapEffect(() => snapshot)),
     saveRecipe,
+    saveInstall,
     startBuild,
     cancelBuild,
     activateBuild,
     buildFinished: Stream.fromPubSub(finished),
     readRecipeRevision,
+    readBuildLog,
     subscribeBuildLog,
   });
 });

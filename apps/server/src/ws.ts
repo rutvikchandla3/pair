@@ -2927,11 +2927,21 @@ export const layerWsRpc = (
         [WS_METHODS.sandboxCheckDriver]: (input) => computeDriverCheck.check(input),
         [WS_METHODS.teamImageSubscribe]: (_input) => teamImages.changes,
         [WS_METHODS.teamImageSaveRecipe]: (input) =>
-          teamImages.saveRecipe({ actorId: currentSession.memberId, input }),
+          teamImages.saveRecipe({
+            by: { kind: "member", memberId: currentSession.memberId },
+            input,
+          }),
         [WS_METHODS.teamImageStartBuild]: (input) =>
-          teamImages.startBuild({ actorId: currentSession.memberId, input }),
+          teamImages.startBuild({
+            by: { kind: "member", memberId: currentSession.memberId },
+            input,
+            activateOnSuccess: true,
+          }),
         [WS_METHODS.teamImageCancelBuild]: ({ imageBuildId }) =>
-          teamImages.cancelBuild({ actorId: currentSession.memberId, imageBuildId }),
+          teamImages.cancelBuild({
+            by: { kind: "member", memberId: currentSession.memberId },
+            imageBuildId,
+          }),
         [WS_METHODS.teamImageActivateBuild]: ({ imageBuildId }) =>
           teamImages.activateBuild({ actorId: currentSession.memberId, imageBuildId }),
         [WS_METHODS.teamImageReadRecipe]: ({ revision }) => teamImages.readRecipeRevision(revision),

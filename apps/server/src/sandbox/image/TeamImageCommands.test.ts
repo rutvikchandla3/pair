@@ -258,7 +258,7 @@ describe("decideTeamImageCommand", () => {
       type: "team-image.build.cancel",
       commandId,
       imageBuildId,
-      by: admin,
+      by: { kind: "member", memberId: admin },
     };
     for (const [command, status] of [
       [fail, "failed"],

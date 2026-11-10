@@ -391,10 +391,14 @@ const startProgram = Effect.fn("TeamImageEffectsLive.test.startProgram")(functio
   const service = yield* TeamImageService.TeamImageService;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
   const { revision } = yield* service.saveRecipe({
-    actorId: admin,
+    by: { kind: "member", memberId: admin },
     input: { baseRevision: null, recipe: buildRecipe },
   });
-  const build = yield* service.startBuild({ actorId: admin, input: { recipeRevision: revision } });
+  const build = yield* service.startBuild({
+    by: { kind: "member", memberId: admin },
+    input: { recipeRevision: revision },
+    activateOnSuccess: true,
+  });
   yield* worker.drain();
   assert.strictEqual((yield* service.snapshot).builds[0]?.status, "launching");
   yield* world.boot();
@@ -485,7 +489,10 @@ describe("TeamImageEffectsLive", () => {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const { build, machine } = yield* startProgram(world);
         yield* Deferred.await(world.spawned);
-        yield* service.cancelBuild({ actorId: admin, imageBuildId: build.id });
+        yield* service.cancelBuild({
+          by: { kind: "member", memberId: admin },
+          imageBuildId: build.id,
+        });
         yield* Deferred.await(world.killed);
         yield* worker.drain();
 

@@ -137,6 +137,8 @@ export interface McpInvocationScope {
    * environment holds no agent link. `/mcp` reads it per request.
    */
   readonly linkedEnvironments?: boolean;
+  /** False on a server without team images (not Pair Cloud). `/mcp` sets it per request. */
+  readonly teamImages?: boolean;
 }
 
 /**
@@ -172,6 +174,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for the team image tools, hidden on a server without team images. */
+export const hiddenWithoutTeamImages = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.teamImages !== false;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

@@ -758,6 +758,11 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
+  /** The run's prompt and every message steered into it, oldest first. */
+  readonly listRunUserMessages: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2ConversationMessage>, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -5752,6 +5757,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const listRunUserMessages: ProjectionStoreV2Shape["listRunUserMessages"] = (threadId, runId) =>
+      sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_messages
+        WHERE thread_id = ${threadId} AND run_id = ${runId} AND role = 'user'
+        ORDER BY created_at ASC, message_id ASC
+      `.pipe(
+        Effect.flatMap(decodeRows(decodeMessagePayload, threadId)),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -8038,6 +8053,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
+      listRunUserMessages: readOnReader(listRunUserMessages),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),

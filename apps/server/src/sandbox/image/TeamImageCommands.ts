@@ -102,7 +102,7 @@ export type TeamImageCommand = { readonly commandId: CommandId } & (
   | {
       readonly type: "team-image.build.cancel";
       readonly imageBuildId: TeamImageBuildId;
-      readonly by: MemberId | null;
+      readonly by: TeamImageRequester | null;
     }
   | { readonly type: "team-image.build.machine-destroyed"; readonly imageBuildId: TeamImageBuildId }
   | {
