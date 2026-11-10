@@ -11,6 +11,7 @@ import {
   type GuestRedeemRequest,
   type GuestStreamEvent,
   type GuestSubmitRequest,
+  type MemberId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2DomainEvent,
@@ -58,6 +59,7 @@ import {
 } from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
@@ -142,8 +144,10 @@ const inactive = new GuestShareAccessError({ reason: "inactive" });
 export class GuestShareService extends Context.Service<
   GuestShareService,
   {
+    /** `actorId` is the member asking; on a `members` session only its owner may (11 §4). */
     readonly create: (
       input: GuestShareCreateInput,
+      actorId: MemberId,
     ) => Effect.Effect<GuestShareCreateResult, GuestShareCreateError>;
     /** Spends an invite and returns the session token for the guest's cookie. */
     readonly redeem: (
@@ -228,6 +232,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
   const analytics = yield* AnalyticsService.AnalyticsService;
+  const access = yield* ThreadAccess.optional;
   const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
   const inviteSignature = (shareId: string) =>
@@ -336,9 +341,18 @@ const make = Effect.gen(function* () {
     return { thread, share };
   });
 
-  const create = Effect.fn("GuestShareService.create")(function* (input: GuestShareCreateInput) {
+  const create = Effect.fn("GuestShareService.create")(function* (
+    input: GuestShareCreateInput,
+    actorId: MemberId,
+  ) {
     if (!(yield* sharingEnabled)) {
       return yield* new GuestShareCreateError({ reason: "disabled" });
+    }
+    if (access?.enforced === true) {
+      const target = yield* ThreadAccess.resolveThreadTarget(access, input.threadId);
+      if (target !== undefined && !access.mayInviteGuest(actorId, target)) {
+        return yield* new GuestShareCreateError({ reason: "not_owner" });
+      }
     }
     const host = yield* connectHostname;
     if (host === null) {

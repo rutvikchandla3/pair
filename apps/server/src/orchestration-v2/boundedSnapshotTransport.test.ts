@@ -820,6 +820,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
               enforced: true,
               allowsSandbox: () => true,
               allowsThread: () => true,
+              mayInviteGuest: () => true,
               agentReaches: () => true,
               assertThread: (_memberId, threadId) =>
                 projections

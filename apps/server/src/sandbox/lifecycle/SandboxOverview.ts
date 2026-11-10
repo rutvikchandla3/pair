@@ -1,9 +1,11 @@
 import {
   type ComputeDriverKind,
+  type MemberId,
   type SandboxDriverHealth,
   type SandboxBaseImageInfo,
   type SandboxDriverIsolation,
   type SandboxOverview as SandboxOverviewResult,
+  type SandboxOverviewMachine,
   SandboxOverviewError,
   SANDBOX_VM_DRIVER_KINDS,
   type TeamImageCurrentBase,
@@ -11,10 +13,14 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as TeamState from "../../team/TeamState.ts";
+import * as ThreadAccess from "../../team/ThreadAccess.ts";
 import type {
   ComputeCapabilities,
   ComputeDriver,
@@ -25,6 +31,7 @@ import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
 import { DEFAULT_BASE_IMAGE_REPOSITORY } from "../image/SandboxBaseImage.ts";
 import { CheckpointMirror } from "../mirror/CheckpointMirror.ts";
 import { STARTS_PER_MINUTE } from "./SandboxAdmission.ts";
+import { listLiveSandboxes } from "./SandboxProjection.ts";
 import { SandboxRestoreMode } from "./SandboxRestoreMode.ts";
 
 /** A driver that does not answer must not hold the page. */
@@ -32,7 +39,9 @@ const HEALTH_TIMEOUT = "10 seconds";
 
 export class SandboxOverview extends Context.Service<
   SandboxOverview,
-  { readonly read: Effect.Effect<SandboxOverviewResult, SandboxOverviewError> }
+  {
+    readonly read: (reader: MemberId) => Effect.Effect<SandboxOverviewResult, SandboxOverviewError>;
+  }
 >()("t3/sandbox/lifecycle/SandboxOverview") {}
 
 const isolationOf = (isolation: ComputeCapabilities["isolation"]): SandboxDriverIsolation => {
@@ -149,49 +158,86 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const mirror = yield* CheckpointMirror;
   const restoreMode = yield* SandboxRestoreMode;
+  const team = yield* TeamState.TeamState;
+  const access = yield* ThreadAccess.ThreadAccess;
+  const sql = yield* SqlClient.SqlClient;
   const version = packageJson.version;
 
-  const read = Effect.gen(function* () {
-    const drivers = yield* registry.list;
-    const { baseImage: override, restoreModeSince } = (yield* settings.getSettings).sandbox ?? {};
-    const healths = yield* Effect.forEach(
-      drivers,
-      (driver) =>
-        registry
-          .runningCap(driver.driverId)
-          .pipe(Effect.flatMap((runningCap) => driverHealth(driver, runningCap))),
-      { concurrency: "unbounded" },
+  /** Every live machine for an admin of a cloud-only server; a title only where they can open it. */
+  const machineListFor = Effect.fn("SandboxOverview.machineList")(function* (reader: MemberId) {
+    const member = (yield* Ref.get(team.members)).get(reader);
+    if (!access.enforced || !(member?.role === "admin" || member?.isOwner === true)) {
+      return undefined;
+    }
+    return yield* Effect.forEach(
+      yield* listLiveSandboxes().pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+      Effect.fnUntraced(function* (record) {
+        const machine: SandboxOverviewMachine = {
+          sandboxId: record.id,
+          ownerMemberId: record.ownerMemberId,
+          state: record.state,
+          size: record.size,
+          driverId: record.driverId,
+          createdAt: record.createdAt,
+        };
+        if (!access.allowsSandbox(reader, record.id)) return machine;
+        const shell = yield* projections.getThreadShell(record.ownerThreadId);
+        return shell === null
+          ? machine
+          : {
+              ...machine,
+              thread: { threadId: shell.id, title: shell.title, branch: shell.branch },
+            };
+      }),
+      { concurrency: 8 },
     );
-    const machines = yield* projections.countSandboxStates;
-    const mirrorBytes = yield* mirror.diskBytes;
-    const current = currentBaseImage({
-      resolved: healths.flatMap((entry) => (entry.baseImage === null ? [] : [entry.baseImage]))[0],
-      override,
-      version,
-    });
-    const configured = new Set(drivers.map((driver) => driver.driverId));
-    const stopped =
-      restoreModeSince === undefined
-        ? []
-        : (yield* restoreMode.machines).filter((machine) => configured.has(machine.driverId));
-    const baseImage = {
-      ref: current.ref,
-      label:
-        current.version !== null ? `Pair base ${current.version}` : `Base image ${current.ref}`,
-    };
-    return {
-      drivers: healths.map((entry) => entry.report),
-      machines,
-      startsPerMinute: STARTS_PER_MINUTE,
-      baseImage,
-      mirrorBytes,
-      ...(restoreModeSince === undefined
-        ? {}
-        : { restoreMode: { since: restoreModeSince, machines: stopped } }),
-    } satisfies SandboxOverviewResult;
-  }).pipe(
+  });
+
+  const read = Effect.fn("SandboxOverview.read")(
+    function* (reader: MemberId) {
+      const drivers = yield* registry.list;
+      const { baseImage: override, restoreModeSince } = (yield* settings.getSettings).sandbox ?? {};
+      const healths = yield* Effect.forEach(
+        drivers,
+        (driver) =>
+          registry
+            .runningCap(driver.driverId)
+            .pipe(Effect.flatMap((runningCap) => driverHealth(driver, runningCap))),
+        { concurrency: "unbounded" },
+      );
+      const machines = yield* projections.countSandboxStates;
+      const mirrorBytes = yield* mirror.diskBytes;
+      const current = currentBaseImage({
+        resolved: healths.flatMap((entry) =>
+          entry.baseImage === null ? [] : [entry.baseImage],
+        )[0],
+        override,
+        version,
+      });
+      const configured = new Set(drivers.map((driver) => driver.driverId));
+      const stopped =
+        restoreModeSince === undefined
+          ? []
+          : (yield* restoreMode.machines).filter((machine) => configured.has(machine.driverId));
+      const machineList = yield* machineListFor(reader);
+      const baseImage = {
+        ref: current.ref,
+        label:
+          current.version !== null ? `Pair base ${current.version}` : `Base image ${current.ref}`,
+      };
+      return {
+        drivers: healths.map((entry) => entry.report),
+        machines,
+        startsPerMinute: STARTS_PER_MINUTE,
+        baseImage,
+        mirrorBytes,
+        ...(restoreModeSince === undefined
+          ? {}
+          : { restoreMode: { since: restoreModeSince, machines: stopped } }),
+        ...(machineList === undefined ? {} : { machineList }),
+      } satisfies SandboxOverviewResult;
+    },
     Effect.mapError((cause) => new SandboxOverviewError({ cause })),
-    Effect.withSpan("SandboxOverview.read"),
   );
 
   return SandboxOverview.of({ read });

@@ -266,6 +266,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
           enforced: options.cloudOnly ?? false,
           allowsSandbox: () => true,
           allowsThread: (memberId) => options.opens?.(memberId) ?? true,
+          mayInviteGuest: () => true,
           agentReaches: () => true,
           threadTarget: () => undefined,
         }),

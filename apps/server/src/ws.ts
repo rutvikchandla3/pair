@@ -1805,6 +1805,14 @@ export const layerWsRpc = (
       const listAcpRegistrySessions = Effect.fn("ws.acpRegistry.listSessions")(function* (
         input: AcpRegistryListSessionsInput,
       ) {
+        // The host's native sessions are its own agent history, and an imported one is a thread
+        // the asker may not be able to open; a cloud-only server offers none of it.
+        if (config.cloudOnly) {
+          return yield* new AcpRegistryOperationError({
+            reason: "session_list_unsupported",
+            message: CloudOnly.CLOUD_ONLY_MESSAGE,
+          });
+        }
         const project = yield* acpRegistryProject(input.projectId);
         const { instance, manager } = yield* acpSessionManager(input.instanceId);
         const listed = yield* manager.listSessions({
@@ -1942,6 +1950,12 @@ export const layerWsRpc = (
       const deleteAcpRegistrySession = Effect.fn("ws.acpRegistry.deleteSession")(function* (
         input: AcpRegistryDeleteSessionInput,
       ) {
+        if (config.cloudOnly) {
+          return yield* new AcpRegistryOperationError({
+            reason: "session_delete_unsupported",
+            message: CloudOnly.CLOUD_ONLY_MESSAGE,
+          });
+        }
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
             const project = yield* acpRegistryProject(input.projectId);
@@ -2641,7 +2655,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-            Effect.andThen(guestShares.create(input)),
+            Effect.andThen(guestShares.create(input, currentSession.memberId)),
           ),
         [WS_METHODS.teamSubscribe]: (_input) => teamMembers.streamChanges,
         [WS_METHODS.teamInvite]: (input) => teamMembers.invite(input),
@@ -3083,7 +3097,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
-        [WS_METHODS.sandboxOverview]: (_input) => sandboxOverview.read,
+        [WS_METHODS.sandboxOverview]: (_input) => sandboxOverview.read(currentSession.memberId),
         // Every member sees every team thread, as with presence; `view` skips local threads.
         [WS_METHODS.sandboxViewing]: ({ threadId }) =>
           sandboxWake.viewed({ threadId, actorId: currentSession.memberId }),

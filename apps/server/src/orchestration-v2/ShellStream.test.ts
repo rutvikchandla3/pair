@@ -170,6 +170,7 @@ describe("shell events for a member on a cloud-only server", () => {
         enforced: true,
         allowsSandbox: (member, id) => ThreadAccess.sandboxAllows(roster, entries.get(id), member),
         allowsThread,
+        mayInviteGuest: () => true,
         agentReaches: () => true,
         assertThread: () => Effect.void,
         assertPath: () => Effect.void,

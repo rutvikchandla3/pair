@@ -122,6 +122,16 @@ export const sessionReaches = (
   return true;
 };
 
+/** A guest link lets someone outside the list in, so on a `members` session only its owner may. */
+const guestInviteAllowed = (
+  roster: ThreadAccessRoster,
+  session: SandboxAccessEntry,
+  memberId: MemberId,
+): boolean =>
+  !roster.cloudOnly ||
+  session.audience === "team" ||
+  (session.ownerMemberId ?? roster.serverOwnerId) === memberId;
+
 const entryOf = (record: OrchestrationV2Sandbox): SandboxAccessEntry => ({
   ownerMemberId: record.ownerMemberId,
   audience: record.access?.audience ?? "team",
@@ -226,6 +236,8 @@ export class ThreadAccess extends Context.Service<
     readonly enforced: boolean;
     readonly allowsSandbox: (memberId: MemberId, sandboxId: SandboxId) => boolean;
     readonly allowsThread: (memberId: MemberId, thread: ThreadAccessTarget) => boolean;
+    /** `guestInviteAllowed` for the thread's session. */
+    readonly mayInviteGuest: (memberId: MemberId, thread: ThreadAccessTarget) => boolean;
     /** `sessionReaches` from the agent's thread, which the index must know. */
     readonly agentReaches: (agentThreadId: ThreadId, thread: ThreadAccessTarget) => boolean;
     /** Fails as a missing thread does, so a refusal does not confirm the thread exists. */
@@ -336,6 +348,7 @@ export const layer = Layer.effect(
       enforced: cloudOnly,
       allowsSandbox,
       allowsThread,
+      mayInviteGuest: (memberId, thread) => guestInviteAllowed(roster, sessionOf(thread), memberId),
       agentReaches,
       assertThread,
       assertPath,
@@ -378,6 +391,7 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       enforced: false,
       allowsSandbox: () => true,
       allowsThread: () => true,
+      mayInviteGuest: () => true,
       agentReaches: () => true,
       assertThread: () => Effect.void,
       assertPath: () => Effect.void,
@@ -402,17 +416,18 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       thread.sandboxId === undefined ? undefined : machines.get(thread.sandboxId),
       memberId,
     );
+  const sessionOf = (target: ThreadAccessTarget) =>
+    sessionEntryOf(
+      target,
+      target.sandboxId === undefined ? undefined : machines.get(target.sandboxId),
+    );
   return {
     enforced: true,
     allowsSandbox,
     allowsThread,
+    mayInviteGuest: (memberId, thread) => guestInviteAllowed(roster, sessionOf(thread), memberId),
     agentReaches: (agentThreadId, thread) => {
       const agent = threads.get(agentThreadId);
-      const sessionOf = (target: ThreadAccessTarget) =>
-        sessionEntryOf(
-          target,
-          target.sandboxId === undefined ? undefined : machines.get(target.sandboxId),
-        );
       return agent !== undefined && sessionReaches(roster, sessionOf(agent), sessionOf(thread));
     },
     assertThread: (memberId, threadId) => {

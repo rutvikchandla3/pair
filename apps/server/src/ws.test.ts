@@ -15,6 +15,9 @@ import {
   WS_METHODS,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  AcpRegistryListSessionsInput,
+  AcpRegistryListSessionsResult,
+  AcpRegistryOperationError,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
@@ -35,11 +38,12 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as CloudOnly from "./environment/CloudOnly.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -1437,4 +1441,87 @@ it.effect("thread resume at its own high-water below the pruned boundary skips t
     // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
     assert.isTrue(Exit.isSuccess(exit));
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+it.effect("a cloud-only server lists none of the host's ACP sessions", () =>
+  Effect.gen(function* () {
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const ListSessions = Rpc.make(WS_METHODS.serverListAcpRegistrySessions, {
+      payload: AcpRegistryListSessionsInput,
+      success: AcpRegistryListSessionsResult,
+      error: AcpRegistryOperationError,
+    });
+    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(ListSessions), {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("acp-test"),
+            subject: "acp-test",
+            memberId: MemberId.make("member-test"),
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+            ),
+          ),
+          Layer.provide(
+            Layer.effect(
+              ServerConfigModule.ServerConfig,
+              Effect.map(ServerConfigModule.ServerConfig, (config) => ({
+                ...config,
+                cloudOnly: true,
+              })),
+            ),
+          ),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("list"),
+      tag: WS_METHODS.serverListAcpRegistrySessions,
+      payload: {
+        instanceId: ProviderInstanceId.make("acp"),
+        projectId: ProjectId.make("project:acp"),
+      },
+      headers: Headers.empty,
+    });
+    const exit = yield* Queue.take(exits);
+    if (!Exit.isFailure(exit)) return yield* Effect.die("Expected a refusal");
+    assert.equal(
+      (Cause.squash(exit.cause) as AcpRegistryOperationError).message,
+      CloudOnly.CLOUD_ONLY_MESSAGE,
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );

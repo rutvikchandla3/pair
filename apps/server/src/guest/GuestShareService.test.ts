@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  SandboxId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -56,6 +57,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as TeamState from "../team/TeamState.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -137,21 +139,25 @@ const layerAnalytics = Layer.effectContext(
     );
   }),
 );
-const layerTest = GuestShareService.layer.pipe(
-  Layer.provideMerge(
-    CommandOutputHub.layer.pipe(
-      Layer.provideMerge(layerOrchestration.pipe(Layer.provide(layerCleanup))),
+const layerWith = (access: ThreadAccess.ThreadAccess["Service"]) =>
+  GuestShareService.layer.pipe(
+    Layer.provide(Layer.succeed(ThreadAccess.ThreadAccess)(access)),
+    Layer.provideMerge(
+      CommandOutputHub.layer.pipe(
+        Layer.provideMerge(layerOrchestration.pipe(Layer.provide(layerCleanup))),
+      ),
     ),
-  ),
-  Layer.provide(layerProviders),
-  Layer.provideMerge(ServerSettings.layerTest({ guestSharingEnabled: true })),
-  Layer.provide(layerConnect),
-  Layer.provideMerge(layerAnalytics),
-  Layer.provide(ServerSecretStore.layer),
-  Layer.provideMerge(layerConfig),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-);
+    Layer.provide(layerProviders),
+    Layer.provideMerge(ServerSettings.layerTest({ guestSharingEnabled: true })),
+    Layer.provide(layerConnect),
+    Layer.provideMerge(layerAnalytics),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provideMerge(layerConfig),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+const layerTest = layerWith(ThreadAccess.makeTest());
 
+const owner = MemberId.make("member-owner");
 const threadId = ThreadId.make("thread:guest-share-service");
 
 const shareThreadFor = Effect.fn(function* (threadId: ThreadId) {
@@ -172,7 +178,7 @@ const shareThreadFor = Effect.fn(function* (threadId: ThreadId) {
     creationSource: "web",
   });
   const guestShares = yield* GuestShareService.GuestShareService;
-  const { url } = yield* guestShares.create({ threadId });
+  const { url } = yield* guestShares.create({ threadId }, owner);
   assert.isTrue(url.startsWith("https://env.t3.test/guest#"));
   const credential = url.slice(url.indexOf("#") + 1);
   return { orchestrator, guestShares, credential };
@@ -318,7 +324,7 @@ it.effect("starts a stream with the runs and items already in the thread", () =>
 it.effect("redeems only a short invite whose signature and share id are both current", () =>
   Effect.gen(function* () {
     const { guestShares, credential: replaced } = yield* shareThread;
-    const { url } = yield* guestShares.create({ threadId });
+    const { url } = yield* guestShares.create({ threadId }, owner);
     const credential = url.slice(url.indexOf("#") + 1);
     assert.match(credential, /^[\w-]{22}\.[\w-]{22}$/);
 
@@ -382,13 +388,57 @@ it.effect("refuses new links and every guest request while the beta is off", () 
     // An open stream closes at the next access check.
     yield* TestClock.adjust("30 seconds");
     yield* Fiber.join(collecting);
-    assert.equal((yield* Effect.flip(guestShares.create({ threadId }))).reason, "disabled");
+    assert.equal((yield* Effect.flip(guestShares.create({ threadId }, owner))).reason, "disabled");
     assert.equal((yield* Effect.flip(guestShares.check(session))).reason, "inactive");
     // Turning it back on lets the same guest back in.
     yield* settings.updateSettings({ guestSharingEnabled: true });
     assert.isTrue(Exit.isSuccess(yield* Effect.exit(guestShares.check(session))));
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("lets only the owner invite a guest to a cloud thread not shared with the team", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const teamThreadId = ThreadId.make("thread:guest-share-team");
+  const teamSandboxId = SandboxId.make("sbx_fedcba9876543210fedc");
+  const access = ThreadAccess.makeTest({
+    serverOwnerId: owner,
+    machines: new Map([
+      [sandboxId, { ownerMemberId: alice, audience: "members", memberIds: new Set([bob]) }],
+      [teamSandboxId, { ownerMemberId: alice, audience: "team", memberIds: new Set() }],
+    ]),
+    threads: new Map([
+      [threadId, { sandboxId, ownerId: alice }],
+      [teamThreadId, { sandboxId: teamSandboxId, ownerId: alice }],
+    ]),
+  });
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const guestShares = yield* GuestShareService.GuestShareService;
+    yield* Ref.set(hostname, "env.t3.test");
+    for (const id of [threadId, teamThreadId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${id}`),
+        threadId: id,
+        projectId: ProjectId.make("project:guest-share-service"),
+        title: "Review me",
+        modelSelection: { instanceId, model: "gpt-5.1-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    assert.equal((yield* Effect.flip(guestShares.create({ threadId }, bob))).reason, "not_owner");
+    yield* guestShares.create({ threadId }, alice);
+    // On a team machine anyone who can open the thread may, as before.
+    yield* guestShares.create({ threadId: teamThreadId }, bob);
+  }).pipe(Effect.provide(layerWith(access)));
+});
 
 it.effect("ends an open guest stream when the link expires", () =>
   Effect.gen(function* () {
@@ -1056,7 +1106,7 @@ it.effect("gives a fork's guest the files on messages the fork shows from its so
       creationSource: "web",
     });
     const later = yield* ownerImage("after.png");
-    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { url } = yield* guestShares.create({ threadId: forkId }, owner);
     const { token: session } = yield* guestShares.redeem({
       credential: url.slice(url.indexOf("#") + 1),
       name: "Sam",
@@ -1164,7 +1214,7 @@ it.effect("serves an image on the host only when an agent reply the guest sees s
       createdBy: "user",
       creationSource: "web",
     });
-    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { url } = yield* guestShares.create({ threadId: forkId }, owner);
     const { token: session } = yield* guestShares.redeem({
       credential: url.slice(url.indexOf("#") + 1),
       name: "Sam",
@@ -1330,7 +1380,7 @@ it.effect("keeps a connected guest's images while other shares come and go", () 
     }
 
     // A new link on the thread starts empty: its guest gets nothing the last guest was sent.
-    const { url } = yield* guestShares.create({ threadId });
+    const { url } = yield* guestShares.create({ threadId }, owner);
     const next = yield* guestShares.redeem({
       credential: url.slice(url.indexOf("#") + 1),
       name: "Kim",

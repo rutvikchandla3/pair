@@ -1239,6 +1239,7 @@ it.effect("lets an agent read another session only when everyone who can open it
         enforced: true,
         allowsSandbox: () => true,
         allowsThread: () => true,
+        mayInviteGuest: () => true,
         agentReaches: (agentThreadId, thread) => {
           const agent = targets.get(agentThreadId);
           return (

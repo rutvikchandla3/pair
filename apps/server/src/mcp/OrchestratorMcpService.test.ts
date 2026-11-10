@@ -92,6 +92,7 @@ const layerOpenAccess = Layer.mock(ThreadAccess.ThreadAccess)({
   enforced: false,
   allowsSandbox: () => true,
   allowsThread: () => true,
+  mayInviteGuest: () => true,
   agentReaches: () => true,
   threadTarget: () => undefined,
 });
