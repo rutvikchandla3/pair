@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { MemberId, ProjectId, ProviderInstanceId, SandboxId, ThreadId } from "@t3tools/contracts";
+import type { SandboxAccessChange } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -13,19 +14,29 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
+import { viewerAccessOf } from "./MemberThreadView.ts";
+import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
+
 import {
+  accessChangedThreadIds,
   activeShellRowsForSubscriber,
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
   expandSandboxShellEvents,
+  loadSubscriberShellSnapshot,
+  mayShowShellEvent,
   omitIdleSubagentShells,
   omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemForViewer,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
@@ -110,6 +121,226 @@ describe("sandbox shell events", () => {
       { sequence: 2, event: { threadId: "owner", sandboxId } },
     ]);
   });
+});
+
+describe("shell events for a member on a cloud-only server", () => {
+  const alice = MemberId.make("member-alice");
+  const bob = MemberId.make("member-bob");
+  const carol = MemberId.make("member-carol");
+  const sandboxId = SandboxId.make("sbx_0123456789abcdef0123");
+  const ownerId = ThreadId.make("owner");
+  const forkId = ThreadId.make("fork");
+  const localId = ThreadId.make("local");
+  const onMachine = { sandboxId, ownerId: alice };
+  const shells = new Map([
+    [ownerId, shellFixture({ id: ownerId, ...onMachine })],
+    [forkId, shellFixture({ id: forkId, ...onMachine })],
+    [localId, shellFixture({ id: localId, ownerId: carol })],
+  ]);
+
+  /** The machine's audience after the commit, as the index holds it when the shell reads. */
+  const accessOf = (
+    memberId: MemberId,
+    audience: "members" | "team",
+    memberIds: ReadonlyArray<MemberId>,
+  ) => {
+    const roster = { cloudOnly: true, serverOwnerId: alice, isActive: () => true };
+    const entry = { ownerMemberId: alice, audience, memberIds: new Set(memberIds) };
+    const entries = new Map([[sandboxId, entry]]);
+    const threads = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
+      [ownerId, onMachine],
+      [forkId, onMachine],
+      [localId, { ownerId: carol }],
+    ]);
+    const allowsThread = (member: MemberId, thread: ThreadAccess.ThreadAccessTarget) =>
+      ThreadAccess.threadAllows(
+        roster,
+        thread,
+        thread.sandboxId === undefined ? undefined : entries.get(thread.sandboxId),
+        member,
+      );
+    const access = viewerAccessOf(
+      {
+        enforced: true,
+        allowsSandbox: (member, id) => ThreadAccess.sandboxAllows(roster, entries.get(id), member),
+        allowsThread,
+        assertThread: () => Effect.void,
+        assertPath: () => Effect.void,
+        threadTarget: (threadId) => threads.get(threadId),
+        caughtUp: Effect.void,
+        changes: Stream.empty,
+        subscribeChanges: Effect.die("unused"),
+      },
+      memberId,
+    );
+    if (access === undefined) throw new Error("expected access rules");
+    return access;
+  };
+  const stored = (sequence: number, event: object) =>
+    ({ sequence, commandId: null, event }) as ApplicationStoredEvent;
+  const changed = (change: Partial<SandboxAccessChange>) =>
+    stored(5, {
+      threadId: ownerId,
+      type: "sandbox.access-changed",
+      payload: {
+        sandboxId,
+        added: [],
+        removed: [],
+        audienceChanged: false,
+        actorId: alice,
+        ...change,
+      },
+    });
+  /** What the live shell stream sends this member for a batch of committed events. */
+  const sent = (
+    access: ReturnType<typeof accessOf>,
+    events: ReadonlyArray<ApplicationStoredEvent>,
+  ) => {
+    const expanded = expandSandboxShellEvents(
+      events.filter((event) => mayShowShellEvent(event, access)).map(toShellApplicationEvent),
+      new Map([
+        [
+          sandboxId,
+          [ownerId, forkId].map((threadId) => ({
+            threadId,
+            attachedAt: DateTime.makeUnsafe("2026-11-06T00:00:00.000Z"),
+            archived: false,
+          })),
+        ],
+      ]),
+    );
+    const revocable = accessChangedThreadIds(expanded);
+    return coalesceShellApplicationEvents(expanded).flatMap((event) => {
+      if ("aggregateKind" in event) return [];
+      const item = shellStreamItemForViewer({
+        stored: event,
+        shell: shells.get(event.event.threadId) ?? null,
+        access,
+        accessChangedThreadIds: revocable,
+      });
+      return item === null
+        ? []
+        : [[item.kind, item.kind === "thread.updated" ? item.thread.id : item.threadId]];
+    });
+  };
+  const updated = [
+    ["thread.updated", ownerId],
+    ["thread.updated", forkId],
+  ];
+  const removed = [
+    ["thread.removed", ownerId],
+    ["thread.removed", forkId],
+  ];
+
+  it.each([
+    ["added", bob, ["members", [bob]], { added: [bob] }, updated],
+    ["removed", bob, ["members", []], { removed: [bob] }, removed],
+    ["opened to the team", carol, ["team", []], { audienceChanged: true }, updated],
+    ["closed to members", carol, ["members", [bob]], { audienceChanged: true }, removed],
+    [
+      "closed to members, still listed",
+      bob,
+      ["members", [bob]],
+      { audienceChanged: true },
+      updated,
+    ],
+    ["someone else added", carol, ["members", [bob]], { added: [bob] }, []],
+    ["someone else removed", carol, ["members", []], { removed: [bob] }, []],
+  ] as const)(
+    "%s: re-sends or removes the machine's threads",
+    (_name, memberId, [audience, members], change, expected) => {
+      expect(sent(accessOf(memberId, audience, members), [changed(change)])).toEqual(expected);
+    },
+  );
+
+  it("sends a member nothing of a thread they cannot open", () => {
+    const carols = accessOf(carol, "members", [bob]);
+    const ownerPayload = { id: ownerId, ...onMachine };
+    const events = [
+      stored(1, { threadId: ownerId, type: "thread.meta-updated", payload: ownerPayload }),
+      stored(2, { threadId: ownerId, type: "run.updated" }),
+      stored(3, { threadId: ownerId, type: "sandbox.updated", payload: { id: sandboxId } }),
+      stored(4, { threadId: localId, type: "run.updated" }),
+    ];
+    expect(events.map((event) => mayShowShellEvent(event, carols))).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(sent(carols, events)).toEqual([["thread.updated", localId]]);
+    // A thread the index has not seen passes the pre-filter; the shell read decides.
+    const unknown = stored(6, { threadId: ThreadId.make("unknown"), type: "run.updated" });
+    expect(mayShowShellEvent(unknown, carols)).toBe(true);
+    expect(sent(carols, [unknown])).toEqual([]);
+    expect(sent(accessOf(bob, "members", [bob]), events.slice(0, 3))).toEqual(updated);
+  });
+
+  it.effect("counts and trims only the threads the member can open", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const settled = (id: string, day: number, machine: boolean) =>
+        shellFixture({
+          id: ThreadId.make(id),
+          projectId: ProjectId.make("project-a"),
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: ThreadId.make(id),
+          },
+          settledOverride: "settled",
+          settledAt: DateTime.makeUnsafe(day * 24 * 60 * 60 * 1000),
+          pinnedAt: null,
+          snoozedUntil: null,
+          ...(machine ? onMachine : { ownerId: carol }),
+        });
+      // A hidden thread among the newest would push a visible one out, and one older would count.
+      const rows = [
+        ...Array.from({ length: 25 }, (_, index) => settled(`new-${index}`, 100 - index, false)),
+        settled("hidden-new", 101, true),
+        settled("old", 50, false),
+        settled("hidden-old", 40, true),
+      ];
+      const requested: Array<ReadonlyArray<ThreadId> | undefined> = [];
+      const load = (access: ReturnType<typeof accessOf> | undefined, omitOlderSettled: boolean) =>
+        loadSubscriberShellSnapshot({
+          sql,
+          listShellIndex: Effect.succeed(
+            rows.map((row): ActiveShellIndexEntry => ({ ...row, mayBeLive: false })),
+          ),
+          readThreads: (threadIds) => {
+            requested.push(threadIds);
+            return Effect.succeed(
+              Effect.succeed({
+                schemaVersion: 1,
+                snapshotSequence: 0,
+                threads: rows.filter(
+                  (row) => threadIds === undefined || threadIds.includes(row.id),
+                ),
+                archivedThreads: [],
+              }),
+            );
+          },
+          listProjects: Effect.succeed([]),
+          latestSequence: Effect.succeed(9),
+          options: { omitIdleSubagents: false, omitOlderSettled },
+          access,
+        }).pipe(Effect.map(({ snapshot }) => snapshot));
+      const carols = accessOf(carol, "members", [bob]);
+      const trimmed = yield* load(carols, true);
+      expect(trimmed.threads.map((thread) => thread.id)).toHaveLength(25);
+      expect(trimmed.threads.map((thread) => thread.id)).not.toContain("hidden-new");
+      expect(trimmed.olderSettled?.counts).toEqual([{ projectId: "project-a", count: 1 }]);
+      expect(requested.at(-1)).not.toContain("hidden-new");
+      const untrimmed = yield* load(carols, false);
+      expect(untrimmed.threads.map((thread) => thread.id)).not.toContain("hidden-old");
+      expect(untrimmed.threads).toHaveLength(26);
+      // Without access rules the hidden ones show, pushing `new-24` into the older count.
+      expect((yield* load(undefined, true)).olderSettled?.counts).toEqual([
+        { projectId: "project-a", count: 3 },
+      ]);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
 });
 
 it.effect("coalesces a slow shell subscriber by identity and location in sequence order", () =>

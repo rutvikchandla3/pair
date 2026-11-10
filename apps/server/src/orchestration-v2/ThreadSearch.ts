@@ -36,15 +36,42 @@ import {
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { holderOf } from "./MemberThreadState.ts";
+import { threadAllowsSql } from "../team/threadAccessSql.ts";
 import type { ThreadViewer } from "./MemberThreadView.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
-/** Whose open counts rank results: null ranks by the holder's, which the thread row keeps. */
-export type ThreadSearchViewer = Pick<ThreadViewer, "memberId" | "serverOwnerId"> | null;
-const SearchViewer = Schema.NullOr(Schema.Struct({ memberId: MemberId, serverOwnerId: MemberId }));
+/**
+ * Whose open counts rank results: null ranks by the holder's, which the thread row keeps. With
+ * `access`, only threads the viewer may open are searched.
+ */
+export type ThreadSearchViewer =
+  | (Pick<ThreadViewer, "memberId" | "serverOwnerId"> & Pick<Partial<ThreadViewer>, "access">)
+  | null;
+const SearchViewer = Schema.NullOr(
+  Schema.Struct({
+    memberId: MemberId,
+    serverOwnerId: MemberId,
+    restricted: Schema.optionalKey(Schema.Boolean),
+  }),
+);
 
 const searchViewer = (viewer: ThreadSearchViewer | undefined): typeof SearchViewer.Type =>
-  viewer == null ? null : { memberId: viewer.memberId, serverOwnerId: viewer.serverOwnerId };
+  viewer == null
+    ? null
+    : {
+        memberId: viewer.memberId,
+        serverOwnerId: viewer.serverOwnerId,
+        ...(viewer.access === undefined ? {} : { restricted: true }),
+      };
+
+// Threads aliased `threads` that a restricted viewer may open.
+const visibleToViewer = (
+  sql: SqlClient.SqlClient,
+  viewer: typeof SearchViewer.Encoded | undefined,
+) =>
+  viewer?.restricted === true
+    ? sql` AND ${threadAllowsSql(sql, "threads", viewer.memberId, viewer.serverOwnerId)}`
+    : sql``;
 
 const memberOpens = (sql: SqlClient.SqlClient, memberId: string) => sql`(
   SELECT member.opens_json
@@ -97,6 +124,7 @@ const SearchRequest = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
+  viewer: Schema.optionalKey(SearchViewer),
 });
 const SearchRow = Schema.Struct({
   messageRowid: Schema.Number,
@@ -187,7 +215,7 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // The scan folds ASCII case only, so accent variants and non-ASCII case variants may not match.
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  { match, substrings, projectId, excludedThreadIds, viewer }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -201,7 +229,10 @@ export const messageHitsQuery = (
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
-        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
+        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1${visibleToViewer(
+          sql,
+          viewer,
+        )}
     )
     ${
       match === null
@@ -367,7 +398,10 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
-        AND (${projectId} IS NULL OR threads.project_id = ${projectId})
+        AND (${projectId} IS NULL OR threads.project_id = ${projectId})${visibleToViewer(
+          sql,
+          viewer,
+        )}
     `,
   });
 
@@ -402,7 +436,10 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
-          OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
+          OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))${visibleToViewer(
+            sql,
+            viewer,
+          )}
     `,
   });
 
@@ -482,6 +519,7 @@ export const make = Effect.gen(function* () {
               ...messageSearch,
               projectId: input.projectId,
               excludedThreadIds: [...(input.excludedThreadIds ?? [])],
+              viewer: searchViewer(input.viewer),
             });
       }),
     );
@@ -604,7 +642,7 @@ export const make = Effect.gen(function* () {
       projectId: input.projectId ?? null,
       excludedThreadIds: shown,
       picks: false,
-      viewer,
+      ...(input.viewer === undefined ? {} : { viewer: input.viewer }),
     });
     const messageHits = matches
       .filter((match) => subjectById.has(match.threadId))

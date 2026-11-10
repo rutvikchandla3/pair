@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -291,7 +290,8 @@ const layerBase: Layer.Layer<
         );
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
-    const publishLane = yield* Semaphore.make(1);
+    // The index owns the lane so access checks can wait for a commit a read already saw.
+    const publishLane = accessIndex.lane;
     const commitThenPublish = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,

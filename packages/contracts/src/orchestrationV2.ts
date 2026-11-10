@@ -4520,6 +4520,18 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   },
 ) {}
 
+/**
+ * Ends a thread subscription when the viewer can no longer open the thread. Newer than the
+ * subscription itself: an older client treats it as the stream ending.
+ */
+export class ThreadAccessRevoked extends Schema.TaggedError<ThreadAccessRevoked>()(
+  "ThreadAccessRevoked",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+  },
+) {}
+
 export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedError<OrchestrationV2GetShellSnapshotError>()(
   "OrchestrationV2GetShellSnapshotError",
   {

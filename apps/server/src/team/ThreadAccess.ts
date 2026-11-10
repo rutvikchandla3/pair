@@ -15,9 +15,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import { isThreadPayloadEvent } from "../orchestration-v2/MemberThreadState.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { listSandboxes } from "../sandbox/lifecycle/SandboxProjection.ts";
 import {
@@ -93,24 +97,65 @@ export class ThreadAccessIndex extends Context.Service<
   ThreadAccessIndex,
   {
     readonly entries: ReadonlyMap<SandboxId, SandboxAccessEntry>;
+    /** Each thread's machine and owner, once `trackThreads` has run. Deleted threads stay. */
+    readonly threads: ReadonlyMap<ThreadId, ThreadAccessTarget>;
+    /** Loads `threads` and keeps it current. Cloud-only servers only; others never read it. */
+    readonly trackThreads: Effect.Effect<void>;
+    /**
+     * `EventSink`'s publish lane: a commit holds it from before COMMIT until it has published.
+     * Taking it once after a read means every commit that read saw is indexed.
+     */
+    readonly lane: Semaphore.Semaphore;
     /** `EventSink` only: runs after a commit and before any stream can publish it. */
     readonly observeCommitted: (
       events: ReadonlyArray<OrchestrationV2StoredEvent>,
     ) => Effect.Effect<void>;
     readonly changes: Stream.Stream<SandboxAccessChange>;
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<SandboxAccessChange>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/team/ThreadAccess/ThreadAccessIndex") {}
 
 export const layerIndex = Layer.effect(
   ThreadAccessIndex,
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const entries = new Map<SandboxId, SandboxAccessEntry>();
     for (const record of yield* listSandboxes().pipe(Effect.orDie)) {
       entries.set(record.id, entryOf(record));
     }
+    const threads = new Map<ThreadId, ThreadAccessTarget>();
+    let tracking = false;
     const changes = yield* PubSub.unbounded<SandboxAccessChange>();
     return ThreadAccessIndex.of({
       entries,
+      threads,
+      trackThreads: Effect.gen(function* () {
+        if (tracking) return;
+        // Track first, so a commit the load misses is observed; the load never overwrites one.
+        tracking = true;
+        const rows = yield* sql<{
+          readonly thread_id: ThreadId;
+          readonly sandbox_id: SandboxId | null;
+          readonly owner_id: MemberId | null;
+        }>`
+          SELECT thread_id,
+            json_extract(payload_json, '$.sandboxId') AS sandbox_id,
+            json_extract(payload_json, '$.ownerId') AS owner_id
+          FROM orchestration_v2_projection_threads
+        `.pipe(Effect.orDie);
+        for (const row of rows) {
+          if (threads.has(row.thread_id)) continue;
+          threads.set(row.thread_id, {
+            ...(row.sandbox_id === null ? {} : { sandboxId: row.sandbox_id }),
+            ownerId: row.owner_id,
+          });
+        }
+      }).pipe(Effect.withSpan("ThreadAccessIndex.trackThreads")),
+      lane: yield* Semaphore.make(1),
       // Runs on every commit; the commit that calls it owns the span.
       observeCommitted: Effect.fnUntraced(function* (events) {
         for (const { event } of events) {
@@ -118,10 +163,21 @@ export const layerIndex = Layer.effect(
             entries.set(event.payload.id, entryOf(event.payload));
           } else if (event.type === "sandbox.access-changed") {
             yield* PubSub.publish(changes, event.payload);
+          } else if (tracking && isThreadPayloadEvent(event)) {
+            const { id, sandboxId, ownerId } = event.payload;
+            const known = threads.get(id);
+            if (
+              known === undefined ||
+              known.sandboxId !== sandboxId ||
+              (known.ownerId ?? null) !== (ownerId ?? null)
+            ) {
+              threads.set(id, { sandboxId, ownerId });
+            }
           }
         }
       }),
       changes: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes),
     });
   }),
 );
@@ -130,6 +186,8 @@ export const layerIndex = Layer.effect(
 export class ThreadAccess extends Context.Service<
   ThreadAccess,
   {
+    /** The server is cloud-only, so the rule is consulted. Elsewhere every check passes. */
+    readonly enforced: boolean;
     readonly allowsSandbox: (memberId: MemberId, sandboxId: SandboxId) => boolean;
     readonly allowsThread: (memberId: MemberId, thread: ThreadAccessTarget) => boolean;
     /** Fails as a missing thread does, so a refusal does not confirm the thread exists. */
@@ -142,8 +200,20 @@ export class ThreadAccess extends Context.Service<
       memberId: MemberId,
       path: string,
     ) => Effect.Effect<void, WorkspaceHostUnavailableError>;
+    /** A thread's machine and owner as last committed; undefined for one never seen. */
+    readonly threadTarget: (threadId: ThreadId) => ThreadAccessTarget | undefined;
+    /**
+     * Waits until every commit already visible to the database is indexed. A read that goes to
+     * the database runs this after reading and before checking what it read.
+     */
+    readonly caughtUp: Effect.Effect<void>;
     /** One item per committed `sandbox.access-changed`, after `allowsSandbox` reflects it. */
     readonly changes: Stream.Stream<SandboxAccessChange>;
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<SandboxAccessChange>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/team/ThreadAccess") {}
 
@@ -154,11 +224,13 @@ export const layer = Layer.effect(
     const team = yield* TeamState.TeamState;
     const { cloudOnly } = yield* ServerConfig.ServerConfig;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    if (cloudOnly) yield* index.trackThreads;
     const roster: ThreadAccessRoster = {
       cloudOnly,
       serverOwnerId: team.ownerId,
       isActive: (memberId) => Ref.getUnsafe(team.members).get(memberId)?.removedAt === null,
     };
+    const caughtUp = index.lane.withPermits(1)(Effect.void);
     const allowsSandbox = (memberId: MemberId, sandboxId: SandboxId) =>
       sandboxAllows(roster, index.entries.get(sandboxId), memberId);
     const allowsThread = (memberId: MemberId, thread: ThreadAccessTarget) =>
@@ -175,6 +247,8 @@ export const layer = Layer.effect(
     ) {
       if (!cloudOnly) return;
       const thread = yield* projections.getThread(threadId);
+      // The read can see a commit the index has not yet observed.
+      yield* caughtUp;
       if (allowsThread(memberId, thread)) return;
       yield* Effect.logWarning("access_denied", {
         memberId,
@@ -198,11 +272,15 @@ export const layer = Layer.effect(
     });
 
     return ThreadAccess.of({
+      enforced: cloudOnly,
       allowsSandbox,
       allowsThread,
       assertThread,
       assertPath,
+      threadTarget: (threadId) => index.threads.get(threadId),
+      caughtUp,
       changes: index.changes,
+      subscribeChanges: index.subscribeChanges,
     });
   }),
 ).pipe(Layer.provide(layerIndex));

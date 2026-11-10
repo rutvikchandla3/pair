@@ -2002,6 +2002,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly snoozedUntilDay?: number;
       readonly ownerId?: MemberId;
       readonly followedBy?: MemberId;
+      readonly sandboxId?: SandboxId;
     }) =>
       Effect.gen(function* () {
         const payload: OrchestrationV2AppThread = {
@@ -2032,6 +2033,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           lastVisitedAt: null,
           deletedAt: null,
           ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
+          ...(input.sandboxId === undefined ? {} : { sandboxId: input.sandboxId }),
         };
         yield* store.apply({
           id: EventId.make(`event:older:${input.name}`),
@@ -2137,6 +2139,81 @@ it.effect("SQL list older settled threads below a cursor", () =>
         { projectId: ProjectId.make("project:b"), count: 1 },
       ],
     );
+
+    // A member's pages and counts hold only the threads they can open.
+    const bob = MemberId.make("member-bob");
+    const carol = MemberId.make("member-carol");
+    const machine = (name: string, hex: string, audience?: "members" | "team") => {
+      const sandboxId = SandboxId.make(`sbx_${hex.repeat(20)}`);
+      return store
+        .apply({
+          id: EventId.make(`event:older:machine:${name}`),
+          type: "sandbox.updated",
+          threadId: id(`owner-${name}`),
+          occurredAt: now,
+          payload: {
+            id: sandboxId,
+            projectId: ProjectId.make("project:cloud"),
+            ownerThreadId: id(`owner-${name}`),
+            ownerMemberId: alice,
+            driverId: ComputeDriverId.make("docker"),
+            size: "default",
+            state: "ready",
+            generation: 1,
+            driverRef: null,
+            admission: null,
+            runnerLostAt: null,
+            sleepReason: null,
+            failure: null,
+            ...(audience === undefined
+              ? {}
+              : { access: { audience, memberIds: [bob], updatedBy: alice, updatedAt: now } }),
+            createdAt: now,
+            updatedAt: now,
+          },
+        })
+        .pipe(Effect.as(sandboxId));
+    };
+    const shared = yield* machine("shared", "a", "members");
+    const team = yield* machine("team", "b", "team");
+    const legacy = yield* machine("legacy", "c");
+    const cloud = (name: string, settledDay: number, sandboxId?: SandboxId) =>
+      createThread({
+        name,
+        settledDay,
+        project: "project:cloud",
+        ownerId: alice,
+        ...(sandboxId === undefined ? {} : { sandboxId }),
+      });
+    yield* cloud("shared-1", 9, shared);
+    yield* cloud("team", 8, team);
+    yield* cloud("shared-2", 7, shared);
+    yield* cloud("legacy", 7, legacy);
+    yield* cloud("local-alice", 6);
+    yield* cloud("unknown-machine", 6, SandboxId.make("sbx_dddddddddddddddddddd"));
+    const page = (memberId: MemberId, after: readonly [number, string] | null, limit: number) =>
+      store.listOlderSettledThreads({
+        before:
+          after === null
+            ? before
+            : { settledAt: DateTime.formatIso(at(after[0])), threadId: id(after[1]) },
+        projectIds: [ProjectId.make("project:cloud")],
+        limit,
+        visibleTo: memberId,
+      });
+    const pageIds = (memberId: MemberId, after: readonly [number, string] | null) =>
+      page(memberId, after, 2).pipe(Effect.map((listing) => listing.threadIds));
+    assert.deepEqual(yield* pageIds(bob, null), [id("shared-1"), id("team")]);
+    assert.deepEqual(yield* pageIds(bob, [8, "team"]), [id("legacy"), id("shared-2")]);
+    assert.deepEqual(yield* pageIds(bob, [7, "shared-2"]), []);
+    assert.deepEqual(yield* pageIds(carol, null), [id("team"), id("legacy")]);
+    assert.deepEqual(yield* pageIds(carol, [7, "legacy"]), []);
+    const countFor = (memberId: MemberId) =>
+      page(memberId, null, 0).pipe(Effect.map((listing) => listing.counts));
+    const cloudCount = (count: number) => [{ projectId: ProjectId.make("project:cloud"), count }];
+    assert.deepEqual(yield* countFor(alice), cloudCount(6));
+    assert.deepEqual(yield* countFor(bob), cloudCount(4));
+    assert.deepEqual(yield* countFor(carol), cloudCount(2));
   }).pipe(Effect.provide(layerTest)),
 );
 

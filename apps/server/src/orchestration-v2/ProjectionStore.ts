@@ -82,6 +82,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   MemberId,
+  SandboxId as SandboxIdSchema,
   ThreadMemberState,
 } from "@t3tools/contracts";
 import {
@@ -103,6 +104,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import * as SandboxProjection from "../sandbox/lifecycle/SandboxProjection.ts";
+import { threadAllowsSql } from "../team/threadAccessSql.ts";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
@@ -455,6 +457,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "pinnedAt"
   | "snoozedUntil"
   | "ownerId"
+  | "sandboxId"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -468,6 +471,8 @@ export interface OlderSettledThreadsQuery {
   readonly ownerId?: MemberId | undefined;
   /** For `limit: 0`, also count this member's threads (held or followed) into `ownCounts`. */
   readonly ownCountsFor?: MemberId | undefined;
+  /** Cloud-only servers: only threads this member may open, in pages and counts alike. */
+  readonly visibleTo?: MemberId | undefined;
 }
 
 export interface OlderSettledThreadsListing {
@@ -7557,6 +7562,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly pinned_at: string | null;
         readonly snoozed_until: string | null;
         readonly owner_id: string | null;
+        readonly sandbox_id: string | null;
         readonly may_be_live: number;
       }>`
         SELECT
@@ -7569,6 +7575,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.ownerId') AS owner_id,
+          json_extract(t.payload_json, '$.sandboxId') AS sandbox_id,
           -- Pinned or snoozed by the holder or by any member.
           (
             SELECT MIN(pinned_at) FROM (
@@ -7646,6 +7653,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         ownerId: row.owner_id === null ? null : MemberId.make(row.owner_id),
+        ...(row.sandbox_id === null ? {} : { sandboxId: SandboxIdSchema.make(row.sandbox_id) }),
         mayBeLive: row.may_be_live === 1,
       }));
     }, Effect.mapError(shellSnapshotReadError));
@@ -7676,9 +7684,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
-    )(function* ({ before, projectIds, limit, ownerId, ownCountsFor }) {
+    )(function* ({ before, projectIds, limit, ownerId, ownCountsFor, visibleTo }) {
       const serverOwner =
-        ownerId === undefined && ownCountsFor === undefined ? null : yield* serverOwnerId;
+        ownerId === undefined && ownCountsFor === undefined && visibleTo === undefined
+          ? null
+          : yield* serverOwnerId;
       // A member's threads are those they hold and those they follow.
       const isMine = (memberId: MemberId) => sql`(
         COALESCE(json_extract(t.payload_json, '$.ownerId'), ${serverOwner}) = ${memberId}
@@ -7701,7 +7711,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
-          }${ownerId === undefined ? sql`` : sql` AND ${isMine(ownerId)}`}
+          }${ownerId === undefined ? sql`` : sql` AND ${isMine(ownerId)}`}${
+            visibleTo === undefined
+              ? sql``
+              : sql` AND ${threadAllowsSql(sql, "t", visibleTo, serverOwner)}`
+          }
       `;
       const belowCursor =
         before.threadId === undefined

@@ -31,6 +31,7 @@ import {
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import {
+  assertViewerThread,
   makeThreadEventView,
   makeThreadViewers,
   olderSettledReaderOf,
@@ -49,11 +50,13 @@ const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,
 );
 
+const isNotFoundTag = (error: unknown) =>
+  Predicate.hasProperty(error, "_tag") && error._tag === "ProjectionStoreThreadNotFoundError";
+
+/** A missing thread, either as the read reports it or as an access refusal does. */
 function isThreadNotFound(error: unknown): boolean {
   return (
-    Predicate.hasProperty(error, "cause") &&
-    Predicate.hasProperty(error.cause, "_tag") &&
-    error.cause._tag === "ProjectionStoreThreadNotFoundError"
+    isNotFoundTag(error) || (Predicate.hasProperty(error, "cause") && isNotFoundTag(error.cause))
   );
 }
 
@@ -103,6 +106,7 @@ export const layer = HttpApiBuilder.group(
         listProjects: projectStore.listShells(),
         latestSequence: applicationEvents.latestApplicationSequence,
         options: { ...options, olderSettledReader: yield* olderSettledReaderOf(viewer) },
+        access: viewer?.access,
       });
       const projects = yield* enrichProjectShells(snapshot.projects);
       const threads = yield* overlayForViewer(viewer, snapshot.threads);
@@ -130,7 +134,8 @@ export const layer = HttpApiBuilder.group(
         | "orchestration_thread_bounded_snapshot_failed"
         | "orchestration_thread_history_failed",
     ) {
-      return yield* threadManagement.getThreadSnapshot(threadId).pipe(
+      return yield* assertViewerThread(viewer, threadId).pipe(
+        Effect.andThen(threadManagement.getThreadSnapshot(threadId)),
         Effect.flatMap((snapshot) => viewSnapshot(viewer, snapshot)),
         Effect.catch(
           Effect.fnUntraced(function* (error) {
@@ -155,28 +160,29 @@ export const layer = HttpApiBuilder.group(
         >[1]["anchorThreadId"],
         deferWork = false,
       ) {
-        return yield* threadManagement
-          .getThreadSnapshotWindow(threadId, {
-            rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-            deferWork,
-            userTurnLimit:
-              anchorItemId === undefined
-                ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
-                : OLDER_THREAD_USER_TURN_LIMIT,
-            ...(anchorItemId === undefined ? {} : { anchorItemId }),
-            ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
-          })
-          .pipe(
-            Effect.flatMap((snapshot) => viewSnapshot(viewer, snapshot)),
-            Effect.catch(
-              Effect.fnUntraced(function* (error) {
-                if (isThreadNotFound(error)) {
-                  return yield* failEnvironmentNotFound("thread_not_found");
-                }
-                return yield* failEnvironmentInternal("orchestration_thread_history_failed", error);
-              }),
-            ),
-          );
+        return yield* assertViewerThread(viewer, threadId).pipe(
+          Effect.andThen(
+            threadManagement.getThreadSnapshotWindow(threadId, {
+              rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+              deferWork,
+              userTurnLimit:
+                anchorItemId === undefined
+                  ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
+                  : OLDER_THREAD_USER_TURN_LIMIT,
+              ...(anchorItemId === undefined ? {} : { anchorItemId }),
+              ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
+            }),
+          ),
+          Effect.flatMap((snapshot) => viewSnapshot(viewer, snapshot)),
+          Effect.catch(
+            Effect.fnUntraced(function* (error) {
+              if (isThreadNotFound(error)) {
+                return yield* failEnvironmentNotFound("thread_not_found");
+              }
+              return yield* failEnvironmentInternal("orchestration_thread_history_failed", error);
+            }),
+          ),
+        );
       },
     );
 
@@ -217,8 +223,9 @@ export const layer = HttpApiBuilder.group(
         "threadTranscript",
         Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* assertViewerThread(viewers(session.memberId), args.params.threadId).pipe(
+            Effect.andThen(threadManagement.getThreadTranscript(args.params.threadId)),
             Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
             traceLocalHandlerWork,
             Effect.catch(
@@ -269,7 +276,7 @@ export const layer = HttpApiBuilder.group(
         "threadHistoryPage",
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           const decoded = Result.try(() => decodeThreadHistoryCursor(args.query.cursor));
           if (Result.isFailure(decoded)) {
             const cause = decoded.failure;
@@ -277,34 +284,32 @@ export const layer = HttpApiBuilder.group(
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }
-          return yield* threadManagement
-            .getThreadHistoryPage(
-              args.params.threadId,
-              args.query.cursor,
-              args.query.throughEntryId,
-              args.query.view === "conversation",
-              args.query.view === "work"
-                ? "work"
-                : args.query.deferWork === "1"
-                  ? "deferred"
-                  : undefined,
-            )
-            .pipe(
-              Effect.map((page) =>
-                args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
+          return yield* assertViewerThread(viewers(session.memberId), args.params.threadId).pipe(
+            Effect.andThen(
+              threadManagement.getThreadHistoryPage(
+                args.params.threadId,
+                args.query.cursor,
+                args.query.throughEntryId,
+                args.query.view === "conversation",
+                args.query.view === "work"
+                  ? "work"
+                  : args.query.deferWork === "1"
+                    ? "deferred"
+                    : undefined,
               ),
-              traceLocalHandlerWork,
-              Effect.catch(
-                Effect.fnUntraced(function* (cause) {
-                  if (isThreadNotFound(cause))
-                    return yield* failEnvironmentNotFound("thread_not_found");
-                  return yield* failEnvironmentInternal(
-                    "orchestration_thread_history_failed",
-                    cause,
-                  );
-                }),
-              ),
-            );
+            ),
+            Effect.map((page) =>
+              args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
+            ),
+            traceLocalHandlerWork,
+            Effect.catch(
+              Effect.fnUntraced(function* (cause) {
+                if (isThreadNotFound(cause))
+                  return yield* failEnvironmentNotFound("thread_not_found");
+                return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
+              }),
+            ),
+          );
         }),
       );
   }),

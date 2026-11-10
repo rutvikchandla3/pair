@@ -6,6 +6,7 @@ import {
   OrchestrationV2DomainEventJson,
   type OrchestrationV2DomainEvent,
   OrchestrationV2ThreadShellJson,
+  SandboxId,
   ThreadId,
   type ThreadMemberState,
 } from "@t3tools/contracts";
@@ -13,8 +14,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import type { ThreadAccessTarget } from "../team/ThreadAccess.ts";
 import { EMPTY_MEMBER_STATE } from "./MemberThreadState.ts";
-import { makeThreadEventView, overlayForViewer, type ThreadViewer } from "./MemberThreadView.ts";
+import {
+  makeThreadEventView,
+  overlayForViewer,
+  type ThreadViewer,
+  type ViewerAccess,
+} from "./MemberThreadView.ts";
 import { isOtherMembersShellEvent } from "./ShellStream.ts";
 
 const owner = MemberId.make("member-owner");
@@ -89,6 +96,36 @@ const viewerWith = (
   readFollowedThreadIds: Effect.succeed(new Set()),
 });
 
+const machine = SandboxId.make("sbx_aaaaaaaaaaaaaaaaaaaa");
+const machineJson = { ...shellJson("thread-machine"), ownerId: alice, sandboxId: machine };
+const machineThread = decodeShell(machineJson);
+const machinePinned = decodeEvent({
+  id: "event-pin-machine",
+  type: "thread.pinned",
+  threadId: "thread-machine",
+  occurredAt: alicesPin,
+  payload: { ...machineJson, pinnedAt: alicesPin, lastSnoozeWakeAt: null },
+});
+/** Threads without a machine, and those on the machines in `opens`. */
+const accessTo = (opens: ReadonlyArray<SandboxId>): ViewerAccess => {
+  const allows = (thread: ThreadAccessTarget) =>
+    thread.sandboxId === undefined || opens.includes(thread.sandboxId);
+  return {
+    allows,
+    allowsSandbox: (sandboxId) => opens.includes(sandboxId),
+    allowsThreadId: () => false,
+    mayAllowThreadId: () => true,
+    affectedBy: () => true,
+    caughtUp: Effect.void,
+    assertThread: () => Effect.void,
+    subscribeChanges: Effect.die("unused"),
+  };
+};
+const withAccess = (viewer: ThreadViewer, opens: ReadonlyArray<SandboxId>): ThreadViewer => ({
+  ...viewer,
+  access: accessTo(opens),
+});
+
 const pinned = (memberId?: MemberId, pinnedAt = alicesPin): OrchestrationV2DomainEvent =>
   decodeEvent({
     id: `event-pin-${memberId ?? "holder"}`,
@@ -158,6 +195,28 @@ describe("overlayForViewer", () => {
       assert.deepEqual(reads, []);
     }),
   );
+
+  it.effect("drops the threads the viewer may not open, holder or not", () =>
+    Effect.gen(function* () {
+      const reads: Array<ReadonlyArray<ThreadId>> = [];
+      const rows = [ownersThread, machineThread];
+      const ids = (viewed: ReadonlyArray<{ readonly id: ThreadId }>) => viewed.map(({ id }) => id);
+      const plainBob = viewerWith(bob, new Map(), reads);
+      assert.deepEqual(ids(yield* overlayForViewer(withAccess(plainBob, []), rows)), [
+        ownersThread.id,
+      ]);
+      assert.deepEqual(
+        ids(yield* overlayForViewer(withAccess(plainBob, [machine]), rows)),
+        ids(rows),
+      );
+      // The rule names no holder: the machine's own thread owner is refused when it says so.
+      const alices = withAccess(viewerWith(alice, new Map(), reads), []);
+      assert.deepEqual(ids(yield* overlayForViewer(alices, [machineThread])), []);
+      // A viewer without rules (a server that is not cloud-only) and a guest see every row.
+      assert.deepEqual(ids(yield* overlayForViewer(plainBob, rows)), ids(rows));
+      assert.strictEqual(yield* overlayForViewer(null, rows), rows);
+    }),
+  );
 });
 
 describe("makeThreadEventView", () => {
@@ -183,6 +242,17 @@ describe("makeThreadEventView", () => {
       const own = yield* view.event(pinned(alice, "2026-10-04T00:00:00.000Z"));
       assert.isTrue(own !== null && !("member" in own));
       assert.deepEqual(reads, [[ownersThread.id]]);
+    }),
+  );
+
+  it.effect("gives no event of a thread the viewer may not open", () =>
+    Effect.gen(function* () {
+      const plainBob = viewerWith(bob, new Map(), []);
+      const refused = makeThreadEventView(withAccess(plainBob, []), machineThread.id);
+      assert.isNull(yield* refused.event(machinePinned));
+      const allowed = makeThreadEventView(withAccess(plainBob, [machine]), machineThread.id);
+      assert.isNotNull(yield* allowed.event(machinePinned));
+      assert.isNotNull(yield* makeThreadEventView(plainBob, machineThread.id).event(machinePinned));
     }),
   );
 

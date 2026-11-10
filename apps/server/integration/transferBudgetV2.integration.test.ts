@@ -22,6 +22,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2GetThreadProjectionError,
+  ThreadAccessRevoked,
   OrchestrationV2GetShellSnapshotError,
   ProviderDriverKind,
   type OrchestrationV2ThreadStreamItem,
@@ -173,7 +174,7 @@ const group = RpcGroup.make(
   Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
     payload: OrchestrationV2RpcSchemas.subscribeThread.input,
     success: OrchestrationV2RpcSchemas.subscribeThread.output,
-    error: OrchestrationV2GetThreadProjectionError,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, ThreadAccessRevoked]),
     stream: true,
   }),
   Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {

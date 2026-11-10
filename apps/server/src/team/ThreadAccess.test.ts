@@ -17,7 +17,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -123,8 +125,11 @@ const layerConfig = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-/** `published` gets what the index said of `bob` as each access change reached publication. */
-const makeLayer = (published: Array<boolean>) => {
+/**
+ * `published` gets what the index said of `bob` as each access change reached publication.
+ * `threadRead` runs after each thread `ThreadAccess` reads.
+ */
+const makeLayer = (published: Array<boolean>, threadRead: Effect.Effect<void> = Effect.void) => {
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerStores = Layer.merge(
     // Every stream reads from publication, so access must already apply there.
@@ -147,7 +152,7 @@ const makeLayer = (published: Array<boolean>) => {
             }),
         });
       }),
-    ).pipe(Layer.provide(Layer.merge(EventStore.layer, ThreadAccess.layerIndex))),
+    ).pipe(Layer.provideMerge(Layer.merge(EventStore.layer, ThreadAccess.layerIndex))),
     ProjectionStore.layer,
   ).pipe(Layer.provideMerge(layerDatabase));
   return Layer.mergeAll(
@@ -163,6 +168,15 @@ const makeLayer = (published: Array<boolean>) => {
             member(carol),
             member(erin, { role: "admin" }),
           ]),
+          Layer.effect(
+            ProjectionStore.ProjectionStoreV2,
+            Effect.map(ProjectionStore.ProjectionStoreV2, (store) =>
+              ProjectionStore.ProjectionStoreV2.of({
+                ...store,
+                getThread: (threadId) => store.getThread(threadId).pipe(Effect.tap(threadRead)),
+              }),
+            ),
+          ),
         ),
       ),
     ),
@@ -313,6 +327,33 @@ describe("ThreadAccess", () => {
       }
     }).pipe(Effect.provide(makeLayer(published)));
   });
+
+  it.effect("waits for a commit its read already saw before checking", () =>
+    Effect.gen(function* () {
+      const read = yield* Deferred.make<void>();
+      return yield* Effect.gen(function* () {
+        const access = yield* ThreadAccess.ThreadAccess;
+        const index = yield* ThreadAccess.ThreadAccessIndex;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        yield* seed;
+        // As `EventSink` does: the lane is held from before COMMIT until the index has the commit.
+        yield* index.lane.take(1);
+        const event: OrchestrationV2DomainEvent = {
+          ...at("gap"),
+          type: "sandbox.updated",
+          payload: record(sandboxId, members([bob])),
+        };
+        yield* projections.apply(event);
+        const check = yield* access
+          .assertThread(bob, ownerThreadId)
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(read);
+        yield* index.observeCommitted([{ sequence: 10, commandId: null, event }]);
+        yield* index.lane.release(1);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(check)));
+      }).pipe(Effect.provide(makeLayer([], Deferred.succeed(read, undefined).pipe(Effect.asVoid))));
+    }),
+  );
 
   it.effect("loads every machine at startup, a record from before access as team", () =>
     Effect.gen(function* () {

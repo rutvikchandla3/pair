@@ -22,9 +22,11 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ThreadAccessRevoked,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type SandboxAccessChange,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -35,7 +37,10 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -49,8 +54,12 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadAccess from "../team/ThreadAccess.ts";
 import * as TeamState from "../team/TeamState.ts";
+import type { ThreadViewer, ViewerAccess } from "./MemberThreadView.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import { encodeThreadHistoryCursor } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
@@ -84,7 +93,15 @@ const management = Layer.unwrap(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     return Layer.mock(ThreadManagementService.ThreadManagementService)({
       ensureLegacyTranscript: () => Effect.void,
-      getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
+      // As the orchestrator reports it, so a refusal can be compared with a missing thread.
+      getThreadSnapshot: (id) =>
+        projections
+          .getThreadSnapshot(id)
+          .pipe(
+            Effect.mapError(
+              (cause) => new Orchestrator.OrchestratorProjectionError({ threadId: id, cause }),
+            ),
+          ),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
       getThreadHistoryPage: (id, cursor, throughEntryId, conversationOnly) =>
@@ -92,7 +109,11 @@ const management = Layer.unwrap(
           .getThreadHistoryPage(id, cursor, throughEntryId, conversationOnly)
           .pipe(Effect.orDie),
       streamStoredEventsFrom: (input) =>
-        input?.threadId === BODIES ? Stream.fromIterable(bodiesLiveTail()) : Stream.empty,
+        input?.threadId === BODIES
+          ? Stream.fromIterable(bodiesLiveTail())
+          : input?.threadId === PARENT
+            ? Stream.never
+            : Stream.empty,
     });
   }),
 );
@@ -405,13 +426,21 @@ const TestLayer = Layer.mergeAll(
   Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
 ).pipe(Layer.provideMerge(store));
 
-const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<A>) =>
+const withHttp = <A>(
+  use: (get: (path: string) => Promise<Response>) => Promise<A>,
+  access: Layer.Layer<
+    ThreadAccess.ThreadAccess,
+    never,
+    ProjectionStore.ProjectionStoreV2
+  > | null = null,
+) =>
   Effect.gen(function* () {
     const context = yield* Effect.context<Layer.Success<typeof TestLayer>>();
     const appLayer = HttpApiBuilder.layer(OrchestrationApi).pipe(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(auth),
       Layer.provide(TeamState.layerTest()),
+      Layer.provide(access ?? Layer.empty),
       Layer.provide(Layer.succeedContext(context)),
       Layer.provide(NodeHttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
@@ -650,6 +679,157 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
             ]);
           }
         }),
+    );
+  });
+
+  describe("access on a cloud-only server", () => {
+    const member = MemberId.make("member-owner");
+    const MISSING = ThreadId.make("thread:compact-transport:missing");
+    const notFound = (threadId: ThreadId) =>
+      Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }));
+    /** `state.open` says whether the member may open the thread now. */
+    const viewerWith = (
+      state: { open: boolean },
+      changes: PubSub.PubSub<SandboxAccessChange>,
+    ): ThreadViewer => {
+      const access: ViewerAccess = {
+        allows: () => state.open,
+        allowsSandbox: () => state.open,
+        allowsThreadId: () => state.open,
+        mayAllowThreadId: () => state.open,
+        affectedBy: (change) => change.removed.includes(member) || change.added.includes(member),
+        caughtUp: Effect.void,
+        assertThread: (threadId) => (state.open ? Effect.void : notFound(threadId)),
+        subscribeChanges: PubSub.subscribe(changes),
+      };
+      return {
+        memberId: member,
+        serverOwnerId: member,
+        isTeamMode: Effect.succeed(true),
+        readMemberStates: () => Effect.succeed(new Map()),
+        readFollowedThreadIds: Effect.succeed(new Set()),
+        access,
+      };
+    };
+    const removal = (memberId: MemberId): SandboxAccessChange => ({
+      sandboxId: "sbx_0123456789abcdef0123" as SandboxAccessChange["sandboxId"],
+      access: {
+        audience: "members",
+        memberIds: [],
+        updatedBy: null,
+        updatedAt: DateTime.makeUnsafe(0),
+      },
+      added: [],
+      removed: [memberId],
+      audienceChanged: false,
+      actorId: null,
+    });
+    const failureOf = (input: Parameters<typeof subscribeOrchestrationV2Thread>[0]) =>
+      subscribeOrchestrationV2Thread(input).pipe(
+        Effect.flip,
+        Effect.map((error) => ({
+          tag: error._tag,
+          message: error.message.replace(input.threadId, "<id>"),
+          cause: [error.cause, (error.cause as { readonly cause?: unknown })?.cause].map(
+            (cause) => (cause as { readonly _tag?: string } | undefined)?._tag,
+          ),
+        })),
+      );
+
+    it.effect("WS: a refused thread fails as a missing one does", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+          const refused = viewerWith({ open: false }, changes);
+          const missing = yield* failureOf({ threadId: MISSING });
+          assert.deepStrictEqual(yield* failureOf({ threadId: PARENT, viewer: refused }), missing);
+          assert.deepStrictEqual(missing.cause, [
+            "OrchestratorProjectionError",
+            "ProjectionStoreThreadNotFoundError",
+          ]);
+          // Resuming from 0 replays nothing and stays open, as it does for a missing thread.
+          const resumed = yield* subscribeOrchestrationV2Thread({
+            threadId: PARENT,
+            afterSequence: 0,
+            requestCompletionMarker: true,
+            viewer: refused,
+          }).pipe(Effect.flatMap((stream) => Stream.runCollect(Stream.take(stream, 1))));
+          assert.deepStrictEqual(Array.from(resumed), [{ kind: "synchronized" }]);
+        }),
+      ),
+    );
+
+    it.effect("WS: losing access mid-stream ends the stream with ThreadAccessRevoked", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+          const state = { open: true };
+          const items = yield* Queue.unbounded<{ readonly kind: string }>();
+          const stream = yield* subscribeOrchestrationV2Thread({
+            threadId: PARENT,
+            viewer: viewerWith(state, changes),
+          });
+          const ended = yield* stream.pipe(
+            Stream.runForEach((item) => Queue.offer(items, item)),
+            Effect.flip,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          assert.strictEqual((yield* Queue.take(items)).kind, "snapshot");
+          state.open = false;
+          yield* PubSub.publish(changes, removal(member));
+          const error = yield* Fiber.join(ended);
+          assert.instanceOf(error, ThreadAccessRevoked);
+          assert.strictEqual(error.threadId, PARENT);
+        }),
+      ),
+    );
+
+    it.effect("HTTP: every read of a refused thread answers as a missing thread does", () =>
+      withHttp(
+        async (get) => {
+          const cursor = encodeURIComponent(
+            encodeThreadHistoryCursor({
+              snapshotSequence: 1,
+              sourceThreadId: LONG,
+              sourceItemId: "item",
+              position: 1,
+            }),
+          );
+          const read = async (threadId: ThreadId, suffix: string) => {
+            const response = await get(
+              `/api/orchestration/threads/${encodeURIComponent(threadId)}${suffix}`,
+            );
+            const { traceId: _traceId, ...body } = JSON.parse(await response.text());
+            return [response.status, body] as const;
+          };
+          for (const suffix of ["", "/bounded", "/transcript", `/history?cursor=${cursor}`]) {
+            const [status, body] = await read(LONG, suffix);
+            assert.strictEqual(status, 404, suffix);
+            assert.deepStrictEqual([status, body], await read(MISSING, suffix), suffix);
+          }
+          assert.strictEqual((await read(FORK, "/bounded"))[0], 200);
+        },
+        Layer.effect(
+          ThreadAccess.ThreadAccess,
+          Effect.gen(function* () {
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
+            return ThreadAccess.ThreadAccess.of({
+              enforced: true,
+              allowsSandbox: () => true,
+              allowsThread: () => true,
+              assertThread: (_memberId, threadId) =>
+                projections
+                  .getThread(threadId)
+                  .pipe(Effect.andThen(threadId === LONG ? notFound(threadId) : Effect.void)),
+              assertPath: () => Effect.void,
+              threadTarget: () => undefined,
+              caughtUp: Effect.void,
+              changes: Stream.empty,
+              subscribeChanges: Effect.die("unused"),
+            });
+          }),
+        ),
+      ),
     );
   });
 });

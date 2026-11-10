@@ -280,6 +280,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2CommandOutputError,
   OrchestrationV2GetThreadProjectionError,
+  ThreadAccessRevoked,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
@@ -2081,7 +2082,11 @@ const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.
 const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
   payload: OrchestrationV2RpcSchemas.subscribeThread.input,
   success: OrchestrationV2RpcSchemas.subscribeThread.output,
-  error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    OrchestrationV2GetThreadProjectionError,
+    ThreadAccessRevoked,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 

@@ -34,7 +34,8 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
-import { holderOf, isMemberThreadEvent } from "./MemberThreadState.ts";
+import { holderOf, isMemberThreadEvent, isThreadPayloadEvent } from "./MemberThreadState.ts";
+import type { ViewerAccess } from "./MemberThreadView.ts";
 import type { ActiveShellIndexEntry } from "./ProjectionStore.ts";
 import type { SandboxThreadRow } from "../sandbox/lifecycle/SandboxProjection.ts";
 
@@ -338,26 +339,40 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E4>;
     readonly latestSequence: Effect.Effect<number, E5>;
     readonly options: ShellSubscriberOptions;
+    /** The viewer's access on a cloud-only server. Trims and counts see only what it allows. */
+    readonly access?: ViewerAccess | undefined;
   }) {
+    const { access } = input;
     const trims = input.options.omitIdleSubagents || input.options.omitOlderSettled;
     const read = yield* input.sql
       .withTransaction(
         Effect.gen(function* () {
-          const index = trims ? yield* input.listShellIndex : null;
+          const listed = trims ? yield* input.listShellIndex : null;
+          // After the first read fixes the snapshot, so access reflects every commit it shows.
+          // Publishing never reads the database, so waiting here cannot deadlock.
+          if (listed !== null && access !== undefined) yield* access.caughtUp;
+          const index =
+            listed === null || access === undefined ? listed : listed.filter(access.allows);
+          const decodeThreads = yield* input.readThreads(
+            index === null ? undefined : shellSubscriberThreadIds(index, input.options),
+          );
+          if (listed === null && access !== undefined) yield* access.caughtUp;
           return {
             index,
-            decodeThreads: yield* input.readThreads(
-              index === null ? undefined : shellSubscriberThreadIds(index, input.options),
-            ),
+            decodeThreads,
             projects: yield* input.listProjects,
             snapshotSequence: yield* input.latestSequence,
           };
         }),
       )
       .pipe(NodeSqliteClient.readOnly);
+    const decoded = yield* read.decodeThreads;
     const base = buildActiveShellSnapshot({
       projects: read.projects,
-      threads: yield* read.decodeThreads,
+      threads:
+        access === undefined
+          ? decoded
+          : { ...decoded, threads: decoded.threads.filter(access.allows) },
       snapshotSequence: read.snapshotSequence,
     });
     const facts = shellTrimFacts(
@@ -454,6 +469,8 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId"> & {
         /** Set on `sandbox.updated`, whose summary every thread sharing the machine shows. */
         readonly sandboxId?: SandboxId;
+        /** Set on `sandbox.access-changed`: a thread the viewer can no longer open is removed. */
+        readonly accessChanged?: true;
       };
     };
 
@@ -495,22 +512,40 @@ export function isOtherMembersShellEvent(
   );
 }
 
+/**
+ * Whether an event can change what this viewer's shell shows. Runs for every event, so it only
+ * reads maps; the shell read after it decides, so an index that lags here costs nothing.
+ */
+export function mayShowShellEvent(stored: ApplicationStoredEvent, access: ViewerAccess): boolean {
+  if ("aggregateKind" in stored) return true;
+  const { event } = stored;
+  if (event.type === "sandbox.access-changed") return access.affectedBy(event.payload);
+  if (event.type === "sandbox.updated") return access.allowsSandbox(event.payload.id);
+  return isThreadPayloadEvent(event)
+    ? access.allows(event.payload)
+    : access.mayAllowThreadId(event.threadId);
+}
+
 /** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
-  return "aggregateKind" in stored
-    ? {
-        aggregateKind: stored.aggregateKind,
-        aggregateId: stored.aggregateId,
-        type: stored.type,
-        sequence: stored.sequence,
-      }
-    : {
-        sequence: stored.sequence,
-        event:
-          stored.event.type === "sandbox.updated"
-            ? { threadId: stored.event.threadId, sandboxId: stored.event.payload.id }
-            : { threadId: stored.event.threadId },
-      };
+  if ("aggregateKind" in stored) {
+    return {
+      aggregateKind: stored.aggregateKind,
+      aggregateId: stored.aggregateId,
+      type: stored.type,
+      sequence: stored.sequence,
+    };
+  }
+  const { event } = stored;
+  return {
+    sequence: stored.sequence,
+    event:
+      event.type === "sandbox.updated"
+        ? { threadId: event.threadId, sandboxId: event.payload.id }
+        : event.type === "sandbox.access-changed"
+          ? { threadId: event.threadId, sandboxId: event.payload.sandboxId, accessChanged: true }
+          : { threadId: event.threadId },
+  };
 }
 
 /** A machine change re-sends the shell of every unarchived thread using it: side chats and forks. */
@@ -526,7 +561,15 @@ export function expandSandboxShellEvents(
       ...attached.flatMap((row) =>
         row.archived || row.threadId === stored.event.threadId
           ? []
-          : [{ sequence: stored.sequence, event: { threadId: row.threadId } }],
+          : [
+              {
+                sequence: stored.sequence,
+                event:
+                  stored.event.accessChanged === true
+                    ? { threadId: row.threadId, accessChanged: true as const }
+                    : { threadId: row.threadId },
+              },
+            ],
       ),
     ];
   });
@@ -746,6 +789,39 @@ export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamIt
       ),
     );
   });
+}
+
+/**
+ * A thread item for a viewer with access rules, read after `caughtUp`. A thread the viewer cannot
+ * open is sent nothing, unless an access change in the batch may have taken it away.
+ */
+export function shellStreamItemForViewer(input: {
+  readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
+  readonly shell: OrchestrationV2ThreadShell | null;
+  readonly access: ViewerAccess;
+  readonly accessChangedThreadIds: ReadonlySet<ThreadId>;
+}): ReturnType<typeof shellStreamItemFromThreadShell> | null {
+  const { shell, access, stored } = input;
+  const threadId = stored.event.threadId;
+  if (shell === null ? access.allowsThreadId(threadId) : access.allows(shell)) {
+    return shellStreamItemFromThreadShell(input);
+  }
+  return input.accessChangedThreadIds.has(threadId)
+    ? { kind: "thread.removed", sequence: stored.sequence, location: "active", threadId }
+    : null;
+}
+
+/** Threads an access change in this batch may have taken from the viewer, before coalescing. */
+export function accessChangedThreadIds(
+  events: ReadonlyArray<ShellApplicationEvent>,
+): ReadonlySet<ThreadId> {
+  const threadIds = new Set<ThreadId>();
+  for (const stored of events) {
+    if (!("aggregateKind" in stored) && stored.event.accessChanged === true) {
+      threadIds.add(stored.event.threadId);
+    }
+  }
+  return threadIds;
 }
 
 export function shellStreamItemFromThreadShell(input: {
