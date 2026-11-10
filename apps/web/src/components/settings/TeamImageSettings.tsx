@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import {
   squashAtomCommandFailure,
@@ -17,22 +17,27 @@ import {
   type ServerSettingsPatch,
   type TeamImageBuild,
   type TeamImageBuildId,
+  type TeamImageProposal,
+  type TeamImageProposalId,
   type TeamImageRecipe,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { AsyncResult } from "effect/reactivity";
+import { useNavigate } from "@tanstack/react-router";
 import { InfoIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
-import { useProjects } from "~/state/entities";
+import { useProjects, useThreadShell } from "~/state/entities";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { teamImageEnvironment } from "~/state/teamImage";
 import { useTeamMembers } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { cn } from "~/lib/utils";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { toastCommandFailure } from "../team/toastCommandFailure";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -58,6 +63,7 @@ import {
   draftFromRecipe,
   EDIT_WITH_AGENT_PROMPT,
   fixWithAgentPrompt,
+  installDiff,
   npmTokenWarning,
   RECIPE_CHANGED_MESSAGE,
   recipeChanges,
@@ -87,6 +93,8 @@ interface Edit {
   /** The revision the editor started from; a save names it. */
   readonly baseRevision: number | null;
   readonly draft: TeamImageDraft;
+  /** An accepted proposal that this edit's save closes. */
+  readonly acceptsProposalId?: TeamImageProposalId;
 }
 
 function isRecipeChangedFailure(result: AtomCommandResult<unknown, unknown>): boolean {
@@ -129,11 +137,15 @@ export function TeamImageSettings({
     reportFailure: false,
   });
   const readRecipe = useAtomCommand(teamImageEnvironment.readRecipe, { reportFailure: false });
+  const dismissProposal = useAtomCommand(teamImageEnvironment.dismissProposal, {
+    reportFailure: false,
+  });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
   const [edit, setEdit] = useState<Edit | null>(null);
   const [conflict, setConflict] = useState(false);
   const [openLog, setOpenLog] = useState<TeamImageBuildId | null>(null);
+  const [openProposal, setOpenProposal] = useState<TeamImageProposalId | null>(null);
   const [busy, setBusy] = useState(false);
 
   const projects = allProjects.filter(
@@ -152,6 +164,8 @@ export function TeamImageSettings({
   const savedRevision = saved?.revision ?? null;
   const savedRecipe = saved?.recipe ?? EMPTY_RECIPE;
   const builds = snapshot?.builds ?? [];
+  const proposals = snapshot?.proposals ?? [];
+  const accepting = proposals.find((proposal) => proposal.id === edit?.acceptsProposalId) ?? null;
   const active = builds.find((build) => build.id === snapshot?.activeBuildId) ?? null;
   const activeNumber = active?.number ?? null;
   const presentations = new Map(
@@ -187,8 +201,28 @@ export function TeamImageSettings({
     setEdit({
       baseRevision: edit?.baseRevision ?? savedRevision,
       draft: { ...draft, ...patch },
+      ...(edit?.acceptsProposalId === undefined
+        ? {}
+        : { acceptsProposalId: edit.acceptsProposalId }),
     });
     setConflict(false);
+  };
+
+  const acceptProposal = (proposal: TeamImageProposal) => {
+    setEdit({
+      baseRevision: edit?.baseRevision ?? savedRevision,
+      draft: { ...draft, install: proposal.install },
+      acceptsProposalId: proposal.id,
+    });
+    setConflict(false);
+    setOpenProposal(null);
+    toastManager.add(
+      stackedThreadToast({
+        type: "info",
+        title: "The proposal is in the editor",
+        description: "Save it to use it. Saving closes the proposal.",
+      }),
+    );
   };
 
   const reload = () => {
@@ -209,7 +243,13 @@ export function TeamImageSettings({
 
   const submit = async (andBuild: boolean) => {
     if (edit === null || parsed?.ok !== true) return;
-    const input = { baseRevision: edit.baseRevision, recipe: parsed.recipe };
+    const input = {
+      baseRevision: edit.baseRevision,
+      recipe: parsed.recipe,
+      ...(edit.acceptsProposalId === undefined
+        ? {}
+        : { acceptsProposalId: edit.acceptsProposalId }),
+    };
     setBusy(true);
     const result = andBuild
       ? await saveAndBuild({ environmentId, input })
@@ -334,11 +374,41 @@ export function TeamImageSettings({
                 </div>
               )}
             </SettingsRow>
+            {canEdit && proposals.length > 0 ? (
+              <>
+                <SettingsRow
+                  title={`Proposals (${proposals.length})`}
+                  description="Agents suggested these install script changes. Nothing changes until you save one."
+                />
+                {proposals.map((proposal) => (
+                  <ProposalRow
+                    key={proposal.id}
+                    environmentId={environmentId}
+                    proposal={proposal}
+                    savedInstall={savedRecipe.install}
+                    open={openProposal === proposal.id}
+                    busy={busy}
+                    memberName={memberName}
+                    formatTime={formatTime}
+                    onToggle={() =>
+                      setOpenProposal(openProposal === proposal.id ? null : proposal.id)
+                    }
+                    onAccept={() => acceptProposal(proposal)}
+                    onDismiss={() =>
+                      void run("Proposal not dismissed", () =>
+                        dismissProposal({ environmentId, input: { proposalId: proposal.id } }),
+                      )
+                    }
+                  />
+                ))}
+              </>
+            ) : null}
             {canEdit ? (
               <RecipeEditor
                 draft={draft}
                 revision={savedRevision}
                 dirty={dirty}
+                accepting={accepting?.reason ?? null}
                 parseError={parsed?.ok === false ? parsed.error : null}
                 changes={changes}
                 stale={stale || conflict}
@@ -504,6 +574,103 @@ export function TeamImageSettings({
   );
 }
 
+function ProposalRow({
+  environmentId,
+  proposal,
+  savedInstall,
+  open,
+  busy,
+  memberName,
+  formatTime,
+  onToggle,
+  onAccept,
+  onDismiss,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly proposal: TeamImageProposal;
+  readonly savedInstall: string;
+  readonly open: boolean;
+  readonly busy: boolean;
+  readonly memberName: (memberId: MemberId) => string | undefined;
+  readonly formatTime: (time: DateTime.Utc) => string;
+  readonly onToggle: () => void;
+  readonly onAccept: () => void;
+  readonly onDismiss: () => void;
+}) {
+  const threadRef = scopeThreadRef(environmentId, proposal.threadId);
+  const thread = useThreadShell(threadRef);
+  const navigate = useNavigate();
+  const ownerId = thread?.source.ownerId ?? null;
+  const ownerName = ownerId === null ? undefined : memberName(ownerId);
+  const whose = ownerName === undefined ? "A thread" : `${ownerName}'s thread`;
+  const diff = installDiff(savedInstall, proposal.install);
+  const changed = diff.some((line) => line.kind !== "same");
+  return (
+    <SettingsRow
+      title={proposal.reason}
+      description={`${whose} · ${formatTime(proposal.createdAt)}`}
+      control={
+        <Button size="xs" variant="outline" aria-expanded={open} disabled={busy} onClick={onToggle}>
+          {open ? "Hide" : "Review"}
+        </Button>
+      }
+    >
+      {open ? (
+        <div className="grid gap-2 pb-3">
+          {changed ? (
+            <pre
+              aria-label="Proposed changes to the install script"
+              className="max-h-64 overflow-auto rounded-md border bg-muted/40 py-2 font-mono text-xs leading-relaxed"
+            >
+              {diff.map((line, index) => (
+                <div
+                  // oxlint-disable-next-line react/no-array-index-key -- a diff has repeated lines and no ids
+                  key={index}
+                  className={cn(
+                    "px-2 whitespace-pre-wrap",
+                    line.kind === "added" && "bg-success/10 text-success-foreground",
+                    line.kind === "removed" && "bg-destructive/10 text-destructive-foreground",
+                    line.kind === "same" && "text-muted-foreground",
+                  )}
+                >
+                  {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}
+                  {line.text}
+                </div>
+              ))}
+            </pre>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Its script is the same as the saved one.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
+            <Button
+              size="xs"
+              variant="link"
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(threadRef),
+                })
+              }
+            >
+              {thread === null ? "Open the thread" : `Open ${thread.title}`}
+            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button size="xs" variant="ghost" disabled={busy} onClick={onDismiss}>
+                Dismiss
+              </Button>
+              <Button size="xs" disabled={busy || !changed} onClick={onAccept}>
+                Accept
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
 function activeSummary(
   build: TeamImageBuild,
   formatTime: (time: DateTime.Utc) => string,
@@ -649,6 +816,7 @@ function RecipeEditor({
   draft,
   revision,
   dirty,
+  accepting,
   parseError,
   changes,
   stale,
@@ -666,6 +834,8 @@ function RecipeEditor({
   readonly draft: TeamImageDraft;
   readonly revision: number | null;
   readonly dirty: boolean;
+  /** The reason of the proposal this edit's save closes. */
+  readonly accepting: string | null;
   readonly parseError: string | null;
   readonly changes: ReadonlyArray<string> | null;
   readonly stale: boolean;
@@ -707,6 +877,14 @@ function RecipeEditor({
         }
       >
         <div className="grid gap-4 pb-3">
+          {accepting === null ? null : (
+            <Alert variant="info">
+              <InfoIcon aria-hidden />
+              <AlertDescription>
+                This script is a proposal: {accepting}. Saving closes it.
+              </AlertDescription>
+            </Alert>
+          )}
           {stale ? (
             <Alert variant="warning">
               <TriangleAlertIcon aria-hidden />

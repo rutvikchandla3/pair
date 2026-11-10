@@ -113,6 +113,10 @@ export function createTeamImageAtoms<R, E>(runtime: Atom.AtomRuntime<Environment
       tag: WS_METHODS.teamImageActivateBuild,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    dismissProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team-image:dismiss-proposal",
+      tag: WS_METHODS.teamImageDismissProposal,
+    }),
     /** A saved revision, for Restore recipe; open to anyone who can read the page. */
     readRecipe: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team-image:read-recipe",

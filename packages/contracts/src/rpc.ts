@@ -18,6 +18,7 @@ import {
   TeamImageBuild,
   TeamImageBuildLogChunk,
   TeamImageBuildRef,
+  TeamImageDismissProposalInput,
   TeamImageError,
   TeamImageReadRecipeInput,
   TeamImageRecipeRevision,
@@ -597,6 +598,7 @@ export const WS_METHODS = {
   teamImageCancelBuild: "teamImage.cancelBuild",
   teamImageActivateBuild: "teamImage.activateBuild",
   teamImageReadRecipe: "teamImage.readRecipe",
+  teamImageDismissProposal: "teamImage.dismissProposal",
   teamImageSubscribeBuildLog: "teamImage.subscribeBuildLog",
   serverPrepareTriage: "server.prepareTriage",
   serverSignalProcess: "server.signalProcess",
@@ -1124,6 +1126,12 @@ const WsTeamImageActivateBuildRpc = Rpc.make(WS_METHODS.teamImageActivateBuild, 
 const WsTeamImageReadRecipeRpc = Rpc.make(WS_METHODS.teamImageReadRecipe, {
   payload: TeamImageReadRecipeInput,
   success: TeamImageRecipeRevision,
+  error: TeamImageRpcError,
+});
+
+const WsTeamImageDismissProposalRpc = Rpc.make(WS_METHODS.teamImageDismissProposal, {
+  payload: TeamImageDismissProposalInput,
+  success: Schema.Void,
   error: TeamImageRpcError,
 });
 
@@ -2391,6 +2399,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTeamImageCancelBuildRpc,
   WsTeamImageActivateBuildRpc,
   WsTeamImageReadRecipeRpc,
+  WsTeamImageDismissProposalRpc,
   WsTeamImageSubscribeBuildLogRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

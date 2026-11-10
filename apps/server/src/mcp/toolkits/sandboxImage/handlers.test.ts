@@ -9,9 +9,11 @@ import {
   type OrchestrationV2ConversationMessage,
   ProviderInstanceId,
   RunId,
+  SandboxId,
   ScheduledTaskId,
   type TeamImageBuild,
   TeamImageBuildId,
+  TeamImageProposalId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import type * as Members from "../../../persistence/Members.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TeamImageAuthority from "../../../sandbox/image/TeamImageAuthority.ts";
@@ -27,7 +30,7 @@ import * as TeamImageService from "../../../sandbox/image/TeamImageService.ts";
 import * as TeamState from "../../../team/TeamState.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { liveThreadShell, liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as SandboxImageHandlers from "./handlers.ts";
 import { SandboxImageToolkit } from "./tools.ts";
 
@@ -99,15 +102,17 @@ interface Calls {
   saveInstall: Array<Parameters<TeamImageService.TeamImageService["Service"]["saveInstall"]>[0]>;
   startBuild: Array<Parameters<TeamImageService.TeamImageService["Service"]["startBuild"]>[0]>;
   cancelBuild: Array<Parameters<TeamImageService.TeamImageService["Service"]["cancelBuild"]>[0]>;
+  fileProposal: Array<Parameters<TeamImageService.TeamImageService["Service"]["fileProposal"]>[0]>;
 }
 
 const callTool = (
   caller: Caller,
   name: keyof typeof SandboxImageToolkit.tools,
   params: Record<string, unknown>,
+  options: { readonly localThread?: true } = {},
 ) =>
   Effect.gen(function* () {
-    const calls: Calls = { saveInstall: [], startBuild: [], cancelBuild: [] };
+    const calls: Calls = { saveInstall: [], startBuild: [], cancelBuild: [], fileProposal: [] };
     const messages = "thread" in caller && caller.thread !== "idle" ? caller.thread : [];
     const services = Layer.mergeAll(
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -133,7 +138,15 @@ const callTool = (
         capabilities: new Set(["orchestration" as const]),
         issuedAt: 0,
       }),
-      liveThreadsLayer,
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.succeed({
+            ...liveThreadShell(id),
+            ...(options.localThread === undefined
+              ? { sandboxId: SandboxId.make("sbx_00000000000000000009") }
+              : {}),
+          }),
+      }),
       TeamImageAuthority.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -187,6 +200,17 @@ const callTool = (
           calls.cancelBuild.push(input);
           return Effect.void;
         },
+        fileProposal: (input) => {
+          calls.fileProposal.push(input);
+          return Effect.succeed({
+            ...input,
+            id: TeamImageProposalId.make("tip_00000000000000000001"),
+            baseRevision: 2,
+            status: "open",
+            createdAt: EPOCH,
+            closedAt: null,
+          });
+        },
       }),
       Layer.mock(ProjectService.ProjectService)({}),
     );
@@ -226,7 +250,7 @@ describe("who may change the team image", () => {
       name: "a member's run",
       caller: { thread: [prompt(bob)] },
       refused: notAdmin(
-        "Bob is not an admin, so this turn cannot change the team image. Ask an admin to make the change.",
+        "Bob is not an admin, so this turn cannot change the team image. Ask an admin to make the change, or propose it with t3_team_image_propose.",
       ),
     },
     {
@@ -338,7 +362,12 @@ describe("team image tools", () => {
       ] as const) {
         const { result, calls } = yield* callTool(membersRun, name, params);
         expect(result).toMatchObject({ reason: "not-admin" });
-        expect(calls).toEqual({ saveInstall: [], startBuild: [], cancelBuild: [] });
+        expect(calls).toEqual({
+          saveInstall: [],
+          startBuild: [],
+          cancelBuild: [],
+          fileProposal: [],
+        });
       }
     }),
   );
@@ -367,6 +396,36 @@ describe("team image tools", () => {
       ]);
       const missing = yield* callTool(adminsRun, "t3_team_image_build_cancel", { build: 9 });
       expect(missing.result).toMatchObject({ reason: "not-found" });
+    }),
+  );
+
+  it.effect("any cloud session's run files a proposal against its own thread and project", () =>
+    Effect.gen(function* () {
+      const params = { install: "sudo apt-get install -y postgresql-client", reason: "psql" };
+      for (const caller of [membersRun, adminsRun, { thread: "idle" as const }]) {
+        const { result, calls } = yield* callTool(caller, "t3_team_image_propose", params);
+        expect(result).toEqual({ note: "Proposed. An admin will see it in Team image." });
+        expect(calls.fileProposal).toEqual([
+          { threadId, projectId: liveThreadShell(threadId).projectId, ...params },
+        ]);
+      }
+    }),
+  );
+
+  it.effect("a local thread, and a caller that is no thread, cannot propose", () =>
+    Effect.gen(function* () {
+      const params = { install: "true", reason: "psql" };
+      const local = yield* callTool(membersRun, "t3_team_image_propose", params, {
+        localThread: true,
+      });
+      expect(local.result).toMatchObject({ _tag: "TeamImageError", reason: "not-available" });
+      const client = yield* callTool(
+        { client: "full-access", memberId: bob },
+        "t3_team_image_propose",
+        params,
+      );
+      expect(client.result).toMatchObject({ _tag: "OrchestratorMcpFailure" });
+      expect([...local.calls.fileProposal, ...client.calls.fileProposal]).toEqual([]);
     }),
   );
 });

@@ -144,7 +144,8 @@ export const TeamImageProposal = Schema.Struct({
   id: TeamImageProposalId,
   threadId: ThreadId,
   projectId: ProjectId,
-  baseRevision: PositiveInt,
+  /** The latest revision when it was filed; null when no recipe existed yet. */
+  baseRevision: Schema.NullOr(PositiveInt),
   install: Schema.String.check(Schema.isMaxLength(TEAM_IMAGE_INSTALL_MAX_CHARS)),
   reason: Schema.String.check(Schema.isMaxLength(500)),
   status: Schema.Literals(["open", "accepted", "dismissed"]),
@@ -201,6 +202,8 @@ export const TeamImageSaveRecipeInput = Schema.Struct({
   /** The revision the editor started from; null for the first save. */
   baseRevision: Schema.NullOr(PositiveInt),
   recipe: TeamImageRecipe,
+  /** Closes this open proposal as accepted in the same commit; ignored when it is no longer open. */
+  acceptsProposalId: Schema.optionalKey(TeamImageProposalId),
 });
 export type TeamImageSaveRecipeInput = typeof TeamImageSaveRecipeInput.Type;
 

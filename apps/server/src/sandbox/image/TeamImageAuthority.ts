@@ -15,6 +15,9 @@ import * as TeamState from "../../team/TeamState.ts";
 
 const notAdmin = (message: string) => new TeamImageError({ reason: "not-admin", message });
 
+// An agent can always file a proposal, which an admin reviews.
+const ASK_OR_PROPOSE = "Ask an admin to make the change, or propose it with t3_team_image_propose.";
+
 /** A person typed it: not a guest, a schedule, a notification, another thread or a delegated task. */
 const writtenByMember = (message: OrchestrationV2ConversationMessage) =>
   message.createdBy === "user" &&
@@ -64,19 +67,19 @@ const make = Effect.gen(function* () {
       const messages = yield* projections.listRunUserMessages(threadId, runId).pipe(Effect.orDie);
       if (messages.some((message) => message.context?.guest !== undefined)) {
         return yield* notAdmin(
-          "A guest wrote part of this turn, so it cannot change the team image. Ask an admin to make the change.",
+          `A guest wrote part of this turn, so it cannot change the team image. ${ASK_OR_PROPOSE}`,
         );
       }
       if (messages.length === 0 || !messages.every(writtenByMember)) {
         return yield* notAdmin(
-          "No admin wrote all of this turn, so it cannot change the team image. Ask an admin to make the change.",
+          `No admin wrote all of this turn, so it cannot change the team image. ${ASK_OR_PROPOSE}`,
         );
       }
       const authorIds = [...new Set(messages.flatMap(({ authorId }) => authorId ?? []))];
       const name = yield* firstNonAdmin(authorIds);
       if (name !== undefined) {
         return yield* notAdmin(
-          `${name} is not an admin, so this turn cannot change the team image. Ask an admin to make the change.`,
+          `${name} is not an admin, so this turn cannot change the team image. ${ASK_OR_PROPOSE}`,
         );
       }
       return { kind: "agent", threadId, runId, authorIds } satisfies TeamImageRequester;

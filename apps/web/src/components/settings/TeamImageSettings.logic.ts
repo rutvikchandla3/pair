@@ -121,6 +121,81 @@ function installLineChanges(
   return { added, removed };
 }
 
+export interface InstallDiffLine {
+  readonly kind: "same" | "added" | "removed";
+  readonly text: string;
+}
+
+/** A script's lines, without the empty one a trailing newline leaves. */
+const scriptLines = (text: string): ReadonlyArray<string> => {
+  if (text === "") return [];
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+};
+
+// Beyond this many cells the table is not worth building; the middle shows as replaced.
+const DIFF_CELL_LIMIT = 250_000;
+
+const diffMiddle = (
+  from: ReadonlyArray<string>,
+  to: ReadonlyArray<string>,
+): ReadonlyArray<InstallDiffLine> => {
+  const removed = from.map((text): InstallDiffLine => ({ kind: "removed", text }));
+  const added = to.map((text): InstallDiffLine => ({ kind: "added", text }));
+  if (from.length === 0 || to.length === 0) return [...removed, ...added];
+  if (from.length * to.length > DIFF_CELL_LIMIT) return [...removed, ...added];
+  const cols = to.length + 1;
+  // table[i * cols + j]: the longest common run of from[i..] and to[j..].
+  const table = new Uint32Array((from.length + 1) * cols);
+  const at = (i: number, j: number) => table[i * cols + j] ?? 0;
+  for (let i = from.length - 1; i >= 0; i--) {
+    for (let j = to.length - 1; j >= 0; j--) {
+      table[i * cols + j] =
+        from[i] === to[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
+    }
+  }
+  const lines: InstallDiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < from.length || j < to.length) {
+    const left = from[i];
+    const right = to[j];
+    if (left !== undefined && left === right) {
+      lines.push({ kind: "same", text: left });
+      i++;
+      j++;
+    } else if (left !== undefined && (right === undefined || at(i + 1, j) >= at(i, j + 1))) {
+      lines.push({ kind: "removed", text: left });
+      i++;
+    } else if (right !== undefined) {
+      lines.push({ kind: "added", text: right });
+      j++;
+    }
+  }
+  return lines;
+};
+
+/** The saved script against a proposed one, line by line, for an admin deciding to accept it. */
+export function installDiff(from: string, to: string): ReadonlyArray<InstallDiffLine> {
+  const before = scriptLines(from);
+  const after = scriptLines(to);
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endBefore = before.length;
+  let endAfter = after.length;
+  while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) {
+    endBefore--;
+    endAfter--;
+  }
+  const same = (text: string): InstallDiffLine => ({ kind: "same", text });
+  return [
+    ...before.slice(0, start).map(same),
+    ...diffMiddle(before.slice(start, endBefore), after.slice(start, endAfter)),
+    ...before.slice(endBefore).map(same),
+  ];
+}
+
 const secretKey = (secret: SecretReference) => `${secret.provider}:${secret.reference}`;
 
 function nameChanges(

@@ -5,6 +5,8 @@ import {
   TeamImageBuild,
   TeamImageBuildId,
   TeamImageBuildStatus,
+  TeamImageProposal,
+  type TeamImageProposalId,
   TeamImageRecipe,
   type TeamImageRecipeRevision,
   TeamImageRequester,
@@ -31,7 +33,7 @@ export interface TeamImageBuildMachineRow {
   readonly driverId: ComputeDriverId;
 }
 
-/** The three 095 tables. Writes run inside the caller's transaction (`apply`). */
+/** The 095 tables and 096's proposals. Writes run inside the caller's transaction (`apply`). */
 export class TeamImageStore extends Context.Service<
   TeamImageStore,
   {
@@ -54,6 +56,11 @@ export class TeamImageStore extends Context.Service<
       limit: number,
     ) => Effect.Effect<ReadonlyArray<TeamImageBuild>, TeamImageStoreError>;
     readonly liveBuild: Effect.Effect<TeamImageBuildRecord | null, TeamImageStoreError>;
+    /** Newest first; the decider keeps these to 20. */
+    readonly openProposals: Effect.Effect<ReadonlyArray<TeamImageProposal>, TeamImageStoreError>;
+    readonly proposal: (
+      proposalId: TeamImageProposalId,
+    ) => Effect.Effect<Option.Option<TeamImageProposal>, TeamImageStoreError>;
     readonly machines: Effect.Effect<ReadonlyArray<TeamImageBuildMachineRow>, TeamImageStoreError>;
     /** Finished builds whose log is not deleted yet: every build garbage collection may touch. */
     readonly collectable: Effect.Effect<ReadonlyArray<TeamImageBuild>, TeamImageStoreError>;
@@ -90,6 +97,8 @@ const toRecord = ({ build, ...machine }: typeof BuildRow.Type): TeamImageBuildRe
   build,
   machine,
 });
+
+const ProposalJson = Schema.fromJsonString(Schema.toCodecJson(TeamImageProposal));
 
 const LIVE_STATUSES = ["queued", "launching", "running", "capturing"] as const;
 const FINISHED_STATUSES = ["succeeded", "failed", "cancelled"] as const;
@@ -196,6 +205,41 @@ const make = Effect.gen(function* () {
     `,
   });
 
+  const findOpenProposals = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ proposal: ProposalJson }),
+    execute: () => sql`
+      SELECT payload_json AS "proposal" FROM team_image_proposals
+      WHERE status = 'open'
+      ORDER BY created_at DESC, rowid DESC
+    `,
+  });
+
+  const findProposal = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ proposal: ProposalJson }),
+    execute: (proposalId) => sql`
+      SELECT payload_json AS "proposal" FROM team_image_proposals WHERE proposal_id = ${proposalId}
+    `,
+  });
+
+  const upsertProposal = SqlSchema.void({
+    Request: Schema.Struct({
+      proposalId: Schema.String,
+      threadId: Schema.String,
+      status: Schema.String,
+      proposal: ProposalJson,
+      createdAt: Schema.DateTimeUtcFromString,
+    }),
+    execute: (row) => sql`
+      INSERT INTO team_image_proposals (proposal_id, thread_id, status, payload_json, created_at)
+      VALUES (${row.proposalId}, ${row.threadId}, ${row.status}, ${row.proposal}, ${row.createdAt})
+      ON CONFLICT (proposal_id) DO UPDATE SET
+        status = excluded.status,
+        payload_json = excluded.payload_json
+    `,
+  });
+
   const insertRevision = SqlSchema.void({
     Request: RevisionRow,
     execute: ({ revision, recipe, savedAt, savedBy }) => sql`
@@ -267,6 +311,14 @@ const make = Effect.gen(function* () {
         return setActiveBuild(event.activeBuildId);
       case "team-image.log-deleted":
         return markLogDeleted(event);
+      case "team-image.proposal-updated":
+        return upsertProposal({
+          proposalId: event.proposal.id,
+          threadId: event.proposal.threadId,
+          status: event.proposal.status,
+          proposal: event.proposal,
+          createdAt: event.proposal.createdAt,
+        });
     }
   };
 
@@ -305,6 +357,17 @@ const make = Effect.gen(function* () {
       Effect.map((row) => (Option.isNone(row) ? null : toRecord(row.value))),
       Effect.mapError(toStoreError("TeamImageStore.liveBuild")),
       Effect.withSpan("TeamImageStore.liveBuild"),
+    ),
+    openProposals: findOpenProposals(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.proposal)),
+      Effect.mapError(toStoreError("TeamImageStore.openProposals")),
+      Effect.withSpan("TeamImageStore.openProposals"),
+    ),
+    proposal: Effect.fn("TeamImageStore.proposal")((proposalId: TeamImageProposalId) =>
+      findProposal(proposalId).pipe(
+        Effect.map(Option.map((row) => row.proposal)),
+        Effect.mapError(toStoreError("TeamImageStore.proposal")),
+      ),
     ),
     machines: findMachines(undefined).pipe(
       Effect.map((rows) =>

@@ -9,8 +9,11 @@ import {
   type TeamImageBuildStatus,
   TeamImageBuildId,
   type TeamImageError,
+  type TeamImageProposal,
+  TeamImageProposalId,
   type TeamImageRecipe,
   type TeamImageRequester,
+  ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +21,7 @@ import * as Result from "effect/Result";
 
 import {
   decideTeamImageCommand,
+  MAX_OPEN_PROPOSALS,
   type TeamImageBuildRecord,
   type TeamImageCommand,
   type TeamImageDecision,
@@ -83,7 +87,22 @@ const state = (status: TeamImageBuildStatus | null): TeamImageState => {
         ? build
         : null,
     build,
+    openProposals: 0,
+    proposal: null,
+    threadHasOpenProposal: false,
   };
+};
+
+const proposal: TeamImageProposal = {
+  id: TeamImageProposalId.make("tip_00000000000000000001"),
+  threadId: ThreadId.make("thread:one"),
+  projectId: ProjectId.make("project:one"),
+  baseRevision: 1,
+  install: "sudo apt-get install -y postgresql-client",
+  reason: "The api tests need psql",
+  status: "open",
+  createdAt: earlier,
+  closedAt: null,
 };
 
 const decide = (current: TeamImageState, command: TeamImageCommand) =>
@@ -403,5 +422,100 @@ describe("decideTeamImageCommand", () => {
       refused(decide(state(null), { type: "team-image.build.attached", commandId, imageBuildId })),
       "not-found",
     );
+  });
+
+  describe("proposals", () => {
+    const file: TeamImageCommand = {
+      type: "team-image.proposal.file",
+      commandId,
+      proposalId: proposal.id,
+      threadId: proposal.threadId,
+      projectId: proposal.projectId,
+      install: proposal.install,
+      reason: proposal.reason,
+    };
+    const dismiss: TeamImageCommand = {
+      type: "team-image.proposal.dismiss",
+      commandId,
+      proposalId: proposal.id,
+    };
+    const save: TeamImageCommand = {
+      type: "team-image.recipe.save",
+      commandId,
+      baseRevision: 1,
+      recipe,
+      savedBy: { kind: "member", memberId: admin },
+      acceptsProposalId: proposal.id,
+    };
+
+    it("files one open proposal per thread, up to 20 on the server", () => {
+      assert.deepStrictEqual(decided(decide(state(null), file)).events, [
+        {
+          type: "team-image.proposal-updated",
+          proposal: { ...proposal, createdAt: now },
+        },
+      ]);
+      assert.strictEqual(
+        refused(decide({ ...state(null), threadHasOpenProposal: true }, file)),
+        "proposal-open",
+      );
+      assert.strictEqual(
+        refused(decide({ ...state(null), openProposals: MAX_OPEN_PROPOSALS }, file)),
+        "too-many-proposals",
+      );
+      assert.strictEqual(
+        decided(decide({ ...state(null), openProposals: MAX_OPEN_PROPOSALS - 1 }, file)).events
+          .length,
+        1,
+      );
+    });
+
+    it("records no recipe revision to file against when none exists", () => {
+      const [event] = decided(decide({ ...state(null), latestRevision: null }, file)).events;
+      assert(event?.type === "team-image.proposal-updated");
+      assert.strictEqual(event.proposal.baseRevision, null);
+    });
+
+    it("closes a proposal as accepted in the save that accepts it, once", () => {
+      const open = { ...state(null), proposal };
+      const events = decided(decide(open, save)).events;
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["team-image.recipe-saved", "team-image.proposal-updated"],
+      );
+      const [, closed] = events;
+      assert(closed?.type === "team-image.proposal-updated");
+      assert.deepStrictEqual(closed.proposal, { ...proposal, status: "accepted", closedAt: now });
+      for (const status of ["accepted", "dismissed"] as const) {
+        assert.deepStrictEqual(
+          decided(decide({ ...state(null), proposal: { ...proposal, status } }, save)).events.map(
+            (event) => event.type,
+          ),
+          ["team-image.recipe-saved"],
+        );
+      }
+      assert.deepStrictEqual(
+        decided(decide(state(null), save)).events.map((event) => event.type),
+        ["team-image.recipe-saved"],
+      );
+    });
+
+    it("keeps a proposal open when its save is refused", () => {
+      assert.strictEqual(
+        refused(decide({ ...state(null), proposal }, { ...save, baseRevision: null })),
+        "recipe-changed",
+      );
+    });
+
+    it("dismisses an open proposal, and a second dismissal changes nothing", () => {
+      const [event] = decided(decide({ ...state(null), proposal }, dismiss)).events;
+      assert(event?.type === "team-image.proposal-updated");
+      assert.deepStrictEqual(event.proposal, { ...proposal, status: "dismissed", closedAt: now });
+      assert.deepStrictEqual(
+        decided(decide({ ...state(null), proposal: event.proposal }, dismiss)).events,
+        [],
+      );
+      assert.strictEqual(refused(decide(state(null), dismiss)), "not-found");
+    });
   });
 });

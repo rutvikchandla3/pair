@@ -3,18 +3,22 @@ import {
   type ComputeDriverId,
   EventId,
   type MemberId,
+  type ProjectId,
   SandboxId,
   type TeamImageBuild,
   TeamImageBuildId,
   type TeamImageBuildLogChunk,
   type TeamImageCurrentBase,
   TeamImageError,
+  TeamImageProposalId,
+  type TeamImageProposal,
   type TeamImageRecipe,
   type TeamImageRecipeRevision,
   type TeamImageRequester,
   type TeamImageSaveRecipeInput,
   type TeamImageSnapshot,
   type TeamImageStartBuildInput,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -112,6 +116,17 @@ export class TeamImageService extends Context.Service<
     }) => Effect.Effect<void, TeamImageError>;
     /** Each build that ends from here on, with who should hear of it. */
     readonly buildFinished: Stream.Stream<TeamImageBuildFinished>;
+    /** Any cloud session's agent may file one; it changes nothing until an admin saves it. */
+    readonly fileProposal: (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly install: string;
+      readonly reason: string;
+    }) => Effect.Effect<TeamImageProposal, TeamImageError>;
+    readonly dismissProposal: (input: {
+      readonly actorId: MemberId;
+      readonly proposalId: TeamImageProposalId;
+    }) => Effect.Effect<void, TeamImageError>;
     readonly readRecipeRevision: (
       revision: number,
     ) => Effect.Effect<TeamImageRecipeRevision, TeamImageError>;
@@ -188,15 +203,28 @@ const make = Effect.gen(function* () {
     const { activeBuildId, nextBuildNumber } = yield* store.state;
     const latest = yield* store.latestRevision;
     const named =
-      command.type === "team-image.recipe.save" || command.type === "team-image.build.request"
-        ? Option.none()
-        : yield* store.build(command.imageBuildId);
+      "imageBuildId" in command && command.type !== "team-image.build.request"
+        ? yield* store.build(command.imageBuildId)
+        : Option.none();
+    const proposalId =
+      command.type === "team-image.proposal.dismiss"
+        ? command.proposalId
+        : command.type === "team-image.recipe.save"
+          ? command.acceptsProposalId
+          : undefined;
+    const open = yield* store.openProposals;
     return {
       latestRevision: latest?.revision ?? null,
       activeBuildId,
       nextBuildNumber,
       liveBuild: yield* store.liveBuild,
       build: Option.getOrNull(named),
+      openProposals: open.length,
+      proposal:
+        proposalId === undefined ? null : Option.getOrNull(yield* store.proposal(proposalId)),
+      threadHasOpenProposal:
+        command.type === "team-image.proposal.file" &&
+        open.some((proposal) => proposal.threadId === command.threadId),
     } satisfies TeamImageState;
   });
 
@@ -362,7 +390,7 @@ const make = Effect.gen(function* () {
       recipe: yield* store.latestRevision,
       activeBuildId,
       builds: Option.isSome(active) ? [...recent, active.value.build] : recent,
-      proposals: [],
+      proposals: yield* store.openProposals,
       keepSucceeded:
         (yield* settingsNow).sandbox?.teamImage?.keepSucceeded ?? DEFAULT_KEEP_SUCCEEDED,
       ...(Option.isNone(driverId) ? {} : { currentBase: yield* currentBase(driverId.value) }),
@@ -380,6 +408,9 @@ const make = Effect.gen(function* () {
       baseRevision: input.baseRevision,
       recipe: input.recipe,
       savedBy: by,
+      ...(input.acceptsProposalId === undefined
+        ? {}
+        : { acceptsProposalId: input.acceptsProposalId }),
     });
     const saved = events.find((event) => event.type === "team-image.recipe-saved");
     if (saved === undefined) return yield* Effect.die("A recipe save committed no revision.");
@@ -471,6 +502,37 @@ const make = Effect.gen(function* () {
     });
   }, onlyTeamImageErrors);
 
+  const fileProposal: TeamImageService["Service"]["fileProposal"] = Effect.fn(
+    "TeamImageService.fileProposal",
+  )(function* ({ threadId, projectId, install, reason }) {
+    yield* ensureAvailable;
+    const proposalId = TeamImageProposalId.make(`tip_${yield* randomHex}`);
+    const events = yield* lockedDispatch({
+      type: "team-image.proposal.file",
+      commandId: CommandId.make(`server:team-image.proposal.file:${proposalId}`),
+      proposalId,
+      threadId,
+      projectId,
+      install,
+      reason,
+    });
+    const filed = events.find((event) => event.type === "team-image.proposal-updated");
+    if (filed === undefined) return yield* Effect.die("A proposal committed no event.");
+    return filed.proposal;
+  }, onlyTeamImageErrors);
+
+  const dismissProposal: TeamImageService["Service"]["dismissProposal"] = Effect.fn(
+    "TeamImageService.dismissProposal",
+  )(function* ({ actorId, proposalId }) {
+    yield* ensureAvailable;
+    yield* ensureAdmin({ kind: "member", memberId: actorId });
+    yield* lockedDispatch({
+      type: "team-image.proposal.dismiss",
+      commandId: yield* freshCommandId("team-image.proposal.dismiss"),
+      proposalId,
+    });
+  }, onlyTeamImageErrors);
+
   const readRecipeRevision: TeamImageService["Service"]["readRecipeRevision"] = Effect.fn(
     "TeamImageService.readRecipeRevision",
   )(function* (revision) {
@@ -543,6 +605,8 @@ const make = Effect.gen(function* () {
     cancelBuild,
     activateBuild,
     buildFinished: Stream.fromPubSub(finished),
+    fileProposal,
+    dismissProposal,
     readRecipeRevision,
     readBuildLog,
     subscribeBuildLog,

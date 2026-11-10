@@ -5,6 +5,7 @@ import {
   TeamImageBuild,
   TeamImageError,
   TeamImageRecipe,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as McpSchema from "effect/ai/McpSchema";
 import * as Schema from "effect/Schema";
@@ -116,10 +117,24 @@ const TeamImageBuildCancelTool = Tool.make("t3_team_image_build_cancel", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutTeamImages);
 
+const TeamImageProposeTool = Tool.make("t3_team_image_propose", {
+  ...shared,
+  description:
+    "Propose a replacement install script for the team image, for an admin to review; nothing changes until they save it. Use it when you could not change the image yourself or were asked to suggest a change. Start from the script t3_team_image_read returned.",
+  parameters: Schema.Struct({
+    install: TeamImageRecipe.fields.install,
+    reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  }),
+  success: Schema.Struct({ note: Schema.String }),
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutTeamImages);
+
 export const SandboxImageToolkit = Toolkit.make(
   TeamImageReadTool,
   TeamImageBuildLogTool,
   TeamImageRecipeUpdateTool,
   TeamImageBuildStartTool,
   TeamImageBuildCancelTool,
+  TeamImageProposeTool,
 );

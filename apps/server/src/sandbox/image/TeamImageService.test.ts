@@ -268,6 +268,57 @@ it.effect("an agent replaces only the install script, and its build waits for an
   }).pipe(Effect.provide(layerTest())),
 );
 
+it.effect("a proposal waits in the snapshot until an admin saves it or dismisses it", () =>
+  Effect.gen(function* () {
+    const service = yield* TeamImageService.TeamImageService;
+    const file = (threadId: string) =>
+      service.fileProposal({
+        threadId: ThreadId.make(threadId),
+        projectId: ProjectId.make("project-1"),
+        install: "sudo apt-get install -y postgresql-client",
+        reason: "The api tests need psql",
+      });
+    const first = yield* file("thread-a");
+    const second = yield* file("thread-b");
+    assert.strictEqual(first.baseRevision, null);
+    assert.deepStrictEqual(
+      (yield* service.snapshot).proposals.map(({ id }) => id),
+      [second.id, first.id],
+    );
+    assert.strictEqual((yield* file("thread-a").pipe(Effect.flip)).reason, "proposal-open");
+    assert.isNull((yield* service.snapshot).recipe);
+
+    const dismissedBy = (actorId: MemberId) =>
+      service.dismissProposal({ actorId, proposalId: second.id });
+    assert.strictEqual((yield* dismissedBy(member).pipe(Effect.flip)).reason, "not-admin");
+    yield* dismissedBy(admin);
+    yield* dismissedBy(secondAdmin);
+    assert.deepStrictEqual(
+      (yield* service.snapshot).proposals.map(({ id }) => id),
+      [first.id],
+    );
+    // A dismissed thread may file again.
+    const refiled = yield* file("thread-b");
+    assert.strictEqual(refiled.status, "open");
+
+    yield* service.saveRecipe({
+      by: { kind: "member", memberId: admin },
+      input: {
+        baseRevision: null,
+        recipe: { ...recipe, install: first.install },
+        acceptsProposalId: first.id,
+      },
+    });
+    const after = yield* service.snapshot;
+    assert.deepStrictEqual(
+      after.proposals.map(({ id }) => id),
+      [refiled.id],
+    );
+    // The proposal is the thread's again to file, now against the saved revision.
+    assert.strictEqual((yield* file("thread-a")).baseRevision, 1);
+  }).pipe(Effect.provide(layerTest())),
+);
+
 it.effect("a build at the cap is refused", () =>
   Effect.gen(function* () {
     const { revision } = yield* saveFirstRecipe;

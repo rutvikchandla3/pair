@@ -6,7 +6,7 @@ import * as TeamImageAuthority from "../../../sandbox/image/TeamImageAuthority.t
 import * as TeamImageService from "../../../sandbox/image/TeamImageService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { unavailable } from "../../threadAccess.ts";
+import { loadCaller, unavailable } from "../../threadAccess.ts";
 import { SandboxImageToolkit } from "./tools.ts";
 
 const RECENT_BUILDS = 10;
@@ -115,6 +115,25 @@ export const layer = McpToolAccess.toLayer(SandboxImageToolkit, {
       }
       yield* service.cancelBuild({ by, imageBuildId: found.id });
       return { build, status: "cancelled" as const };
+    }),
+  ),
+  // Anyone's run may propose; an admin reviews it, so no authority is checked.
+  t3_team_image_propose: McpToolAccess.actsAsCaller(({ install, reason }) =>
+    Effect.gen(function* () {
+      const { caller } = yield* loadCaller();
+      if (caller?.sandboxId === undefined) {
+        return yield* new TeamImageError({
+          reason: "not-available",
+          message: "Only a cloud session can propose a team image change.",
+        });
+      }
+      yield* (yield* TeamImageService.TeamImageService).fileProposal({
+        threadId: caller.id,
+        projectId: caller.projectId,
+        install,
+        reason,
+      });
+      return { note: "Proposed. An admin will see it in Team image." };
     }),
   ),
 });

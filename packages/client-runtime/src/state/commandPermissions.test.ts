@@ -166,6 +166,7 @@ describe("command permissions", () => {
     [WS_METHODS.serverCheckOtlpEndpoint, AuthSettingsWriteScope],
     [WS_METHODS.sandboxCheckDriver, AuthSettingsWriteScope],
     [WS_METHODS.teamImageActivateBuild, AuthSettingsWriteScope],
+    [WS_METHODS.teamImageDismissProposal, AuthSettingsWriteScope],
     [WS_METHODS.serverCancelDrain, AuthEnvironmentMaintainScope],
   ] as const)("requires the destination grant for %s", ([method, scope]) =>
     Effect.scoped(

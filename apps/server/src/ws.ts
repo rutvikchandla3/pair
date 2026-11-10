@@ -2944,6 +2944,8 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.teamImageActivateBuild]: ({ imageBuildId }) =>
           teamImages.activateBuild({ actorId: currentSession.memberId, imageBuildId }),
+        [WS_METHODS.teamImageDismissProposal]: ({ proposalId }) =>
+          teamImages.dismissProposal({ actorId: currentSession.memberId, proposalId }),
         [WS_METHODS.teamImageReadRecipe]: ({ revision }) => teamImages.readRecipeRevision(revision),
         [WS_METHODS.teamImageSubscribeBuildLog]: ({ imageBuildId }) =>
           teamImages.subscribeBuildLog(imageBuildId),

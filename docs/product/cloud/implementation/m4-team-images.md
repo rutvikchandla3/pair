@@ -1318,24 +1318,31 @@ Nothing is built or changed by a proposal.
     CREATE UNIQUE INDEX IF NOT EXISTS team_image_proposals_open_thread
       ON team_image_proposals (thread_id) WHERE status = 'open';
     ```
-  - `TeamImageCommands.ts`: `team-image.proposal.file { proposalId, threadId, projectId,
-    baseRevision, install, reason }` (an open one for the thread is `proposal-open`; 20 open is
-    `too-many-proposals`), `team-image.proposal.dismiss { proposalId, by }`, and the save command
-    gains `acceptsProposalId?`, which closes it as accepted in the same commit. Event
-    `team-image.proposal-updated { TeamImageProposal }`. `TeamImageStore.apply` writes the table;
-    the snapshot lists open proposals.
+  - `TeamImageCommands.ts`: `team-image.proposal.file { proposalId, threadId, projectId, install,
+    reason }` (an open one for the thread is `proposal-open`; 20 open is `too-many-proposals`; the
+    decider fills `baseRevision` from the latest revision, null when none exists, so the contract's
+    `TeamImageProposal.baseRevision` is nullable), `team-image.proposal.dismiss { proposalId }`
+    (one that is no longer open changes nothing), and the save command gains `acceptsProposalId?`,
+    which closes the proposal as accepted in the same commit when it is still open; a save naming
+    one that is not open just saves. Event `team-image.proposal-updated { proposal }`.
+    `TeamImageStore.apply` writes the table; the snapshot lists open proposals, newest first.
   - `toolkits/sandboxImage/`: `t3_team_image_propose { install, reason }`, declared with
     `McpToolAccess.actsAsCaller` (a thread caller, writing; McpToolAccess.ts 130–138). Only a
     thread on a sandbox (a cloud session) may call it. Returns "Proposed. An admin will see it in
-    Team image."
+    Team image." `TeamImageAuthority`'s refusals now end "Ask an admin to make the change, or
+    propose it with t3_team_image_propose."
   - `rpc.ts`, `clientRpcPermissions.ts`, `ws.ts`: `teamImage.dismissProposal`
     (`AuthSettingsWriteScope`); `saveRecipe`'s input gains `acceptsProposalId`.
-  - `TeamImageSettings.tsx`: a **Proposals** list above the recipe ("Add postgresql-client for
-    the api tests · Bob's thread [Review]"); **Review** shows the diff, the reason and a link to
-    the thread, with **Accept** and **Dismiss**.
-  - `agentContextBudget.json`: the one tool's bytes, under the same label.
+  - `TeamImageSettings.tsx`: a **Proposals** list above the recipe, for admins ("Add
+    postgresql-client for the api tests · Bob's thread [Review]"); **Review** shows the script
+    against the saved one line by line (`installDiff`), a link to the thread, **Accept** and
+    **Dismiss**. Accept sets the editor's install script and `acceptsProposalId`, keeping other
+    unsaved changes.
+  - `agentContextBudget.json`: the one tool's bytes, under the same label (+456: 50,313 to
+    50,769, so 4.19 and 4.20 add 1,981 of the 6,000).
   - `team-image.ndjson`: `team-image-member-proposes`, the member case continued: after the
-    refusal, expect `t3_team_image_propose` with a reason, once. Run as 4.19's.
+    refusal, expect `t3_team_image_propose` with a reason, once. The admin and control cases
+    gain `t3_team_image_propose` as a forbidden call. Run as 4.19's.
   - User docs: one sentence on proposals in **Build a team image**.
 - **Types and services:** `TeamImageService.fileProposal` and `dismissProposal`.
 - **Commands and events:** `team-image.proposal.file`, `.dismiss`, and the save's

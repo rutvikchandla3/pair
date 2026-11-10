@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   draftFromRecipe,
   fixWithAgentPrompt,
+  installDiff,
   NPM_TOKEN_WARNING,
   npmTokenWarning,
   recipeChanges,
@@ -139,5 +140,35 @@ describe("fixWithAgentPrompt", () => {
         "Help me fix it. Read the recipe with t3_team_image_read, try changes in this machine's terminal, then update the install script and start a build.",
       ].join("\n\n"),
     );
+  });
+});
+
+describe("installDiff", () => {
+  const render = (from: string, to: string) =>
+    installDiff(from, to).map(
+      ({ kind, text }) => `${kind === "same" ? " " : kind === "added" ? "+" : "-"}${text}`,
+    );
+
+  it.each([
+    ["adds a line", "a\nb\n", "a\nb\nc\n", [" a", " b", "+c"]],
+    ["removes one", "a\nb\nc\n", "a\nc\n", [" a", "-b", " c"]],
+    ["replaces one in place", "a\nb\nc", "a\nx\nc", [" a", "-b", "+x", " c"]],
+    ["inserts between repeats", "a\na", "a\nb\na", [" a", "+b", " a"]],
+    ["fills an empty script", "", "a\nb\n", ["+a", "+b"]],
+    ["clears a script", "a\n", "", ["-a"]],
+    ["keeps an unchanged script as it is", "a\nb\n", "a\nb", [" a", " b"]],
+  ])("%s", (_name, from, to, expected) => {
+    expect(render(from, to)).toEqual(expected);
+  });
+
+  it("shows a huge replaced middle as removed then added", () => {
+    const from = Array.from({ length: 600 }, (_, index) => `old ${index}`).join("\n");
+    const to = Array.from({ length: 600 }, (_, index) => `new ${index}`).join("\n");
+    const lines = installDiff(`keep\n${from}\nend`, `keep\n${to}\nend`);
+    expect(lines).toHaveLength(1202);
+    expect(lines[0]).toEqual({ kind: "same", text: "keep" });
+    expect(lines[1]?.kind).toBe("removed");
+    expect(lines[601]?.kind).toBe("added");
+    expect(lines.at(-1)).toEqual({ kind: "same", text: "end" });
   });
 });

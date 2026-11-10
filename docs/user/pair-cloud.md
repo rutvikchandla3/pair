@@ -235,6 +235,14 @@ part of the turn, including a message sent while it ran, the agent is refused an
 admin has to make the change. An outside agent connected with an admin's token that is not read-only
 has the same reach.
 
+An agent that can't change the image can propose a new install script instead, with a short reason.
+It does this when it was refused or when someone asks it to suggest a change, and it changes
+nothing by itself. Each thread has one open proposal at a time, and a server holds 20. Admins see
+open proposals under **Proposals** at the top of Team image. **Review** shows the script against
+the saved one, the reason and a link to the thread. **Accept** puts the script in the editor
+without saving it, and saving closes the proposal. **Dismiss** closes it, and the thread can
+propose again.
+
 ## Set the team cap and disk retention
 
 In **Settings → Cloud → Compute** on the web or desktop app:

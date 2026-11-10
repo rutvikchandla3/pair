@@ -10,6 +10,8 @@ import {
   type TeamImageBuildStatus,
   TeamImageError,
   type TeamImageManifest,
+  TeamImageProposal,
+  type TeamImageProposalId,
   type TeamImageRecipe,
   TeamImageRecipeRevision,
   type TeamImageRequester,
@@ -52,6 +54,10 @@ export const TeamImageEvent = Schema.Union([
     imageBuildId: TeamImageBuildId,
     at: Schema.DateTimeUtc,
   }),
+  Schema.Struct({
+    type: Schema.Literal("team-image.proposal-updated"),
+    proposal: TeamImageProposal,
+  }),
 ]);
 export type TeamImageEvent = typeof TeamImageEvent.Type;
 
@@ -62,7 +68,18 @@ export type TeamImageCommand = { readonly commandId: CommandId } & (
       readonly baseRevision: number | null;
       readonly recipe: TeamImageRecipe;
       readonly savedBy: TeamImageRequester;
+      /** Closes this proposal as accepted with the save, if it is still open. */
+      readonly acceptsProposalId?: TeamImageProposalId;
     }
+  | {
+      readonly type: "team-image.proposal.file";
+      readonly proposalId: TeamImageProposalId;
+      readonly threadId: TeamImageProposal["threadId"];
+      readonly projectId: TeamImageProposal["projectId"];
+      readonly install: string;
+      readonly reason: string;
+    }
+  | { readonly type: "team-image.proposal.dismiss"; readonly proposalId: TeamImageProposalId }
   | {
       readonly type: "team-image.build.request";
       readonly imageBuildId: TeamImageBuildId;
@@ -127,6 +144,11 @@ export interface TeamImageState {
   readonly liveBuild: TeamImageBuildRecord | null;
   /** The build the command names; null when it names none or the build does not exist. */
   readonly build: TeamImageBuildRecord | null;
+  readonly openProposals: number;
+  /** The proposal a command names (a dismissal, or a save that accepts one); null when none. */
+  readonly proposal: TeamImageProposal | null;
+  /** Whether the file command's thread has an open proposal already. */
+  readonly threadHasOpenProposal: boolean;
 }
 
 export interface TeamImageDecision {
@@ -145,6 +167,9 @@ export const isLiveTeamImageBuild = (status: TeamImageBuildStatus) =>
 const isReservedBuildName = (name: string) =>
   name === "HOME" || name === "PATH" || /^(T3CODE_|T3_CLONE_TOKEN_)/.test(name);
 
+/** Past this many waiting for an admin, an agent is told to wait, not to file more. */
+export const MAX_OPEN_PROPOSALS = 20;
+
 const NOTHING: TeamImageDecision = { events: [], effects: [] };
 
 const refuse = (reason: TeamImageError["reason"], message: string) =>
@@ -158,6 +183,15 @@ const updated = (
   type: "team-image.build-updated",
   build: { ...record.build, ...build },
   machine: { ...record.machine, ...machine },
+});
+
+const closedProposal = (
+  proposal: TeamImageProposal,
+  status: "accepted" | "dismissed",
+  at: DateTime.Utc,
+): TeamImageEvent => ({
+  type: "team-image.proposal-updated",
+  proposal: { ...proposal, status, closedAt: at },
 });
 
 const activeChanged = (
@@ -211,7 +245,54 @@ export function decideTeamImageCommand(
             savedBy: command.savedBy,
           },
         },
+        ...(state.proposal?.status === "open"
+          ? [closedProposal(state.proposal, "accepted", now)]
+          : []),
       ],
+      effects: [],
+    });
+  }
+
+  if (command.type === "team-image.proposal.file") {
+    if (state.threadHasOpenProposal) {
+      return refuse(
+        "proposal-open",
+        "This thread already has a proposal waiting for an admin. Wait for them to accept or dismiss it.",
+      );
+    }
+    if (state.openProposals >= MAX_OPEN_PROPOSALS) {
+      return refuse(
+        "too-many-proposals",
+        `${MAX_OPEN_PROPOSALS} proposals are already waiting for an admin. Ask an admin to review them.`,
+      );
+    }
+    return Result.succeed({
+      events: [
+        {
+          type: "team-image.proposal-updated",
+          proposal: {
+            id: command.proposalId,
+            threadId: command.threadId,
+            projectId: command.projectId,
+            baseRevision: state.latestRevision,
+            install: command.install,
+            reason: command.reason,
+            status: "open",
+            createdAt: now,
+            closedAt: null,
+          },
+        },
+      ],
+      effects: [],
+    });
+  }
+
+  if (command.type === "team-image.proposal.dismiss") {
+    if (state.proposal === null) return refuse("not-found", "That proposal does not exist.");
+    // Two admins dismissing the same proposal, or one accepted in between, leave it as it is.
+    if (state.proposal.status !== "open") return Result.succeed(NOTHING);
+    return Result.succeed({
+      events: [closedProposal(state.proposal, "dismissed", now)],
       effects: [],
     });
   }
