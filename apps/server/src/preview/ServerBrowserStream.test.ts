@@ -53,6 +53,7 @@ const makeAuth = (
             memberId: MemberId.make("member-test"),
             method: "bearer-access-token",
             scopes,
+            storedScopes: scopes,
           });
     },
   });

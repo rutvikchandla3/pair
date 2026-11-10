@@ -98,6 +98,8 @@ export interface AuthenticatedSession {
   readonly memberId: MemberId;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  /** The session row's scopes, before `effectiveScopes`; what a live socket compares the row with. */
+  readonly storedScopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
 }
@@ -839,6 +841,7 @@ export const make = Effect.gen(function* () {
             memberId,
             method: session.method,
             scopes: yield* effectiveScopes(memberId, session.scopes),
+            storedScopes: session.scopes,
             ...(session.proofKeyThumbprint
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
@@ -1423,6 +1426,7 @@ export const make = Effect.gen(function* () {
             memberId,
             method: session.method,
             scopes: yield* effectiveScopes(memberId, session.scopes),
+            storedScopes: session.scopes,
             ...(session.proofKeyThumbprint
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),

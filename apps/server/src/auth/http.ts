@@ -195,12 +195,12 @@ export const authenticateMediaRequest =
 export const whenSessionEnds = Effect.fn("http.whenSessionEnds")(function* (
   session: Pick<
     EnvironmentAuth.AuthenticatedSession,
-    "sessionId" | "proofKeyThumbprint" | "scopes"
+    "sessionId" | "proofKeyThumbprint" | "storedScopes"
   >,
 ) {
   const sessions = yield* SessionStore.SessionStore;
   return sessions
-    .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+    .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.storedScopes)
     .pipe(Effect.ignore);
 });
 

@@ -4153,7 +4153,11 @@ export const layer = Layer.unwrap(
             Effect.raceFirst(
               framedRpcWebSocketHttpEffect,
               sessions
-                .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+                .awaitInvalidation(
+                  session.sessionId,
+                  session.proofKeyThumbprint,
+                  session.storedScopes,
+                )
                 .pipe(
                   Effect.as(HttpServerResponse.empty()),
                   Effect.catchTags({

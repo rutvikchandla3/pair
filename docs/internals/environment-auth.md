@@ -64,7 +64,9 @@ session with the member bundle and revokes unconsumed links, which still carry
 admin scopes. Promotion widens only sessions that hold the full member bundle,
 so a deliberately narrow one, such as a read-only MCP client, stays narrow.
 `awaitInvalidation` closes a socket whose session scopes changed, and the client
-reconnects with the new grant. Removal revokes the member's sessions and
+reconnects with the new grant. It compares the session's stored scopes, never
+the narrower set a cloud-only server authenticates a member with
+(`effectiveScopes`), or every member's socket would close on upgrade. Removal revokes the member's sessions and
 unconsumed links, and authentication independently rejects a removed member.
 
 Authentication reads members from an in-memory snapshot

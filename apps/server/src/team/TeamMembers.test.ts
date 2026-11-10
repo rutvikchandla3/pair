@@ -1,18 +1,29 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ADMIN_SCOPES, MEMBER_SCOPES, MemberId, type TeamStreamEvent } from "@t3tools/contracts";
+import {
+  ADMIN_SCOPES,
+  AuthDiagnosticsReadScope,
+  MEMBER_SCOPES,
+  MemberId,
+  type TeamStreamEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { whenSessionEnds } from "../auth/http.ts";
+import { requiredScopeForRpcMethod } from "../auth/RpcAuthorization.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -39,19 +50,28 @@ const layerGitName = (name: string) =>
       }),
   });
 
-const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
-  Layer.provide(ManagedPolicy.layerTest()),
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.layerIdentity),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-team-members-test-" })),
-);
+const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.map(ServerConfig.ServerConfig, (config) => ({ ...config, ...overrides })),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-team-members-test-" })));
 
-const layerTeam = TeamMembers.layer.pipe(
-  Layer.provideMerge(layerEnvironmentAuth),
-  Layer.provide(layerGitName("Ada Lovelace")),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-);
+const makeLayerTeam = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+  TeamMembers.layer.pipe(
+    Layer.provideMerge(
+      EnvironmentAuth.layer.pipe(
+        Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provideMerge(ServerSecretStore.layer),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerServerConfig(overrides)),
+      ),
+    ),
+    Layer.provide(layerGitName("Ada Lovelace")),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+
+const layerTeam = makeLayerTeam();
 
 const requestMetadata = { deviceType: "desktop" as const, os: "macOS", browser: "Chrome" };
 
@@ -294,6 +314,49 @@ it.layer(layerTeam)("TeamMembers", (it) => {
     }),
   );
 });
+
+it.effect("a cloud-only server keeps a member's socket open until their role changes", () =>
+  Effect.gen(function* () {
+    const team = yield* TeamMembers.TeamMembers;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const invited = yield* team.invite({ name: "Gus", role: "member" });
+    const { authenticate } = yield* signIn(invited.credential.credential);
+    // What `/ws`, the preview stream and the device proxy do on upgrade.
+    const openSocket = Effect.gen(function* () {
+      const ticket = yield* auth.issueWebSocketTicket(yield* authenticate, { use: "rpc" });
+      const socket = yield* auth.authenticateWebSocketUpgrade(
+        {
+          method: "GET",
+          url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+          cookies: {},
+          headers: {},
+        } as never,
+        "rpc",
+      );
+      const ended = yield* Deferred.make<void>();
+      yield* (yield* whenSessionEnds(socket)).pipe(
+        Effect.andThen(Deferred.succeed(ended, undefined)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      return { scopes: socket.scopes, ended };
+    });
+
+    const member = yield* openSocket;
+    expect(member.scopes).not.toContain(AuthDiagnosticsReadScope);
+    expect(member.scopes).toContain(requiredScopeForRpcMethod(WS_METHODS.serverGetConfig));
+    expect(yield* Deferred.isDone(member.ended)).toBe(false);
+
+    yield* team.setRole({ memberId: invited.member.id, role: "admin" });
+    yield* Deferred.await(member.ended);
+    const admin = yield* openSocket;
+    expect(admin.scopes).toContain(AuthDiagnosticsReadScope);
+    expect(yield* Deferred.isDone(admin.ended)).toBe(false);
+
+    yield* team.setRole({ memberId: invited.member.id, role: "member" });
+    yield* Deferred.await(admin.ended);
+    expect((yield* openSocket).scopes).not.toContain(AuthDiagnosticsReadScope);
+  }).pipe(Effect.scoped, Effect.provide(makeLayerTeam({ cloudOnly: true }))),
+);
 
 it.effect("renames the owner from git user.name once", () =>
   Effect.gen(function* () {
