@@ -174,6 +174,12 @@ const makeWorld = Effect.fn("TeamImageEffectsLive.test.makeWorld")(function* (in
                   retryable: true,
                 }),
               );
+        case "health":
+          return Deferred.succeed(call.reply, {
+            isolation: "container",
+            privateNetworkBlock: { applied: true },
+            baseImage: { ref: "ghcr.io/pair/base:1", digest: "sha256:base", version: "1" },
+          });
         case "destroy":
           destroyed.push(call.ref);
           return Deferred.succeed(call.reply, undefined);

@@ -13,8 +13,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -27,6 +29,11 @@ import type * as Members from "../../persistence/Members.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TeamState from "../../team/TeamState.ts";
+import {
+  ComputeDriverNotConfiguredError,
+  ComputeDriverRegistry,
+} from "../compute/ComputeDriverRegistry.ts";
+import * as FakeComputeDriver from "../compute/ComputeDriverTesting.ts";
 import * as SandboxAdmission from "../lifecycle/SandboxAdmission.ts";
 import * as LiveTeamImageBuild from "./LiveTeamImageBuild.ts";
 import * as TeamImageBuildLog from "./TeamImageBuildLog.ts";
@@ -69,8 +76,24 @@ const freeSlots: SandboxAdmission.AdmissionSnapshot = {
 
 const layerDatabase = SqlitePersistence.layerMemory;
 
+const layerSettings = ServerSettings.layerTest({
+  sandbox: { drivers: [dockerDriver], defaultDriverId: docker },
+});
+
+// A driver that never resolves its base: the snapshot falls back to this server's own image.
+const layerUnresolvedDrivers = Layer.mock(ComputeDriverRegistry)({
+  get: (driverId) => Effect.fail(new ComputeDriverNotConfiguredError({ driverId })),
+});
+
 /** The real service; admission answers a fixed snapshot. Each build is a fresh process. */
-const layerService = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
+const layerService = (
+  slots: SandboxAdmission.AdmissionSnapshot = freeSlots,
+  drivers: Layer.Layer<
+    ComputeDriverRegistry,
+    never,
+    ServerSettings.ServerSettingsService
+  > = layerUnresolvedDrivers,
+) =>
   TeamImageService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -84,7 +107,8 @@ const layerService = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
           takeStart: Effect.void,
         }),
         Layer.mock(TeamImageBuildLog.TeamImageBuildLog)({}),
-        ServerSettings.layerTest({ sandbox: { drivers: [dockerDriver], defaultDriverId: docker } }),
+        drivers.pipe(Layer.provide(layerSettings)),
+        layerSettings,
         TeamState.layerTest([
           memberRecord(admin, "admin"),
           memberRecord(member, "member"),
@@ -103,13 +127,48 @@ const layerStorage = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
 );
 
 /** The service over its own SQLite database. */
-const layerTest = (slots: SandboxAdmission.AdmissionSnapshot = freeSlots) =>
-  layerService(slots).pipe(Layer.provideMerge(layerStorage));
+const layerTest = (
+  slots: SandboxAdmission.AdmissionSnapshot = freeSlots,
+  drivers?: Layer.Layer<ComputeDriverRegistry, never, ServerSettings.ServerSettingsService>,
+) => layerService(slots, drivers).pipe(Layer.provideMerge(layerStorage));
 
 const saveFirstRecipe = Effect.gen(function* () {
   const service = yield* TeamImageService.TeamImageService;
   return yield* service.saveRecipe({ actorId: admin, input: { baseRevision: null, recipe } });
 });
+
+it.effect("the snapshot names the base a rebuild would use, reading the driver once", () =>
+  Effect.gen(function* () {
+    const { driver, calls } = yield* FakeComputeDriver.make(docker);
+    const baseImage = {
+      ref: "ghcr.io/pair/t3-sandbox:9.9.9",
+      digest: "sha256:new",
+      version: "9.9.9",
+    };
+    const fallback = yield* Effect.gen(function* () {
+      const service = yield* TeamImageService.TeamImageService;
+      return (yield* service.snapshot).currentBase;
+    }).pipe(Effect.provide(layerTest()));
+    assert.isNull(fallback?.digest);
+    assert.isNotNull(fallback?.version);
+
+    const bases = yield* Effect.gen(function* () {
+      const service = yield* TeamImageService.TeamImageService;
+      const reading = yield* Effect.forkChild(service.snapshot);
+      const health = yield* Queue.take(calls);
+      if (health._tag !== "health") return yield* Effect.die(`Expected health, got ${health._tag}`);
+      yield* Deferred.succeed(health.reply, {
+        isolation: "container",
+        privateNetworkBlock: { applied: true },
+        baseImage,
+      });
+      const first = (yield* Fiber.join(reading)).currentBase;
+      // A second health read would wait on a reply nobody sends.
+      return [first, (yield* service.snapshot).currentBase];
+    }).pipe(Effect.provide(layerTest(freeSlots, FakeComputeDriver.layerRegistry(driver))));
+    assert.deepStrictEqual(bases, [baseImage, baseImage]);
+  }),
+);
 
 it.effect("a replayed command id returns its first receipt", () =>
   Effect.gen(function* () {

@@ -247,7 +247,7 @@ const layerSandboxAdmissionProvided = SandboxAdmission.layer.pipe(
   ),
 );
 
-// TeamState, settings and the server config come from the server.
+// TeamState, settings, the driver registry and the server config come from the server.
 const layerTeamImageServiceProvided = TeamImageService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(

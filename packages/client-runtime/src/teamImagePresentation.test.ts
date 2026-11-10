@@ -13,6 +13,7 @@ import {
   teamImageBuildPresentation,
   teamImageFailureMessage,
   teamImageImageLine,
+  rebuildSuggestion,
 } from "./teamImagePresentation.ts";
 
 const alice = MemberId.make("member-alice");
@@ -197,5 +198,75 @@ describe("teamImageImageLine", () => {
     };
     expect(teamImageImageLine(build(14, { manifest }))).toBe("Build 14 · Pair base 0.1.7");
     expect(teamImageImageLine(build(14))).toBe("Build 14");
+  });
+});
+
+describe("rebuildSuggestion", () => {
+  const built = (digest: string | null) =>
+    build(14, {
+      manifest: {
+        base: { ref: "ghcr.io/pair/t3-sandbox:0.1.7", digest, pairVersion: "0.1.7" },
+        providers: [],
+        repos: [],
+        serverVersion: "0.1.7",
+        imageEnv: {},
+        sizeBytes: null,
+      },
+    });
+  const now = (digest: string | null, version: string | null) => ({
+    ref: "ghcr.io/pair/t3-sandbox:0.1.9",
+    digest,
+    version,
+  });
+
+  it.each([
+    {
+      name: "the same digest",
+      active: built("sha256:a"),
+      current: now("sha256:a", "0.1.9"),
+      expected: null,
+    },
+    {
+      name: "a different digest and version",
+      active: built("sha256:a"),
+      current: now("sha256:b", "0.1.9"),
+      expected:
+        "Built on Pair base 0.1.7. This server runs 0.1.9. Rebuild to update provider CLIs.",
+    },
+    {
+      name: "a different digest on the same version",
+      active: built("sha256:a"),
+      current: now("sha256:b", "0.1.7"),
+      expected:
+        "Built on Pair base 0.1.7. This server's base image has changed. Rebuild to update provider CLIs.",
+    },
+    {
+      name: "an unknown digest and different versions",
+      active: built(null),
+      current: now("sha256:b", "0.1.9"),
+      expected:
+        "Built on Pair base 0.1.7. This server runs 0.1.9. Rebuild to update provider CLIs.",
+    },
+    {
+      name: "an unknown digest and the same version",
+      active: built(null),
+      current: now(null, "0.1.7"),
+      expected: null,
+    },
+    {
+      name: "a pinned image with no version",
+      active: built(null),
+      current: now(null, null),
+      expected: null,
+    },
+    { name: "no active build", active: null, current: now("sha256:b", "0.1.9"), expected: null },
+    {
+      name: "a server that reports no base",
+      active: built("sha256:a"),
+      current: undefined,
+      expected: null,
+    },
+  ])("$name", ({ active, current, expected }) => {
+    expect(rebuildSuggestion(active, current)).toBe(expected);
   });
 });

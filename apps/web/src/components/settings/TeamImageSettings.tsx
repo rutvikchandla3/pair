@@ -6,6 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  rebuildSuggestion,
   teamImageBuildPresentation,
   type TeamImageBuildPresentation,
 } from "@t3tools/client-runtime/team-image-presentation";
@@ -162,6 +163,7 @@ export function TeamImageSettings({
       }),
     ]),
   );
+  const rebuildHint = canEdit ? rebuildSuggestion(active, snapshot?.currentBase) : null;
   const buildRunning = [...presentations.values()].some((presentation) => presentation.inProgress);
 
   const parsed = edit === null ? null : recipeFromDraft(edit.draft);
@@ -177,6 +179,9 @@ export function TeamImageSettings({
     : buildRunning
       ? "A build is already running."
       : null;
+
+  const buildTitle =
+    saved === null ? "Save a recipe first." : (buildBlocker ?? "Builds the saved recipe.");
 
   const update = (patch: Partial<TeamImageDraft>) => {
     setEdit({
@@ -295,11 +300,7 @@ export function TeamImageSettings({
                       size="sm"
                       variant="outline"
                       disabled={busy || buildBlocker !== null || saved === null}
-                      title={
-                        saved === null
-                          ? "Save a recipe first."
-                          : (buildBlocker ?? "Builds the saved recipe.")
-                      }
+                      title={buildTitle}
                       onClick={() => saved !== null && void build(saved.revision)}
                     >
                       Build
@@ -312,7 +313,27 @@ export function TeamImageSettings({
                   </div>
                 ) : undefined
               }
-            />
+            >
+              {rebuildHint === null ? null : (
+                <div className="pb-2">
+                  <Alert variant="info">
+                    <InfoIcon aria-hidden />
+                    <AlertDescription>{rebuildHint}</AlertDescription>
+                    <AlertAction>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={busy || buildBlocker !== null || saved === null}
+                        title={buildTitle}
+                        onClick={() => saved !== null && void build(saved.revision)}
+                      >
+                        Build
+                      </Button>
+                    </AlertAction>
+                  </Alert>
+                </div>
+              )}
+            </SettingsRow>
             {canEdit ? (
               <RecipeEditor
                 draft={draft}

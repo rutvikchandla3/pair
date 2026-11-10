@@ -7,12 +7,14 @@ import {
   type TeamImageBuild,
   TeamImageBuildId,
   type TeamImageBuildLogChunk,
+  type TeamImageCurrentBase,
   TeamImageError,
   type TeamImageRecipeRevision,
   type TeamImageSaveRecipeInput,
   type TeamImageSnapshot,
   type TeamImageStartBuildInput,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -27,12 +29,15 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TeamState from "../../team/TeamState.ts";
+import { ComputeDriverRegistry } from "../compute/ComputeDriverRegistry.ts";
 import * as SandboxAdmission from "../lifecycle/SandboxAdmission.ts";
+import { currentBaseImage, driverBaseImage } from "../lifecycle/SandboxOverview.ts";
 import * as LiveTeamImageBuild from "./LiveTeamImageBuild.ts";
 import {
   decideTeamImageCommand,
@@ -47,6 +52,9 @@ import * as TeamImageStore from "./TeamImageStore.ts";
 
 /** The snapshot's history: the newest builds, plus the active one when it is older. */
 const RECENT_BUILDS = 20;
+
+/** An unresolved base (a driver still pulling, or unreachable) is looked up again after this. */
+const UNRESOLVED_BASE_TTL_MS = 60_000;
 
 /** A build reached succeeded, failed or cancelled; 4.18 and 4.21 tell the recipients. */
 export interface TeamImageBuildFinished {
@@ -128,6 +136,7 @@ const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const liveBuild = yield* LiveTeamImageBuild.LiveTeamImageBuild;
   const admission = yield* SandboxAdmission.SandboxAdmission;
+  const registry = yield* ComputeDriverRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
   const teamState = yield* TeamState.TeamState;
   const random = yield* SecureRandom.SecureRandom;
@@ -282,6 +291,33 @@ const make = Effect.gen(function* () {
     return driver.id satisfies ComputeDriverId;
   });
 
+  // A driver resolves its base once per override setting, so an answer holds until that changes.
+  const baseCache = yield* Ref.make<{
+    readonly override: string | undefined;
+    readonly base: TeamImageCurrentBase;
+    readonly until: number;
+  } | null>(null);
+
+  const currentBase = Effect.fn("TeamImageService.currentBase")(function* (
+    driverId: ComputeDriverId,
+  ) {
+    const override = (yield* settingsNow).sandbox?.baseImage;
+    const now = yield* Clock.currentTimeMillis;
+    const cached = yield* Ref.get(baseCache);
+    if (cached !== null && cached.override === override && cached.until > now) return cached.base;
+    const resolved = yield* registry.get(driverId).pipe(
+      Effect.flatMap(driverBaseImage),
+      Effect.orElseSucceed(() => null),
+    );
+    const base = currentBaseImage({ resolved, override, version: packageJson.version });
+    yield* Ref.set(baseCache, {
+      override,
+      base,
+      until: resolved === null ? now + UNRESOLVED_BASE_TTL_MS : Number.POSITIVE_INFINITY,
+    });
+    return base;
+  });
+
   const snapshot = Effect.gen(function* () {
     yield* ensureAvailable;
     const { activeBuildId } = yield* store.state;
@@ -290,6 +326,7 @@ const make = Effect.gen(function* () {
       activeBuildId === null || recent.some((build) => build.id === activeBuildId)
         ? Option.none()
         : yield* store.build(activeBuildId);
+    const driverId = yield* buildDriver().pipe(Effect.option);
     return {
       recipe: yield* store.latestRevision,
       activeBuildId,
@@ -297,6 +334,7 @@ const make = Effect.gen(function* () {
       proposals: [],
       keepSucceeded:
         (yield* settingsNow).sandbox?.teamImage?.keepSucceeded ?? DEFAULT_KEEP_SUCCEEDED,
+      ...(Option.isNone(driverId) ? {} : { currentBase: yield* currentBase(driverId.value) }),
     } satisfies TeamImageSnapshot;
   }).pipe(onlyTeamImageErrors, Effect.withSpan("TeamImageService.snapshot"));
 

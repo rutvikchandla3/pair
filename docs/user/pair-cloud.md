@@ -219,6 +219,11 @@ A failed build never changes the active build, so nobody else notices. Its row s
 failed and the last lines of its log. **Retry** builds the same recipe again, and **Fix with an
 agent** opens a cloud thread with the failure in its first message.
 
+After you update the server, Team image tells admins when the active build's base is not the one
+the server boots now ("This server runs 0.1.9. Rebuild to update provider CLIs."). **Build** there
+rebuilds the saved recipe. Nothing rebuilds by itself, and the old build keeps working. A pinned
+**Base image** that matches the build never shows it.
+
 **Edit with an agent** opens a new cloud thread on a project you choose, with a first message you
 can edit before sending.
 

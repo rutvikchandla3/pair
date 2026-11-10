@@ -552,7 +552,7 @@ clients build against one set of names. Schemas only: each RPC method lands with
     - `TeamImageSnapshot = Struct({ recipe: NullOr(TeamImageRecipeRevision), activeBuildId:
       NullOr(TeamImageBuildId), builds: Array(TeamImageBuild) /* newest 20, plus the active */,
       proposals: Array(TeamImageProposal) /* open */, keepSucceeded: PositiveInt,
-      currentBase: optionalKey(Struct({ ref, digest, version: NullOr(String) })) /* 4.22 */ })`.
+      currentBase: optionalKey(TeamImageCurrentBase) /* 4.22: { ref, digest: NullOr, version: NullOr } */ })`.
     - `TeamImageErrorReason = Literals(["not-admin", "not-available", "invalid-recipe",
       "recipe-changed", "build-running", "no-capacity", "draining", "not-found", "wrong-state",
       "image-deleted", "proposal-open", "too-many-proposals"])` and `TeamImageError`, a tagged error
@@ -1386,18 +1386,21 @@ server's runner at boot). The provider additions 3.13 also carried stay Later.
 
 - **Needs:** 4.17, 4.18. **Unblocks:** nothing.
 - **Files:**
-  - `apps/server/src/sandbox/lifecycle/SandboxOverview.ts` (120–133): extract the base the server
-    would boot now (`resolved` from the drivers' health, else the override, else
-    `DEFAULT_BASE_IMAGE_REPOSITORY:<version>`) into `currentBaseImage(driverId)`, returning `{ ref,
-    digest: string | null, version: string | null }`, and use it in both places.
-  - `TeamImageService.ts` `snapshot`: `currentBase` for the default driver, cached until the
-    driver's health is next read (the overview already reads it; no new driver calls per
-    subscription).
+  - `apps/server/src/sandbox/lifecycle/SandboxOverview.ts`: `currentBaseImage({ resolved, override,
+    version })` is the pure choice of the base the server would boot now (the driver's resolved
+    image, else the override, else `DEFAULT_BASE_IMAGE_REPOSITORY:<version>`), returning
+    `TeamImageCurrentBase` (`digest` and `version` are null when unknown). Overview's label comes
+    from it. `driverBaseImage(driver)` reads one driver's resolved base.
+  - `TeamImageService.ts` `snapshot`: `currentBase` for the default driver. A resolved base is
+    cached until `sandbox.baseImage` changes (the driver resolves once per override too); an
+    unresolved one (pulling, unreachable) is looked up again after a minute, so a dead Docker host
+    costs one 10 s probe a minute, not one per snapshot.
   - `packages/client-runtime/src/teamImagePresentation.ts`: `rebuildSuggestion(activeBuild,
-    currentBase)` returns the sentence when both digests are known and differ, or when the
-    digests are unknown and the versions differ; else null.
-  - `TeamImageSettings.tsx`: the line under the active build, with **Build** (a build of the saved
-    revision). Mobile does not show it in M4: 4.21 owns that screen in the same wave, and the
+    currentBase)` returns the sentence when both digests are known and differ, or when either
+    digest is unknown and both versions are known and differ; else null. It tests "differs", not
+    "older": a server rolled back to an older release also reads "Rebuild to update".
+  - `TeamImageSettings.tsx`: an info alert under the active build for admins, with **Build** (a
+    build of the saved revision). Mobile does not show it in M4: 4.21 owns that screen in the same wave, and the
     hint is an admin's prompt to act on the web.
 - **Types and services:** `currentBaseImage` (SandboxOverview); `rebuildSuggestion`.
 - **Commands and events, Migrations:** none.

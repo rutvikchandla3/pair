@@ -4,6 +4,7 @@ import type {
   TeamImageBuildFailure,
   TeamImageBuildId,
   TeamImageBuildPhase,
+  TeamImageCurrentBase,
 } from "@t3tools/contracts";
 
 /** One words-and-tone rule for a build, written once for web and mobile (05 §8). */
@@ -143,4 +144,27 @@ export function teamImageImageLine(build: Pick<TeamImageBuild, "number" | "manif
   return build.manifest === undefined
     ? `Build ${build.number}`
     : `Build ${build.number} · Pair base ${build.manifest.base.pairVersion}`;
+}
+
+/**
+ * "Rebuild to update" for the active build, or null when it is current or the two bases can't be
+ * compared. Digests settle it when both are known (a digest names exactly one image); otherwise
+ * the versions do, and only when both exist. A pinned override that resolves to the build's own
+ * image never nags.
+ */
+export function rebuildSuggestion(
+  activeBuild: Pick<TeamImageBuild, "manifest"> | null | undefined,
+  currentBase: TeamImageCurrentBase | null | undefined,
+): string | null {
+  const built = activeBuild?.manifest?.base;
+  if (built === undefined || currentBase == null) return null;
+  const stale =
+    built.digest !== null && currentBase.digest !== null
+      ? built.digest !== currentBase.digest
+      : currentBase.version !== null && currentBase.version !== built.pairVersion;
+  if (!stale) return null;
+  const builtOn = `Built on Pair base ${built.pairVersion}.`;
+  return currentBase.version !== null && currentBase.version !== built.pairVersion
+    ? `${builtOn} This server runs ${currentBase.version}. Rebuild to update provider CLIs.`
+    : `${builtOn} This server's base image has changed. Rebuild to update provider CLIs.`;
 }

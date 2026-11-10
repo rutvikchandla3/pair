@@ -1,9 +1,10 @@
 import {
   type SandboxDriverHealth,
+  type SandboxBaseImageInfo,
   type SandboxDriverIsolation,
   type SandboxOverview as SandboxOverviewResult,
   SandboxOverviewError,
-  sandboxImageLabel,
+  type TeamImageCurrentBase,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -66,11 +67,46 @@ const baseImageMessage = (baseImage: ComputeDriverHealth["baseImage"]): string |
   return undefined;
 };
 
+/** `None` is a timeout. */
+const probeHealth = (driver: ComputeDriver["Service"]) =>
+  driver.health.pipe(Effect.timeoutOption(HEALTH_TIMEOUT), Effect.result);
+
+const resolvedImage = (baseImage: ComputeDriverHealth["baseImage"]): SandboxBaseImageInfo | null =>
+  baseImage !== null && "digest" in baseImage ? baseImage : null;
+
+/** The base this driver resolved, or null while it is pulling, missing or unreachable. */
+export const driverBaseImage = Effect.fn("SandboxOverview.driverBaseImage")(function* (
+  driver: ComputeDriver["Service"],
+) {
+  const health = yield* probeHealth(driver);
+  return health._tag === "Success" && health.success._tag === "Some"
+    ? resolvedImage(health.success.value.baseImage)
+    : null;
+});
+
+/** What a new machine would boot: the driver's resolved image, else the override, else this version's. */
+export const currentBaseImage = (input: {
+  readonly resolved: SandboxBaseImageInfo | null | undefined;
+  /** `ServerSettings.sandbox.baseImage`. */
+  readonly override: string | undefined;
+  /** The server's package version. */
+  readonly version: string;
+}): TeamImageCurrentBase =>
+  input.resolved != null
+    ? input.resolved
+    : input.override !== undefined
+      ? { ref: input.override, digest: null, version: null }
+      : {
+          ref: `${DEFAULT_BASE_IMAGE_REPOSITORY}:${input.version}`,
+          digest: null,
+          version: input.version,
+        };
+
 const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
   driver: ComputeDriver["Service"],
   runningCap: number,
 ) {
-  const health = yield* driver.health.pipe(Effect.timeoutOption(HEALTH_TIMEOUT), Effect.result);
+  const health = yield* probeHealth(driver);
   const base = { driverId: driver.driverId, runningCap };
   if (health._tag === "Failure" || health.success._tag === "None") {
     const report: SandboxDriverHealth = {
@@ -92,7 +128,7 @@ const driverHealth = Effect.fn("SandboxOverview.driverHealth")(function* (
     isolation: isolationOf(isolation),
     ...(message === undefined ? {} : { message }),
   };
-  return { report, baseImage: baseImage !== null && "digest" in baseImage ? baseImage : null };
+  return { report, baseImage: resolvedImage(baseImage) };
 });
 
 const make = Effect.gen(function* () {
@@ -116,20 +152,21 @@ const make = Effect.gen(function* () {
     );
     const machines = yield* projections.countSandboxStates;
     const mirrorBytes = yield* mirror.diskBytes;
-    const resolved = healths.flatMap((entry) =>
-      entry.baseImage === null ? [] : [entry.baseImage],
-    )[0];
+    const current = currentBaseImage({
+      resolved: healths.flatMap((entry) => (entry.baseImage === null ? [] : [entry.baseImage]))[0],
+      override,
+      version,
+    });
     const configured = new Set(drivers.map((driver) => driver.driverId));
     const stopped =
       restoreModeSince === undefined
         ? []
         : (yield* restoreMode.machines).filter((machine) => configured.has(machine.driverId));
-    const baseImage =
-      resolved !== undefined
-        ? { ref: resolved.ref, label: sandboxImageLabel({ baseImage: resolved }) }
-        : override !== undefined
-          ? { ref: override, label: `Base image ${override}` }
-          : { ref: `${DEFAULT_BASE_IMAGE_REPOSITORY}:${version}`, label: `Pair base ${version}` };
+    const baseImage = {
+      ref: current.ref,
+      label:
+        current.version !== null ? `Pair base ${current.version}` : `Base image ${current.ref}`,
+    };
     return {
       drivers: healths.map((entry) => entry.report),
       machines,

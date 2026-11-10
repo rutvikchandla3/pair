@@ -11,7 +11,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceEnvironmentVariableName } from "./providerInstance.ts";
-import { ComputeDriverId, SandboxBaseImageInfo, TeamImageBuildId } from "./sandbox.ts";
+import { ComputeDriverId, TeamImageBuildId } from "./sandbox.ts";
 import { SecretReference } from "./secretReference.ts";
 
 const TEAM_IMAGE_MAX_PROJECTS = 50;
@@ -153,6 +153,15 @@ export const TeamImageProposal = Schema.Struct({
 });
 export type TeamImageProposal = typeof TeamImageProposal.Type;
 
+/** What a rebuild would boot from. A digest is null until the driver has resolved the image. */
+export const TeamImageCurrentBase = Schema.Struct({
+  ref: TrimmedNonEmptyString,
+  digest: Schema.NullOr(TrimmedNonEmptyString),
+  /** The image's `org.opencontainers.image.version`; null for an image without one. */
+  version: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type TeamImageCurrentBase = typeof TeamImageCurrentBase.Type;
+
 export const TeamImageSnapshot = Schema.Struct({
   recipe: Schema.NullOr(TeamImageRecipeRevision),
   activeBuildId: Schema.NullOr(TeamImageBuildId),
@@ -162,7 +171,7 @@ export const TeamImageSnapshot = Schema.Struct({
   proposals: Schema.Array(TeamImageProposal),
   keepSucceeded: PositiveInt,
   /** The base a rebuild would use now; absent until the server reports it. */
-  currentBase: Schema.optionalKey(SandboxBaseImageInfo),
+  currentBase: Schema.optionalKey(TeamImageCurrentBase),
 });
 export type TeamImageSnapshot = typeof TeamImageSnapshot.Type;
 
