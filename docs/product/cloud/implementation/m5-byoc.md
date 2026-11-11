@@ -1944,8 +1944,8 @@ What the maintainer provides:
    terminal, **Commit, push & create PR**, **Sleep now**, **Wake machine**. Passes when:
    - `gcloud compute instances describe` shows the machine in the machine subnet with no
      `accessConfigs`, no service account, and the four labels;
-   - in its terminal, `sudo apt-get install -y docker.io && sudo docker run --rm hello-world`
-     works (Docker inside the machine, 09 §3);
+   - in its terminal, `docker run --rm hello-world` and `docker compose version` work with no
+     `sudo` (Docker is in the machine image, 05 §1);
    - the PR opens on the test repository;
    - asleep, the instance is `TERMINATED` and files and Changes still read; awake, it is the
      same instance with the same disk (a marker file) and the terminal works. Record stop and

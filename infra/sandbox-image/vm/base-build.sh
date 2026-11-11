@@ -157,10 +157,11 @@ Acquire::Retries "5";
 DPkg::Lock::Timeout "1200";
 APT
 # needrestart would restart services mid-build, this script's runner among them.
-PAIR_VERSION="$version" NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l bash "$tree/provision.sh"
-rm -f /etc/apt/apt.conf.d/90pair-base-build
+export NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l
+PAIR_VERSION="$version" bash "$tree/provision.sh"
 
 step=install
 bash "$tree/vm/install-vm.sh"
+rm -f /etc/apt/apt.conf.d/90pair-base-build
 
 step=finished

@@ -47,7 +47,13 @@ targets ([CodexInstallation.ts](../../../apps/server/src/provider/CodexInstallat
 | Browser        | Chrome's `chrome-headless-shell` at `/opt/pair-chrome/<version>/`, run as `pair-chrome`, with its libraries and fonts                                         | The machine browser of cloud sessions ([07 §5](./07-access-and-data.md)). The same build the server's Playwright drives; on a VM an AppArmor profile lets it use its own sandbox.                                    |
 | User           | `t3`, uid 1000, home `/home/t3`, passwordless `sudo`                                                                                                          | See below.                                                                                                                                                                                                           |
 
-Left out on purpose: Docker inside the sandbox, Go, Rust and Java. Teams add them in recipes.
+A VM machine's image also has Docker (`docker.io`, `docker-compose-v2`, `docker-buildx` from
+Ubuntu's archive), with `t3` in the `docker` group and bridge MTUs set to the network's:
+`vm/install-vm.sh` installs it, since most repositories need it for test databases and
+`docker compose`. A container machine has none, as Docker inside a container needs privileges it
+does not get.
+
+Left out on purpose: Go, Rust and Java. Teams add them in recipes.
 
 **Runner as root, agents as `t3` with passwordless sudo** (D3, as Conductor and Claude Code cloud
 give agents root). Agents run as `t3` because some provider CLIs refuse permission-bypass modes as

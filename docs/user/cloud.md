@@ -46,7 +46,8 @@ runs.
 agents. Projects can add their own.
 
 A Pair Cloud server that runs in your own Google Cloud project can use that project's Compute
-Engine VMs as machines instead: choose **Add driver**, then **Google Cloud**.
+Engine VMs as machines instead: choose **Add driver**, then **Google Cloud**. These machines have
+Docker and Docker Compose, so agents and setup scripts can run containers. Container machines do not.
 
 With more than one driver, new machines start on the first one until you choose another:
 press **Use for new machines** on its row. Machines already running stay where they are.

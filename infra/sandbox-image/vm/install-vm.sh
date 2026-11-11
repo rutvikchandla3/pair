@@ -32,6 +32,27 @@ APPARMOR
 apparmor_parser -r /etc/apparmor.d/pair-chrome
 sudo -u t3 -H pair-chrome --dump-dom about:blank >/dev/null
 
+# Docker for agents, from Ubuntu's archive. The VM is the sandbox, so the daemon is the machine's own.
+# Bridges take the network's MTU: Docker's 1500 is over a VPC's default 1460 and stalls large packets.
+mtu="$(cat "/sys/class/net/$(ip -o route show default | awk '{print $5; exit}')/mtu")"
+install -d -m 0755 /etc/docker
+cat >/etc/docker/daemon.json <<DOCKER
+{
+  "mtu": $mtu,
+  "default-network-opts": { "bridge": { "com.docker.network.driver.mtu": "$mtu" } }
+}
+DOCKER
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends docker.io docker-compose-v2 docker-buildx
+rm -rf /var/lib/apt/lists/*
+systemctl enable --now docker.service
+# The runner starts agents with t3's groups (setpriv --init-groups), so they need no sudo.
+usermod -aG docker t3
+sudo -u t3 -H docker version >/dev/null
+sudo -u t3 -H docker compose version >/dev/null
+sudo -u t3 -H docker buildx version >/dev/null
+
 # Agents run apt; Ubuntu's own upgrades would hold the dpkg lock under them.
 for unit in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
   if systemctl cat "$unit" >/dev/null 2>&1; then systemctl disable --now "$unit"; fi

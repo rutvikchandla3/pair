@@ -3064,6 +3064,17 @@ first cloud thread failed with "master is not on origin. Push master first."
   the Team page's environment picker is easy to miss, and the `app-no-access` message does not
   mention a token.
 
+## Docker on VM machines
+
+- The gce driver has said `nestedDocker: true` since 5.11, but the image had no Docker.
+  `vm/install-vm.sh` now installs `docker.io`, `docker-compose-v2` and `docker-buildx`, adds `t3`
+  to the `docker` group (agents get it through `setpriv --init-groups`), sets bridge MTUs to the
+  builder's network MTU in `/etc/docker/daemon.json`, and checks all three as `t3`.
+- `base-build.sh` keeps its apt retries and the needrestart guard through the install step.
+- The provision tree's hash changed, so a server builds a new base image after it upgrades.
+  Machines and team images made from the old base have no Docker until they are remade.
+- Unproven until a GCE base rebuild: the build itself, and `docker run` in a session's terminal.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
