@@ -502,6 +502,7 @@ export function layerWithRegistry<Error>(
         layerRuntime,
         layerServerConfig,
         layerServerSettings,
+        Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
       ),
     ),
   );

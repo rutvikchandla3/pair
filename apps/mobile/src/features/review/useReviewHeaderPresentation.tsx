@@ -5,6 +5,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
 import { useThreadGitMenuDefinition } from "../threads/ThreadGitControls";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ThreadRepository } from "@t3tools/client-runtime/state/workspaces";
 import type { ReviewSectionItem } from "./reviewModel";
 import type { AppBarMenuItem, AppBarMenu } from "../../components/ui/AppBar.types";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
@@ -23,7 +24,9 @@ export function useReviewHeaderPresentation(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly androidSubtitle: string;
+  /** The folder whose git status the menu shows; null for a workspace thread. */
   readonly selectedThreadCwd: string | null;
+  readonly repositories: ReadonlyArray<ThreadRepository> | null;
   readonly selectedSection: ReviewSectionItem | null;
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
@@ -47,6 +50,7 @@ export function useReviewHeaderPresentation(props: {
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatusQuery.data,
     gitOperationLabel: gitState.gitOperationLabel,
+    repositories: props.repositories,
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   });

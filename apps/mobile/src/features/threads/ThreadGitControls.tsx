@@ -126,6 +126,11 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
 };
 
+// A workspace thread reviews only its turns: its folder has no uncommitted or branch changes.
+function workspaceReviewSubtitle(hasThread: boolean | undefined): string {
+  return hasThread === false ? "Available after the first message" : "Turn diffs";
+}
+
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
@@ -374,14 +379,24 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       label: "Git",
       menu: {
         items: props.repositories
-          ? workspaceRepositoryRows(props.repositories).map((row) => ({
-              description: row.subtitle,
-              disabled: true,
-              icon: { name: "folder", type: "sfSymbol" as const },
-              label: row.title,
-              onPress: (): void => {},
-              type: "action" as const,
-            }))
+          ? [
+              {
+                description: workspaceReviewSubtitle(props.hasThread),
+                disabled: props.hasThread === false,
+                icon: { name: "text.bubble", type: "sfSymbol" as const },
+                label: "Review changes",
+                onPress: model.openReview,
+                type: "action" as const,
+              },
+              ...workspaceRepositoryRows(props.repositories).map((row) => ({
+                description: row.subtitle,
+                disabled: true,
+                icon: { name: "folder", type: "sfSymbol" as const },
+                label: row.title,
+                onPress: (): void => {},
+                type: "action" as const,
+              })),
+            ]
           : [
               {
                 description: model.menuStatus,
@@ -563,14 +578,24 @@ function threadGitMenuDefinition(
       title: "Repositories",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       separateBackground: false,
-      items: workspaceRepositoryRows(props.repositories).map((row) => ({
-        id: `workspace-${row.key}`,
-        title: row.title,
-        icon: "folder",
-        disabled: true,
-        subtitle: row.subtitle,
-        onPress: () => {},
-      })),
+      items: [
+        {
+          id: "git-review",
+          title: "Review changes",
+          icon: "text.bubble",
+          disabled: props.hasThread === false,
+          subtitle: workspaceReviewSubtitle(props.hasThread),
+          onPress: model.openReview,
+        },
+        ...workspaceRepositoryRows(props.repositories).map((row) => ({
+          id: `workspace-${row.key}`,
+          title: row.title,
+          icon: "folder" as const,
+          disabled: true,
+          subtitle: row.subtitle,
+          onPress: () => {},
+        })),
+      ],
     };
   }
   return {

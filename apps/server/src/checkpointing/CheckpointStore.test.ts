@@ -647,5 +647,163 @@ describe.each(layers)("on the %s host", (_hostKind, layerTest) =>
         }),
       );
     });
+
+    describe("workspace roots", () => {
+      const makeWorkspace = Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        for (const name of ["api", "web"]) {
+          yield* fileSystem.makeDirectory(NodePath.join(tmp, name));
+          yield* initRepoWithCommit(NodePath.join(tmp, name));
+        }
+        yield* writeTextFile(NodePath.join(tmp, "AGENTS.md"), "guidance\n");
+        return { cwd: tmp, roots: ["api", "web"] };
+      });
+
+      it.effect("captures and diffs every repository under its folder name", () =>
+        Effect.gen(function* () {
+          const workspace = yield* makeWorkspace;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const threadId = ThreadId.make("checkpoint-workspace-roots");
+          const baseline = checkpointRefForThreadTurn(threadId, 0);
+          const firstTurn = checkpointRefForThreadTurn(threadId, 1);
+          yield* writeTextFile(NodePath.join(workspace.cwd, "web", "old.txt"), "a\nb\nc\nd\n");
+          yield* CheckpointCapture.captureBaseline({ ...workspace, checkpointRef: baseline });
+
+          yield* writeTextFile(NodePath.join(workspace.cwd, "api", "README.md"), "# api\n");
+          yield* fileSystem.rename(
+            NodePath.join(workspace.cwd, "web", "old.txt"),
+            NodePath.join(workspace.cwd, "web", "new.txt"),
+          );
+          yield* writeTextFile(NodePath.join(workspace.cwd, "AGENTS.md"), "not in any repo\n");
+          const turn = yield* CheckpointCapture.captureTurn({
+            ...workspace,
+            checkpointRef: firstTurn,
+            previousCheckpointRef: baseline,
+          });
+          expect(turn.status).toBe("ready");
+          expect(turn.commitOid).toBe(
+            yield* git(NodePath.join(workspace.cwd, "api"), ["rev-parse", firstTurn]),
+          );
+          expect(
+            yield* git(NodePath.join(workspace.cwd, "web"), ["rev-parse", firstTurn]),
+          ).not.toBe("");
+          expect(turn.files).toEqual([
+            { path: "api/README.md", kind: "modified", additions: 1, deletions: 1 },
+            { path: "web/new.txt", kind: "modified", additions: 0, deletions: 0 },
+          ]);
+          expect(
+            parseTurnDiffFilesFromNumstat(
+              yield* checkpointStore.diffCheckpoints({
+                ...workspace,
+                fromCheckpointRef: baseline,
+                toCheckpointRef: firstTurn,
+                ignoreWhitespace: false,
+                format: "numstat",
+              }),
+            ),
+          ).toEqual([
+            { path: "api/README.md", additions: 1, deletions: 1 },
+            { path: "web/new.txt", previousPath: "web/old.txt", additions: 0, deletions: 0 },
+          ]);
+
+          const patchInput = {
+            ...workspace,
+            fromCheckpointRef: baseline,
+            toCheckpointRef: firstTurn,
+            ignoreWhitespace: false,
+          };
+          const patch = yield* checkpointStore.diffCheckpoints(patchInput);
+          expect(patch).toContain("+++ b/api/README.md");
+          expect(patch).toContain("rename from web/old.txt\nrename to web/new.txt");
+          expect(patch.indexOf("api/README.md")).toBeLessThan(patch.indexOf("web/new.txt"));
+          const webOnly = yield* checkpointStore.diffCheckpoints({
+            ...patchInput,
+            filePaths: ["web/new.txt", "web/old.txt", "AGENTS.md", "docs/README.md"],
+          });
+          expect(webOnly).toContain("rename to web/new.txt");
+          expect(webOnly).not.toContain("api/");
+          expect(
+            yield* checkpointStore.diffCheckpoints({ ...patchInput, filePaths: ["AGENTS.md"] }),
+          ).toBe("");
+          const bounded = yield* checkpointStore.diffCheckpoints({
+            ...patchInput,
+            maxOutputBytes: patch.indexOf("diff --git a/web/") + 10,
+          });
+          expect(bounded).toBe(patch.slice(0, patch.indexOf("diff --git a/web/") + 10));
+          const tooLarge = yield* Effect.flip(
+            checkpointStore.diffCheckpoints({
+              ...patchInput,
+              format: "numstat",
+              maxOutputBytes: 20,
+            }),
+          );
+          expect(tooLarge._tag).toBe("VcsProcessOutputLimitError");
+          expect(
+            yield* checkpointStore.listAuthoredPaths({
+              ...workspace,
+              fromCheckpointRef: baseline,
+              toCheckpointRef: firstTurn,
+            }),
+          ).toBeNull();
+          yield* git(NodePath.join(workspace.cwd, "api"), ["commit", "-am", "api"]);
+          yield* checkpointStore.captureCheckpoint({ ...workspace, checkpointRef: firstTurn });
+          expect(
+            yield* checkpointStore.listAuthoredPaths({
+              ...workspace,
+              fromCheckpointRef: baseline,
+              toCheckpointRef: firstTurn,
+            }),
+          ).toEqual(new Set(["api/README.md", "web/new.txt", "web/old.txt"]));
+        }),
+      );
+
+      it.effect("restores every repository, refusing when one is missing", () =>
+        Effect.gen(function* () {
+          const workspace = yield* makeWorkspace;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const threadId = ThreadId.make("checkpoint-workspace-restore");
+          const baseline = checkpointRefForThreadTurn(threadId, 0);
+          const later = checkpointRefForThreadTurn(threadId, 1);
+          yield* checkpointStore.captureCheckpoint({ ...workspace, checkpointRef: baseline });
+          expect(
+            yield* checkpointStore.hasCheckpointRef({ ...workspace, checkpointRef: baseline }),
+          ).toBe(true);
+          const apiReadme = NodePath.join(workspace.cwd, "api", "README.md");
+          const webExtra = NodePath.join(workspace.cwd, "web", "extra.txt");
+          yield* writeTextFile(apiReadme, "# changed\n");
+          yield* writeTextFile(webExtra, "added\n");
+
+          expect(
+            yield* checkpointStore.restoreCheckpoint({ ...workspace, checkpointRef: baseline }),
+          ).toBe(true);
+          expect(yield* fileSystem.readFileString(apiReadme)).toBe("# test\n");
+          expect(yield* fileSystem.exists(webExtra)).toBe(false);
+
+          yield* checkpointStore.captureCheckpoint({
+            cwd: NodePath.join(workspace.cwd, "api"),
+            checkpointRef: later,
+          });
+          expect(
+            yield* checkpointStore.hasCheckpointRef({ ...workspace, checkpointRef: later }),
+          ).toBe(false);
+          yield* writeTextFile(apiReadme, "# kept\n");
+          expect(
+            yield* checkpointStore.restoreCheckpoint({ ...workspace, checkpointRef: later }),
+          ).toBe(false);
+          expect(yield* fileSystem.readFileString(apiReadme)).toBe("# kept\n");
+
+          yield* fileSystem.remove(NodePath.join(workspace.cwd, "web"), { recursive: true });
+          const missing = yield* Effect.flip(
+            checkpointStore.restoreCheckpoint({ ...workspace, checkpointRef: baseline }),
+          );
+          expect(missing._tag).toBe("VcsRepositoryDetectionError");
+          expect(missing.message).toContain("web/");
+          expect(yield* fileSystem.readFileString(apiReadme)).toBe("# kept\n");
+        }),
+      );
+    });
   }),
 );

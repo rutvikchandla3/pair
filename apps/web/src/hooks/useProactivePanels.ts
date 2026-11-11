@@ -35,7 +35,7 @@ export function useProactivePanels(input: {
   readonly latestRun: { readonly runId: RunId; readonly status: string } | null;
   readonly latestRunSettled: boolean;
   readonly turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
-  readonly isGitRepo: boolean | undefined;
+  readonly hasCheckpoints: boolean | undefined;
   readonly linkedPullRequest: ThreadLinkedPullRequest | null;
   readonly hasLinkedPullRequestDetail: boolean;
   readonly pullRequestsKey: string | null;
@@ -54,7 +54,7 @@ export function useProactivePanels(input: {
     latestRun: activeLatestRun,
     latestRunSettled,
     turnDiffSummaries,
-    isGitRepo,
+    hasCheckpoints,
     linkedPullRequest: linkedThreadPullRequest,
     hasLinkedPullRequestDetail,
     pullRequestsKey: proactivePullRequestsKey,
@@ -166,7 +166,7 @@ export function useProactivePanels(input: {
     const diffAction = eligibleCompletion
       ? resolveProactiveTurnDiffAction({
           checkpoint: completedCheckpoint,
-          isGitRepo,
+          hasCheckpoints,
         })
       : "ignore";
     proactivePanelObservationRef.current = {
@@ -193,7 +193,7 @@ export function useProactivePanels(input: {
     activeRunningTurnId,
     clientSettingsHydrated,
     hasLinkedPullRequestDetail,
-    isGitRepo,
+    hasCheckpoints,
     latestRunSettled,
     linkedThreadPullRequest,
     onDiffPanelOpen,

@@ -175,8 +175,11 @@ T3 Code throughout.
   with an `AGENTS.md` and `CLAUDE.md` that list the repositories.
 - **Safe edits.** Threads keep the repositories they started with, and a project a workspace uses
   can't be deleted.
-- Not built yet: combined checkpoints and diffs, per-repository git and pull request controls,
-  automatic folder cleanup, and Cloud.
+- **Diffs and revert across repositories.** A turn's changed files, the diff panel and revert
+  cover every repository, with paths under each repository's folder name. The phone shows turn
+  diffs.
+- Not built yet: per-repository git and pull request controls, automatic folder cleanup, and
+  Cloud.
 - User guide: [Workspaces](../user/workspaces.md).
 
 ## Not planned

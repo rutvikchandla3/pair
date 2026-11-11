@@ -524,6 +524,28 @@ function chunkPathsForGitCheckIgnore(relativePaths: ReadonlyArray<string>): stri
   return chunks;
 }
 
+// --src-prefix/--dst-prefix cover the headers; rename and copy lines and -z numstat carry bare paths.
+function prefixCheckpointDiffPaths(output: string, format: "patch" | "numstat", prefix: string) {
+  if (format === "patch") {
+    return output.replace(/^((?:rename|copy) (?:from|to) )("?)/gm, `$1$2${prefix}/`);
+  }
+  const records = output.split("\0");
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    const counts = /^(?:\d+|-)\t(?:\d+|-)\t/.exec(record);
+    if (counts === null) continue;
+    if (record.length > counts[0].length) {
+      records[index] = `${counts[0]}${prefix}/${record.slice(counts[0].length)}`;
+      continue;
+    }
+    for (const pathIndex of [index + 1, index + 2]) {
+      if (records[pathIndex]) records[pathIndex] = `${prefix}/${records[pathIndex]}`;
+    }
+    index += 2;
+  }
+  return records.join("\0");
+}
+
 function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
@@ -1485,7 +1507,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--no-ext-diff",
           "--no-textconv",
           "--submodule=short",
-          ...PATCH_RENDER_PREFIX_ARGS,
+          ...(input.pathPrefix === undefined
+            ? PATCH_RENDER_PREFIX_ARGS
+            : [`--src-prefix=a/${input.pathPrefix}/`, `--dst-prefix=b/${input.pathPrefix}/`]),
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
@@ -1509,7 +1533,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         });
       }
 
-      return result.stdout;
+      return input.pathPrefix === undefined
+        ? result.stdout
+        : prefixCheckpointDiffPaths(result.stdout, input.format ?? "patch", input.pathPrefix);
     }),
 
     listAuthoredPaths: Effect.fn("GitVcsDriver.checkpoints.listAuthoredPaths")(function* (input) {

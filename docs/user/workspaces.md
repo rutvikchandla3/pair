@@ -49,12 +49,14 @@ Everyone on the server sees every workspace, as with projects.
   inside each one.
 - A repository's own agent setup, such as its skills or MCP servers, isn't loaded, because the
   agent doesn't start inside it.
+- Each turn's changed files, the diff panel and reverting to an earlier turn cover every
+  repository. Paths start with the repository's folder name, such as `frontend/src/app.ts`.
+  A revert changes nothing if any repository is missing or has no checkpoint for that turn.
 
 You can't delete a project while a workspace uses it. Remove it from the workspace first.
 
 ## Not supported yet
 
-- Checkpoints, diffs and restore for a workspace thread.
 - Git controls and pull request actions for each repository. Commit, push and open pull requests
   from the agent or a terminal inside each repository.
 - Automatic cleanup. Storage cleanup never removes a workspace thread's folder. When you delete

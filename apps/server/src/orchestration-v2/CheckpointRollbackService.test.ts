@@ -43,6 +43,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -59,6 +60,7 @@ const layerCheckpointRollbackService = CheckpointRollbackService.layer.pipe(
       ServerSettings.layerTest(),
       Layer.mock(GitWorkflow.GitWorkflowService)({}),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
+      Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
     ),
   ),
 );
@@ -226,6 +228,7 @@ it.effect.each([
         Layer.mergeAll(
           ThreadCommandExecutor.layer,
           WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(NodeServices.layer)),
+          Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
           Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as never),
           ServerSettings.layerTest(),
           Layer.mock(ProjectStore.ProjectStoreV2)({

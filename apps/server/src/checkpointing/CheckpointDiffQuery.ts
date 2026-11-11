@@ -207,6 +207,7 @@ export const make = Effect.gen(function* () {
 
       const comparison = {
         cwd: toScope.cwd,
+        roots: toScope.roots,
         fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,

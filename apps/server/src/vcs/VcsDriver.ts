@@ -37,6 +37,8 @@ export interface VcsDiffCheckpointsInput {
   readonly maxOutputBytes?: number;
   /** An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** A folder name put in front of every path in the output, as `<pathPrefix>/<path>`. */
+  readonly pathPrefix?: string;
 }
 
 export interface VcsListAuthoredPathsInput {

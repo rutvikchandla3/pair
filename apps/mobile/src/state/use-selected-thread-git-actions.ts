@@ -34,7 +34,10 @@ import {
 import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import {
+  useSelectedThreadRepositories,
+  useSelectedThreadWorktree,
+} from "./use-selected-thread-worktree";
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -72,7 +75,11 @@ export function useSelectedThreadGitActions() {
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const worktree = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = worktree;
+  // A workspace thread's folder holds several repositories and is not one, so nothing here runs git in it.
+  const isWorkspaceThread = useSelectedThreadRepositories() !== null;
+  const selectedThreadCwd = isWorkspaceThread ? null : worktree.selectedThreadCwd;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
@@ -81,7 +88,9 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = isWorkspaceThread
+    ? null
+    : (selectedThreadProject?.workspaceRoot ?? null);
   const branchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,

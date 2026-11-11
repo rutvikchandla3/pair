@@ -21,24 +21,25 @@ export interface TurnCapture {
   readonly warnings: ReadonlyArray<CheckpointCaptureWarning>;
 }
 
-export const isGitCheckpointable = (cwd: string) =>
-  CheckpointStore.CheckpointStore.use((store) => store.isGitRepository(cwd)).pipe(
+export const isGitCheckpointable = (cwd: string, roots?: ReadonlyArray<string>) =>
+  CheckpointStore.CheckpointStore.use((store) => store.isGitRepository(cwd, roots)).pipe(
     Effect.orElseSucceed(() => false),
   );
 
 /** `commitOid` is null when nothing was captured, including when the ref already existed. */
 export const captureBaseline = Effect.fn("CheckpointCapture.captureBaseline")(function* (input: {
   readonly cwd: string;
+  readonly roots?: ReadonlyArray<string> | undefined;
   readonly checkpointRef: CheckpointRef;
 }) {
   const store = yield* CheckpointStore.CheckpointStore;
-  if (!(yield* isGitCheckpointable(input.cwd))) {
+  if (!(yield* isGitCheckpointable(input.cwd, input.roots))) {
     return { status: "missing" as const, commitOid: null };
   }
   if (yield* store.hasCheckpointRef(input)) {
     return { status: "ready" as const, commitOid: null };
   }
-  return yield* store.captureCheckpoint(input).pipe(
+  return yield* store.captureCheckpoint({ ...input, keepExisting: true }).pipe(
     Effect.map((commitOid) => ({ status: "ready" as const, commitOid })),
     Effect.catchTags({
       VcsUnsupportedOperationError: () =>
@@ -49,6 +50,7 @@ export const captureBaseline = Effect.fn("CheckpointCapture.captureBaseline")(fu
 
 export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* (input: {
   readonly cwd: string;
+  readonly roots?: ReadonlyArray<string> | undefined;
   readonly checkpointRef: CheckpointRef;
   readonly previousCheckpointRef: CheckpointRef;
 }) {
@@ -66,12 +68,12 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
     warnings,
   });
 
-  if (!(yield* isGitCheckpointable(input.cwd))) {
+  if (!(yield* isGitCheckpointable(input.cwd, input.roots))) {
     return finish({ status: "missing", commitOid: null, files: [] });
   }
 
   const captured = yield* store
-    .captureCheckpoint({ cwd: input.cwd, checkpointRef: input.checkpointRef })
+    .captureCheckpoint({ cwd: input.cwd, roots: input.roots, checkpointRef: input.checkpointRef })
     .pipe(
       Effect.map((commitOid) => ({ status: "ready" as const, commitOid })),
       Effect.catchTags({
@@ -87,10 +89,15 @@ export const captureTurn = Effect.fn("CheckpointCapture.captureTurn")(function* 
   }
 
   const previousExists = yield* store
-    .hasCheckpointRef({ cwd: input.cwd, checkpointRef: input.previousCheckpointRef })
+    .hasCheckpointRef({
+      cwd: input.cwd,
+      roots: input.roots,
+      checkpointRef: input.previousCheckpointRef,
+    })
     .pipe(Effect.catch(warn("previous-ref-lookup-failed", input.previousCheckpointRef, false)));
   const refs = {
     cwd: input.cwd,
+    roots: input.roots,
     fromCheckpointRef: input.previousCheckpointRef,
     toCheckpointRef: input.checkpointRef,
   };

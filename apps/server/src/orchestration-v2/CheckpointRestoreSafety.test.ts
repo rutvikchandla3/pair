@@ -19,6 +19,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceHostTesting from "../workspaceHost/WorkspaceHostTesting.ts";
 import * as WorkspaceHosts from "../workspaceHost/WorkspaceHosts.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -107,6 +108,7 @@ it.effect.each([
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+          Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
           }),

@@ -1156,6 +1156,8 @@ export const OrchestrationV2CheckpointScope = Schema.Struct({
   ordinalWithinParent: NonNegativeInt,
   advancesAppRunCount: Schema.Boolean,
   cwd: TrimmedNonEmptyString,
+  /** A workspace thread's repository folders under `cwd`; checkpoint paths are `<root>/<path>`. */
+  roots: Schema.optional(Schema.Array(ProjectRoot.fields.name)),
   createdAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointScope.Type;

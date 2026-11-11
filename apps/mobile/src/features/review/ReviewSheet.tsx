@@ -36,11 +36,7 @@ import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import {
-  useSelectedThreadRepositories,
-  useSelectedThreadWorktree,
-} from "../../state/use-selected-thread-worktree";
-import { WORKSPACE_GIT_CONTROLS_UNAVAILABLE } from "@t3tools/client-runtime/state/workspaces";
+import { useSelectedThreadRepositories } from "../../state/use-selected-thread-worktree";
 import { useStoppedFiles } from "../../state/sandbox";
 import { StoppedFilesNotice } from "../threads/StoppedMachineNotice";
 import { useReviewCacheForThread } from "./reviewState";
@@ -364,45 +360,6 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
-  // A workspace thread's folder holds several repositories, so there is no one diff to review.
-  if (useSelectedThreadRepositories() !== null) return <WorkspaceReviewUnavailable {...props} />;
-  return <ReviewSheetContent {...props} />;
-}
-
-function WorkspaceReviewUnavailable(props: ReviewSheetProps) {
-  const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
-  const { environmentId, threadId } = props.route.params;
-  const returnToThread = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    selectDetail({
-      name: "Thread",
-      params: { environmentId: String(environmentId), threadId: String(threadId) },
-    });
-  };
-  return (
-    <>
-      <AppBar
-        title="Review changes"
-        onBack={returnToThread}
-        hideBottomBorder
-        backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
-      />
-      <ScreenContent>
-        <View className="flex-1 items-center justify-center bg-sheet px-6 android:bg-sheet-solid">
-          <Text className="text-center text-sm text-foreground-muted">
-            {WORKSPACE_GIT_CONTROLS_UNAVAILABLE}
-          </Text>
-        </View>
-      </ScreenContent>
-    </>
-  );
-}
-
-function ReviewSheetContent(props: ReviewSheetProps) {
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { panes } = useAdaptiveWorkspaceLayout();
@@ -417,7 +374,7 @@ function ReviewSheetContent(props: ReviewSheetProps) {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage, draftContext } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const repositories = useSelectedThreadRepositories();
   const stoppedFiles = useStoppedFiles({ environmentId, threadId });
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
@@ -427,6 +384,8 @@ function ReviewSheetContent(props: ReviewSheetProps) {
 
   const {
     error,
+    gitCwd,
+    isWorkspaceThread,
     reviewSections,
     selectedSection,
     refreshSelectedSection,
@@ -453,7 +412,7 @@ function ReviewSheetContent(props: ReviewSheetProps) {
   } = useReviewDiffData({
     threadKey: reviewCache.threadKey,
     environmentId,
-    cwd: selectedThreadCwd,
+    cwd: gitCwd,
     selectedSection,
     draftMessage,
     draftContext,
@@ -677,7 +636,8 @@ function ReviewSheetContent(props: ReviewSheetProps) {
         subtitle={headerSubtitle}
         androidSubtitle={androidHeaderSubtitle}
         iconColor={headerIcon}
-        selectedThreadCwd={selectedThreadCwd}
+        selectedThreadCwd={gitCwd}
+        repositories={repositories}
         sectionMenu={sectionMenu}
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
@@ -792,7 +752,9 @@ function ReviewSheetContent(props: ReviewSheetProps) {
                         Platform.OS === "android" && "mt-2 text-center",
                       )}
                     >
-                      This thread has no ready turn diffs and the worktree diff is empty.
+                      {isWorkspaceThread
+                        ? "This thread has no ready turn diffs."
+                        : "This thread has no ready turn diffs and the worktree diff is empty."}
                     </Text>
                   </View>
                 )

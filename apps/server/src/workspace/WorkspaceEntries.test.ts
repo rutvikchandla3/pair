@@ -223,6 +223,62 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("labels each repository's ignored paths in a folder of repositories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const source = yield* makeTempDir({ git: true });
+        yield* git(cwd, ["init", "api"]);
+        yield* writeTextFile(cwd, "api/.gitignore", ".env\n");
+        yield* writeTextFile(cwd, "api/.env", "A=1");
+        yield* writeTextFile(cwd, "api/src/main.ts");
+        yield* writeTextFile(source, ".gitignore", "dist/\n*.log\n");
+        yield* git(source, ["add", ".gitignore"]);
+        yield* git(source, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init"]);
+        yield* git(source, ["worktree", "add", "--detach", `${cwd}/web`]);
+        yield* writeTextFile(cwd, "web/dist/out.js", "xy");
+        yield* writeTextFile(cwd, "web/index.ts");
+        yield* writeTextFile(cwd, "web/debug.log", "xy");
+        yield* writeTextFile(cwd, "AGENTS.md");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        expect(
+          (yield* workspaceEntries.list({ cwd, directoryPath: "" })).entries.toSorted((a, b) =>
+            a.path.localeCompare(b.path),
+          ),
+        ).toEqual([
+          { path: "AGENTS.md", kind: "file" },
+          { path: "api", kind: "directory" },
+          { path: "web", kind: "directory" },
+        ]);
+        expect((yield* workspaceEntries.list({ cwd, directoryPath: "api" })).entries).toEqual(
+          expect.arrayContaining([
+            { path: "api/.env", kind: "file", ignored: true },
+            { path: "api/src", kind: "directory" },
+          ]),
+        );
+        expect((yield* workspaceEntries.list({ cwd, directoryPath: "web" })).entries).toEqual(
+          expect.arrayContaining([
+            { path: "web/dist", kind: "directory", ignored: true },
+            { path: "web/index.ts", kind: "file" },
+          ]),
+        );
+        const searched = (yield* searchWorkspaceEntries({
+          cwd,
+          query: "",
+          limit: 100,
+        })).entries.map((entry) => entry.path);
+        expect(searched).toEqual(expect.arrayContaining(["api/src/main.ts", "web/index.ts"]));
+        expect(searched.filter((entryPath) => /\.env|dist|\.log/.test(entryPath))).toEqual([]);
+        expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
+          files: [
+            { path: "api/.env", byteLength: 3 },
+            { path: "web/debug.log", byteLength: 2 },
+          ],
+          truncated: false,
+        });
+      }),
+    );
+
     it.effect("lists symlinks as what they point to, hiding ones that cannot be opened", () =>
       Effect.gen(function* () {
         const platform = yield* HostProcess.Platform;

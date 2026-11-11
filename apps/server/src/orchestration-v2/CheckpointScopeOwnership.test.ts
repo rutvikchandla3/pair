@@ -133,6 +133,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
           ordinalWithinParent: 0,
           advancesAppRunCount: true,
           cwd: ordinal === 1 ? "/repo" : "/prepared-repo",
+          ...(ordinal === 1 ? {} : { roots: ["api", "web"] }),
           createdAt: now,
         },
       });
@@ -211,6 +212,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
     );
     assert.equal(context.checkpointScopes.length, 1);
     assert.equal(context.checkpointScopes[0]?.runId, secondRunId);
+    assert.deepEqual(context.checkpointScopes[0]?.roots, ["api", "web"]);
 
     const layerQuery = CheckpointDiffQuery.layer.pipe(
       Layer.provide(
@@ -222,6 +224,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
             listAuthoredPaths: () => Effect.succeed(null),
             diffCheckpoints: (input) => {
               assert.equal(input.cwd, "/prepared-repo");
+              assert.deepEqual(input.roots, ["api", "web"]);
               assert.equal(input.fromCheckpointRef, checkpointRefs[0]);
               assert.equal(input.toCheckpointRef, checkpointRefs[2]);
               return Effect.succeed("two-run diff");

@@ -760,32 +760,57 @@ export const make = Effect.gen(function* () {
     const host = yield* hostForRoot(input.cwd, normalizedCwd);
     // `--directory` reports a folder holding nothing but ignored files as one
     // `name/` entry, which is how `node_modules` and build output drop out.
-    const result = yield* vcsProcess
-      .run({
-        operation: "WorkspaceEntries.listIgnoredFiles",
-        command: "git",
-        args: [
-          "-c",
-          "core.fsmonitor=false",
-          "ls-files",
-          "--others",
-          "--ignored",
-          "--exclude-standard",
-          "--directory",
-          "--no-empty-directory",
-          "-z",
-        ],
-        cwd: normalizedCwd,
-        allowNonZeroExit: true,
-        timeoutMs: 10_000,
-        maxOutputBytes: 4 * 1024 * 1024,
-      })
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (!result || result.exitCode !== 0) return { files: [], truncated: false };
-    const paths = result.stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
-      .toSorted();
+    const listIgnored = (cwd: string) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.listIgnoredFiles",
+          command: "git",
+          args: [
+            "-c",
+            "core.fsmonitor=false",
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "--no-empty-directory",
+            "-z",
+          ],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+          maxOutputBytes: 4 * 1024 * 1024,
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.exitCode === 0
+              ? result.stdout
+                  .split("\0")
+                  .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
+              : undefined,
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+    // A workspace folder is no repository itself; each top-level child checkout answers for its own files.
+    const listRepositoryChildren = Effect.gen(function* () {
+      const children = yield* host.files
+        .readDirectory(normalizedCwd)
+        .pipe(Effect.orElseSucceed(() => []));
+      const nested = yield* Effect.forEach(
+        children.filter((child) => child.kind === "Directory"),
+        (child) =>
+          host.files.lstat(path.join(normalizedCwd, child.name, ".git")).pipe(
+            Effect.flatMap(() => listIgnored(path.join(normalizedCwd, child.name))),
+            Effect.map((paths) => paths?.map((entry) => `${child.name}/${entry}`) ?? []),
+            Effect.orElseSucceed(() => []),
+          ),
+        { concurrency: 4 },
+      );
+      return nested.flat();
+    });
+    const paths = (
+      (yield* listIgnored(normalizedCwd)) ?? (yield* listRepositoryChildren)
+    ).toSorted();
     const files = yield* Effect.forEach(
       paths.slice(0, IGNORED_FILES_LIMIT),
       (relativePath) =>

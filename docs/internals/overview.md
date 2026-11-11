@@ -70,7 +70,9 @@ thread's folder, one worktree per root. Code keyed on the project folder's git s
 branches, checkpoints, cleanup, setup scripts, pull requests) must use the thread's repositories
 instead (`threadRepositories` in
 [client-runtime](../../packages/client-runtime/src/state/workspaces.ts), or the thread's `roots` on
-the server), or refuse. A thread's `roots` are copied at launch and don't follow later edits to the
+the server), or refuse. A workspace thread's checkpoint scope records its root names, and
+`CheckpointStore` alone fans each checkpoint operation out over them, so checkpoint and diff paths
+read `<root>/<path in repo>`. A thread's `roots` are copied at launch and don't follow later edits to the
 workspace, so read the thread's copy, not the project's. "Workspace" here is unrelated to
 "workspace root" and to the workspace host above.
 

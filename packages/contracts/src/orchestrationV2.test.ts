@@ -8,6 +8,7 @@ import {
   isKnownOrchestrationV2EventType,
   latestProviderTurnForAttempt,
   OrchestrationV2AppThreadJson,
+  OrchestrationV2CheckpointScopeJson,
   OrchestrationV2Command,
   OrchestrationV2ContextExport,
   OrchestrationV2DomainEventJson,
@@ -698,6 +699,23 @@ describe("member attribution", () => {
     expect(legacy.ownerId).toBeUndefined();
     expect(legacy.lastRollback).toBeUndefined();
     expect(legacy.roots).toBeUndefined();
+
+    const decodeScope = Schema.decodeUnknownSync(OrchestrationV2CheckpointScopeJson);
+    const scope = {
+      id: "scope-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: "node-1",
+      parentScopeId: null,
+      providerThreadId: null,
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/work/feature",
+      createdAt: "2026-10-01T00:00:00.000Z",
+    };
+    expect(decodeScope({ ...scope, roots: ["api", "web"] }).roots).toEqual(["api", "web"]);
+    expect(decodeScope(scope).roots).toBeUndefined();
 
     expect(
       decodeOrchestrationV2TurnItemJson({

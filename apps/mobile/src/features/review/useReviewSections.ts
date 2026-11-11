@@ -12,7 +12,10 @@ import { lastReviewGitSectionsAtom, reviewEnvironment } from "../../state/review
 import { lastReviewTurnDiffsAtom } from "../../state/reviewTurnDiffs";
 import { environmentSession } from "../../state/session";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadRepositories,
+  useSelectedThreadWorktree,
+} from "../../state/use-selected-thread-worktree";
 import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
@@ -53,17 +56,21 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  // A workspace thread's folder is not a repository, so it has no uncommitted or branch changes
+  // to read; its turns come from checkpoints, which the server reads per repository.
+  const isWorkspaceThread = useSelectedThreadRepositories() !== null;
+  const gitCwd = isWorkspaceThread ? null : selectedThreadCwd;
   const diffPreview = useEnvironmentQuery(
-    canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
+    canReadFiles && enabled && environmentId !== undefined && gitCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: gitCwd },
         })
       : null,
   );
   const lastGitSections = useAtomValue(
-    environmentId !== undefined && selectedThreadCwd !== null
-      ? lastReviewGitSectionsAtom(environmentId, selectedThreadCwd)
+    environmentId !== undefined && gitCwd !== null
+      ? lastReviewGitSectionsAtom(environmentId, gitCwd)
       : NO_GIT_SECTIONS_ATOM,
   );
 
@@ -86,7 +93,7 @@ export function useReviewSections(input: {
     gitSections:
       canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? lastGitSections) : [],
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
-    loadingGitSections: fileAccess.isPending || diffPreview.isPending,
+    loadingGitSections: !isWorkspaceThread && (fileAccess.isPending || diffPreview.isPending),
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
     cachedSections,
@@ -145,11 +152,13 @@ export function useReviewSections(input: {
     error:
       diffPreview.error ??
       activeTurnDiff.error ??
-      (selectedSection === null && !fileAccess.isPending && !canReadFiles
+      (selectedSection === null && !isWorkspaceThread && !fileAccess.isPending && !canReadFiles
         ? (fileAccess.error ?? "This connection cannot read local diffs.")
         : null),
     isSelectedSectionPending:
       selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
+    gitCwd,
+    isWorkspaceThread,
     reviewSections,
     selectedSection,
     refreshSelectedSection,

@@ -24,13 +24,23 @@ const state = vi.hoisted(() => ({
   statusRefreshes: 0,
   readRefs: vi.fn(),
   cachedRefs: [] as VcsListRefsResult["refs"],
+  repositories: null as readonly unknown[] | null,
+  mounted: [] as unknown[],
+  branchCwds: [] as (string | null)[],
 }));
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomMount: () => {} }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomMount: (atom: unknown) => state.mounted.push(atom),
+}));
+vi.mock("@t3tools/client-runtime/state/vcs", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  // The status revalidation atom is its target here, so a test can read what it would refresh.
+  createVcsStatusRevalidationAtomFamily: () => (target: unknown) => target,
+}));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
@@ -48,9 +58,13 @@ vi.mock("./use-selected-thread-worktree", () => ({
     selectedThreadCwd: "/repo",
     selectedThreadWorktreePath: null,
   }),
+  useSelectedThreadRepositories: () => state.repositories,
 }));
 vi.mock("./queries", () => ({
-  useBranches: () => ({ data: { refs: state.cachedRefs }, refresh: () => {} }),
+  useBranches: ({ cwd }: { cwd: string | null }) => {
+    state.branchCwds.push(cwd);
+    return { data: { refs: state.cachedRefs }, refresh: () => {} };
+  },
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
@@ -303,4 +317,39 @@ describe("automatic feature branch refs", () => {
       { type: "error", title: "Git action failed", description: "Cannot list refs" },
     ]);
   });
+});
+
+describe("workspace threads", () => {
+  beforeEach(() => {
+    state.scopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
+    state.commits = 0;
+    state.statusRefreshes = 0;
+    state.readRefs.mockClear();
+    state.mounted = [];
+    state.branchCwds = [];
+  });
+
+  it.each([
+    ["one repository", null, { environmentId: "environment", cwd: "/repo" }, "/repo"],
+    ["a workspace", [], null, null],
+  ] as const)(
+    "runs git in the thread's folder only for %s",
+    async (_, repositories, revalidated, branchCwd) => {
+      state.repositories = repositories;
+      try {
+        const actions = useSelectedThreadGitActions();
+        expect(state.mounted).toEqual([revalidated]);
+        expect(state.branchCwds).toEqual([branchCwd]);
+        if (repositories === null) return;
+        expect(await actions.refreshSelectedThreadGitStatus()).toBeNull();
+        expect(await actions.refreshSelectedThreadBranches()).toBeNull();
+        expect(await actions.onRunSelectedThreadGitAction({ action: "commit" })).toBeNull();
+        expect(state.statusRefreshes).toBe(0);
+        expect(state.readRefs).not.toHaveBeenCalled();
+        expect(state.commits).toBe(0);
+      } finally {
+        state.repositories = null;
+      }
+    },
+  );
 });

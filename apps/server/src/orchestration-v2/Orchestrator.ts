@@ -2434,6 +2434,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 rootNodeId: rootNode.id,
                 providerThreadId: queuedProviderThread.id,
                 cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                roots: projection.thread.roots,
                 createdAt: now,
               }),
             ),
@@ -6141,6 +6142,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           resolvedRuntimePolicy.cwd ??
           input.projection.thread.worktreePath ??
           session.providerSession.cwd,
+        roots: input.projection.thread.roots,
         createdAt: now,
       })
       .pipe(
@@ -7007,6 +7009,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     selectedProviderSession?.cwd ??
                     projection.thread.worktreePath ??
                     process.cwd(),
+                  roots: projection.thread.roots,
                   createdAt: now,
                 }),
               ),
@@ -7402,6 +7405,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     providerThreadId,
                     cwd:
                       resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                    roots: projection.thread.roots,
                     createdAt: now,
                   }),
                 ),
@@ -8154,6 +8158,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 existingProviderSession?.cwd ??
                 projection.thread.worktreePath ??
                 process.cwd(),
+              roots: projection.thread.roots,
               createdAt: now,
             })
             .pipe(
@@ -11588,6 +11593,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId: state.rootNode.id,
           providerThreadId: state.providerThread.id,
           cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+          roots: projection.thread.roots,
           createdAt: now,
         })
         .pipe(mapDispatchError(command));

@@ -8,7 +8,11 @@ import {
   withMessageContext,
   deriveAvailableRevertTurnCounts,
 } from "./ChatView.logic";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  resolveCheckoutGitSupport,
+} from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
@@ -674,6 +678,32 @@ describe("checkout Git memory", () => {
   it("does not confuse an environment id containing the separator with a path", () => {
     rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
     expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
+  });
+
+  it.each([
+    ["a git checkout", { workspace: false, isRepo: true }, { liveGit: true, checkpoints: true }],
+    [
+      "a non-git project",
+      { workspace: false, isRepo: false },
+      { liveGit: false, checkpoints: false },
+    ],
+    [
+      "a checkout whose status is unknown",
+      { workspace: false, isRepo: undefined },
+      { liveGit: undefined, checkpoints: undefined },
+    ],
+    [
+      "a workspace thread, whatever its folder reports",
+      { workspace: true, isRepo: undefined },
+      { liveGit: false, checkpoints: true },
+    ],
+    [
+      "a workspace thread inside some other repository",
+      { workspace: true, isRepo: true },
+      { liveGit: false, checkpoints: true },
+    ],
+  ] as const)("separates checkpoints from live git for %s", (_name, input, expected) => {
+    expect(resolveCheckoutGitSupport(input)).toEqual(expected);
   });
 });
 

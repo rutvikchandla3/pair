@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
@@ -123,6 +124,7 @@ export const layer: Layer.Layer<
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | ThreadCommandExecutor.ThreadCommandExecutor
+  | WorkspaceCheckouts.WorkspaceCheckouts
 > = Layer.effect(
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
@@ -139,6 +141,7 @@ export const layer: Layer.Layer<
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
     const mirrorHooks = yield* MirrorSync.MirrorHooks;
+    const workspaceCheckouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
 
     // An unavailable host counts as existing: a sandbox checkout is never recreated on this disk.
     const worktreeExists = (worktreePath: string) =>
@@ -226,22 +229,42 @@ export const layer: Layer.Layer<
               };
             });
 
-      const { worktreePath, branch } = context.thread;
+      const { worktreePath, branch, roots } = context.thread;
       // Recreated only where the server would have made it, as turn start does.
-      if (
-        worktreePath != null &&
-        branch != null &&
-        !(yield* worktreeExists(worktreePath)) &&
-        (yield* isManagedWorktreePath(worktreePath))
-      ) {
-        const project = yield* projects.get(context.thread.projectId);
-        if (Option.isSome(project)) {
+      if (worktreePath != null && branch != null && (yield* isManagedWorktreePath(worktreePath))) {
+        // A workspace thread's folder holds one worktree per root, each from that root's repository.
+        const checkouts =
+          roots === undefined
+            ? [{ projectId: context.thread.projectId, path: worktreePath }]
+            : roots.map((root) => ({
+                projectId: root.projectId,
+                path: path.join(worktreePath, root.name),
+              }));
+        let recreated = false;
+        for (const checkout of checkouts) {
+          if (yield* worktreeExists(checkout.path)) continue;
+          const project = yield* projects.get(checkout.projectId, {
+            includeDeleted: roots !== undefined,
+          });
+          if (Option.isNone(project)) continue;
           yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
           yield* gitWorkflow.createWorktree({
             cwd: project.value.workspaceRoot,
             refName: branch,
-            path: worktreePath,
+            path: checkout.path,
           });
+          recreated = true;
+        }
+        if (recreated && roots !== undefined) {
+          yield* workspaceCheckouts.writeGuidance({ folder: worktreePath, roots }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to restore a workspace folder's agent guidance", {
+                threadId: input.threadId,
+                worktreePath,
+                cause,
+              }),
+            ),
+          );
         }
       }
 

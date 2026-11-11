@@ -258,11 +258,12 @@ const ProjectionCheckpointContext = Schema.Struct({
     OrchestrationV2RunJsonSchema.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
   ),
   checkpointScopes: Schema.Array(
-    OrchestrationV2CheckpointScopeJsonSchema.mapFields(({ id, runId, kind, cwd }) => ({
+    OrchestrationV2CheckpointScopeJsonSchema.mapFields(({ id, runId, kind, cwd, roots }) => ({
       id,
       runId,
       kind,
       cwd,
+      roots,
     })),
   ),
   checkpoints: Schema.Array(
@@ -5550,7 +5551,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
               sql`
               SELECT scope_id AS id, run_id AS "runId", kind,
-                json_extract(payload_json, '$.cwd') AS cwd
+                json_extract(payload_json, '$.cwd') AS cwd,
+                json_extract(payload_json, '$.roots') AS roots
               FROM orchestration_v2_projection_checkpoint_scopes
               WHERE thread_id = ${threadId}
               ORDER BY ordinal_within_parent ASC, scope_id ASC
@@ -5565,7 +5567,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY scope_id ASC, ordinal_within_scope ASC
             `,
             ]);
-            return yield* decodeCheckpointContext({ runs, checkpointScopes, checkpoints });
+            return yield* decodeCheckpointContext({
+              runs,
+              checkpointScopes: checkpointScopes.map(({ roots, ...scope }) =>
+                typeof roots === "string" ? { ...scope, roots: JSON.parse(roots) } : scope,
+              ),
+              checkpoints,
+            });
           }),
         )
         .pipe(

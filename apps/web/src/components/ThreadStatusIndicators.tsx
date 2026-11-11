@@ -704,6 +704,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus &&
       thread.linkedPullRequest == null &&
+      thread.roots === undefined &&
       (thread.branch != null || thread.worktreePath !== null) &&
       gitCwd !== null
       ? vcsEnvironment.status({

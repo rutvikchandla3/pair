@@ -231,6 +231,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
+  const openReview = () => {
+    const params = { environmentId, threadId };
+    if (presentation === "sheet") {
+      navigation.dispatch(StackActions.replace("ThreadReview", params));
+    } else {
+      presentRoute(() => navigation.dispatch(CommonActions.navigate("ThreadReview", params)));
+    }
+  };
+
   // Background refreshes also report pending; using that query flag would stick the RefreshControl spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
@@ -253,23 +262,33 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        Platform.OS === "ios" || isInspector ? (
+        repositories === null && (Platform.OS === "ios" || isInspector) ? (
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
         ) : undefined
       }
     >
       {repositories !== null ? (
-        <ListSection title="Repositories">
-          {workspaceRepositoryRows(repositories).map((row) => (
-            <View key={row.key} className="bg-grouped-card">
-              <ListRowLayout
-                icon={row.key === "unavailable" ? "info.circle" : "folder"}
-                label={row.title}
-                description={row.subtitle}
-              />
-            </View>
-          ))}
-        </ListSection>
+        <>
+          <ListSection>
+            <ListRow
+              icon="text.bubble"
+              label="Review changes"
+              description="Inspect turn diffs"
+              onPress={openReview}
+            />
+          </ListSection>
+          <ListSection title="Repositories">
+            {workspaceRepositoryRows(repositories).map((row) => (
+              <View key={row.key} className="bg-grouped-card">
+                <ListRowLayout
+                  icon={row.key === "unavailable" ? "info.circle" : "folder"}
+                  label={row.title}
+                  description={row.subtitle}
+                />
+              </View>
+            ))}
+          </ListSection>
+        </>
       ) : (
         <ListSection>
           {sheetMenuItems.map(({ item, disabledReason }) => (
@@ -300,16 +319,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             label="Review changes"
             description="Inspect changes, uncommitted edits, and turn diffs"
             disabled={busy || !isRepo}
-            onPress={() => {
-              const params = { environmentId, threadId };
-              if (presentation === "sheet") {
-                navigation.dispatch(StackActions.replace("ThreadReview", params));
-              } else {
-                presentRoute(() =>
-                  navigation.dispatch(CommonActions.navigate("ThreadReview", params)),
-                );
-              }
-            }}
+            onPress={openReview}
           />
           <ListRow
             icon="point.topleft.down.curvedto.point.bottomright.up"

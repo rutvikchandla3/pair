@@ -5,9 +5,11 @@ import {
   NodeId,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
+  type ProjectRoot,
   ProviderThreadId,
   RunId,
   ThreadId,
+  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -118,6 +120,8 @@ export interface CheckpointServiceV2Shape {
     readonly rootNodeId: NodeId;
     readonly providerThreadId: ProviderThreadId;
     readonly cwd: string;
+    /** A workspace thread's roots; its checkpoints span their repositories under `cwd`. */
+    readonly roots?: ReadonlyArray<ProjectRoot> | undefined;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2CheckpointScope, CheckpointServiceV2Error>;
   readonly captureBaseline: (input: {
@@ -192,6 +196,7 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
   readonly rootNodeId: NodeId;
   readonly providerThreadId: ProviderThreadId;
   readonly cwd: string;
+  readonly roots?: ReadonlyArray<ProjectRoot> | undefined;
   readonly createdAt: DateTime.Utc;
 }) {
   const scopeId = yield* input.idAllocator.allocate.checkpointScope({
@@ -209,6 +214,7 @@ const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(functio
     ordinalWithinParent: 0,
     advancesAppRunCount: true,
     cwd: input.cwd,
+    ...(input.roots === undefined ? {} : { roots: input.roots.map((root) => root.name) }),
     createdAt: input.createdAt,
   } satisfies OrchestrationV2CheckpointScope;
 });
@@ -266,11 +272,24 @@ export const layer: Layer.Layer<
         Effect.map((host) => host.invoke),
         Effect.orElseSucceed(() => undefined),
       );
+    // The runner's capture knows one repository, so a workspace scope must never reach it.
+    const coarseForScope = (scope: OrchestrationV2CheckpointScope) =>
+      coarseFor(scope.cwd).pipe(
+        Effect.filterOrFail(
+          (coarse) => coarse === undefined || scope.roots === undefined,
+          () =>
+            new VcsUnsupportedOperationError({
+              operation: "CheckpointService.coarseCapture",
+              kind: "git",
+              detail: "A workspace's repositories cannot be checkpointed on a sandbox host.",
+            }),
+        ),
+      );
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
-    const isGitCheckpointable = (cwd: string) =>
-      CheckpointCapture.isGitCheckpointable(cwd).pipe(
+    const isGitCheckpointable = (scope: OrchestrationV2CheckpointScope) =>
+      CheckpointCapture.isGitCheckpointable(scope.cwd, scope.roots).pipe(
         Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore),
       );
 
@@ -282,7 +301,7 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const coarse = yield* coarseFor(input.scope.cwd);
+          const coarse = yield* coarseForScope(input.scope);
           if (coarse !== undefined) {
             yield* coarse.checkpointCapture({
               _tag: "baseline",
@@ -291,7 +310,11 @@ export const layer: Layer.Layer<
             });
             return;
           }
-          yield* CheckpointCapture.captureBaseline({ cwd: input.scope.cwd, checkpointRef });
+          yield* CheckpointCapture.captureBaseline({
+            cwd: input.scope.cwd,
+            roots: input.scope.roots,
+            checkpointRef,
+          });
         }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore)),
       ).pipe(
         Effect.mapError(
@@ -318,11 +341,12 @@ export const layer: Layer.Layer<
               ordinalWithinScope: input.ordinalWithinScope,
             });
             const checkpointable =
-              input.forceMissing !== true && (yield* isGitCheckpointable(input.scope.cwd));
+              input.forceMissing !== true && (yield* isGitCheckpointable(input.scope));
             const available = checkpointable
               ? yield* checkpointStore
                   .hasCheckpointRef({
                     cwd: input.scope.cwd,
+                    roots: input.scope.roots,
                     checkpointRef,
                   })
                   .pipe(
@@ -399,11 +423,12 @@ export const layer: Layer.Layer<
             });
           }
 
-          const coarse = yield* coarseFor(input.scope.cwd);
+          const coarse = yield* coarseForScope(input.scope);
           const captured =
             coarse === undefined
               ? yield* CheckpointCapture.captureTurn({
                   cwd: input.scope.cwd,
+                  roots: input.scope.roots,
                   checkpointRef,
                   previousCheckpointRef,
                 }).pipe(Effect.provideService(CheckpointStore.CheckpointStore, checkpointStore))
@@ -477,6 +502,7 @@ export const layer: Layer.Layer<
 
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd: input.scope.cwd,
+            roots: input.scope.roots,
             checkpointRef: input.checkpoint.ref,
             fallbackToHead: false,
           });
@@ -505,6 +531,7 @@ export const layer: Layer.Layer<
         input.scope.cwd,
         checkpointStore.deleteCheckpointRefs({
           cwd: input.scope.cwd,
+          roots: input.scope.roots,
           checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
         }),
       ).pipe(

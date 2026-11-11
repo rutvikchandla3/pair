@@ -223,12 +223,12 @@ export function shouldOpenProactiveTurnDiff(input: {
 
 export function resolveProactiveTurnDiffAction(input: {
   checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal"> | undefined;
-  isGitRepo: boolean | undefined;
+  hasCheckpoints: boolean | undefined;
 }): "defer" | "ignore" | "open" {
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
-  if (input.isGitRepo === undefined) return "defer";
+  if (input.hasCheckpoints === undefined) return "defer";
   if (
-    !input.isGitRepo ||
+    !input.hasCheckpoints ||
     input.checkpoint.status !== "ready" ||
     input.checkpoint.files.length === 0
   ) {
@@ -869,6 +869,20 @@ export function recallCheckoutIsRepo(
   return cwd === null
     ? undefined
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
+}
+
+/**
+ * Splits checkpoint features (turn diffs, restore) from live git (status, branches, commits).
+ * A workspace thread's folder is no repository, but its checkpoints span its repositories.
+ */
+export function resolveCheckoutGitSupport<IsRepo extends boolean | undefined>(input: {
+  readonly workspace: boolean;
+  /** The checkout's git status, undefined while unknown; ignored for a workspace. */
+  readonly isRepo: IsRepo;
+}): { readonly liveGit: IsRepo | false; readonly checkpoints: IsRepo | true } {
+  return input.workspace
+    ? { liveGit: false, checkpoints: true }
+    : { liveGit: input.isRepo, checkpoints: input.isRepo };
 }
 
 function threadHasStarted(thread: Thread | null | undefined): boolean {

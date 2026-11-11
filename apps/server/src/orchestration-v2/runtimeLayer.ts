@@ -224,6 +224,7 @@ const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.p
       layerProviderSessionManagerProvided,
       ThreadCommandExecutor.layer,
       layerRuntimePolicyProvided,
+      WorkspaceCheckouts.layer,
     ),
   ),
 );
