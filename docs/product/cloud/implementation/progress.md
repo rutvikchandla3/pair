@@ -3073,7 +3073,10 @@ first cloud thread failed with "master is not on origin. Push master first."
 - `base-build.sh` keeps its apt retries and the needrestart guard through the install step.
 - The provision tree's hash changed, so a server builds a new base image after it upgrades.
   Machines and team images made from the old base have no Docker until they are remade.
-- Unproven until a GCE base rebuild: the build itself, and `docker run` in a session's terminal.
+- Checked on the test server on `pair.17` (2026-11-11): the base rebuilt and reported `ok`. A VM
+  from it, started as the runner starts agents (`setpriv --reuid=1000 --regid=1000 --init-groups`),
+  ran `docker run --rm hello-world` and `docker compose version`, and a container fetched over
+  HTTPS on a 1460 MTU. Not yet run from a session's own terminal.
 
 ## Open follow-ups and risks
 
