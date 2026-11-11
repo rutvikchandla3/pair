@@ -3043,6 +3043,27 @@ Each item had a failing test first, except the two that needed no code.
 - Audited and found correctly wired: `MachineBrowser`, `MachinePorts`, the sleep hook's
   `stopForSleep`, and the stream's viewer lease.
 
+## 7.9 a draft's base branch follows the repository (landed fb1dab0e5, 5da87964d)
+
+Found by the maintainer on V15, adding `interviewstreet/ade` (default `main`, no `master`): the
+first cloud thread failed with "master is not on origin. Push master first."
+
+- Cause: while a Pair Cloud project clones, its empty checkout's HEAD is the unborn
+  `init.defaultBranch`, `master` on the server. The draft's default-branch effect
+  (`BranchToolbarBranchSelector.tsx`) stored that once and never revisited it.
+- `resolveDraftBaseBranchDefault` (`BranchToolbar.logic.ts`) replaces a stored base that is not a
+  ref of the repository and never adopts a current branch that is not a listed ref. It also runs
+  for local worktree drafts, where it only matters for an unborn or deleted base.
+- `CloudLaunchError.baseOnHost`: a base that exists on the host and not on origin keeps "Push X
+  first."; otherwise "X isn't a branch of `<remote>`. Choose another base branch."
+- Not reproduced: the maintainer saw the chip read "From main" while the launch sent `master`.
+  From the code the chip and the send read the same draft value. Not yet re-checked on the server.
+- Also from that session: the App is not installed on `interviewstreet`, so the project add and
+  the machine's git use the member's own token (Settings → Team, **Use a token instead**, on the
+  Pair Cloud environment). The maintainer saved it on the Mac's local environment twice first:
+  the Team page's environment picker is easy to miss, and the `app-no-access` message does not
+  mention a token.
+
 ## Open follow-ups and risks
 
 - Every `OrchestrationV2Command` is client-dispatchable with operate scope, including server-internal ones (`sandbox.provision`, `sandbox.created`, `sandbox.runner.attached`). A member could provision a machine past `checkCloudLaunch` (sandboxAllowed, credential refusal). Decide before M1 ships whether ws.ts should refuse server-only command types from clients.
