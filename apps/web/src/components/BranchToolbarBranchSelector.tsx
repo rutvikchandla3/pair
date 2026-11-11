@@ -50,6 +50,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  resolveDraftBaseBranchDefault,
   resolveDraftEnvModeAfterBranchChange,
   resolveWorktreeBaseBranchName,
   sanitizeNewRefName,
@@ -480,9 +481,21 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const activeBranchListed =
+    listedActiveBranch !== null || queriedActiveBranch !== undefined
+      ? true
+      : activeBranchRefQuery.data !== null
+        ? false
+        : null;
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
-    : (defaultBranchName ?? currentGitBranch);
+    : resolveDraftBaseBranchDefault({
+        activeThreadBranch,
+        activeBranchListed,
+        defaultBranchName,
+        currentGitBranch,
+        currentGitBranchListed: currentGitBranch !== null && branchByName.has(currentGitBranch),
+      });
 
   // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;
@@ -492,14 +505,12 @@ export function BranchToolbarBranchSelector({
       threadStarted ||
       effectiveEnvMode === "local" ||
       activeWorktreePath ||
-      activeThreadBranch ||
       !worktreeBaseBranchCandidate
     ) {
       return;
     }
     setThreadBranch(worktreeBaseBranchCandidate, null, true);
   }, [
-    activeThreadBranch,
     activeWorktreePath,
     effectiveEnvMode,
     setThreadBranch,

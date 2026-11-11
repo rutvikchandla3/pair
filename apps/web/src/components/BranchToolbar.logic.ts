@@ -133,6 +133,26 @@ export function resolveWorktreeBaseBranchName(
     : refName.name;
 }
 
+/**
+ * The base branch an unsent worktree or cloud draft should hold, or null to keep what it has.
+ * A repository still cloning reports an unborn `master`, which is no ref; a draft that took it
+ * moves to the real default once the repository has one. A branch the user picked is a ref, so it stays.
+ */
+export function resolveDraftBaseBranchDefault(input: {
+  readonly activeThreadBranch: string | null;
+  /** Whether the draft's branch is a ref of the repository; null until that is known. */
+  readonly activeBranchListed: boolean | null;
+  readonly defaultBranchName: string | null;
+  readonly currentGitBranch: string | null;
+  readonly currentGitBranchListed: boolean;
+}): string | null {
+  const candidate =
+    input.defaultBranchName ?? (input.currentGitBranchListed ? input.currentGitBranch : null);
+  if (candidate === null || candidate === input.activeThreadBranch) return null;
+  if (input.activeThreadBranch === null) return candidate;
+  return input.activeBranchListed === false ? candidate : null;
+}
+
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
 function normalizeDisplayLabel(value: string | null | undefined): string | null {

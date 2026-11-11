@@ -19,6 +19,7 @@ import {
   pairCloudAddInput,
   resolveCloudEnvModeItem,
   resolveCloudLaunchTarget,
+  resolveDraftBaseBranchDefault,
   resolveLocalCheckoutBranchMismatch,
   resolveLogicalProjectEnvironments,
   resolvePreviousWorktreeSeed,
@@ -383,6 +384,49 @@ describe("resolveWorktreeBaseBranchName", () => {
     const remote = { name: "origin/test", isRemote: true };
     expect(resolveWorktreeBaseBranchName("cloud", remote)).toBe("test");
     expect(resolveWorktreeBaseBranchName("worktree", remote)).toBe("origin/test");
+  });
+});
+
+describe("resolveDraftBaseBranchDefault", () => {
+  const settled = {
+    activeThreadBranch: null,
+    activeBranchListed: null,
+    defaultBranchName: "main",
+    currentGitBranch: "main",
+    currentGitBranchListed: true,
+  };
+
+  it.each([
+    // A draft opened while the clone ran took the unborn `master`; the repository has only `main`.
+    [
+      "a stored branch the repository does not have",
+      { activeThreadBranch: "master", activeBranchListed: false },
+      "main",
+    ],
+    ["no branch yet", {}, "main"],
+    [
+      "a stored branch the repository has",
+      { activeThreadBranch: "dev", activeBranchListed: true },
+      null,
+    ],
+    ["a stored branch not yet checked", { activeThreadBranch: "master" }, null],
+    [
+      "a stored branch that is already the default",
+      { activeThreadBranch: "main", activeBranchListed: false },
+      null,
+    ],
+    [
+      "an unborn current branch and no default",
+      { defaultBranchName: null, currentGitBranch: "master", currentGitBranchListed: false },
+      null,
+    ],
+    [
+      "a listed current branch and no default",
+      { defaultBranchName: null, currentGitBranch: "trunk" },
+      "trunk",
+    ],
+  ])("%s", (_name, overrides, expected) => {
+    expect(resolveDraftBaseBranchDefault({ ...settled, ...overrides })).toBe(expected);
   });
 });
 
