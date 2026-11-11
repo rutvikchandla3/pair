@@ -66,6 +66,8 @@ export interface ProjectSetupScriptRunnerInput {
   readonly projectId?: string;
   readonly projectCwd?: string;
   readonly worktreePath: string;
+  /** Tells apart setup terminals of one thread, such as a workspace's per-root scripts. */
+  readonly terminalSuffix?: string;
   readonly trigger?: "setup" | "settle";
   readonly project?: {
     readonly id: ProjectId;
@@ -436,7 +438,7 @@ export const make = Effect.gen(function* () {
     const terminalId =
       trigger === "settle"
         ? `settle-${script.id}-${(yield* random.uuidV4()).slice(0, 8)}`
-        : `setup-${script.id}`;
+        : `setup-${script.id}${input.terminalSuffix === undefined ? "" : `-${input.terminalSuffix}`}`;
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({

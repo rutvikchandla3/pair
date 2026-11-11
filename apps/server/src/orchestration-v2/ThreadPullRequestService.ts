@@ -69,10 +69,14 @@ const resolveProjectForPullRequestDiscovery = Effect.fn(
   repositoryIdentities: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
   options?: { readonly refresh?: boolean },
 ) {
+  // A workspace's folder is not a repository; git would find an enclosing one.
   // Post-turn discovery refreshes 15-minute identity caches because agents may add remotes.
-  const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
-    refresh: options?.refresh ?? false,
-  });
+  const repositoryIdentity =
+    project.roots !== undefined
+      ? null
+      : yield* repositoryIdentities.resolve(project.workspaceRoot, {
+          refresh: options?.refresh ?? false,
+        });
   return {
     project: { ...project, repositoryIdentity },
     repository: sourceControlDefinitions.repositorySelector(repositoryIdentity),

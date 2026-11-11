@@ -5,6 +5,8 @@ import {
   type ModelSelection,
   type ProjectIconOverride,
   ProjectId,
+  type ProjectRoot,
+  type ProjectRootInput,
   type ProjectScript,
   SCRIPT_RUN_COMMAND_PATTERN,
   type ThreadEnvMode,
@@ -23,6 +25,7 @@ export interface ProjectCreateCommand {
   readonly title: string;
   readonly workspaceRoot: string;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly roots?: ReadonlyArray<ProjectRootInput>;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -37,6 +40,7 @@ export interface ProjectMetaUpdateCommand {
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly roots?: ReadonlyArray<ProjectRootInput>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -85,10 +89,34 @@ export class ProjectWorkspaceConflictError extends Schema.TaggedError<ProjectWor
   }
 }
 
+export class ProjectRootsInvalidError extends Schema.TaggedError<ProjectRootsInvalidError>()(
+  "ProjectRootsInvalidError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export class ProjectReferencedByWorkspaceError extends Schema.TaggedError<ProjectReferencedByWorkspaceError>()(
+  "ProjectReferencedByWorkspaceError",
+  {
+    projectId: ProjectId,
+    workspaceId: ProjectId,
+    workspaceTitle: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `This project is a repository in workspace "${this.workspaceTitle}". Remove it from that workspace first.`;
+  }
+}
+
 export const ProjectCommandRejection = Schema.Union([
   ProjectCommandInvariantError,
   ProjectCommandMissingProjectError,
   ProjectWorkspaceConflictError,
+  ProjectRootsInvalidError,
+  ProjectReferencedByWorkspaceError,
 ]);
 export type ProjectCommandRejection = typeof ProjectCommandRejection.Type;
 
@@ -101,6 +129,69 @@ export const decodeProjectCommandRejection = Schema.decodeUnknownOption(
 export interface ProjectCommandState {
   readonly project: ProjectRow | undefined;
   readonly workspaceOwner: ProjectRow | undefined;
+  /** Active rows for the projects a create or update names as roots. */
+  readonly rootProjects?: ReadonlyArray<ProjectRow>;
+  /** Active workspaces with the deleted project among their roots. */
+  readonly referencingWorkspaces?: ReadonlyArray<ProjectRow>;
+}
+
+const MIN_WORKSPACE_ROOTS = 2;
+const MAX_WORKSPACE_ROOTS = 8;
+const ROOT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+const FALLBACK_ROOT_NAME = "repository";
+
+// Mirrored by defaultWorkspaceRepositoryName in client-runtime, which previews it.
+const defaultRootName = (workspaceRoot: string) => {
+  const name = (workspaceRoot.split(/[\\/]+/).findLast((segment) => segment.length > 0) ?? "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return name === "" || name === "." || name === ".." ? FALLBACK_ROOT_NAME : name;
+};
+
+/** Resolves default names and checks the v1 workspace rules; I/O checks stay in ProjectService. */
+function resolveProjectRoots(input: {
+  readonly workspaceId: ProjectId;
+  readonly roots: ReadonlyArray<ProjectRootInput>;
+  readonly rootProjects: ReadonlyArray<ProjectRow>;
+}): Result.Result<ReadonlyArray<ProjectRoot>, ProjectRootsInvalidError> {
+  const invalid = (detail: string) => Result.fail(new ProjectRootsInvalidError({ detail }));
+  if (input.roots.length < MIN_WORKSPACE_ROOTS || input.roots.length > MAX_WORKSPACE_ROOTS) {
+    return invalid(
+      `A workspace needs ${MIN_WORKSPACE_ROOTS} to ${MAX_WORKSPACE_ROOTS} repositories (got ${input.roots.length}).`,
+    );
+  }
+  const rows = new Map(
+    input.rootProjects
+      .filter((row) => row.deletedAt === null)
+      .map((row) => [row.projectId, row] as const),
+  );
+  const projectIds = new Set<ProjectId>();
+  const names = new Set<string>();
+  const resolved: Array<ProjectRoot> = [];
+  for (const root of input.roots) {
+    if (root.projectId === input.workspaceId) return invalid("A workspace cannot contain itself.");
+    if (projectIds.has(root.projectId)) {
+      return invalid("Each project can appear only once in a workspace.");
+    }
+    projectIds.add(root.projectId);
+    const row = rows.get(root.projectId);
+    if (row === undefined) return invalid(`Project ${root.projectId} was not found.`);
+    if (row.roots !== undefined) {
+      return invalid(`"${row.title}" is a workspace, so it cannot be a repository in another.`);
+    }
+    const name = root.name ?? defaultRootName(row.workspaceRoot);
+    if (!ROOT_NAME_PATTERN.test(name) || name === "." || name === "..") {
+      return invalid(
+        `Folder name "${name}" for "${row.title}" may use only letters, digits, ".", "_" and "-".`,
+      );
+    }
+    const key = name.toLowerCase();
+    if (names.has(key)) return invalid(`Two repositories use the folder name "${name}".`);
+    names.add(key);
+    resolved.push({ projectId: root.projectId, name });
+  }
+  return Result.succeed(resolved);
 }
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -152,6 +243,16 @@ export function planProjectCommand(input: {
       }
       const conflict = requireWorkspaceAvailable(command.workspaceRoot);
       if (conflict !== undefined) return Result.fail(conflict);
+      let roots: ReadonlyArray<ProjectRoot> | undefined;
+      if (command.roots !== undefined) {
+        const resolved = resolveProjectRoots({
+          workspaceId: command.projectId,
+          roots: command.roots,
+          rootProjects: state.rootProjects ?? [],
+        });
+        if (Result.isFailure(resolved)) return Result.fail(resolved.failure);
+        roots = resolved.success;
+      }
       return Result.succeed({
         ...base,
         type: "project.created",
@@ -163,6 +264,7 @@ export function planProjectCommand(input: {
           faviconPath: null,
           projectIcon: null,
           scripts: command.scripts ?? [],
+          ...(roots === undefined ? {} : { roots }),
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
@@ -190,8 +292,30 @@ export function planProjectCommand(input: {
         }
       }
       if (command.workspaceRoot !== undefined) {
+        if (project.roots !== undefined) {
+          return Result.fail(
+            new ProjectRootsInvalidError({ detail: "A workspace's folder cannot be moved." }),
+          );
+        }
         const conflict = requireWorkspaceAvailable(command.workspaceRoot);
         if (conflict !== undefined) return Result.fail(conflict);
+      }
+      let roots: ReadonlyArray<ProjectRoot> | undefined;
+      if (command.roots !== undefined) {
+        if (project.roots === undefined) {
+          return Result.fail(
+            new ProjectRootsInvalidError({
+              detail: "Only a workspace's repositories can be changed.",
+            }),
+          );
+        }
+        const resolved = resolveProjectRoots({
+          workspaceId: command.projectId,
+          roots: command.roots,
+          rootProjects: state.rootProjects ?? [],
+        });
+        if (Result.isFailure(resolved)) return Result.fail(resolved.failure);
+        roots = resolved.success;
       }
       return Result.succeed({
         ...base,
@@ -210,6 +334,7 @@ export function planProjectCommand(input: {
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
+          ...(roots === undefined ? {} : { roots }),
           // Repeating a pin or archive keeps the original time.
           ...(command.pinned === undefined
             ? {}
@@ -224,6 +349,19 @@ export function planProjectCommand(input: {
 
     case "project.delete": {
       if (activeProject === undefined) return missingProject();
+      const workspace = state.referencingWorkspaces?.find(
+        (row) =>
+          row.deletedAt === null && row.roots?.some((root) => root.projectId === command.projectId),
+      );
+      if (workspace !== undefined) {
+        return Result.fail(
+          new ProjectReferencedByWorkspaceError({
+            projectId: command.projectId,
+            workspaceId: workspace.projectId,
+            workspaceTitle: workspace.title,
+          }),
+        );
+      }
       // Thread children are deleted by ProjectService before this event commits.
       return Result.succeed({
         ...base,

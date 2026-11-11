@@ -33,7 +33,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import * as OrchestrationHttp from "./http.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -181,7 +181,12 @@ const serveOrchestrationHttp = (allowed: () => boolean, memberId = MemberId.make
         ),
       ),
       Layer.provide(Layer.succeedContext(services)),
-      Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
+      Layer.provide(
+        Layer.mock(ProjectService)({
+          enrichShells: (projects) =>
+            Effect.succeed({ projects, resolvedRepositoryIdentityRoots: [] }),
+        }),
+      ),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),

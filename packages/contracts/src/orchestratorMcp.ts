@@ -174,7 +174,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree", "cloud"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. 'cloud': own machine from the parent's pushed branch, if `features.cloudThreads` or `target.environmentId` is a `cloud` link. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit (in a workspace, each repository from its default branch instead), for a separate checkout or PR per child. 'cloud': own machine from the parent's pushed branch, if `features.cloudThreads` or `target.environmentId` is a `cloud` link. Uncommitted edits stay out.",
     }),
   ),
   mode: Schema.optional(

@@ -3,6 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
+import { isWorkspaceProject, threadRepositories } from "@t3tools/client-runtime/state/workspaces";
 import { AuthFilesystemReadScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
@@ -27,8 +28,13 @@ export function DraftThreadHeader(props: {
   const environmentId = props.thread.environmentId;
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canWriteGit = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
+  const repositories = isWorkspaceProject(props.project)
+    ? threadRepositories(props.thread, props.project)
+    : null;
   const status = useEnvironmentQuery(
-    props.cwd ? vcsEnvironment.status({ environmentId, input: { cwd: props.cwd } }) : null,
+    props.cwd && repositories === null
+      ? vcsEnvironment.status({ environmentId, input: { cwd: props.cwd } })
+      : null,
   );
   const target = { environmentId, cwd: props.cwd };
   const progress = useVcsActionState(target);
@@ -66,6 +72,7 @@ export function DraftThreadHeader(props: {
         hasThread: false,
         currentBranch: props.thread.branch,
         gitStatus: status.data,
+        repositories,
         gitOperationLabel: progress.currentLabel,
         canOpenTerminal: false,
         canOperateTerminal: false,

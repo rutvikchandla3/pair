@@ -1,6 +1,7 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
+import { WORKSPACE_WORKTREE_REASON } from "./workspace-repositories";
 import { threadHeaderAppearance } from "./thread-header-appearance";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
@@ -973,6 +974,26 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  // A workspace starts each repository's worktree from its own default branch, so nothing is chosen.
+  const workspaceProjectControls = (
+    <View className="gap-1 px-2">
+      <View className="flex-row">
+        <ComposerInlineControl
+          accessibilityLabel={workspaceLabel}
+          static
+          renderIcon={(size) => (
+            <NewTaskWorkspaceIcon workspaceMode="worktree" worktreePath={null} size={size} />
+          )}
+          label={workspaceLabel}
+          maxWidth="100%"
+        />
+      </View>
+      <Text textRole="footnote" className="px-1 text-foreground-muted">
+        {WORKSPACE_WORKTREE_REASON}
+      </Text>
+    </View>
+  );
+
   if (!flow.selectedModel) {
     return (
       <ThreadScreenFallback
@@ -1013,7 +1034,7 @@ export function NewTaskDraftScreen(props: {
     modelSelection: flow.selectedModel,
     runtimeMode: flow.runtimeMode,
     interactionMode: flow.interactionMode,
-    branch: flow.selectedBranchName,
+    branch: flow.isWorkspace ? null : flow.selectedBranchName,
     worktreePath: flow.selectedWorktreePath,
     createdAt: creationMetadata.createdAt,
   });
@@ -1075,7 +1096,11 @@ export function NewTaskDraftScreen(props: {
                   {flow.cloudBranch.message}
                 </Text>
               ) : null}
-              {flow.canChooseWorkspace ? workspaceControls : null}
+              {flow.isWorkspace
+                ? workspaceProjectControls
+                : flow.canChooseWorkspace
+                  ? workspaceControls
+                  : null}
             </View>
           ),
           editorRef: promptInputRef,

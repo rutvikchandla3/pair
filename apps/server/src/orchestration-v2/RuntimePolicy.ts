@@ -183,7 +183,17 @@ export const layerFromProjectStore: Layer.Layer<
                       cause: "Project not found.",
                     }),
                   ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
+                // A workspace's own folder holds no code; its threads run in their own folder.
+                onSome: (project) =>
+                  project.roots === undefined
+                    ? Effect.succeed(project.workspaceRoot)
+                    : Effect.fail(
+                        new RuntimePolicyResolveError({
+                          projectId: input.thread.projectId,
+                          providerInstanceId: input.modelSelection.instanceId,
+                          cause: "A workspace thread runs only in its own folder of worktrees.",
+                        }),
+                      ),
               }),
             ),
           ));

@@ -56,6 +56,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -130,6 +131,19 @@ const otherProject = {
   workspaceRoot: "/other-repo",
 } as const;
 
+const workspaceProjectId = ProjectId.make("project:launch-workspace");
+const workspaceRoots = [
+  { projectId, name: "repo" },
+  { projectId: otherProjectId, name: "other" },
+];
+const workspaceProject = {
+  ...project,
+  id: workspaceProjectId,
+  title: "Workspace",
+  workspaceRoot: "/workspaces/workspace",
+  roots: workspaceRoots,
+};
+
 const adapter = {
   instanceId: modelSelection.instanceId,
   driver: ProviderDriverKind.make("codex"),
@@ -171,6 +185,7 @@ interface HarnessOptions {
   readonly stagedImports?: Partial<StagedCloudImports.StagedCloudImports["Service"]>;
   /** The team's active image build; none by default. */
   readonly activeImageBuild?: TeamImageBuild;
+  readonly createWorkspaceCheckout?: WorkspaceCheckouts.WorkspaceCheckouts["Service"]["create"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -211,11 +226,31 @@ function makeHarness(options: HarnessOptions = {}) {
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
   );
   const closeTerminal = vi.fn(options.closeTerminal ?? (() => Effect.void));
+  const createWorkspaceCheckout = vi.fn(
+    options.createWorkspaceCheckout ??
+      ((input: Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["create"]>[0]) =>
+        Effect.succeed({ folder: "/worktrees/workspace/feature", branch: input.branch })),
+  );
+  const removeWorkspaceCheckout = vi.fn(
+    (_checkout: WorkspaceCheckouts.WorkspaceCheckout) => Effect.void,
+  );
+  const renameWorkspaceBranch = vi.fn(
+    (input: Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["renameBranch"]>[0]) =>
+      Effect.succeed({ branch: input.newBranch }),
+  );
   const generateBranchName = vi.fn(
     options.generateBranchName ?? (() => Effect.succeed({ branch: "generated-branch" })),
   );
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
+  );
+  const layerWorkspaceCheckouts = Layer.mergeAll(
+    NodeServices.layer,
+    Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({
+      create: createWorkspaceCheckout,
+      remove: removeWorkspaceCheckout,
+      renameBranch: renameWorkspaceBranch,
+    }),
   );
   const layerExternalServices = Layer.mergeAll(
     WorktreeSetupTracker.layer,
@@ -233,13 +268,16 @@ function makeHarness(options: HarnessOptions = {}) {
             ? Option.some(project)
             : id === otherProjectId
               ? Option.some(otherProject)
-              : Option.none(),
+              : id === workspaceProjectId
+                ? Option.some(workspaceProject)
+                : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       getResolvedShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
+      enrichShells: () => Effect.die("unused"),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
@@ -307,6 +345,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerProjections,
         layerTeamImages,
         IdAllocator.layer,
+        layerWorkspaceCheckouts,
         Layer.succeed(ServerConfig.ServerConfig, {
           cloudOnly: options.cloudOnly ?? false,
         } as ServerConfig.ServerConfig["Service"]),
@@ -364,6 +403,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerExternalServices,
       layerProjections,
       layerTeamImages,
+      layerWorkspaceCheckouts,
     ),
     createWorktree,
     removeWorktree,
@@ -373,6 +413,9 @@ function makeHarness(options: HarnessOptions = {}) {
     generateThreadTitle,
     runSetup,
     closeTerminal,
+    createWorkspaceCheckout,
+    removeWorkspaceCheckout,
+    renameWorkspaceBranch,
   };
 }
 
@@ -381,11 +424,12 @@ function launchInput(input: {
   readonly thread: string;
   readonly message?: string;
   readonly workspace?: ThreadLaunch.ThreadLaunchWorkspaceStrategy;
+  readonly projectId?: ProjectId;
 }) {
   return {
     commandId: CommandId.make(input.command),
     threadId: ThreadId.make(input.thread),
-    projectId,
+    projectId: input.projectId ?? projectId,
     title: "New thread",
     modelSelection,
     runtimeMode: "full-access" as const,
@@ -2355,6 +2399,103 @@ it.effect(
       }).pipe(Effect.provide(harness.layer));
     }),
 );
+
+it.effect(
+  "launches a workspace thread in one folder of root worktrees and removes it on cancel",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        runSetup: (input) =>
+          input.worktreePath === "/worktrees/workspace/feature"
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed({ status: "no-script" as const }),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "launch:workspace",
+            thread: "thread:workspace",
+            projectId: workspaceProjectId,
+            workspace: { type: "worktree", baseRef: "main", branch: "feature" },
+          }),
+        );
+        yield* Deferred.await(entered);
+        assert.deepEqual(harness.createWorkspaceCheckout.mock.calls[0]?.[0].roots, workspaceRoots);
+        assert.isEmpty(harness.createWorktree.mock.calls);
+        assert.deepEqual(
+          harness.runSetup.mock.calls.map(([input]) => [input.projectId, input.worktreePath]),
+          [
+            [projectId, "/worktrees/workspace/feature/repo"],
+            [otherProjectId, "/worktrees/workspace/feature/other"],
+            [workspaceProjectId, "/worktrees/workspace/feature"],
+          ],
+        );
+        const running = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(running.thread.worktreePath, "/worktrees/workspace/feature");
+        assert.deepEqual(running.thread.roots, workspaceRoots);
+
+        assert.isTrue(yield* tracker.cancel(launched.threadId));
+        assert.deepEqual(harness.removeWorkspaceCheckout.mock.calls[0]?.[0], {
+          folder: "/worktrees/workspace/feature",
+          roots: workspaceRoots,
+          branch: "feature",
+        });
+        const cancelled = yield* threads.getThreadProjection(launched.threadId);
+        assert.isNull(cancelled.thread.worktreePath);
+        assert.isUndefined(cancelled.thread.roots);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect.each([{ type: "root" as const }, { type: "existing_worktree" as const }])(
+  "refuses a $type launch on a workspace",
+  ({ type }) => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .launch(
+          launchInput({
+            command: `launch:workspace-${type}`,
+            thread: `thread:workspace-${type}`,
+            projectId: workspaceProjectId,
+            workspace:
+              type === "root"
+                ? { type: "root" }
+                : { type: "existing_worktree", worktreePath: "/workspaces/workspace" },
+          }),
+        )
+        .pipe(Effect.flip);
+      assert.include(error.message, "workspace");
+      assert.isEmpty(harness.createWorkspaceCheckout.mock.calls);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect.each([
+  { name: "a workspace in a new worktree", project: workspaceProjectId, worktree: true },
+  { name: "a project in its folder", project: projectId, worktree: false },
+])("launches $name when no strategy is given", ({ project, worktree }) => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const { workspaceStrategy: _explicit, ...request } = launchInput({
+      command: `launch:default-${project}`,
+      thread: `thread:default-${project}`,
+      message: "Start",
+      projectId: project,
+    });
+    const launched = yield* launches.launch(request);
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.workspacePreparation?.type, worktree ? "worktree" : "root");
+    assert.equal(harness.createWorkspaceCheckout.mock.calls.length, worktree ? 1 : 0);
+    assert.isEmpty(harness.createWorktree.mock.calls);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("stops an in-flight branch rename when tracked setup is cancelled", () =>
   Effect.gen(function* () {

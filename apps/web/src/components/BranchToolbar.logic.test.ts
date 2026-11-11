@@ -172,6 +172,21 @@ describe("resolveEffectiveEnvMode", () => {
       { hasServerThread: true, cloudLaunch: true },
       "local",
     ],
+    [
+      "a workspace draft that holds a local or cloud mode",
+      { draftThreadEnvMode: "local", workspace: true },
+      "worktree",
+    ],
+    [
+      "a workspace draft that carried another thread's worktree",
+      { activeWorktreePath: "/repo/.t3/worktrees/a", draftThreadEnvMode: "cloud", workspace: true },
+      "worktree",
+    ],
+    [
+      "a workspace thread before its folder exists",
+      { hasServerThread: true, workspace: true },
+      "worktree",
+    ],
   ] as const)("%s", (_name, overrides, expected) => {
     expect(resolveEffectiveEnvMode({ ...base, ...overrides })).toBe(expected);
   });
@@ -210,7 +225,7 @@ describe("resolveCloudEnvModeItem", () => {
     cloudEnvironmentId: undefined,
     effectiveEnvMode: "cloud",
     isServerThread: false,
-    forceNewWorktree: false,
+    forcedWorktreeReason: null,
   } as const;
   const cloudRow = (reason: string | null = null) => ({
     value: "cloud",
@@ -303,7 +318,7 @@ describe("resolveCloudEnvModeItem", () => {
       "disabled for a multi-model send",
       {
         cloud: targets(option(cloud, "Pair Cloud", "match")),
-        forceNewWorktree: true,
+        forcedWorktreeReason: "Each model starts in its own worktree.",
         effectiveEnvMode: "worktree",
       },
       {

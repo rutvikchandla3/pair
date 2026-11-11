@@ -15,6 +15,7 @@ const localDefault: PendingDraftProjectDefaults = {
   defaultModeSettled: true,
   cloudAvailable: false,
   cloudLaunch: false,
+  workspace: false,
 };
 const worktreeDefault: PendingDraftProjectDefaults = { ...localDefault, defaultMode: "worktree" };
 const resolve = (
@@ -82,5 +83,12 @@ describe("resolvePendingDraftBranch", () => {
     const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
     expect(pendingDraftBranchNeedsRefs(chosen, localDefault)).toBe(false);
     expect(resolve({ draft: chosen, branches, projectCwd })).toBe("release");
+  });
+
+  it("shows no branch for a workspace, whose repositories each start from their default", () => {
+    const workspace = { ...worktreeDefault, workspace: true };
+    const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
+    expect(pendingDraftBranchNeedsRefs(chosen, workspace)).toBe(false);
+    expect(resolve({ draft: chosen, defaults: workspace, branches, projectCwd })).toBeNull();
   });
 });

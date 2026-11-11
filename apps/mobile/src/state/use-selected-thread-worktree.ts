@@ -1,4 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  type ThreadRepository,
+  isWorkspaceProject,
+  threadRepositories,
+} from "@t3tools/client-runtime/state/workspaces";
 import * as Option from "effect/Option";
 
 import { useProject, useQuietThreadShell } from "./entities";
@@ -24,6 +29,25 @@ export function useSelectedThreadWorktree() {
         ? (selectedThreadProject?.workspaceRoot ?? null)
         : null),
   };
+}
+
+/**
+ * A workspace thread's repositories, empty until its folder of worktrees exists; null for a
+ * thread in one repository, whose git controls apply to its own checkout.
+ */
+export function useSelectedThreadRepositories(): ReadonlyArray<ThreadRepository> | null {
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  if (
+    selectedThread === null ||
+    (selectedThread.roots === undefined && !isWorkspaceProject(selectedThreadProject))
+  ) {
+    return null;
+  }
+  return threadRepositories(
+    { ...selectedThread, worktreePath: selectedThreadWorktreePath },
+    selectedThreadProject,
+  );
 }
 
 /**

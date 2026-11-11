@@ -1,3 +1,6 @@
+import * as Digest from "effect/crypto/Digest";
+import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import type * as Path from "effect/Path";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -40,3 +43,15 @@ export function managedWorktreesDirectories(
   }
   return [...directories];
 }
+
+/** The folder a branch's worktree gets under `<worktrees dir>/<repo>/`. */
+export const worktreeDirectoryName = Effect.fn("worktreeDirectoryName")(function* (branch: string) {
+  const directoryName = branch.replace(/\//g, "-");
+  // Leave room for files beneath the worktree on Windows, regardless of branch length.
+  if (directoryName.length <= 40) return directoryName;
+  const digest = yield* Digest.Digest;
+  const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(branch));
+  // Avoid splitting a surrogate pair, which Git would list back as a different path.
+  const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
+  return `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
+});

@@ -36,7 +36,11 @@ import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadRepositories,
+  useSelectedThreadWorktree,
+} from "../../state/use-selected-thread-worktree";
+import { WORKSPACE_GIT_CONTROLS_UNAVAILABLE } from "@t3tools/client-runtime/state/workspaces";
 import { useStoppedFiles } from "../../state/sandbox";
 import { StoppedFilesNotice } from "../threads/StoppedMachineNotice";
 import { useReviewCacheForThread } from "./reviewState";
@@ -360,6 +364,45 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  // A workspace thread's folder holds several repositories, so there is no one diff to review.
+  if (useSelectedThreadRepositories() !== null) return <WorkspaceReviewUnavailable {...props} />;
+  return <ReviewSheetContent {...props} />;
+}
+
+function WorkspaceReviewUnavailable(props: ReviewSheetProps) {
+  const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
+  const { environmentId, threadId } = props.route.params;
+  const returnToThread = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    selectDetail({
+      name: "Thread",
+      params: { environmentId: String(environmentId), threadId: String(threadId) },
+    });
+  };
+  return (
+    <>
+      <AppBar
+        title="Review changes"
+        onBack={returnToThread}
+        hideBottomBorder
+        backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      />
+      <ScreenContent>
+        <View className="flex-1 items-center justify-center bg-sheet px-6 android:bg-sheet-solid">
+          <Text className="text-center text-sm text-foreground-muted">
+            {WORKSPACE_GIT_CONTROLS_UNAVAILABLE}
+          </Text>
+        </View>
+      </ScreenContent>
+    </>
+  );
+}
+
+function ReviewSheetContent(props: ReviewSheetProps) {
   const reduceMotion = useReduceMotionEnabled();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { panes } = useAdaptiveWorkspaceLayout();

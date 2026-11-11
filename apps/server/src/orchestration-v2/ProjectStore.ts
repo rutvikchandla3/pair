@@ -5,6 +5,7 @@ import {
   type OrchestrationProjectShell,
   StoredProjectIcon,
   ProjectId,
+  ProjectRoot,
   ProjectScript,
   ThreadEnvMode,
 } from "@t3tools/contracts";
@@ -39,6 +40,7 @@ export const ProjectRow = Schema.Struct({
   faviconPath: Schema.NullOr(Schema.String),
   projectIcon: Schema.NullOr(StoredProjectIcon),
   scripts: Schema.Array(ProjectScript),
+  roots: Schema.optional(Schema.Array(ProjectRoot)),
   pinnedAt: Schema.NullOr(IsoDateTime),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
@@ -53,7 +55,11 @@ const ProjectDbRow = Schema.Struct({
   autoPull: Schema.BooleanFromBit,
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+  roots: Schema.NullOr(Schema.fromJsonString(Schema.Array(ProjectRoot))),
 });
+
+const fromDbRow = ({ roots, ...row }: typeof ProjectDbRow.Type): ProjectRow =>
+  roots === null ? row : { ...row, roots };
 
 function toShell(row: ProjectRow): OrchestrationProjectShell {
   return {
@@ -67,6 +73,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
     faviconPath: row.faviconPath,
     projectIcon: row.projectIcon,
     scripts: row.scripts,
+    ...(row.roots === undefined ? {} : { roots: row.roots }),
     pinnedAt: row.pinnedAt,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -103,7 +110,8 @@ export class ProjectStoreV2 extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const encodeRow = Schema.encodeEffect(ProjectDbRow);
+  const encodeDbRow = Schema.encodeEffect(ProjectDbRow);
+  const encodeRow = (row: ProjectRow) => encodeDbRow({ ...row, roots: row.roots ?? null });
 
   const selectRows = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -124,6 +132,7 @@ export const make = Effect.gen(function* () {
         favicon_path AS "faviconPath",
         project_icon_json AS "projectIcon",
         scripts_json AS "scripts",
+        roots_json AS "roots",
         pinned_at AS "pinnedAt",
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -141,6 +150,8 @@ export const make = Effect.gen(function* () {
       ORDER BY created_at ASC, project_id ASC
     `,
   });
+  const selectProjects = (request: Parameters<typeof selectRows>[0]) =>
+    selectRows(request).pipe(Effect.map((rows) => rows.map(fromDbRow)));
 
   const upsertRow = (row: ProjectRow) =>
     encodeRow(row).pipe(
@@ -156,6 +167,7 @@ export const make = Effect.gen(function* () {
             favicon_path,
             project_icon_json,
             scripts_json,
+            roots_json,
             pinned_at,
             archived_at,
             created_at,
@@ -172,6 +184,7 @@ export const make = Effect.gen(function* () {
             ${encoded.faviconPath},
             ${encoded.projectIcon},
             ${encoded.scripts},
+            ${encoded.roots},
             ${encoded.pinnedAt},
             ${encoded.archivedAt},
             ${encoded.createdAt},
@@ -188,6 +201,7 @@ export const make = Effect.gen(function* () {
             favicon_path = excluded.favicon_path,
             project_icon_json = excluded.project_icon_json,
             scripts_json = excluded.scripts_json,
+            roots_json = excluded.roots_json,
             pinned_at = excluded.pinned_at,
             archived_at = excluded.archived_at,
             created_at = excluded.created_at,
@@ -203,14 +217,14 @@ export const make = Effect.gen(function* () {
       effect.pipe(Effect.mapError((cause) => new ProjectStoreV2Error({ operation, cause })));
 
   const get: ProjectStoreV2["Service"]["get"] = (projectId, options) =>
-    selectRows({ projectId, includeDeleted: options?.includeDeleted === true }).pipe(
+    selectProjects({ projectId, includeDeleted: options?.includeDeleted === true }).pipe(
       NodeSqliteClient.readOnly,
       Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
       mapError("get"),
     );
 
   const list: ProjectStoreV2["Service"]["list"] = (options) =>
-    selectRows({
+    selectProjects({
       ...(options?.projectIds === undefined ? {} : { projectIds: options.projectIds }),
       includeDeleted: options?.includeDeleted === true,
     }).pipe(NodeSqliteClient.readOnly, mapError("list"));
@@ -218,7 +232,7 @@ export const make = Effect.gen(function* () {
   const findActiveByWorkspaceRoot: ProjectStoreV2["Service"]["findActiveByWorkspaceRoot"] = (
     workspaceRoot,
   ) =>
-    selectRows({ workspaceRoot, includeDeleted: false }).pipe(
+    selectProjects({ workspaceRoot, includeDeleted: false }).pipe(
       NodeSqliteClient.readOnly,
       Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
       mapError("findActiveByWorkspaceRoot"),
@@ -238,6 +252,7 @@ export const make = Effect.gen(function* () {
           faviconPath: payload.faviconPath ?? null,
           projectIcon: payload.projectIcon ?? null,
           scripts: payload.scripts,
+          ...(payload.roots === undefined ? {} : { roots: payload.roots }),
           pinnedAt: null,
           archivedAt: null,
           createdAt: payload.createdAt,
@@ -270,6 +285,7 @@ export const make = Effect.gen(function* () {
         ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
         ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
         ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),
+        ...(payload.roots === undefined ? {} : { roots: payload.roots }),
         ...(payload.pinnedAt === undefined ? {} : { pinnedAt: payload.pinnedAt }),
         ...(payload.archivedAt === undefined ? {} : { archivedAt: payload.archivedAt }),
         updatedAt: payload.updatedAt,

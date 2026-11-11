@@ -99,6 +99,7 @@ export class CloudMoves extends Context.Service<
 >()("t3/cloudMove/CloudMoves") {}
 
 const failed = (message: string) => () => new ThreadMoveError({ reason: "failed", message });
+const WORKSPACE_MESSAGE = "Workspaces don't run in Cloud yet.";
 const refused = (reason: ThreadMoveError["reason"], message: string) =>
   new ThreadMoveError({ reason, message });
 const seedFailed = () => refused("seed-failed", CloudMoveClient.SEED_FAILED_MESSAGE);
@@ -215,6 +216,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(failed("Couldn't read the project here."))),
     );
     if (project === undefined) return yield* failed("This project isn't on this computer.")();
+    if (project.roots !== undefined) {
+      return yield* new ThreadMoveError({ reason: "unsupported", message: WORKSPACE_MESSAGE });
+    }
     const root = project.workspaceRoot;
     const originKey = originKeyOf(project);
     const moveId = yield* moveIdFor(input.commandId);
@@ -399,6 +403,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(failed("Couldn't read the project here."))),
     );
     if (project === undefined) return yield* failed("This thread's project is gone.")();
+    if (project.roots !== undefined || shell.roots !== undefined) {
+      return yield* new ThreadMoveError({ reason: "unsupported", message: WORKSPACE_MESSAGE });
+    }
     return { shell, project, cwd: shell.worktreePath ?? project.workspaceRoot };
   });
 

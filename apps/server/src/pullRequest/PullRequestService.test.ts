@@ -1890,7 +1890,7 @@ it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
   }),
 );
 
-it.effect("resolves a project's repository identity when its shell has none cached", () =>
+it.effect("resolves a cold project identity, but never a workspace's from its folder", () =>
   Effect.gen(function* () {
     const resolved = project({
       id: "web",
@@ -1899,10 +1899,26 @@ it.effect("resolves a project's repository identity when its shell has none cach
       repository: "acme/web",
     });
     const service = yield* makeService({
-      projects: [{ ...resolved, repositoryIdentity: null }],
+      projects: [
+        { ...resolved, repositoryIdentity: null },
+        // Git would find the enclosing repository from a workspace's folder inside it.
+        {
+          ...resolved,
+          id: "stack" as ProjectId,
+          workspaceRoot: "/web/.t3/workspaces/stack",
+          repositoryIdentity: null,
+          roots: [{ projectId: "web" as ProjectId, name: "web" }],
+        },
+      ],
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
           getChangeRequestSummary: () => Effect.succeed(changeRequest(7, "2026-07-02T00:00:00Z")),
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
         }),
       ],
       resolveRepositoryIdentity: () => Effect.succeed(resolved.repositoryIdentity ?? null),
@@ -1912,8 +1928,10 @@ it.effect("resolves a project's repository identity when its shell has none cach
       { projectId: "web" as ProjectId, host: "github.com", repository: "acme/web", number: 7 },
       { recoverTransientFailure: false },
     );
+    const workspace = yield* service.list({ state: "open", projectId: "stack" as ProjectId });
 
     assert.strictEqual(summary.number, 7);
+    assert.deepStrictEqual(workspace.entries, []);
   }),
 );
 

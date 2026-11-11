@@ -123,6 +123,19 @@ page says how it must behave. The decisions came from a product design review du
   nothing, and the thread says "Connect GitHub to push".
 - Each team registers its own GitHub App. Pair never points at upstream's "T3 Code for GitHub" app.
 
+## Workspaces
+
+- **Worktrees only.** A workspace thread always runs in its own new folder of worktrees. Its
+  project's folder holds no code, and sharing one checkout of several repositories between threads
+  would bring back the overwrites that worktrees by default prevent.
+- **One branch name.** Every repository in a thread uses the same branch, so the work reads as one
+  change across them. A rename that can't apply to all of them applies to none.
+- **Repositories are fixed per thread.** A thread keeps the repositories it started with. Editing a
+  workspace changes new threads only, so a running agent never finds a repository added or taken
+  away under it.
+- **Visible like projects.** Everyone on the server sees every workspace. There are no
+  per-workspace permissions, as there are none per project.
+
 ## API tokens
 
 - A token is an outside client on `/mcp` only, never the internal `/api` or `/ws`, so it can't mint

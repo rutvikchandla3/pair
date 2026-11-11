@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { Button } from "../../components/ui/Button";
 import type {
   EnvironmentProject,
@@ -150,6 +151,8 @@ function ProjectGroupLabel(props: {
         environmentId={props.project.environmentId}
         faviconPath={props.project.faviconPath}
         projectIcon={props.project.projectIcon}
+
+        workspace={isWorkspaceProject(props.project)}
         projectTitle={props.project.title}
         size={18}
         workspaceRoot={props.project.workspaceRoot}

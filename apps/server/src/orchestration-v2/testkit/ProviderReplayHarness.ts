@@ -46,6 +46,7 @@ import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
+import * as WorkspaceCheckouts from "../../project/WorkspaceCheckouts.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
@@ -472,6 +473,7 @@ export function layerWithRegistry<Error>(
         Layer.mock(ProviderAuthService.ProviderAuthService)({
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
+        Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
         layerRunExecutionServiceProvided,
         layerRuntime,
         layerServerConfig,

@@ -5,6 +5,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import {
+  WORKSPACE_WORKTREE_BASE_REF,
+  isWorkspaceProject,
+} from "@t3tools/client-runtime/state/workspaces";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -299,6 +303,8 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = sendCtx.selectedModelSelection;
 
+    // A workspace thread cannot share another thread's folder; it gets new worktrees instead.
+    const workspace = isWorkspaceProject(activeProject);
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
 
@@ -311,8 +317,8 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
         modelSelection: nextThreadModelSelection,
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
+        branch: workspace ? null : activeThreadBranch,
+        worktreePath: workspace ? null : activeThread.worktreePath,
         createdAt,
       },
     });
@@ -338,6 +344,17 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
           },
+          ...(workspace
+            ? {
+                bootstrap: {
+                  prepareWorktree: {
+                    projectCwd: activeProject.workspaceRoot,
+                    baseBranch: WORKSPACE_WORKTREE_BASE_REF,
+                  },
+                  runSetupScript: true,
+                },
+              }
+            : {}),
           createdAt,
         },
       });

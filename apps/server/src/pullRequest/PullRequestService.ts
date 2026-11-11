@@ -890,7 +890,8 @@ export const make = Effect.gen(function* () {
         Effect.forEach(
           projects,
           (project) =>
-            project.repositoryIdentity != null
+            // A workspace's folder is not a repository; git would find an enclosing one.
+            project.repositoryIdentity != null || project.roots !== undefined
               ? Effect.succeed(project)
               : repositoryIdentities
                   .resolve(project.workspaceRoot)

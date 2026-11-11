@@ -64,6 +64,7 @@ Once a driver is saved, every project allows cloud threads. To change that, open
 - **Project cloud variables** are set on that project's machines, over the team's variables.
 
 The machine clones the project's `origin` remote, so a project needs one.
+[Workspaces](./workspaces.md) don't run in Cloud yet.
 
 ## Start a cloud thread
 
@@ -112,7 +113,8 @@ and that it ran.
 
 A thread lives on one server. To change which, you continue it on the other: Pair starts a new
 thread there with the work and the conversation, and leaves the original where it is. Your Mac
-always starts the move, in both directions; Pair Cloud never reaches into it.
+always starts the move, in both directions; Pair Cloud never reaches into it. A thread in a
+[workspace](./workspaces.md) can't move yet.
 
 ### Continue in cloud
 

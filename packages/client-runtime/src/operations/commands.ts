@@ -17,6 +17,8 @@ import {
   type PlanId,
   type ProjectId,
   type ProjectIconOverride,
+  type ProjectMutation,
+  type ProjectRootInput,
   type ProjectScript,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
@@ -45,14 +47,23 @@ interface CommandMetadata {
   readonly creationSource?: OrchestrationV2CreationSource;
 }
 
-export interface CreateProjectInput extends CommandMetadata {
+interface CreateProjectFields extends CommandMetadata {
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly workspaceRoot: string;
-  readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
+
+/** A project in a folder, or a workspace of other projects whose folder the server picks. */
+export type CreateProjectInput = CreateProjectFields &
+  (
+    | {
+        readonly workspaceRoot: string;
+        readonly createWorkspaceRootIfMissing?: boolean;
+        readonly roots?: undefined;
+      }
+    | { readonly roots: ReadonlyArray<ProjectRootInput>; readonly workspaceRoot?: undefined }
+  );
 
 export interface UpdateProjectInput extends CommandMetadata {
   readonly projectId: ProjectId;
@@ -64,6 +75,8 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly faviconPath?: string | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** Only a workspace's: new threads use them, existing threads keep theirs. */
+  readonly roots?: ReadonlyArray<ProjectRootInput>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -325,32 +338,7 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
 });
 
 const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
-  mutation:
-    | {
-        readonly type: "project.create";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title: string;
-        readonly workspaceRoot: string;
-        readonly createWorkspaceRootIfMissing?: boolean;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.update";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title?: string;
-        readonly workspaceRoot?: string;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.delete";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly force?: boolean;
-      },
+  mutation: ProjectMutation,
 ) {
   return yield* request(WS_METHODS.projectsMutate, mutation);
 });
@@ -363,10 +351,14 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
     commandId: yield* allocateCommandId(input),
     projectId: input.projectId,
     title: input.title,
-    workspaceRoot: input.workspaceRoot,
-    ...(input.createWorkspaceRootIfMissing === undefined
-      ? {}
-      : { createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing }),
+    ...(input.roots === undefined
+      ? {
+          workspaceRoot: input.workspaceRoot,
+          ...(input.createWorkspaceRootIfMissing === undefined
+            ? {}
+            : { createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing }),
+        }
+      : { roots: input.roots }),
     ...(input.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
@@ -393,6 +385,7 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.roots === undefined ? {} : { roots: input.roots }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
   });

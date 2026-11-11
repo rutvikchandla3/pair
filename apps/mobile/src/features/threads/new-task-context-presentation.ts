@@ -1,6 +1,7 @@
 import { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
+import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
 import type { NewTaskWorkspaceMode } from "../../lib/newTaskWorkspaceMode";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
 
@@ -12,7 +13,14 @@ export function resolveNewTaskWorkspaceSelection(input: {
   readonly cloudAvailable: boolean;
   /** The environment's `capabilities.cloudLaunch`: every new task there is cloud. */
   readonly cloudLaunch: boolean;
+  /** The project is a workspace of several repositories. */
+  readonly workspace: boolean;
 }): ComposerDraftWorkspaceSelection {
+  // The server runs a workspace thread only in a new worktree of each repository, each from
+  // its own default branch, so no draft choice applies.
+  if (input.workspace) {
+    return { mode: "worktree", branch: WORKSPACE_WORKTREE_BASE_REF, worktreePath: null };
+  }
   const selection = input.selection ?? input.fallback;
   const mode = resolveSendEnvMode({ requestedEnvMode: selection.mode, isGitRepo: input.isGitRepo });
   if (!input.isGitRepo) return { mode, branch: null, worktreePath: null };
@@ -195,6 +203,7 @@ export function resolveNewTaskDraftWorkspace(input: {
   readonly isGitRepo: boolean;
   readonly cloudAvailable: boolean;
   readonly cloudLaunch: boolean;
+  readonly workspace: boolean;
   readonly branches: Parameters<typeof fillNewTaskWorkspaceBranch>[0]["branches"];
   readonly projectCwd: string | null;
 }): ComposerDraftWorkspaceSelection {
@@ -206,6 +215,7 @@ export function resolveNewTaskDraftWorkspace(input: {
       isGitRepo: input.isGitRepo,
       cloudAvailable: input.cloudAvailable,
       cloudLaunch: input.cloudLaunch,
+      workspace: input.workspace,
     }),
     branches: input.branches,
     projectCwd: input.projectCwd,

@@ -32,6 +32,7 @@ import {
   routedCloudLaunch,
 } from "@t3tools/client-runtime/state/cloud-target";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -903,6 +904,7 @@ export function useComposerSend(input: ComposerSendInput) {
       keepFullHistory,
       phase,
       dispatchMode,
+      workspace: isWorkspaceProject(activeProject),
     });
     if (missingWorktreeBaseBranch) {
       setThreadError(

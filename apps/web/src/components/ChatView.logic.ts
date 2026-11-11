@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
+import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -1415,6 +1416,8 @@ export function planComposerTurn(input: {
   readonly keepFullHistory: boolean;
   readonly phase: SessionPhase;
   readonly dispatchMode: ComposerDispatchMode;
+  /** A workspace's repositories each start from their own default branch. */
+  readonly workspace?: boolean;
 }) {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
@@ -1432,8 +1435,13 @@ export function planComposerTurn(input: {
   return {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    missingWorktreeBaseBranch: shouldCreateWorkspace && !input.activeThreadBranch,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    missingWorktreeBaseBranch:
+      shouldCreateWorkspace && input.workspace !== true && !input.activeThreadBranch,
+    baseBranchForWorktree: !shouldCreateWorktree
+      ? null
+      : input.workspace === true
+        ? WORKSPACE_WORKTREE_BASE_REF
+        : input.activeThreadBranch,
     baseRefForCloud: shouldLaunchCloud ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:

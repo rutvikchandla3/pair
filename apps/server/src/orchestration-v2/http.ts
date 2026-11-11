@@ -1,7 +1,6 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  type OrchestrationProjectShell,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,7 +20,7 @@ import {
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -69,24 +68,8 @@ export const layer = HttpApiBuilder.group(
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
-    const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const projectService = yield* ProjectService.ProjectService;
     const viewers = yield* makeThreadViewers;
-
-    const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
-      (projects: ReadonlyArray<OrchestrationProjectShell>) =>
-        Effect.forEach(
-          projects,
-          (project) =>
-            // Use available enrichment only; git probes can take a minute and exceed shell-snapshot budgets.
-            projectEnrichment.getAvailable(project.workspaceRoot).pipe(
-              Effect.map((enrichment) => ({
-                ...project,
-                repositoryIdentity: enrichment.repositoryIdentity,
-              })),
-            ),
-          { concurrency: 16 },
-        ),
-    );
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* (
       viewer: ThreadViewer | null,
@@ -108,7 +91,8 @@ export const layer = HttpApiBuilder.group(
         options: { ...options, olderSettledReader: yield* olderSettledReaderOf(viewer) },
         access: viewer?.access,
       });
-      const projects = yield* enrichProjectShells(snapshot.projects);
+      // Cached identities only; git probes can take a minute and exceed shell-snapshot budgets.
+      const { projects } = yield* projectService.enrichShells(snapshot.projects);
       const threads = yield* overlayForViewer(viewer, snapshot.threads);
       return { ...snapshot, threads, projects };
     });

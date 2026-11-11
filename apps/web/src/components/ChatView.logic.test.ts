@@ -1103,6 +1103,16 @@ describe("planComposerTurn", () => {
     }
   });
 
+  it("starts a workspace's worktrees without a base branch, since each repository uses its own", () => {
+    expect(planComposerTurn({ ...base, activeThreadBranch: null, workspace: true })).toMatchObject({
+      missingWorktreeBaseBranch: false,
+      baseBranchForWorktree: "HEAD",
+    });
+    expect(
+      planComposerTurn({ ...base, workspace: true, isServerThread: true, activeMessageCount: 2 }),
+    ).toMatchObject({ baseBranchForWorktree: null });
+  });
+
   it("queues behind a compaction of a stale session, except for /compact itself", () => {
     const stale = { ...base, resumeCompactionTokens: 120_000 };
     for (const messageText of ["hello", "/compactfoo"]) {

@@ -158,6 +158,20 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectAddTargetError extends Schema.TaggedError<ProjectAddTargetError>()(
+  "ProjectAddTargetError",
+  {
+    operation: Schema.Literal("addProject"),
+    reason: Schema.Literals(["path-or-roots", "workspace-title"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "path-or-roots"
+      ? "Give either a path or --root projects for a workspace, not both."
+      : "A workspace needs --title.";
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -167,6 +181,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectAddTargetError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -320,6 +335,21 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   } satisfies ProjectMutationTarget;
 });
 
+/** `<project>` or `<project>=<folder>`; a project named with "=" in it still resolves whole. */
+const resolveWorkspaceRoot = Effect.fn("resolveWorkspaceRoot")(function* (
+  snapshot: ProjectSnapshot,
+  spec: string,
+) {
+  const whole = yield* Effect.result(findActiveProjectTarget({ snapshot, identifier: spec }));
+  if (whole._tag === "Success")
+    return { project: whole.success, root: { projectId: whole.success.id } };
+  const split = spec.lastIndexOf("=");
+  if (split < 0) return yield* whole.failure;
+  const project = yield* findActiveProjectTarget({ snapshot, identifier: spec.slice(0, split) });
+  const name = spec.slice(split + 1).trim();
+  return { project, root: { projectId: project.id, ...(name.length === 0 ? {} : { name }) } };
+});
+
 const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestrationSnapshot")(
   function* (origin: string, bearerToken: string, _timeout?: Duration.Duration) {
     const client = yield* makeLiveServerClient(origin);
@@ -467,10 +497,17 @@ const projectAddCommand = Command.make("add", {
   ...projectLocationFlags,
   workspaceRoot: Argument.String("path").pipe(
     Argument.withDescription("Workspace root to add as a project."),
+    Argument.optional,
   ),
   title: Flag.String("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
+  roots: Flag.String("root").pipe(
+    Flag.withDescription(
+      "Instead of a path, a project (id or path) to put in a new workspace, optionally as <project>=<folder>. Repeat for 2 to 8 repositories; needs --title.",
+    ),
+    Flag.atLeast(0),
+  ),
 }).pipe(
-  Command.withDescription("Add a project."),
+  Command.withDescription("Add a project, or a workspace of several projects' repositories."),
   Command.withHandler((flags) =>
     runProjectMutation(
       flags,
@@ -483,7 +520,37 @@ const projectAddCommand = Command.make("add", {
           command: ProjectCliDispatchCommand,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
-        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+        if (Option.isSome(flags.workspaceRoot) === flags.roots.length > 0) {
+          return yield* new ProjectAddTargetError({
+            operation: "addProject",
+            reason: "path-or-roots",
+          });
+        }
+        if (Option.isNone(flags.workspaceRoot)) {
+          if (Option.isNone(flags.title)) {
+            return yield* new ProjectAddTargetError({
+              operation: "addProject",
+              reason: "workspace-title",
+            });
+          }
+          const title = yield* resolveProjectTitle("", flags.title.value);
+          const resolved = yield* Effect.forEach(flags.roots, (spec) =>
+            resolveWorkspaceRoot(snapshot, spec),
+          );
+          const projectId = ProjectId.make(yield* projectCommandUuid);
+          yield* dispatch({
+            type: "project.create",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId,
+            title,
+            roots: resolved.map(({ root }) => root),
+          });
+          return `Added workspace ${projectId} (${title}) of ${resolved.map(({ project, root }) => `${project.title}${root.name === undefined ? "" : ` as ${root.name}/`}`).join(", ")}.`;
+        }
+
+        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(
+          flags.workspaceRoot.value,
+        );
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );

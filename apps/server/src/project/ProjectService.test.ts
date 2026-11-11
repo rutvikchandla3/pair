@@ -9,6 +9,7 @@ import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -227,6 +228,79 @@ it.effect("a resolved shell read waits for the repository identity a shell read 
       "github.com/t3tools/shell-0",
     );
   }).pipe(Effect.scoped, Effect.provide(layerTestFor(layerMetadata))),
+);
+
+it.effect("a workspace inside a repository never takes that repository's identity", () =>
+  Effect.gen(function* () {
+    const inspected = yield* Ref.make<ReadonlySet<string>>(new Set());
+    // Git walks up from any folder inside the checkout to the enclosing repository.
+    const enclosing = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Ref.update(inspected, (roots) => new Set([...roots, workspaceRoot])).pipe(
+            Effect.as({
+              canonicalKey: "github.com/owner/pair",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@github.com:owner/pair.git",
+              },
+              rootPath: "/repo",
+            }),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const service = yield* ProjectService.ProjectService;
+      const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+      const changes = yield* enrichment.subscribeChanges;
+      const row = {
+        scripts_json: "[]",
+        created_at: "2026-10-01T00:00:00.000Z",
+        updated_at: "2026-10-01T00:00:00.000Z",
+        deleted_at: null,
+        auto_pull: 0,
+      };
+      yield* sql`INSERT INTO projection_projects ${sql.insert([
+        { ...row, project_id: "repo", title: "Pair", workspace_root: "/repo", roots_json: null },
+        {
+          ...row,
+          project_id: "stack",
+          title: "Stack",
+          workspace_root: "/repo/.t3/workspaces/stack",
+          roots_json: JSON.stringify([{ projectId: "repo", name: "repo" }]),
+        },
+      ])}`;
+      const shells = yield* service.listShells();
+
+      const cold = yield* service.enrichShells(shells);
+      assert.include(cold.resolvedRepositoryIdentityRoots, "/repo/.t3/workspaces/stack");
+      // A sentinel queued after the shells lets the workers finish every earlier request.
+      yield* enrichment.request("/sentinel");
+      for (;;) {
+        if ((yield* PubSub.take(changes)).workspaceRoot === "/sentinel") break;
+      }
+
+      const warm = yield* service.enrichShells(shells);
+      assert.deepEqual(
+        warm.projects.map((project) => [project.id, project.repositoryIdentity?.canonicalKey]),
+        [
+          ["repo", "github.com/owner/pair"],
+          ["stack", undefined],
+        ],
+      );
+      assert.sameMembers(
+        [...warm.resolvedRepositoryIdentityRoots],
+        ["/repo", "/repo/.t3/workspaces/stack"],
+      );
+      assert.isFalse((yield* Ref.get(inspected)).has("/repo/.t3/workspaces/stack"));
+    }).pipe(Effect.scoped, Effect.provide(layerTestFor(enclosing)));
+  }),
 );
 
 const layerProjectServiceDependencies = Layer.mergeAll(
@@ -621,6 +695,63 @@ it.layer(layerTest)("ProjectService", (it) => {
         events.map((event) => event.event_type),
         ["project.created", "project.deleted"],
       );
+    }),
+  );
+
+  it.effect("creates a workspace in a server folder and keeps its repositories from deletion", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { baseDir } = yield* ServerConfig.ServerConfig;
+      const repository = Effect.fn("repository")(function* (name: string, git: boolean) {
+        const folder = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-root-" });
+        if (git) yield* fileSystem.makeDirectory(`${folder}/.git`);
+        return yield* service.create({
+          commandId: CommandId.make(`command:workspace:${name}`),
+          projectId: ProjectId.make(`project:workspace:${name}`),
+          title: name,
+          workspaceRoot: folder,
+        });
+      });
+      const api = yield* repository("api", true);
+      const web = yield* repository("web", true);
+      const plain = yield* repository("plain", false);
+      const createWorkspace = (name: string, roots: ReadonlyArray<Project>) =>
+        service.create({
+          commandId: CommandId.make(`command:workspace:${name}`),
+          projectId: ProjectId.make(`project:workspace:${name}`),
+          title: "Full Stack",
+          roots: roots.map((root) => ({ projectId: root.id })),
+        });
+
+      const refused = yield* createWorkspace("refused", [api, plain]).pipe(Effect.flip);
+      assert.equal(refused._tag, "ProjectWorkspaceError");
+      assert.include(refused.message, '"plain" is not the top folder of a git repository');
+
+      const workspace = yield* createWorkspace("stack", [api, web]);
+      assert.equal(workspace.workspaceRoot, `${baseDir}/workspaces/full-stack`);
+      assert.isTrue(yield* fileSystem.exists(workspace.workspaceRoot));
+      assert.isNull(workspace.repositoryIdentity);
+      assert.deepEqual(workspace.roots, [
+        { projectId: api.id, name: api.workspaceRoot.split("/").at(-1)! },
+        { projectId: web.id, name: web.workspaceRoot.split("/").at(-1)! },
+      ]);
+
+      const blocked = yield* service
+        .delete({ commandId: CommandId.make("command:workspace:delete-api"), projectId: api.id })
+        .pipe(Effect.flip);
+      assert.equal(blocked._tag, "ProjectWorkspaceError");
+      assert.include(blocked.message, 'workspace "Full Stack"');
+      assert.isTrue(Option.isSome(yield* service.getById(api.id)));
+
+      yield* service.delete({
+        commandId: CommandId.make("command:workspace:delete-stack"),
+        projectId: workspace.id,
+      });
+      yield* service.delete({
+        commandId: CommandId.make("command:workspace:delete-api-after"),
+        projectId: api.id,
+      });
     }),
   );
 

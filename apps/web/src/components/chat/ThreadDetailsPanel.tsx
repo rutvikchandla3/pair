@@ -7,6 +7,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import {
+  type ThreadRepository,
+  WORKSPACE_GIT_CONTROLS_UNAVAILABLE,
+} from "@t3tools/client-runtime/state/workspaces";
+
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
@@ -32,11 +37,13 @@ import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
 import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { SlidersHorizontalIcon } from "lucide-react";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { FolderGitIcon, SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
 
@@ -62,6 +69,8 @@ interface ThreadDetailsPanelProps extends Pick<
   openInShortcutEnabled: boolean;
   gitCwd: string | null;
   isGitRepo: boolean;
+  /** A workspace thread's repositories; null for a thread in a single repository. */
+  repositories: ReadonlyArray<ThreadRepository> | null;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -153,8 +162,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
-          branch: props.gitCwd !== null && props.isGitRepo && visible.branch,
+          branch:
+            props.repositories === null &&
+            props.gitCwd !== null &&
+            props.isGitRepo &&
+            visible.branch,
           git:
+            props.repositories === null &&
             props.gitCwd !== null &&
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
@@ -238,6 +252,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
+              {props.repositories !== null && (visible.branch || visible.gitActions) ? (
+                <ThreadDetailsSection
+                  headingId="thread-details-repositories-heading"
+                  title="Repositories"
+                  separated={density === "full"}
+                >
+                  <WorkspaceRepositories repositories={props.repositories} />
+                </ThreadDetailsSection>
+              ) : null}
+
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}
@@ -307,5 +331,46 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         );
       }}
     </ThreadDetailsCard>
+  );
+}
+
+function WorkspaceRepositories({
+  repositories,
+}: {
+  repositories: ReadonlyArray<ThreadRepository>;
+}) {
+  return (
+    <div className="flex flex-col">
+      {repositories.length === 0 ? (
+        <p className="px-2.5 py-1 text-muted-foreground text-xs">
+          Each repository gets its own worktree when the thread starts.
+        </p>
+      ) : (
+        <ul className="flex flex-col">
+          {repositories.map((repository) => (
+            <li key={repository.projectId}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div
+                      className={cn("flex items-center", THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS)}
+                    />
+                  }
+                >
+                  <FolderGitIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+                  <span className={cn("truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                    {repository.name}
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="left">{repository.cwd}</TooltipPopup>
+              </Tooltip>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="px-2.5 py-1 text-muted-foreground text-xs">
+        {WORKSPACE_GIT_CONTROLS_UNAVAILABLE}
+      </p>
+    </div>
   );
 }

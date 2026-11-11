@@ -19,6 +19,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { stoppedReadLabel } from "@t3tools/client-runtime/state/sandbox";
+import type { ThreadRepository } from "@t3tools/client-runtime/state/workspaces";
 
 import { useStoppedFiles } from "../../state/sandbox";
 import { useEnvironmentScope } from "../../state/session";
@@ -30,6 +31,7 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { workspaceRepositoryRows } from "./workspace-repositories";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -98,6 +100,8 @@ export type ThreadGitMenuProps = {
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
+  /** A workspace thread's repositories, which replace the git actions; null for one repository. */
+  readonly repositories?: ReadonlyArray<ThreadRepository> | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
@@ -369,61 +373,70 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       identifier: "thread-right-git",
       label: "Git",
       menu: {
-        items: [
-          {
-            description: model.menuStatus,
-            disabled: true,
-            icon: {
-              name: "point.topleft.down.curvedto.point.bottomright.up",
-              type: "sfSymbol",
-            },
-            label: compactMenuBranchLabel(model.currentBranchLabel),
-            onPress: (): void => {},
-            type: "action",
-          },
-          {
-            description: model.quickActionHint ?? undefined,
-            disabled: model.quickAction.disabled,
-            icon: { name: model.quickActionIcon, type: "sfSymbol" },
-            label: model.quickAction.label,
-            onPress: (): void => void model.runQuickAction(),
-            type: "action",
-          },
-          {
-            description:
-              props.hasThread === false
-                ? "Available after the first message"
-                : "Turn diffs and worktree changes",
-            disabled: !model.isRepo || props.hasThread === false,
-            icon: { name: "text.bubble", type: "sfSymbol" },
-            label: "Review changes",
-            onPress: model.openReview,
-            type: "action",
-          },
-          ...(props.onMergeBack
-            ? [
-                {
-                  description: "Bring this thread's latest turn into its source",
-                  icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
-                  label: "Merge back to source",
-                  onPress: props.onMergeBack,
-                  type: "action" as const,
+        items: props.repositories
+          ? workspaceRepositoryRows(props.repositories).map((row) => ({
+              description: row.subtitle,
+              disabled: true,
+              icon: { name: "folder", type: "sfSymbol" as const },
+              label: row.title,
+              onPress: (): void => {},
+              type: "action" as const,
+            }))
+          : [
+              {
+                description: model.menuStatus,
+                disabled: true,
+                icon: {
+                  name: "point.topleft.down.curvedto.point.bottomright.up",
+                  type: "sfSymbol",
                 },
-              ]
-            : []),
-          {
-            description:
-              props.hasThread === false
-                ? "Available after the first message"
-                : "Commit, files, branches",
-            disabled: props.hasThread === false,
-            icon: { name: "ellipsis", type: "sfSymbol" },
-            label: "More",
-            onPress: model.openGitInspector,
-            type: "action",
-          },
-        ],
-        title: "Git",
+                label: compactMenuBranchLabel(model.currentBranchLabel),
+                onPress: (): void => {},
+                type: "action",
+              },
+              {
+                description: model.quickActionHint ?? undefined,
+                disabled: model.quickAction.disabled,
+                icon: { name: model.quickActionIcon, type: "sfSymbol" },
+                label: model.quickAction.label,
+                onPress: (): void => void model.runQuickAction(),
+                type: "action",
+              },
+              {
+                description:
+                  props.hasThread === false
+                    ? "Available after the first message"
+                    : "Turn diffs and worktree changes",
+                disabled: !model.isRepo || props.hasThread === false,
+                icon: { name: "text.bubble", type: "sfSymbol" },
+                label: "Review changes",
+                onPress: model.openReview,
+                type: "action",
+              },
+              ...(props.onMergeBack
+                ? [
+                    {
+                      description: "Bring this thread's latest turn into its source",
+                      icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
+                      label: "Merge back to source",
+                      onPress: props.onMergeBack,
+                      type: "action" as const,
+                    },
+                  ]
+                : []),
+              {
+                description:
+                  props.hasThread === false
+                    ? "Available after the first message"
+                    : "Commit, files, branches",
+                disabled: props.hasThread === false,
+                icon: { name: "ellipsis", type: "sfSymbol" },
+                label: "More",
+                onPress: model.openGitInspector,
+                type: "action",
+              },
+            ],
+        title: props.repositories ? "Repositories" : "Git",
       },
       sharesBackground: true,
       type: "menu",
@@ -545,6 +558,21 @@ function threadGitMenuDefinition(
   props: ThreadGitMenuProps,
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
+  if (props.repositories) {
+    return {
+      title: "Repositories",
+      icon: "point.topleft.down.curvedto.point.bottomright.up",
+      separateBackground: false,
+      items: workspaceRepositoryRows(props.repositories).map((row) => ({
+        id: `workspace-${row.key}`,
+        title: row.title,
+        icon: "folder",
+        disabled: true,
+        subtitle: row.subtitle,
+        onPress: () => {},
+      })),
+    };
+  }
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",

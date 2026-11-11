@@ -26,6 +26,7 @@ import { ViewerLeaseWatch } from "../components/sandbox/ViewerLeaseWatch";
 import { TeamMembersWatch } from "../components/team/TeamMembersWatch";
 import { PrimarySignOutWatch } from "../components/auth/PrimarySignOutWatch";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { NewWorkspaceDialogHost } from "../components/NewWorkspaceDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -228,6 +229,7 @@ function RootRouteBranch() {
         <ProjectCloneToastCoordinator />
         <TeamImageBuildToasts />
         <AddProjectToMachineDialogHost />
+        <NewWorkspaceDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
         {primaryEnvironmentAuthenticated ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />

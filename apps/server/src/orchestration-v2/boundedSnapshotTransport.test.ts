@@ -50,7 +50,7 @@ import { Etag, HttpRouter } from "effect/http";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -424,7 +424,9 @@ const TestLayer = Layer.mergeAll(
   Layer.effectDiscard(seed),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
-  Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
+  Layer.mock(ProjectService.ProjectService)({
+    enrichShells: (projects) => Effect.succeed({ projects, resolvedRepositoryIdentityRoots: [] }),
+  }),
 ).pipe(Layer.provideMerge(store));
 
 const withHttp = <A>(

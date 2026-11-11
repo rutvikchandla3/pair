@@ -57,7 +57,7 @@ const boxRun = RunId.make("run:box-auto");
 interface Seen {
   readonly sends: ReadonlyArray<ThreadManagement.ThreadManagementSendInput>;
   readonly waits: ReadonlyArray<ThreadManagement.ThreadManagementWaitInput>;
-  readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
+  readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchRequest>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
   /** The projects B lists, which pages of `t3_project_list` were asked for. */
@@ -195,7 +195,7 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
           Effect.as({
             id: input.projectId,
             title: input.title,
-            workspaceRoot: input.workspaceRoot,
+            workspaceRoot: input.workspaceRoot ?? "",
             defaultModelSelection: null,
             scripts: [],
             createdAt: "2026-10-18T00:00:00.000Z",

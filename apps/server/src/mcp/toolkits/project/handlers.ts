@@ -44,6 +44,9 @@ import { ProjectToolkit } from "./tools.ts";
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 function projectFailure(error: Project.ProjectServiceError) {
+  if (error._tag === "ProjectWorkspaceError") {
+    return new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
+  }
   if (error._tag === "ProjectOperationError") {
     return error.operation === "pair-cloud-workspace"
       ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
@@ -161,7 +164,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               code: "invalid_request",
               message: "The project was not found.",
             });
-          yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
+          // Launch refuses a workspace's existing_worktree with a message that says what to do.
+          if (project.roots === undefined)
+            yield* assertProjectWorktree(
+              project.workspaceRoot,
+              input.workspaceStrategy.worktreePath,
+            );
         }
         // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
@@ -247,7 +255,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          ...(input.workspaceStrategy === undefined
+            ? {}
+            : { workspaceStrategy: input.workspaceStrategy }),
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {
@@ -279,7 +289,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               });
             }
             // A refused cloud launch is refused before anything exists.
-            if (error._tag === "ThreadLaunchError" && isCloudLaunchRefusal(error.cause)) {
+            if (
+              error._tag === "ThreadLaunchError" &&
+              (isCloudLaunchRefusal(error.cause) ||
+                ThreadLaunch.isWorkspaceLaunchRefusal(error.cause))
+            ) {
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: `${error.cause.message} No thread was created.`,
@@ -334,7 +348,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     ({ workspaceRoot, ...input }) =>
       Effect.gen(function* () {
         const projects = yield* Project.ProjectService;
-        if (workspaceRoot === undefined) {
+        if (workspaceRoot === undefined && input.roots === undefined) {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
             input.scripts !== undefined ||
@@ -371,7 +385,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         const commandId = yield* newCommandId();
         return yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+          .create({
+            ...input,
+            ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+            commandId,
+            projectId: ProjectId.make(commandId),
+          })
           .pipe(Effect.mapError(projectFailure));
       }),
     // Linked work may bring the repository it works in; an existing

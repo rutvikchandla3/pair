@@ -7,11 +7,16 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import {
+  useSelectedThreadRepositories,
+  useSelectedThreadWorktree,
+} from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  // A workspace thread's folder holds several repositories and is not one itself.
+  const isWorkspaceThread = useSelectedThreadRepositories() !== null;
 
   const selectedThreadGitTarget = {
     environmentId: selectedThread?.environmentId ?? null,
@@ -29,7 +34,7 @@ export function useSelectedThreadGitState() {
 
   const selectedThreadBranchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
+    cwd: isWorkspaceThread ? null : selectedThreadCwd,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);

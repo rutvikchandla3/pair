@@ -56,7 +56,7 @@ const project = (id: string, originKey: string, createdAt: string, archived = fa
 
 interface World {
   launchFailure: unknown;
-  readonly launches: Array<ThreadLaunch.ThreadLaunchInput>;
+  readonly launches: Array<ThreadLaunch.ThreadLaunchRequest>;
   readonly checks: Array<{ readonly projectId: ProjectId; readonly instanceId: string }>;
 }
 

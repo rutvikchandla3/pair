@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -457,6 +458,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
     cloudAvailable: projectDefaults.cloud.available,
     cloudLaunch: projectDefaults.cloudLaunch,
+    workspace: projectDefaults.workspace,
   };
   const draftBranchRefs = useBranches({
     environmentId: pendingTask.environmentId,
@@ -471,7 +473,10 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         branches: draftBranchRefs.data?.refs ?? [],
         projectCwd,
       })
-    : pendingTask.branch;
+    : // A queued workspace task names only the placeholder base its repositories ignore.
+      isWorkspaceProject(props.project)
+      ? null
+      : pendingTask.branch;
 
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -490,6 +495,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               environmentId={pendingTask.environmentId}
               faviconPath={props.project.faviconPath}
               projectIcon={props.project.projectIcon}
+
+              workspace={isWorkspaceProject(props.project)}
               size={projectIconSize}
               projectTitle={projectTitle}
               workspaceRoot={props.project.workspaceRoot}
@@ -829,8 +836,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : { environmentId: thread.environmentId, threadId: thread.id },
   );
   const runMachineAction = useSandboxActionRunner();
+  // A workspace thread runs only in its own folder of worktrees, so it never moves.
   const continueInCloud = useContinueInCloudOffer(
-    thread.source.sandboxId === undefined
+    thread.source.sandboxId === undefined && thread.roots === undefined
       ? { environmentId: thread.environmentId, threadId: thread.id }
       : null,
   );
@@ -992,7 +1000,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const menuActions = useMemo<MenuAction[]>(() => {
     const nested = Platform.OS === "ios";
     const direct: MenuAction[] = [
-      ...(thread.branch
+      // A workspace's new thread always gets a fresh worktree, so it can't share a branch.
+      ...(thread.branch && thread.roots === undefined
         ? [
             {
               id: "new-thread-on-branch",
@@ -1095,6 +1104,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozedRow,
     swipeActions.secondary,
     thread.branch,
+    thread.roots,
     titleMenuItems,
   ]);
   const handleMenuAction = useCallback(
@@ -1269,6 +1279,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               environmentId={thread.environmentId}
               faviconPath={props.project.faviconPath}
               projectIcon={props.project.projectIcon}
+
+              workspace={isWorkspaceProject(props.project)}
               size={projectIconSize}
               projectTitle={props.project.title}
               workspaceRoot={props.project.workspaceRoot}
@@ -1606,6 +1618,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 environmentId={thread.environmentId}
                 faviconPath={props.project.faviconPath}
                 projectIcon={props.project.projectIcon}
+
+                workspace={isWorkspaceProject(props.project)}
                 size={projectIconSize}
                 projectTitle={props.project.title}
                 workspaceRoot={props.project.workspaceRoot}

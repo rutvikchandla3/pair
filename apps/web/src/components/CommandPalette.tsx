@@ -55,6 +55,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BoxesIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -170,6 +171,11 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
+import {
+  MIN_WORKSPACE_REPOSITORIES,
+  workspaceRepositoryCandidates,
+} from "@t3tools/client-runtime/state/workspaces";
+import { openNewWorkspace } from "./NewWorkspaceDialog";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   dispatchCommandPalette,
@@ -1144,6 +1150,12 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
+    if (canCreateWorkspace(environmentId)) {
+      sourceItems.push(
+        newWorkspaceAction(environmentId, `action:add-project:${environmentId}:workspace`),
+      );
+    }
+
     return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
   };
 
@@ -1278,6 +1290,37 @@ function OpenCommandPaletteDialog(props: {
         );
     }
   };
+
+  // Cloud-launch servers refuse workspaces, and a workspace needs two projects to combine.
+  function canCreateWorkspace(environmentId: EnvironmentId): boolean {
+    return (
+      !clonesWithoutDestination(environmentId) &&
+      workspaceRepositoryCandidates(projects, environmentId).length >= MIN_WORKSPACE_REPOSITORIES
+    );
+  }
+  function newWorkspaceAction(
+    environmentId: EnvironmentId,
+    value: string,
+  ): CommandPaletteActionItem {
+    return {
+      kind: "action",
+      value,
+      searchTerms: ["new workspace", "workspace", "multiple repositories", "repositories", "multi"],
+      title: "New workspace",
+      description: "Work across several repositories in one thread",
+      icon: <BoxesIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setOpen(false);
+        openNewWorkspace(environmentId);
+      },
+    };
+  }
+  const newWorkspaceEnvironmentId =
+    defaultAddProjectEnvironmentId !== null && canCreateWorkspace(defaultAddProjectEnvironmentId)
+      ? defaultAddProjectEnvironmentId
+      : (addProjectEnvironmentOptions.find(
+          (option) => option.isConnected && canCreateWorkspace(option.environmentId),
+        )?.environmentId ?? null);
 
   const openNewProjectFlow = () => {
     const firstOption = newProjectEnvironmentOptions[0];
@@ -1677,6 +1720,10 @@ function OpenCommandPaletteDialog(props: {
         openNewProjectFlow();
       },
     });
+  }
+
+  if (newWorkspaceEnvironmentId !== null) {
+    actionItems.push(newWorkspaceAction(newWorkspaceEnvironmentId, "action:new-workspace"));
   }
 
   const addProjectAction: CommandPaletteActionItem = {

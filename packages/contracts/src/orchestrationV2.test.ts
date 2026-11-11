@@ -672,7 +672,7 @@ describe("member attribution", () => {
     updatedAt: "2026-10-01T00:00:00.000Z",
   };
 
-  it("decodes attribution fields, and threads written without them", () => {
+  it("decodes attribution fields and workspace roots, and threads written without them", () => {
     const decodeThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
     const encodeThread = Schema.encodeSync(OrchestrationV2AppThreadJson);
     const attributed = decodeThread({
@@ -685,16 +685,19 @@ describe("member attribution", () => {
         checkpointId: "checkpoint-1",
         requestedAt: "2026-10-01T01:00:00.000Z",
       },
+      roots: [{ projectId: "project-api", name: "api" }],
     });
     expect(attributed).toMatchObject({
       ownerId: "member-1",
       humanAuthorIds: ["member-1", "member-2"],
+      roots: [{ projectId: "project-api", name: "api" }],
     });
     expect(encodeThread(attributed).lastRollback?.requestedAt).toBe("2026-10-01T01:00:00.000Z");
 
     const legacy = decodeThread(thread);
     expect(legacy.ownerId).toBeUndefined();
     expect(legacy.lastRollback).toBeUndefined();
+    expect(legacy.roots).toBeUndefined();
 
     expect(
       decodeOrchestrationV2TurnItemJson({

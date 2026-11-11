@@ -150,6 +150,20 @@ export const ReceivedProjectIcon = ForwardCompatibleUnion(projectIconMembers, "k
   ),
 );
 
+/** One repository folder inside a workspace thread's folder: another project on the same server. */
+export const ProjectRoot = Schema.Struct({
+  projectId: ProjectId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type ProjectRoot = typeof ProjectRoot.Type;
+
+/** A root as a client names it; the server defaults `name` to the root project's folder name. */
+export const ProjectRootInput = Schema.Struct({
+  projectId: ProjectId,
+  name: Schema.optional(ProjectRoot.fields.name),
+});
+export type ProjectRootInput = typeof ProjectRootInput.Type;
+
 export const Project = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -162,6 +176,8 @@ export const Project = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
+  /** Present only on a workspace: the projects each of its threads checks out side by side. */
+  roots: Schema.optional(Schema.Array(ProjectRoot)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
@@ -176,9 +192,11 @@ export const ProjectSnapshot = Schema.Struct({
 });
 export type ProjectSnapshot = typeof ProjectSnapshot.Type;
 
+/** Exactly one of `workspaceRoot` or `roots`; a workspace's folder is allocated by the server. */
 export const ProjectCreatePayload = Schema.Struct({
   title: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  roots: Schema.optional(Schema.Array(ProjectRootInput)),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -194,6 +212,8 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  /** Only a workspace's roots can change; new threads use them, existing threads keep theirs. */
+  roots: Schema.optional(Schema.Array(ProjectRootInput)),
   pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(
     Schema.Boolean.annotate({

@@ -27,6 +27,7 @@ import { rpcInitialItems } from "./rpcInitialItems.ts";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
   AcpRegistryOperationError,
+  GitCommandError,
   CommandId,
   authScopeResponse,
   AuthAccessStreamError,
@@ -73,7 +74,6 @@ import {
   OrchestrationV2GetThreadProjectionError,
   ThreadAccessRevoked,
   OrchestrationV2ThreadLaunchError,
-  type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadStreamItem,
   type ApplicationStoredEvent,
@@ -261,6 +261,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as WorkspaceCheckouts from "./project/WorkspaceCheckouts.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -857,33 +858,6 @@ const canReplayPersistedRange = Effect.fnUntraced(function* (
   return true;
 });
 
-const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
-  (projects: ReadonlyArray<OrchestrationProjectShell>) =>
-    Effect.flatMap(ProjectEnrichmentService.ProjectEnrichmentService, (projectEnrichment) =>
-      Effect.forEach(
-        projects,
-        (project) =>
-          projectEnrichment.getAvailable(project.workspaceRoot).pipe(
-            Effect.map((enrichment) => ({
-              project: {
-                ...project,
-                repositoryIdentity: enrichment.repositoryIdentity,
-              },
-              repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
-            })),
-          ),
-        { concurrency: 16 },
-      ).pipe(
-        Effect.map((enriched) => ({
-          projects: enriched.map((entry) => entry.project),
-          resolvedRepositoryIdentityRoots: enriched
-            .filter((entry) => entry.repositoryIdentityResolved)
-            .map((entry) => entry.project.workspaceRoot),
-        })),
-      ),
-    ),
-);
-
 export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
   function* (input: {
     readonly threadId: ThreadId;
@@ -1241,7 +1215,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
     const loadProjectMetadataSnapshot = Effect.fn("ws.orchestrationV2.loadProjectMetadataSnapshot")(
       function* (snapshotSequence: number) {
-        const enriched = yield* enrichProjectShells(yield* projects.listShells());
+        const enriched = yield* projectService.enrichShells(yield* projects.listShells());
         return {
           snapshot: {
             schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
@@ -1273,7 +1247,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         access,
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;
-      const enriched = yield* enrichProjectShells(forSubscriber.snapshot.projects);
+      const enriched = yield* projectService.enrichShells(forSubscriber.snapshot.projects);
       return {
         snapshot: {
           ...forSubscriber.snapshot,
@@ -1671,6 +1645,7 @@ export const layerWsRpc = (
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const workspaceCheckouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -2251,9 +2226,9 @@ export const layerWsRpc = (
         } as const;
       }).pipe(
         Effect.flatMap((snapshot) =>
-          enrichProjectShells(snapshot.projects).pipe(
-            Effect.map(({ projects }) => ({ ...snapshot, projects })),
-          ),
+          projectService
+            .enrichShells(snapshot.projects)
+            .pipe(Effect.map(({ projects }) => ({ ...snapshot, projects }))),
         ),
         Effect.mapError(
           (cause) =>
@@ -2616,9 +2591,11 @@ export const layerWsRpc = (
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
-                        message: CloudPreparation.isCloudLaunchRefusal(cause.cause)
-                          ? cause.cause.message
-                          : "Failed to launch thread",
+                        message:
+                          CloudPreparation.isCloudLaunchRefusal(cause.cause) ||
+                          ThreadLaunchService.isWorkspaceLaunchRefusal(cause.cause)
+                            ? cause.cause.message
+                            : "Failed to launch thread",
                         cause,
                       }),
                     ServerRuntimeStartupError: (cause) =>
@@ -3488,6 +3465,7 @@ export const layerWsRpc = (
                   commandId: mutation.commandId,
                   message:
                     cause._tag === "ProjectNotEmptyError" ||
+                    cause._tag === "ProjectWorkspaceError" ||
                     (cause._tag === "ProjectOperationError" &&
                       cause.operation === "pair-cloud-workspace")
                       ? cause.message
@@ -3666,8 +3644,26 @@ export const layerWsRpc = (
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        // A workspace's folder is not a repository; its thread folders hold one worktree per root.
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          workspaceCheckouts.removeFolder({ workspaceRoot: input.cwd, folder: input.path }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "removeWorktree",
+                  command: "git worktree remove",
+                  cwd: input.cwd,
+                  detail: cause.message,
+                }),
+            ),
+            Effect.flatMap((removed) =>
+              removed
+                ? Effect.void
+                : gitWorkflow
+                    .removeWorktree(input)
+                    .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>

@@ -268,9 +268,10 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => undefined),
     );
     // The project's own identity is a one-minute cache that reads blank when
-    // cold, so resolve it here, as the other side's t3_project_list does.
+    // cold, so resolve it here, as the other side's t3_project_list does. A
+    // workspace's folder is not a repository; git would find an enclosing one.
     const key =
-      here === undefined
+      here === undefined || here.roots !== undefined
         ? undefined
         : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey;
     if (key === undefined) {

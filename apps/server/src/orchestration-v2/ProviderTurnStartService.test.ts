@@ -47,6 +47,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TeamState from "../team/TeamState.ts";
@@ -91,6 +92,7 @@ function startWithMissingWorktree(
     [managedWorktreesDir]: managedWorktreesDir,
     [`${managedWorktreesDir}/project`]: `${managedWorktreesDir}/project`,
   },
+  roots?: ReadonlyArray<{ readonly projectId: ProjectId; readonly name: string }>,
 ) {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
@@ -112,6 +114,7 @@ function startWithMissingWorktree(
       projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
       branch: "feature/restore",
       worktreePath,
+      ...(roots === undefined ? {} : { roots }),
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     },
     runs: [
@@ -140,8 +143,14 @@ function startWithMissingWorktree(
   );
   const startRootRun = vi.fn(() => Effect.void);
   const pruneWorktrees = vi.fn(() => Effect.void);
-  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const createWorktree = vi.fn((_input: { readonly cwd: string; readonly path: string | null }) =>
+    Effect.succeed({} as never),
+  );
   const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
+  const writeGuidance = vi.fn(
+    (_input: Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["writeGuidance"]>[0]) =>
+      Effect.void,
+  );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -173,9 +182,13 @@ function startWithMissingWorktree(
           listLocalBranchNames,
         }),
         Layer.mock(ProjectService.ProjectService)({
-          getById: () =>
-            Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+          getById: (id) =>
+            Effect.succeedSome({
+              workspaceRoot:
+                roots === undefined ? "/tmp/provider-turn-start-project" : `/repos/${id}`,
+            } as never),
         }),
+        Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({ writeGuidance }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => {
             projectionReadCount += 1;
@@ -222,6 +235,7 @@ function startWithMissingWorktree(
     start,
     pruneWorktrees,
     createWorktree,
+    writeGuidance,
     writeIfRunCurrent,
     startRootRun,
     projectionReads: () => projectionReadCount,
@@ -281,6 +295,38 @@ it.each([
   const harness = startWithMissingWorktree(input.worktreePath, input.realPaths);
   await harness.start;
   expect(harness.createWorktree).toHaveBeenCalledTimes(input.recreated ? 1 : 0);
+  expect(harness.writeGuidance).not.toHaveBeenCalled();
+});
+
+it("recreates each missing repository of a workspace thread from that repository", async () => {
+  const folder = `${managedWorktreesDir}/stack/feature-restore`;
+  const harness = startWithMissingWorktree(
+    folder,
+    {
+      [managedWorktreesDir]: managedWorktreesDir,
+      [`${managedWorktreesDir}/stack`]: `${managedWorktreesDir}/stack`,
+    },
+    [
+      { projectId: ProjectId.make("api"), name: "api" },
+      { projectId: ProjectId.make("web"), name: "web" },
+    ],
+  );
+  await harness.start;
+  expect(harness.createWorktree.mock.calls.map(([request]) => [request.cwd, request.path])).toEqual(
+    [
+      ["/repos/api", `${folder}/api`],
+      ["/repos/web", `${folder}/web`],
+    ],
+  );
+  expect(harness.writeGuidance.mock.calls.map(([request]) => request)).toEqual([
+    {
+      folder,
+      roots: [
+        { projectId: "api", name: "api" },
+        { projectId: "web", name: "web" },
+      ],
+    },
+  ]);
 });
 
 function makeLocalCommandHarness(input: {
@@ -1043,6 +1089,7 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
+        Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
           runStarted: () => Effect.void,

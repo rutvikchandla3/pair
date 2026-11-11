@@ -75,6 +75,13 @@ import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
+import {
+  MAX_WORKSPACE_REPOSITORIES,
+  MIN_WORKSPACE_REPOSITORIES,
+  defaultWorkspaceRepositoryName,
+  workspaceRepositoriesProblem,
+  workspaceRepositoryCandidates,
+} from "@t3tools/client-runtime/state/workspaces";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
@@ -554,6 +561,13 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
   const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data, {
     cloudLaunch: selectedEnvironment?.cloudLaunch === true,
   });
+  const projects = useProjects();
+  // As on web: only where projects have folders of their own, with enough of them to combine.
+  const offersWorkspace =
+    selectedEnvironment !== null &&
+    !selectedEnvironment.cloudLaunch &&
+    workspaceRepositoryCandidates(projects, selectedEnvironment.environmentId).length >=
+      MIN_WORKSPACE_REPOSITORIES;
 
   return (
     <AddProjectShell title="Add project">
@@ -672,6 +686,32 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                 />
               ),
             )}
+            {offersWorkspace ? (
+              <ListRow
+                title="New workspace"
+                subtitle={
+                  canCreateProject
+                    ? "Work across several repositories in one thread"
+                    : "This connection cannot add projects."
+                }
+                icon={
+                  <SymbolView
+                    name="square.stack.3d.up"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon"
+                    type="monochrome"
+                  />
+                }
+                disabled={!isConnected || !canCreateProject}
+                onPress={() =>
+                  navigation.dispatch(
+                    StackActions.push("AddProjectWorkspace", {
+                      environmentId: selectedEnvironment.environmentId,
+                    }),
+                  )
+                }
+              />
+            ) : null}
           </ListSection>
           {discoveryState.isPending ? (
             <AppActivityIndicator colorClassName="accent-icon-muted" />
@@ -1294,6 +1334,182 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
         </>
       ) : environmentOptions.length > 0 ? (
         machineRows
+      ) : (
+        <EmptyEnvironmentState />
+      )}
+    </AddProjectShell>
+  );
+}
+
+interface SelectedRepository {
+  readonly projectId: ProjectId;
+  readonly name: string;
+}
+
+export function AddProjectWorkspaceScreen(props: { readonly environmentId?: string | string[] }) {
+  const openNewTaskDraft = useOpenNewTaskDraft();
+  const navigation = useNavigation();
+  const environment = useEnvironmentFromParam(props.environmentId);
+  const environmentId = environment?.environmentId ?? null;
+  const projects = useProjects();
+  const candidates =
+    environmentId === null ? [] : workspaceRepositoryCandidates(projects, environmentId);
+  const canCreate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const [title, setTitle] = useState("");
+  const [selected, setSelected] = useState<ReadonlyArray<SelectedRepository>>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // A project can leave the store while the screen is open; it then stops counting.
+  const repositories = selected.flatMap((repository) => {
+    const project = candidates.find((candidate) => candidate.id === repository.projectId);
+    return project ? [{ ...repository, title: project.title }] : [];
+  });
+  const problem = workspaceRepositoriesProblem(repositories);
+
+  const toggle = (projectId: ProjectId, workspaceRoot: string) => {
+    setError(null);
+    setSelected((current) =>
+      current.some((repository) => repository.projectId === projectId)
+        ? current.filter((repository) => repository.projectId !== projectId)
+        : [...current, { projectId, name: defaultWorkspaceRepositoryName(workspaceRoot) }],
+    );
+  };
+  const rename = (projectId: ProjectId, name: string) => {
+    setError(null);
+    setSelected((current) =>
+      current.map((repository) =>
+        repository.projectId === projectId ? { ...repository, name } : repository,
+      ),
+    );
+  };
+
+  // State lags a render behind, so a double tap could start a second create.
+  const submittingRef = useRef(false);
+  const submit = async () => {
+    if (!environment || problem !== null || submittingRef.current) return;
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length === 0) {
+      setError("Name the workspace.");
+      return;
+    }
+    const originRoute = getActiveRoute(navigation);
+    submittingRef.current = true;
+    setError(null);
+    setIsSubmitting(true);
+    const projectId = ProjectId.make(uuidv4());
+    const result = await createProject({
+      environmentId: environment.environmentId,
+      input: {
+        projectId,
+        title: trimmedTitle,
+        roots: repositories.map((repository) => ({
+          projectId: repository.projectId,
+          name: repository.name.trim(),
+        })),
+      },
+    });
+    if (AsyncResult.isFailure(result)) {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      setError(errorMessage(Cause.squash(result.cause)));
+      return;
+    }
+    // The draft screen resolves its project from the client store.
+    const project = await waitForProject(
+      { environmentId: environment.environmentId, projectId },
+      15_000,
+    );
+    submittingRef.current = false;
+    setIsSubmitting(false);
+    if (project === null) {
+      setError(
+        "The workspace was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+      );
+      return;
+    }
+    openNewTaskDraft(
+      { environmentId: environment.environmentId, projectId, title: trimmedTitle },
+      originRoute,
+    );
+  };
+
+  return (
+    <AddProjectShell title="New workspace">
+      {error ? <ErrorBanner message={error} /> : null}
+      {environment ? (
+        <>
+          <Text className="px-1 text-sm leading-snug text-foreground-muted">
+            {`Work across ${MIN_WORKSPACE_REPOSITORIES} to ${MAX_WORKSPACE_REPOSITORIES} repositories in one thread. Each thread gets a new worktree of every repository, side by side in one folder.`}
+          </Text>
+          <TextInput
+            className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
+            value={title}
+            onChangeText={(text) => {
+              setError(null);
+              setTitle(text);
+            }}
+            autoCorrect={false}
+            placeholder="Workspace name"
+            returnKeyType="done"
+          />
+          <SectionTitle>Repositories</SectionTitle>
+          {candidates.length === 0 ? (
+            <Text className="px-1 text-sm leading-snug text-foreground-muted">
+              Add the repositories as projects first.
+            </Text>
+          ) : (
+            <ListSection>
+              {candidates.map((project, index) => {
+                const repository = selected.find((candidate) => candidate.projectId === project.id);
+                return (
+                  <View key={project.id}>
+                    <ListRow
+                      title={project.title}
+                      subtitle={project.workspaceRoot}
+                      icon={
+                        <SymbolView
+                          name={repository ? "checkmark.circle.fill" : "circle"}
+                          size={Platform.OS === "android" ? 24 : 20}
+                          tintColorClassName={repository ? "accent-primary" : "accent-icon-subtle"}
+                          type="monochrome"
+                        />
+                      }
+                      disabled={isSubmitting}
+                      isFirst={index === 0}
+                      right={null}
+                      onPress={() => toggle(project.id, project.workspaceRoot)}
+                    />
+                    {repository ? (
+                      <View className="flex-row items-center gap-3 bg-grouped-card px-3.5 pb-3">
+                        <Text className="text-sm text-foreground-muted">Folder name</Text>
+                        <TextInput
+                          className="h-10 min-h-10 flex-1 rounded-[20px] px-4 py-0 text-base leading-snug"
+                          value={repository.name}
+                          onChangeText={(name) => rename(project.id, name)}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          spellCheck={false}
+                          accessibilityLabel={`Folder name for ${project.title}`}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </ListSection>
+          )}
+          {selected.length > 0 && problem !== null ? (
+            <Text className="px-1 text-sm leading-snug text-foreground-muted">{problem}</Text>
+          ) : null}
+          <PrimaryActionButton
+            label="Create workspace"
+            disabled={!canCreate || isSubmitting || problem !== null}
+            onPress={() => void submit()}
+            loading={isSubmitting}
+          />
+        </>
       ) : (
         <EmptyEnvironmentState />
       )}

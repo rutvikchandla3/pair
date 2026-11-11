@@ -39,12 +39,14 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
+  /** A workspace's own folder holds no code to find a favicon in. */
+  readonly workspace?: boolean;
 }) {
   const size = props.size ?? 42;
   const symbol = resolveProjectIconSymbol(props.projectIcon);
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
-    props.workspaceRoot == null || glyph !== null
+    props.workspaceRoot == null || glyph !== null || props.workspace === true
       ? EMPTY_FAVICON_URL
       : projectFaviconUrlAtom({
           environmentId: props.environmentId,
@@ -74,6 +76,17 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
 
   if (glyph !== null) {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;
+  }
+
+  if (props.workspace === true) {
+    return (
+      <SymbolView
+        name="square.stack.3d.up"
+        size={size}
+        tintColorClassName="accent-icon-subtle"
+        type="monochrome"
+      />
+    );
   }
 
   return (

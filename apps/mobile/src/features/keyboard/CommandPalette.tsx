@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -138,6 +139,8 @@ function PaletteRow(props: {
             environmentId={props.item.project.environmentId}
             faviconPath={props.item.project.faviconPath}
             projectIcon={props.item.project.projectIcon}
+
+            workspace={isWorkspaceProject(props.item.project)}
             projectTitle={props.item.project.title}
             size={20}
             workspaceRoot={props.item.project.workspaceRoot}

@@ -3,7 +3,8 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { FolderCodeIcon } from "lucide-react";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
+import { BoxesIcon, FolderCodeIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -30,7 +31,7 @@ function DynamicProjectIconFallback() {
 
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
-  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
+  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon" | "roots"
 >;
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
@@ -72,6 +73,15 @@ export function ProjectFavicon(input: {
           />
         </Suspense>
       </span>
+    );
+  }
+  // A workspace's own folder holds no code to find a favicon in.
+  if (isWorkspaceProject(project)) {
+    return (
+      <BoxesIcon
+        aria-hidden="true"
+        className={cn("size-3.5 shrink-0 text-icon-muted", input.className)}
+      />
     );
   }
   return <AutomaticProjectFavicon {...input} />;

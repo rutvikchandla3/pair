@@ -153,7 +153,15 @@ const layerServices = layerManagement.pipe(
     }),
   ),
   Layer.provideMerge(ProjectStore.layer),
-  Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
+  Layer.provideMerge(
+    Layer.mock(ProjectService.ProjectService)({
+      enrichShells: (projects) =>
+        Effect.succeed({
+          projects,
+          resolvedRepositoryIdentityRoots: projects.map((project) => project.workspaceRoot),
+        }),
+    }),
+  ),
   Layer.provideMerge(layerEnrichment),
   Layer.provideMerge(layerPersistence),
 );

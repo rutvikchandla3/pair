@@ -1,4 +1,5 @@
 import { isDraftThreadRoute } from "./thread-route-state";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -492,6 +493,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                           environmentId={scope.representative.environmentId}
                           faviconPath={scope.representative.faviconPath}
                           projectIcon={scope.representative.projectIcon}
+
+                          workspace={isWorkspaceProject(scope.representative)}
                           size={24}
                           projectTitle={scope.title}
                           workspaceRoot={scope.representative.workspaceRoot}
@@ -517,6 +520,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                           environmentId={scope.representative.environmentId}
                           faviconPath={scope.representative.faviconPath}
                           projectIcon={scope.representative.projectIcon}
+
+                          workspace={isWorkspaceProject(scope.representative)}
                           size={20}
                           projectTitle={scope.title}
                           workspaceRoot={scope.representative.workspaceRoot}

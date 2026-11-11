@@ -12,6 +12,7 @@ import {
   ProviderInteractionMode,
   Project,
   ProjectCreatePayload,
+  ProjectRootInput,
   ProjectUpdatePayload,
   ProjectId,
   OrchestratorMcpClientRequestId,
@@ -39,6 +40,9 @@ import * as SourceControlRepositoryService from "../../../sourceControl/SourceCo
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
+const WORKSPACE_ROOTS_DESCRIPTION =
+  "2 to 8 registered git projects, by `projectId`; `name` is its folder, by default the project's. Each new thread gets a worktree of every root, side by side on one branch, each from its default branch.";
+
 const shared = {
   success: Project,
   failure: OrchestratorMcpFailure,
@@ -52,7 +56,8 @@ const shared = {
 };
 const ProjectListTool = Tool.make("t3_project_list", {
   ...shared,
-  description: "List projects. Pages can shift.",
+  description:
+    "List projects. Pages can shift. A project with `roots` is a workspace of other projects' repositories.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     cursor: Schema.optional(NonNegativeInt),
@@ -67,7 +72,7 @@ const ProjectListTool = Tool.make("t3_project_list", {
   .annotate(Tool.Destructive, false);
 const ProjectReadTool = Tool.make("t3_project_read", {
   ...shared,
-  description: "Read one project: workspace and saved scripts.",
+  description: "Read one project: folder, saved scripts, and a workspace's `roots`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
@@ -78,11 +83,15 @@ const ProjectReadTool = Tool.make("t3_project_read", {
 const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
-    "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
+    "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed. `roots` instead of `workspaceRoot`: a workspace.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...ProjectCreatePayload.fields,
-    workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
+    roots: Schema.optional(
+      Schema.Array(ProjectRootInput).annotate({
+        description: WORKSPACE_ROOTS_DESCRIPTION,
+      }),
+    ),
   }),
   success: Schema.Struct({ ...Project.fields, commitError: Schema.optional(Schema.String) }),
   dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders],
@@ -94,6 +103,11 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
     ...ProjectUpdatePayload.fields,
+    roots: Schema.optional(
+      Schema.Array(ProjectRootInput).annotate({
+        description: `Workspaces only; replaces the list. ${WORKSPACE_ROOTS_DESCRIPTION} Existing threads keep theirs.`,
+      }),
+    ),
   }),
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
@@ -144,7 +158,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchInputWorkspaceStrategy.annotate({
         description:
-          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied. 'cloud': a new machine, checked out from `baseRef` on the remote, that keeps running when this computer sleeps. Only where `orchestrator_capabilities` reports `features.cloudThreads`, or with the `environmentId` of a `cloud` link from `t3_environment_links`. `existingBranch: true`: `branch` is already on the remote.",
+          "'worktree': new checkout from `baseRef`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. A workspace (project with `roots`) runs only in 'worktree', its default; `baseRef` is ignored there. Stack: parent branch as `baseRef`, `startFromOrigin: false`. Uncommitted edits are not copied. 'cloud': a new machine, checked out from `baseRef` on the remote, that keeps running when this computer sleeps. Only where `orchestrator_capabilities` reports `features.cloudThreads`, or with the `environmentId` of a `cloud` link from `t3_environment_links`. `existingBranch: true`: `branch` is already on the remote.",
       }),
     ),
     message: Schema.optional(

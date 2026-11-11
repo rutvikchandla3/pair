@@ -5,6 +5,7 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   checkProjectAccess,
@@ -50,6 +51,7 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { WorkspaceRepositoriesSettings } from "./WorkspaceRepositoriesSettings";
 import {
   defaultProjectIcon,
   hasDefaultProjectIcon,
@@ -340,6 +342,8 @@ function ProjectDetail({
   };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
+  const onlyMember = hasMultipleCheckouts ? null : (group.memberProjects[0] ?? null);
+  const workspaceMember = isWorkspaceProject(onlyMember) ? onlyMember : null;
   const canResetScratchTitle =
     group.memberProjects.every((member) => member.isScratch) &&
     group.memberProjects.some((member) => member.title !== SCRATCH_PROJECT_TITLE);
@@ -653,6 +657,14 @@ function ProjectDetail({
             </>
           ) : null}
         </SettingsSection>
+        {workspaceMember ? (
+          <WorkspaceRepositoriesSettings
+            // A saved change from anywhere starts the editor over from the stored roots.
+            key={JSON.stringify(workspaceMember.roots)}
+            workspace={workspaceMember}
+            canEdit={canEditGroup}
+          />
+        ) : null}
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {checkoutChoices}

@@ -89,7 +89,7 @@ interface World {
   launchFails: boolean;
   reportFailures: number;
   readonly downloads: Array<{ readonly haves: ReadonlyArray<string>; readonly copied: boolean }>;
-  readonly launches: Array<ThreadLaunch.ThreadLaunchInput>;
+  readonly launches: Array<ThreadLaunch.ThreadLaunchRequest>;
   readonly reports: Array<CloudMoveContinuedInput>;
   readonly dispatched: Array<OrchestrationV2ServerCommand>;
   /** Continue in cloud: the local thread, the link here, and the fake routes' answers. */
@@ -456,9 +456,9 @@ it.effect("brings the branch, its commits and the uncommitted files into a new w
     const result = yield* moves.continueLocally(moveInput("command-1"));
 
     const launch = world.launches[0]!;
-    assert.equal(launch.workspaceStrategy.type, "existing_worktree");
+    assert.equal(launch.workspaceStrategy?.type, "existing_worktree");
     const worktree =
-      launch.workspaceStrategy.type === "existing_worktree"
+      launch.workspaceStrategy?.type === "existing_worktree"
         ? launch.workspaceStrategy.worktreePath
         : "";
     assert.deepEqual(result, {
@@ -522,7 +522,7 @@ it.effect("a copy gets a branch of its own, tracking nothing", () => {
     const worktree = world.launches[0]!.workspaceStrategy;
     assert.isTrue(
       (yield* git(
-        worktree.type === "existing_worktree" ? worktree.worktreePath : "",
+        worktree?.type === "existing_worktree" ? worktree.worktreePath : "",
         ["rev-parse", "--abbrev-ref", "@{u}"],
         true,
       )).startsWith("128:"),

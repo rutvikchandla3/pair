@@ -85,7 +85,7 @@ const driver = ProviderDriverKind.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.4" };
 
 type LaunchedWith = Pick<
-  ThreadLaunch.ThreadLaunchInput,
+  ThreadLaunch.ThreadLaunchRequest,
   "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceStrategy"
 >;
 
@@ -444,7 +444,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
-                workspaceStrategy: input.workspaceStrategy,
+                ...(input.workspaceStrategy === undefined
+                  ? {}
+                  : { workspaceStrategy: input.workspaceStrategy }),
               }),
             ),
             Effect.andThen(Effect.flatten(Ref.get(thread.afterLaunch))),
@@ -1148,7 +1150,6 @@ it.effect("a task named only by environment inherits the parent's model, within 
         modelSelection,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
-        workspaceStrategy: { type: "root" },
       });
 
       // Asking for more than the link allows is still refused there.

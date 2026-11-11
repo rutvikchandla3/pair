@@ -7,6 +7,7 @@ import {
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
@@ -122,6 +123,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  // A workspace always starts threads in a new worktree and has no checkout of its own to pull.
+  const isWorkspaceScope =
+    isProjectScope && scope.members.length > 0 && scope.members.every(isWorkspaceProject);
   const unavailable = connectedEnvironments.length === 0;
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
@@ -242,7 +246,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
     />
   );
-  const workspaceRow = (
+  const workspaceRow = isWorkspaceScope ? null : (
     <SettingsRow
       serverScoped
       settingKeys={["defaultThreadEnvMode"]}
@@ -494,35 +498,37 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : (
         <>
-          <SettingsRow
-            serverScoped
-            settingKeys={["defaultAutoPull"]}
-            mixed={mixedAutoPull}
-            id="automatic-pull"
-            title="Automatically pull"
-            description={
-              isProjectScope
-                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
-            }
-            resetAction={
-              settings.defaultAutoPull ? (
-                <SettingResetButton
-                  label="default automatic pull"
-                  tooltip="Reset automatic pull to off"
-                  onClick={() => updateSettings({ defaultAutoPull: false })}
+          {isWorkspaceScope ? null : (
+            <SettingsRow
+              serverScoped
+              settingKeys={["defaultAutoPull"]}
+              mixed={mixedAutoPull}
+              id="automatic-pull"
+              title="Automatically pull"
+              description={
+                isProjectScope
+                  ? "Keeps this project's default branch current when the checkout has no local changes or commits."
+                  : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+              }
+              resetAction={
+                settings.defaultAutoPull ? (
+                  <SettingResetButton
+                    label="default automatic pull"
+                    tooltip="Reset automatic pull to off"
+                    onClick={() => updateSettings({ defaultAutoPull: false })}
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  aria-label="Default automatic pull"
+                  mixed={mixedAutoPull}
+                  checked={mixedAutoPull ? false : settings.defaultAutoPull}
+                  onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
                 />
-              ) : null
-            }
-            control={
-              <Switch
-                aria-label="Default automatic pull"
-                mixed={mixedAutoPull}
-                checked={mixedAutoPull ? false : settings.defaultAutoPull}
-                onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
-              />
-            }
-          />
+              }
+            />
+          )}
           <SettingsRow
             serverScoped
             settingKeys={["removeAgentCreditsOnMerge"]}

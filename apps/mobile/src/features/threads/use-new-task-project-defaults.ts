@@ -1,6 +1,7 @@
 import { resolveCloudTarget } from "@t3tools/client-runtime/state/cloud-target";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ export function useNewTaskProjectDefaults(
   const environments = useWorkspaceEnvironments();
   const isScratch =
     project !== null && isScratchProject(project, serverConfig?.scratchWorkspaceRoot);
+  const workspace = isWorkspaceProject(project);
   const hasWorkspace = project !== null && project.workspaceRoot !== "";
   const fileAccessSession = useEnvironmentQuery(
     hasWorkspace ? environmentSession.sessionStateAtom(project.environmentId) : null,
@@ -72,8 +74,9 @@ export function useNewTaskProjectDefaults(
   const projectHasThreads = useProjectHasThreads(project);
   const isTeamMode = useIsTeamMode(project?.environmentId ?? null);
   const cloudLaunch = serverConfig?.environment.capabilities.cloudLaunch === true;
+  // A workspace's repositories are on this machine; the server refuses it in the cloud.
   const cloud: NewTaskCloud =
-    project === null
+    project === null || workspace
       ? NO_NEW_TASK_CLOUD
       : resolveNewTaskCloud({
           cloudTarget: resolveCloudTarget({
@@ -92,22 +95,27 @@ export function useNewTaskProjectDefaults(
   // A Pair Cloud project starts in the cloud; a routed one only when the user picks Cloud.
   const defaultWorkspaceMode: NewTaskWorkspaceMode = isScratch
     ? "local"
-    : cloud.available && !cloud.routed
-      ? "cloud"
-      : resolveNewThreadEnvMode({
-          teamDefault: isTeamMode,
-          projectSettings,
-          workspaceRoot: project?.workspaceRoot ?? null,
-          newProjectsRoot: serverConfig?.newProjectsRoot,
-          projectHasThreads,
-        });
+    : workspace
+      ? "worktree"
+      : cloud.available && !cloud.routed
+        ? "cloud"
+        : resolveNewThreadEnvMode({
+            teamDefault: isTeamMode,
+            projectSettings,
+            workspaceRoot: project?.workspaceRoot ?? null,
+            newProjectsRoot: serverConfig?.newProjectsRoot,
+            projectHasThreads,
+          });
   // While t3.json loads, the environment default is provisional; t3.json may replace it.
   const defaultWorkspaceModeSettled =
+    workspace ||
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
     (!t3ProjectFileQuery.isPending && !fileAccessPending);
   return {
     serverConfig,
     isScratch,
+    /** A workspace of several repositories: its tasks start only in new worktrees. */
+    workspace,
     projectSettings,
     defaultWorkspaceMode,
     defaultWorkspaceModeSettled,

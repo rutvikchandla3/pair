@@ -165,6 +165,20 @@ T3 Code throughout.
   delegate and move threads there as the member.
 - User guide: [Move a thread](../user/cloud.md#move-a-thread-between-your-mac-and-pair-cloud).
 
+### Workspaces
+
+- **One thread, several repositories.** A workspace is a project made of 2 to 8 other git
+  projects on the same server. **New workspace** in the command palette, `t3 project add --root`
+  and `t3_project_create` with `roots` create one; **Settings → Projects** edits its repositories.
+- **A folder per thread.** Each thread gets a worktree of every repository, side by side in one
+  folder, on one branch name, each from its own default branch. The agent starts in that folder,
+  with an `AGENTS.md` and `CLAUDE.md` that list the repositories.
+- **Safe edits.** Threads keep the repositories they started with, and a project a workspace uses
+  can't be deleted.
+- Not built yet: combined checkpoints and diffs, per-repository git and pull request controls,
+  automatic folder cleanup, and Cloud.
+- User guide: [Workspaces](../user/workspaces.md).
+
 ## Not planned
 
 - **Pooling or rotating teammates' personal subscriptions.** They are licensed per person, and

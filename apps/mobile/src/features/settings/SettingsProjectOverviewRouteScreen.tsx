@@ -1,4 +1,5 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -313,6 +314,8 @@ function ProjectOverviewContent(props: {
           workspaceRoot={representative.workspaceRoot}
           faviconPath={representative.faviconPath}
           projectIcon={representative.projectIcon}
+
+          workspace={isWorkspaceProject(representative)}
           size={48}
         />
         <View className="min-w-0 flex-1">

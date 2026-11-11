@@ -25,6 +25,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const projectId = ProjectId.make("project:runtime-policy");
+const workspaceProjectId = ProjectId.make("project:runtime-policy-workspace");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = {
   instanceId: providerInstanceId,
@@ -36,13 +37,14 @@ function makeThread(input: {
   readonly worktreePath: string | null;
   readonly runtimeMode?: RuntimeMode;
   readonly ownerId?: MemberId | null | undefined;
+  readonly projectId?: ProjectId;
 }): OrchestrationV2AppThread {
   const threadId = ThreadId.make("thread:runtime-policy");
   return {
     createdBy: "user",
     creationSource: "web",
     id: threadId,
-    projectId,
+    projectId: input.projectId ?? projectId,
     title: "Runtime policy",
     providerInstanceId,
     modelSelection,
@@ -97,9 +99,12 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
     ),
     Layer.provide(
       Layer.mock(ProjectStore.ProjectStoreV2)({
-        get: () =>
+        get: (requested) =>
           Effect.succeedSome({
-            projectId,
+            ...(requested === workspaceProjectId
+              ? { roots: [{ projectId, name: "project" }] }
+              : {}),
+            projectId: requested,
             title: "Project",
             workspaceRoot: "/project-root",
             defaultModelSelection: null,
@@ -140,6 +145,31 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       assert.equal(acpPermissionDisposition(auto, request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
+    }),
+  );
+
+  it.effect("runs a thread in its folder, or its project's, but never in a workspace's own", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const cwdOf = (worktreePath: string | null, threadProjectId?: ProjectId) =>
+        policy
+          .resolve({
+            thread: makeThread({
+              now,
+              worktreePath,
+              ...(threadProjectId === undefined ? {} : { projectId: threadProjectId }),
+            }),
+            modelSelection,
+          })
+          .pipe(Effect.map((resolved) => resolved.cwd));
+      assert.equal(yield* cwdOf(null), "/project-root");
+      assert.equal(
+        yield* cwdOf("/worktrees/stack/feature", workspaceProjectId),
+        "/worktrees/stack/feature",
+      );
+      const refused = yield* cwdOf(null, workspaceProjectId).pipe(Effect.flip);
+      assert.equal(refused._tag, "RuntimePolicyResolveError");
     }),
   );
 

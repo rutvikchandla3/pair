@@ -235,9 +235,18 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       unreadablePaths: [],
       lookups: [],
     },
+    // A workspace's folder sits inside some checkout, whose PRs are not the workspace's.
+    {
+      worktree: "a workspace's folder of checkouts",
+      worktreePath: "/workspace/worktree",
+      existingPaths: ["/workspace/worktree"],
+      unreadablePaths: [],
+      lookups: [],
+      roots: [{ projectId: ProjectId.make("project:api"), name: "api" }],
+    },
   ] as const)(
     "looks up a branch whose worktree is $worktree in $lookups",
-    ({ worktreePath, existingPaths, unreadablePaths, lookups }) =>
+    ({ worktreePath, existingPaths, unreadablePaths, lookups, ...workspace }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const thread = {
@@ -255,6 +264,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             scripts: [],
             createdAt: "2026-08-01T00:00:00.000Z",
             updatedAt: "2026-08-01T00:00:00.000Z",
+            ...workspace,
           };
           const activation = yield* Deferred.make<void>();
           const sweepStarted = yield* Deferred.make<void>();

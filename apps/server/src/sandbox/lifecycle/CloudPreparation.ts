@@ -62,6 +62,7 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "seed-on-base",
     "seed-unavailable",
     "export-unavailable",
+    "workspace",
   ]),
   baseRef: Schema.optional(Schema.String),
   /** For `base-ref-missing`: the base is a branch on the host that origin lacks. */
@@ -109,6 +110,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
         return "The work uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
       case "export-unavailable":
         return "The conversation uploaded for this move is no longer on Pair Cloud. Continue in cloud again.";
+      case "workspace":
+        return "Workspaces don't run in Cloud yet.";
     }
   }
 }

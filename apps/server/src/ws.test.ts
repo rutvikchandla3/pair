@@ -69,6 +69,7 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as WorkspaceCheckouts from "./project/WorkspaceCheckouts.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
@@ -175,6 +176,9 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+
+const passThroughShells: ProjectService.ProjectService["Service"]["enrichShells"] = (projects) =>
+  Effect.succeed({ projects, resolvedRepositoryIdentityRoots: [] });
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -384,6 +388,7 @@ it.live.each(["thread", "shell"] as const)(
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
         Effect.provideService(ProjectService.ProjectService, {
+          enrichShells: passThroughShells,
           getShell: () => Effect.succeedSome(project),
         } as unknown as ProjectService.ProjectService["Service"]),
         Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
@@ -543,6 +548,7 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
         Effect.provideService(ProjectService.ProjectService, {
+          enrichShells: passThroughShells,
           getShell: () => Effect.succeedSome(project),
         } as unknown as ProjectService.ProjectService["Service"]),
         Effect.provideServiceEffect(
@@ -670,6 +676,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
         Effect.provideService(ProjectService.ProjectService, {
+          enrichShells: passThroughShells,
           getShell: () => Effect.succeedNone,
         } as unknown as ProjectService.ProjectService["Service"]),
         Effect.provideServiceEffect(
@@ -750,6 +757,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(WorkspaceCheckouts.WorkspaceCheckouts)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
@@ -1431,10 +1439,9 @@ it.effect.each(["thread", "shell"] as const)(
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
-        Effect.provideService(
-          ProjectService.ProjectService,
-          {} as ProjectService.ProjectService["Service"],
-        ),
+        Effect.provideService(ProjectService.ProjectService, {
+          enrichShells: passThroughShells,
+        } as unknown as ProjectService.ProjectService["Service"]),
         Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
           subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
         } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
@@ -1503,10 +1510,9 @@ it.effect.each(["thread", "shell"] as const)(
         Effect.provideService(ProjectStore.ProjectStoreV2, {
           listShells: () => Effect.succeed([]),
         } as unknown as ProjectStore.ProjectStoreV2["Service"]),
-        Effect.provideService(
-          ProjectService.ProjectService,
-          {} as ProjectService.ProjectService["Service"],
-        ),
+        Effect.provideService(ProjectService.ProjectService, {
+          enrichShells: passThroughShells,
+        } as unknown as ProjectService.ProjectService["Service"]),
         Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
           subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
         } as ProjectEnrichment.ProjectEnrichmentService["Service"]),

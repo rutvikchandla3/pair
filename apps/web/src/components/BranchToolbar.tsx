@@ -1,5 +1,6 @@
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -42,6 +43,8 @@ import {
   pairCloudAddInput,
   resolveCloudEnvModeItem,
   shouldShowEnvironmentIndicator,
+  MULTI_MODEL_WORKTREE_REASON,
+  WORKSPACE_WORKTREE_REASON,
 } from "./BranchToolbar.logic";
 import {
   BranchToolbarBranchSelector,
@@ -158,7 +161,8 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
 interface RunContextSelectorProps {
   displayMode?: "toolbar" | "panel";
   workspaceRoot?: string;
-  forceNewWorktree: boolean;
+  /** Why the run context is fixed to a new worktree, or null when it can change. */
+  forcedWorktreeReason: string | null;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
@@ -183,7 +187,7 @@ interface RunContextSelectorProps {
 const RunContextSelector = memo(function RunContextSelector({
   displayMode = "toolbar",
   workspaceRoot,
-  forceNewWorktree,
+  forcedWorktreeReason,
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -215,6 +219,7 @@ const RunContextSelector = memo(function RunContextSelector({
         : activeWorktreePath
           ? FolderGitIcon
           : FolderIcon;
+  const forceNewWorktree = forcedWorktreeReason !== null;
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
     : envModeLocked
@@ -243,10 +248,8 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipTrigger>
       <TooltipPopup>
         {isPanel
-          ? forceNewWorktree
-            ? "Each model starts in its own worktree."
-            : (workspacePath ?? workspaceLabel)
-          : workspaceLabel}
+          ? (forcedWorktreeReason ?? workspacePath ?? workspaceLabel)
+          : (forcedWorktreeReason ?? workspaceLabel)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -432,20 +435,22 @@ const RunContextSelector = memo(function RunContextSelector({
           >
             {cloudItem?.only ? null : (
               <>
-                <MenuRadioItem
-                  disabled={envModeLocked || forceNewWorktree}
-                  value="local"
-                  closeOnClick
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {activeWorktreePath ? (
-                      <FolderGitIcon className="size-3" />
-                    ) : (
-                      <FolderIcon className="size-3" />
-                    )}
-                    <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
-                  </span>
-                </MenuRadioItem>
+                <CloudEnvModeTooltip reason={forcedWorktreeReason}>
+                  <MenuRadioItem
+                    disabled={envModeLocked || forceNewWorktree}
+                    value="local"
+                    closeOnClick
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {activeWorktreePath ? (
+                        <FolderGitIcon className="size-3" />
+                      ) : (
+                        <FolderIcon className="size-3" />
+                      )}
+                      <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
+                    </span>
+                  </MenuRadioItem>
+                </CloudEnvModeTooltip>
                 <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
                   <span className="flex min-w-0 items-center gap-1.5">
                     <FolderGit2Icon className="size-3" />
@@ -675,8 +680,17 @@ export const BranchToolbar = memo(function BranchToolbar({
   // The composer retains resolved thread details while bootstrap cleanup can remove its shell.
   const activeProjectRef = scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
-  const activeWorktreePath = forceNewWorktree ? null : worktreePath;
-  const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
+  const workspace = isWorkspaceProject(activeProject);
+  // A started workspace thread already has its folder; only a new one is pinned to a new worktree.
+  const forcedWorktreeReason =
+    workspace && worktreePath === null
+      ? WORKSPACE_WORKTREE_REASON
+      : forceNewWorktree
+        ? MULTI_MODEL_WORKTREE_REASON
+        : null;
+  const forcesNewWorktree = forcedWorktreeReason !== null;
+  const activeWorktreePath = forcesNewWorktree ? null : worktreePath;
+  const effectiveEnvMode = forcesNewWorktree ? "worktree" : envMode;
   const envModeLocked =
     envLocked || (isServerThread && (activeWorktreePath !== null || envMode === "cloud"));
   const cloudEnvironmentId = useComposerDraftStore((store) =>
@@ -688,7 +702,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     cloudEnvironmentId,
     effectiveEnvMode,
     isServerThread,
-    forceNewWorktree,
+    forcedWorktreeReason,
   });
   const handleNewThread = useNewThreadHandler();
   const addingToPairCloud = useRef(false);
@@ -732,7 +746,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     onEnvModeChange("cloud");
   };
 
-  const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forceNewWorktree;
+  const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forcesNewWorktree;
   const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
   const previousWorktreeSeed = canUsePreviousWorktree
@@ -773,7 +787,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
-  const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
+  const addTargets = useAddProjectTargets(workspace ? null : activeProject, availableEnvironments);
   const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
     openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
   // A project on one machine still gets the picker when it can be added to another.
@@ -798,7 +812,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           <RunContextSelector
             displayMode="panel"
             workspaceRoot={activeProject.workspaceRoot}
-            forceNewWorktree={forceNewWorktree}
+            forcedWorktreeReason={forcedWorktreeReason}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
@@ -820,7 +834,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             onAddToMachine={onAddToMachine}
           />
         ) : null}
-        {panelSection !== "workspace" ? (
+        {panelSection !== "workspace" && !workspace ? (
           <BranchToolbarBranchSelector
             displayMode="panel"
             className="w-full"
@@ -851,7 +865,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       {showGitControls ? (
         <div className="contents @xl/composer-surface:hidden">
           <RunContextSelector
-            forceNewWorktree={forceNewWorktree}
+            forcedWorktreeReason={forcedWorktreeReason}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
@@ -904,7 +918,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           )}
           {showGitControls ? (
             <BranchToolbarEnvModeSelector
-              forceNewWorktree={forceNewWorktree}
+              forcedWorktreeReason={forcedWorktreeReason}
               envLocked={envModeLocked}
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
@@ -919,9 +933,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
-      {showGitControls ? (
+      {showGitControls && !workspace ? (
         <BranchToolbarBranchSelector
-          forceNewWorktree={forceNewWorktree}
+          forceNewWorktree={forcesNewWorktree}
           ref={branchSelectorRef}
           className="min-w-0 flex-initial justify-end @xl/composer-surface:ml-auto"
           environmentId={environmentId}

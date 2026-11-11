@@ -50,7 +50,7 @@ const clientLaunchHarness = (input: {
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
-  readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
+  readonly launched: Array<ThreadLaunch.ThreadLaunchRequest>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
   readonly hostedAppUrl?: string;
@@ -220,7 +220,7 @@ it.effect(
           refusedByCloud,
           ...input
         } = params;
-        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
           defaultRuntimeMode,
@@ -323,7 +323,7 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
     // Pi offers no Auto; a mode a provider lacks would run as Supervised.
     const pi = ProviderInstanceId.make("pi");
     const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
-      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
       const { projectId, dependencies } = clientLaunchHarness({
         runtimeModeCeiling: "auto",
         launched,
@@ -376,7 +376,7 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
@@ -414,7 +414,7 @@ it.effect("a launch retried with the same clientRequestId replays the first one"
 
 it.effect("a launch key of any length or content gives a short id and never a defect", () =>
   Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
@@ -443,7 +443,7 @@ it.effect("a launch key of any length or content gives a short id and never a de
 
 it.effect("a retried launch replays after the project loses its default model", () =>
   Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const { projectId, modelSelection, projectDefaults, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
@@ -479,7 +479,7 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     yield* fileSystem.makeDirectory(repo);
     yield* fileSystem.makeDirectory(outside);
 
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
@@ -529,7 +529,7 @@ it.effect("a launch binds only an existing checkout that is one of the project's
 
 it.effect("a launch into a new worktree creates nothing when its base ref has no commit", () =>
   Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
       launched,
@@ -573,7 +573,7 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
 
 it.effect("a retried worktree launch replays after its base ref is gone", () =>
   Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
     const base = { exists: true };
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
@@ -616,7 +616,7 @@ it.effect("a retried worktree launch replays after its base ref is gone", () =>
 
 it.effect("a client launches with the fallback for an exhausted default", () =>
   Effect.gen(function* () {
-    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    const launched: ThreadLaunch.ThreadLaunchRequest[] = [];
     const fallbackModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
     const providers: ServerProvider[] = ["claudeAgent", "codex"].map((driver) => ({
       instanceId: ProviderInstanceId.make(driver),
@@ -704,5 +704,74 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("creating a workspace through MCP passes its roots and says why one is refused", () =>
+  Effect.gen(function* () {
+    const created: Array<Parameters<Project.ProjectService["Service"]["create"]>[0]> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const roots = [
+      { projectId: ProjectId.make("project:api") },
+      { projectId: ProjectId.make("project:web"), name: "frontend" },
+    ];
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: (input) =>
+          input.roots?.length === 1
+            ? Effect.fail(
+                new Project.ProjectWorkspaceError({
+                  projectId: input.projectId,
+                  reason: "A workspace needs 2 to 8 repositories.",
+                }),
+              )
+            : Effect.sync(() => {
+                created.push(input);
+                return {
+                  id: input.projectId,
+                  title: input.title,
+                  workspaceRoot: "/projects/workspaces/stack",
+                  roots: [
+                    { projectId: ProjectId.make("project:api"), name: "api" },
+                    { projectId: ProjectId.make("project:web"), name: "frontend" },
+                  ],
+                  repositoryIdentity: null,
+                  faviconPath: null,
+                  defaultModelSelection: null,
+                  defaultThreadEnvMode: null,
+                  autoPull: false,
+                  projectIcon: null,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                  deletedAt: null,
+                } satisfies ProjectRecord;
+              }),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const create = (params: { readonly title: string; readonly roots: typeof roots }) =>
+      toolkit
+        .handle("t3_project_create", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    const workspace = yield* create({ title: "Stack", roots });
+    expect(workspace.at(-1)?.result).toMatchObject({
+      roots: [{ name: "api" }, { name: "frontend" }],
+    });
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ title: "Stack", roots });
+    expect(created[0]).not.toHaveProperty("workspaceRoot");
+
+    const refused = yield* create({ title: "Solo", roots: roots.slice(0, 1) });
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: "A workspace needs 2 to 8 repositories.",
+    });
   }),
 );

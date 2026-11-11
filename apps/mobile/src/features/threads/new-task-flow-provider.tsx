@@ -158,6 +158,8 @@ type NewTaskFlowContextValue = {
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
   readonly canChooseWorkspace: boolean;
+  /** The selected project is a workspace: its tasks start only in new worktrees. */
+  readonly isWorkspace: boolean;
   /** The selected project's Cloud entry: its own Pair Cloud, a routed one, or not offered. */
   readonly cloud: NewTaskCloud;
   /** The project's own environment is a Pair Cloud, so Cloud is its only mode. */
@@ -370,6 +372,8 @@ export function NewTaskFlowProvider(
   );
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
+  // A workspace's own folder is not a repository: its tasks start in new worktrees of each one.
+  const isWorkspace = projectDefaults.workspace;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
@@ -403,7 +407,10 @@ export function NewTaskFlowProvider(
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   const projectGitStatus = useEnvironmentQuery(
-    props.active !== false && selectedProject !== null && selectedProject.workspaceRoot !== ""
+    props.active !== false &&
+      selectedProject !== null &&
+      selectedProject.workspaceRoot !== "" &&
+      !isWorkspace
       ? vcsEnvironment.status({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot },
@@ -414,16 +421,19 @@ export function NewTaskFlowProvider(
   // The unfiltered ref list also provides repository capability while offline.
   const projectBranches = useBranches({
     environmentId: selectedProject?.environmentId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
+    cwd: isWorkspace ? null : selectedProject?.workspaceRoot || null,
   });
-  const knownIsGitRepo = projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null;
+  // A workspace counts as one here so its new worktrees are not refused as a plain folder's.
+  const knownIsGitRepo = isWorkspace
+    ? true
+    : (projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null);
   const isGitRepo = knownIsGitRepo ?? true;
   const projectSettings = projectDefaults.projectSettings;
-  const canChooseWorkspace = !isScratchDraft;
+  const canChooseWorkspace = !isScratchDraft && !isWorkspace;
   const defaultWorkspaceMode: NewTaskWorkspaceMode = projectDefaults.defaultWorkspaceMode;
   const branchState = usePaginatedBranches({
     environmentId: selectedProject?.environmentId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
+    cwd: isWorkspace ? null : selectedProject?.workspaceRoot || null,
   });
   const branchesLoading = branchState.isPending && branchState.data === null;
   const allBranchRefs = branchState.refs;
@@ -441,6 +451,7 @@ export function NewTaskFlowProvider(
       isGitRepo,
       cloudAvailable: projectDefaults.cloud.available,
       cloudLaunch: projectDefaults.cloudLaunch,
+      workspace: isWorkspace,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });
@@ -974,6 +985,8 @@ export function NewTaskFlowProvider(
       if (seen.has(project.environmentId) || !offersLocalModes(project.environmentId)) {
         continue;
       }
+      // A workspace's repositories are projects on its own environment.
+      if (isWorkspace && project.environmentId !== selectedProject?.environmentId) continue;
       const environment = savedConnectionsById[project.environmentId];
       if (!environment) {
         continue;
@@ -997,6 +1010,7 @@ export function NewTaskFlowProvider(
     isGitRepo,
     isGitRepoKnown: knownIsGitRepo !== null,
     canChooseWorkspace,
+    isWorkspace,
     cloud: projectDefaults.cloud,
     cloudLaunch: projectDefaults.cloudLaunch,
     launch,

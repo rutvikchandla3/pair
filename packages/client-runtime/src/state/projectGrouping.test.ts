@@ -251,11 +251,22 @@ describe("buildProjectGroups", () => {
       makeProject("t3code", "/work/t3code"),
       makeProject("t3code-2", "/work/t3code-2"),
       makeProject("t3code-3", "/work/t3code-3"),
+      // A workspace over those clones is its own project, never a member of theirs.
+      makeProject("workspace", "/t3/workspaces/both", {
+        repositoryIdentity: null,
+        roots: [
+          { projectId: ProjectId.make("t3code"), name: "t3code" },
+          { projectId: ProjectId.make("t3code-2"), name: "t3code-2" },
+        ],
+      }),
     ];
 
     for (const mode of ["repository", "repository_path"] as const) {
       const groups = buildProjectGroups({ projects, settings: settings(mode) });
-      expect(groups).toHaveLength(1);
+      expect(groups).toHaveLength(2);
+      expect(groups[1]?.memberProjectRefs).toEqual([
+        { environmentId, projectId: ProjectId.make("workspace") },
+      ]);
       expect(groups[0]?.members.map((member) => member.project.id)).toEqual([
         "t3code",
         "t3code-2",

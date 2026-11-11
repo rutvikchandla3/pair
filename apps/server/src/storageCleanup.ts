@@ -917,6 +917,8 @@ const make = Effect.gen(function* () {
         if (Option.isNone(host)) return;
         const fs = host.value.fileSystem;
         if (!(yield* fs.exists(worktreePath))) return;
+        // The checks below read one repository; a workspace folder holds several.
+        if (thread.roots !== undefined) return keep("a workspace folder of several repositories");
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);

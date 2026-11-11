@@ -45,6 +45,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isWorkspaceProject, threadRepositories } from "@t3tools/client-runtime/state/workspaces";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -755,9 +756,12 @@ export default function ChatView(props: ChatViewProps) {
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
+  const draftIsWorkspace = isWorkspaceProject(fallbackDraftProject);
   // Cloud on a local project launches on its Pair Cloud project: models and uploads read there.
   const draftCloudTarget = useCloudTarget(
-    !serverThread && draftThread?.envMode === "cloud" ? fallbackDraftProjectRef : null,
+    !serverThread && !draftIsWorkspace && draftThread?.envMode === "cloud"
+      ? fallbackDraftProjectRef
+      : null,
   );
   const draftCloudLaunchTarget = resolveCloudLaunchTarget(
     draftCloudTarget,
@@ -836,7 +840,8 @@ export default function ChatView(props: ChatViewProps) {
   const localDraftThread = draftThread
     ? buildLocalDraftThread(
         threadId,
-        draftThread,
+        // A workspace thread never reuses a checkout, so a carried branch or worktree is dropped.
+        draftIsWorkspace ? { ...draftThread, branch: null, worktreePath: null } : draftThread,
         (draftFallback ? draftFallback.selection : draftDefaultModelSelection) ??
           NO_PROVIDER_MODEL_SELECTION,
       )
@@ -988,7 +993,8 @@ export default function ChatView(props: ChatViewProps) {
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
-  const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
+  const canCheckoutPullRequestIntoThread =
+    canWriteSourceControl && isLocalDraftThread && !draftIsWorkspace;
   const activeThreadId = activeThread?.id ?? null;
   // Turn items can lag projection hydration; keep the environment locked through that gap.
   const activeMessageCount = isServerThread
@@ -1144,6 +1150,8 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  // A workspace's own folder is not a repository, so per-repository git UI stays off.
+  const activeProjectIsWorkspace = isWorkspaceProject(activeProject);
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
@@ -1698,7 +1706,7 @@ export default function ChatView(props: ChatViewProps) {
           worktreePath: activeThread?.worktreePath ?? null,
         })
       : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusCwd = activeProjectIsWorkspace ? null : (activeThread?.worktreePath ?? gitCwd);
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -1797,7 +1805,9 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const isGitRepo =
+    !activeProjectIsWorkspace &&
+    (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
   const composerMounted = !showProviderSubagentBar;
@@ -1830,7 +1840,7 @@ export default function ChatView(props: ChatViewProps) {
       isDraftHeroState,
       persistInActiveThreads: settings.persistComposerContextStrip,
       hasActiveProject: activeProject !== null && !showProviderSubagentBar,
-      isGitRepo,
+      isGitRepo: isGitRepo || activeProjectIsWorkspace,
       showEnvironmentIndicator: showComposerEnvironmentIndicator,
     });
   const terminalShortcutLabelOptions = {
@@ -2267,6 +2277,7 @@ export default function ChatView(props: ChatViewProps) {
     sandboxId: serverThread?.source.sandboxId,
     cloudAvailable: draftCloudLaunchTarget !== null,
     cloudLaunch,
+    workspace: activeProjectIsWorkspace,
   });
   const canOverrideServerThreadEnvMode = Boolean(
     isServerThread &&
@@ -2274,7 +2285,8 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount === 0 &&
     activeThread.worktreePath === null &&
     serverThread?.source.sandboxId === undefined &&
-    !envLocked,
+    !envLocked &&
+    !activeProjectIsWorkspace,
   );
   if (
     !canOverrideServerThreadEnvMode &&
@@ -2346,7 +2358,7 @@ export default function ChatView(props: ChatViewProps) {
       : false;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
-    isGitRepo,
+    isGitRepo: isGitRepo || activeProjectIsWorkspace,
   });
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
@@ -3919,7 +3931,7 @@ export default function ChatView(props: ChatViewProps) {
                                 projectId={activeThread.projectId}
                                 worktreePath={activeThread.worktreePath}
                                 isServerThread={isServerThread}
-                                showGitControls={isGitRepo}
+                                showGitControls={isGitRepo || activeProjectIsWorkspace}
                                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                 onEnvModeChange={onEnvModeChangeStable}
                                 startFromOrigin={startFromOrigin}
@@ -4038,7 +4050,12 @@ export default function ChatView(props: ChatViewProps) {
                     )
                   }
                   gitCwd={gitCwd}
-                  isGitRepo={isGitRepo}
+                  isGitRepo={isGitRepo || activeProjectIsWorkspace}
+                  repositories={
+                    activeProjectIsWorkspace
+                      ? threadRepositories(activeThread, activeProject)
+                      : null
+                  }
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}

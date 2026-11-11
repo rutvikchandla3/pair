@@ -1,3 +1,4 @@
+import { WORKSPACE_WORKTREE_BASE_REF } from "@t3tools/client-runtime/state/workspaces";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,7 +11,13 @@ import {
 
 describe("resolveNewTaskWorkspaceSelection", () => {
   const fallback = { mode: "worktree", branch: null, worktreePath: null } as const;
-  const base = { fallback, isGitRepo: true, cloudAvailable: true, cloudLaunch: false };
+  const base = {
+    fallback,
+    isGitRepo: true,
+    cloudAvailable: true,
+    cloudLaunch: false,
+    workspace: false,
+  };
   const cloud = { mode: "cloud", branch: "main", worktreePath: null } as const;
 
   it("falls back to the current checkout when a non-git project defaults to worktree", () => {
@@ -65,6 +72,32 @@ describe("resolveNewTaskWorkspaceSelection", () => {
       ...fallback,
       mode: "cloud",
     });
+  });
+
+  it("starts a workspace's task in a new worktree whatever the draft chose", () => {
+    const workspaceTask = {
+      mode: "worktree",
+      branch: WORKSPACE_WORKTREE_BASE_REF,
+      worktreePath: null,
+    };
+    for (const selection of [
+      undefined,
+      cloud,
+      { mode: "local", branch: "feature", worktreePath: "/existing-worktree" } as const,
+    ]) {
+      expect(resolveNewTaskWorkspaceSelection({ ...base, workspace: true, selection })).toEqual(
+        workspaceTask,
+      );
+    }
+    // Its own folder is not a repository, which must not fall back to the current checkout.
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        ...base,
+        workspace: true,
+        isGitRepo: false,
+        selection: undefined,
+      }),
+    ).toEqual(workspaceTask);
   });
 });
 

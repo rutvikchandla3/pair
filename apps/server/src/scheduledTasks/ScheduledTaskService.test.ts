@@ -627,7 +627,7 @@ it.effect("a run interrupted right after it reserves the task does not block the
 
 it.effect("a cloud task's run launches with discardOnSettle and records its thread", () =>
   Effect.gen(function* () {
-    const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchInput>>([]);
+    const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchRequest>>([]);
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -688,6 +688,11 @@ it.effect("a cloud task's run launches with discardOnSettle and records its thre
         Option.some([["succeeded", undefined]]),
       );
 
+      // The forms' plain `root` leaves the place to the launch: a workspace needs a new worktree.
+      yield* service.upsert({ ...input, workspaceStrategy: { type: "root" } });
+      yield* service.runNow({ id: task.id });
+      assert.notProperty((yield* Ref.get(launches))[1], "workspaceStrategy");
+
       const cleared = yield* service.upsert({ ...input, discardOnSettle: false });
       assert.isUndefined(cleared.task.discardOnSettle);
     }).pipe(Effect.provide(layer));
@@ -713,7 +718,7 @@ it.effect(
         updatedAt: null,
         removedAt,
       });
-      const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchInput>>([]);
+      const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchService.ThreadLaunchRequest>>([]);
       const layer = ScheduledTaskService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(

@@ -156,7 +156,13 @@ describe("shared project payloads", () => {
       faviconPath: null,
     });
     expect(Object.hasOwn(create, "scripts")).toBe(false);
+    expect(Object.hasOwn(create, "roots")).toBe(false);
     expect(Object.hasOwn(update, "title")).toBe(false);
+    expect(Object.hasOwn(update, "roots")).toBe(false);
+    expect(decodeProjectCreatePayload({ title: "Stack", roots: [{ projectId: "api" }] })).toEqual({
+      title: "Stack",
+      roots: [{ projectId: "api" }],
+    });
     expect(
       decodeProjectMutation({ type: "project.update", ...envelope, title: undefined }),
     ).toHaveProperty("title", undefined);

@@ -1,4 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  WORKSPACE_WORKTREE_BASE_REF,
+  isWorkspaceProject,
+} from "@t3tools/client-runtime/state/workspaces";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -1257,8 +1261,6 @@ function ScheduledTaskEditorForm({
           projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
         },
   );
-  // The task stores a worktree; the server places each of its runs in the cloud.
-  const workspaceMode: WorkspaceMode = cloudLaunch ? "worktree" : draft.workspaceMode;
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
     .filter(
@@ -1287,6 +1289,11 @@ function ScheduledTaskEditorForm({
   });
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  // A workspace runs only in a new worktree of each repository, each from its default branch.
+  const selectedIsWorkspace = isWorkspaceProject(selectedProject);
+  // The task stores a worktree; the server places each of its runs in the cloud.
+  const workspaceMode: WorkspaceMode =
+    cloudLaunch || selectedIsWorkspace ? "worktree" : draft.workspaceMode;
   const instanceEntries = providerInstanceEntriesFor(
     providers,
     settings,
@@ -1391,7 +1398,9 @@ function ScheduledTaskEditorForm({
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
           : {
               type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
+              baseRef: selectedIsWorkspace
+                ? WORKSPACE_WORKTREE_BASE_REF
+                : draft.baseRef.trim() || "main",
               startFromOrigin: draft.startFromOrigin,
             };
     const access = runAccessForSave({
@@ -1573,6 +1582,10 @@ function ScheduledTaskEditorForm({
               <Field label="Workspace">
                 <p className="text-sm">Cloud</p>
               </Field>
+            ) : selectedIsWorkspace ? (
+              <Field label="Workspace" hint="Each repository starts from its default branch">
+                <p className="text-sm">{WORKSPACE_MODE_LABELS.worktree}</p>
+              </Field>
             ) : (
               <Field label="Workspace" htmlFor="scheduled-task-workspace">
                 <Select
@@ -1594,7 +1607,7 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
-          {workspaceMode === "worktree" ? (
+          {workspaceMode === "worktree" && !selectedIsWorkspace ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}

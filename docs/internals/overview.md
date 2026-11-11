@@ -62,6 +62,18 @@ root route to their machine and fail closed: they never fall back to the server'
 reads platform, home and environment from `host.info` per use, not from the server's process, and
 the host owns the base environment every process it starts inherits.
 
+## Workspace projects
+
+A project with `roots` is a workspace of other projects' repositories. Its own folder, under the T3
+home's `workspaces` folder, stays empty and is never a git repository. The code lives in each
+thread's folder, one worktree per root. Code keyed on the project folder's git state (status,
+branches, checkpoints, cleanup, setup scripts, pull requests) must use the thread's repositories
+instead (`threadRepositories` in
+[client-runtime](../../packages/client-runtime/src/state/workspaces.ts), or the thread's `roots` on
+the server), or refuse. A thread's `roots` are copied at launch and don't follow later edits to the
+workspace, so read the thread's copy, not the project's. "Workspace" here is unrelated to
+"workspace root" and to the workspace host above.
+
 ## Settings ownership
 
 Client preferences stay in the current client; environment defaults and project overrides stay

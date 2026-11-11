@@ -274,7 +274,9 @@ export interface CloudEnvModeItem {
   readonly value: string;
 }
 
-const MULTI_MODEL_CLOUD_REASON = "Each model starts in its own worktree.";
+export const MULTI_MODEL_WORKTREE_REASON = "Each model starts in its own worktree.";
+export const WORKSPACE_WORKTREE_REASON =
+  "A workspace thread starts in a new worktree of each of its repositories.";
 
 function cloudRow(reason: string | null): CloudEnvModeRow {
   return {
@@ -299,7 +301,8 @@ export function resolveCloudEnvModeItem(input: {
   cloudEnvironmentId: EnvironmentId | undefined;
   effectiveEnvMode: EnvMode;
   isServerThread: boolean;
-  forceNewWorktree: boolean;
+  /** Why this send must start in a new worktree, which also rules out Cloud. */
+  forcedWorktreeReason: string | null;
 }): CloudEnvModeItem | null {
   const { cloud } = input;
   if (input.isServerThread) {
@@ -308,7 +311,7 @@ export function resolveCloudEnvModeItem(input: {
       : null;
   }
   if (cloud.kind === "hidden") return null;
-  const worktreeReason = input.forceNewWorktree ? MULTI_MODEL_CLOUD_REASON : null;
+  const worktreeReason = input.forcedWorktreeReason;
   if (cloud.kind === "unavailable") {
     const reason = worktreeReason ?? cloud.message;
     return { disabledReason: reason, only: false, rows: [cloudRow(reason)], value: "cloud" };
@@ -458,8 +461,11 @@ export function resolveEffectiveEnvMode(input: {
   cloudAvailable: boolean;
   /** The environment's `capabilities.cloudLaunch`: every draft there is cloud. */
   cloudLaunch: boolean;
+  /** A workspace thread runs only in a new folder of worktrees, whatever the draft holds. */
+  workspace?: boolean;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
+  if (input.workspace === true) return "worktree";
   if (hasServerThread && input.sandboxId !== undefined) return "cloud";
   if (!hasServerThread && input.cloudLaunch) return "cloud";
   // A cloud draft falls back in render when Cloud goes away; the stored draft keeps its choice.

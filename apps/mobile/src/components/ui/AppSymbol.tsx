@@ -45,6 +45,7 @@ import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
 import IconMoodPlus from "@tabler/icons-react-native/IconMoodPlus";
+import IconPackages from "@tabler/icons-react-native/IconPackages";
 import IconTag from "@tabler/icons-react-native/IconTag";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
@@ -157,6 +158,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.triangle.merge": IconGitMerge,
   "arrow.triangle.pull": IconGitPullRequest,
   "square.3.layers.3d": IconStack2,
+  "square.stack.3d.up": IconPackages,
   "arrow.turn.left.up": IconArrowBackUp,
   "arrow.up": IconArrowUp,
   "arrow.up.circle": IconArrowUpCircle,

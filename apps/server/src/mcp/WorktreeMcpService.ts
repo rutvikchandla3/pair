@@ -176,6 +176,12 @@ const make = Effect.gen(function* () {
     }
 
     const project = yield* loadProject(scope, projection.thread.projectId);
+    if (project.roots !== undefined) {
+      return yield* failure(
+        "invalid_request",
+        "A workspace thread runs only in its own folder of worktrees, created when it starts.",
+      );
+    }
     const projectCwd = project.workspaceRoot;
 
     const localStatus = yield* gitWorkflow

@@ -100,7 +100,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadRepositories,
+  useSelectedThreadWorktree,
+} from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
@@ -433,6 +436,7 @@ function ThreadRouteContent(
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const selectedThreadRepositories = useSelectedThreadRepositories();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -613,8 +617,9 @@ function ThreadRouteContent(
         )
       : null;
   // A thread on the member's own computer has no machine, so Cloud takes the machine menu's slot.
+  // A workspace thread runs only in its own folder of worktrees, so it never moves.
   const continueInCloudOffer = useContinueInCloudOffer(
-    selectedThread === null || threadMachine !== null
+    selectedThread === null || threadMachine !== null || selectedThreadRepositories !== null
       ? null
       : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
   );
@@ -642,7 +647,7 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    selectedThread !== null && selectedThreadCwd !== null && selectedThreadRepositories === null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -926,6 +931,7 @@ function ThreadRouteContent(
         ? null
         : orchestrationV2PendingWorktreeBase(selectedThreadDetail?.runs ?? [])),
     gitStatus: gitStatus.data,
+    repositories: selectedThreadRepositories,
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
@@ -1163,7 +1169,10 @@ function ThreadRouteContent(
                   working: composer.activeWorkStartedAt !== null,
                   turnStarted: setupTurnStartedAt !== null,
                   onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
+                  onWorkLocally:
+                    setupMessage && selectedThreadProject && selectedThreadRepositories === null
+                      ? handleWorkLocally
+                      : null,
                 }
               : null
           }

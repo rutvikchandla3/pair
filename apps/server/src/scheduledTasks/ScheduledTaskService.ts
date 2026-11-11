@@ -203,6 +203,8 @@ const decodeScheduleJson = Schema.decodeUnknownEffect(
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
+const isDefaultWorkspaceStrategy = (strategy: ScheduledTask["workspaceStrategy"]) =>
+  strategy.type === "root" && strategy.branch === undefined;
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
@@ -1059,7 +1061,11 @@ export const layer = Layer.effect(
                       modelSelection: active.modelSelection,
                       runtimeMode: active.runtimeMode,
                       interactionMode: active.interactionMode,
-                      workspaceStrategy: active.workspaceStrategy,
+                      // Task forms default to `root`, which launch reads as the project's default
+                      // place: the project folder, or a new worktree for a workspace.
+                      ...(isDefaultWorkspaceStrategy(active.workspaceStrategy)
+                        ? {}
+                        : { workspaceStrategy: active.workspaceStrategy }),
                       initialMessage: {
                         messageId,
                         scheduledTaskId: active.id,

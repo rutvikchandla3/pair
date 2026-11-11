@@ -22,6 +22,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { newThreadPrefersCloud } from "@t3tools/shared/sandbox";
+import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
 import {
   readProject,
   readProjects,
@@ -80,7 +81,7 @@ export function createNewThreadHandler(router: AnyRouter) {
 
   return (
     projectRef: ScopedProjectRef,
-    options?: {
+    requestedOptions?: {
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
@@ -109,9 +110,9 @@ export function createNewThreadHandler(router: AnyRouter) {
     } = useComposerDraftStore.getState();
     // Never over text the user wrote: a draft can gain some while this awaits.
     const seedPrompt = (draftId: DraftId) => {
-      if (options?.prompt === undefined) return;
+      if (requestedOptions?.prompt === undefined) return;
       if (composerDraftHasUserContent(getComposerDraft(draftId))) return;
-      setPrompt(draftId, options.prompt);
+      setPrompt(draftId, requestedOptions.prompt);
     };
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
@@ -142,6 +143,16 @@ export function createNewThreadHandler(router: AnyRouter) {
         candidate.id === projectRef.projectId &&
         candidate.environmentId === projectRef.environmentId,
     );
+    // A workspace thread only starts in a new worktree, whatever the caller carried over.
+    const options =
+      requestedOptions && isWorkspaceProject(project)
+        ? {
+            ...requestedOptions,
+            ...(requestedOptions.branch === undefined ? {} : { branch: null }),
+            ...(requestedOptions.worktreePath === undefined ? {} : { worktreePath: null }),
+            ...(requestedOptions.envMode === undefined ? {} : { envMode: "worktree" as const }),
+          }
+        : requestedOptions;
     const abandonedSinceRequest = () =>
       routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
     const projectSettings = resolveProjectSettings(
@@ -200,6 +211,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       );
     };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+      if (isWorkspaceProject(project)) return "worktree";
       const cloudLaunch =
         environmentServerConfigs.get(projectRef.environmentId)?.environment.capabilities
           .cloudLaunch === true;

@@ -3240,6 +3240,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.roots === undefined ? {} : { roots: command.roots }),
       activeProviderThreadId: null,
       pullRequests: [],
       ownerId: command.ownerId ?? command.actorId ?? null,
@@ -4227,6 +4228,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.roots === undefined
+              ? {}
+              : { roots: command.roots.length === 0 ? undefined : command.roots }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -4595,6 +4599,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.regenerateTitle !== undefined ||
         command.branch !== undefined ||
         command.worktreePath !== undefined ||
+        command.roots !== undefined ||
         command.linkedPullRequest !== undefined;
       if (sharedChanged) {
         yield* emitThreadEvent({ ...eventBase, type: eventType, payload: sharedPayload });

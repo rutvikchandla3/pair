@@ -57,6 +57,10 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sandboxWaitingLabel } from "@t3tools/client-runtime/state/sandbox";
+import {
+  WORKSPACE_WORKTREE_BASE_REF,
+  isWorkspaceProject,
+} from "@t3tools/client-runtime/state/workspaces";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
@@ -723,7 +727,11 @@ function TaskForm({
   };
 
   const cloudLaunch = config?.environment.capabilities.cloudLaunch === true;
-  const workspace = cloudLaunch ? "worktree" : draft.workspace;
+  // A workspace runs only in a new worktree of each repository, each from its default branch.
+  const selectedIsWorkspace = isWorkspaceProject(
+    projects.find((project) => project.id === draft.projectId),
+  );
+  const workspace = cloudLaunch || selectedIsWorkspace ? "worktree" : draft.workspace;
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
@@ -807,7 +815,9 @@ function TaskForm({
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
             : {
                 type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
+                baseRef: selectedIsWorkspace
+                  ? WORKSPACE_WORKTREE_BASE_REF
+                  : draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
@@ -946,6 +956,18 @@ function TaskForm({
               </Text>
               <Text className="text-base text-foreground-muted">Cloud</Text>
             </View>
+          ) : selectedIsWorkspace ? (
+            <View className="min-h-14 flex-row items-center gap-3 px-4 py-3">
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text textRole="body" className="text-foreground">
+                  Run in
+                </Text>
+                <Text className="text-sm text-foreground-muted">
+                  Each repository starts from its default branch
+                </Text>
+              </View>
+              <Text className="text-base text-foreground-muted">New worktree</Text>
+            </View>
           ) : (
             <SelectRow
               label="Run in"
@@ -979,7 +1001,7 @@ function TaskForm({
               }}
             />
           )}
-          {workspace === "worktree" ? (
+          {workspace === "worktree" && !selectedIsWorkspace ? (
             <PickerRow
               label="Base branch"
               value={resolveNewTaskBranchLabel({

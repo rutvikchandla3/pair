@@ -147,6 +147,7 @@ so on a shared team machine each person sets their own.
 A new thread uses the project's default model and permission mode, and runs in
 the project folder unless you pass `--worktree <base-branch>`, or
 `--cloud <base-branch>` for a cloud machine, when your server has Cloud set up.
+A thread in a [workspace](./workspaces.md) always runs in a new worktree.
 `send` never
 interrupts: a busy thread gets the message as its next turn. Pass `-` as the
 message to read it from stdin.

@@ -31,6 +31,7 @@ import * as SandboxAttachments from "../sandbox/attachments/SandboxAttachments.t
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as WorkspaceCheckouts from "../project/WorkspaceCheckouts.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
@@ -145,6 +146,7 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
+  | WorkspaceCheckouts.WorkspaceCheckouts
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
@@ -163,6 +165,7 @@ export const layer: Layer.Layer<
     const path = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
+    const workspaceCheckouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -646,47 +649,71 @@ export const layer: Layer.Layer<
           return;
         }
       }
-      const { worktreePath, branch } = projection.thread;
+      const { worktreePath, branch, roots } = projection.thread;
       if (worktreePath !== null && branch !== null) {
-        const exists = yield* hosts.forPath(worktreePath).pipe(
-          Effect.flatMap((host) => host.fileSystem.exists(worktreePath)),
-          Effect.orElseSucceed(() => true),
-        );
-        if (!exists && (yield* isManagedWorktreePath(worktreePath))) {
-          const project = yield* projects.getById(projection.thread.projectId).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.orElseSucceed(() => undefined),
+        // A workspace thread's folder holds one worktree per root, each from that root's repository.
+        const checkouts =
+          roots === undefined
+            ? [{ projectId: projection.thread.projectId, path: worktreePath }]
+            : roots.map((root) => ({
+                projectId: root.projectId,
+                path: path.join(worktreePath, root.name),
+              }));
+        let recreated = false;
+        for (const checkout of checkouts) {
+          const exists = yield* hosts.forPath(checkout.path).pipe(
+            Effect.flatMap((host) => host.fileSystem.exists(checkout.path)),
+            Effect.orElseSucceed(() => true),
           );
-          if (project !== undefined) {
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
-            });
-            const recreateResult = yield* Effect.result(
-              recreateMissingWorktree({
-                cwd: project.workspaceRoot,
-                worktreePath,
-                branch,
-              }).pipe(
-                Effect.mapError((cause) =>
-                  cause._tag === "WorktreeRecreateNoBaseError"
-                    ? cause
-                    : new WorktreeRecreateError({ worktreePath, branch, cause }),
-                ),
-              ),
+          if (exists || !(yield* isManagedWorktreePath(worktreePath))) continue;
+          const project = yield* projects
+            .getById(checkout.projectId, { includeDeleted: roots !== undefined })
+            .pipe(
+              Effect.map(Option.getOrUndefined),
+              Effect.orElseSucceed(() => undefined),
             );
-            if (recreateResult._tag === "Failure") {
-              if (input.willRetry === true) return yield* recreateResult.failure;
-              yield* settleStartFailure({
-                signal: "worktree-recreate-failure",
-                title: "Couldn't recreate thread workspace",
-                error: recreateResult.failure,
-                message: recreateResult.failure.message,
-              });
-              return;
-            }
+          if (project === undefined) continue;
+          yield* Effect.logWarning("provider turn start recreating missing worktree", {
+            threadId: projection.thread.id,
+            worktreePath: checkout.path,
+            branch,
+          });
+          const recreateResult = yield* Effect.result(
+            recreateMissingWorktree({
+              cwd: project.workspaceRoot,
+              worktreePath: checkout.path,
+              branch,
+            }).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "WorktreeRecreateNoBaseError"
+                  ? cause
+                  : new WorktreeRecreateError({ worktreePath: checkout.path, branch, cause }),
+              ),
+            ),
+          );
+          if (recreateResult._tag === "Failure") {
+            if (input.willRetry === true) return yield* recreateResult.failure;
+            yield* settleStartFailure({
+              signal: "worktree-recreate-failure",
+              title: "Couldn't recreate thread workspace",
+              error: recreateResult.failure,
+              message: recreateResult.failure.message,
+            });
+            return;
           }
+          recreated = true;
+        }
+        // A recreated root may mean the whole folder was gone, taking its guidance with it.
+        if (recreated && roots !== undefined) {
+          yield* workspaceCheckouts.writeGuidance({ folder: worktreePath, roots }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to restore a workspace folder's agent guidance", {
+                threadId: projection.thread.id,
+                worktreePath,
+                cause,
+              }),
+            ),
+          );
         }
       }
       const selectInheritedBackgroundItems = (

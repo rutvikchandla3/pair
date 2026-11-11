@@ -54,6 +54,8 @@ export class GitWorkflowService extends Context.Service<
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
+    /** The primary remote's default branch as last fetched, or null when no remote names one. */
+    readonly defaultBranch: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitManager.GitRemoteStatusOptions,
@@ -385,6 +387,13 @@ export const make = Effect.gen(function* () {
         stderrLength: result.stderr.length,
         detail: "Failed to read the checked-out branch.",
       });
+    }),
+    defaultBranch: Effect.fn("GitWorkflowService.defaultBranch")(function* (cwd) {
+      yield* ensureGitCommand("GitWorkflowService.defaultBranch", cwd);
+      const remoteName = yield* git
+        .resolvePrimaryRemoteName(cwd)
+        .pipe(Effect.orElseSucceed(() => "origin"));
+      return yield* git.resolveDefaultBranchName(cwd, remoteName);
     }),
     remoteStatus: Effect.fn("GitWorkflowService.remoteStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(

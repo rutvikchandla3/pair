@@ -337,7 +337,10 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
-}): Extract<ProjectMutation, { type: "project.create" }> {
+}): Extract<ProjectMutation, { type: "project.create" }> & {
+  readonly workspaceRoot: string;
+  readonly roots?: undefined;
+} {
   return {
     type: "project.create",
     commandId: input.commandId,

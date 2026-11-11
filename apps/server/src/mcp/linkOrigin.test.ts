@@ -85,7 +85,7 @@ const layerLaunches = Layer.effect(
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     return ThreadLaunch.ThreadLaunchService.of({
-      launch: (input: ThreadLaunch.ThreadLaunchInput) =>
+      launch: (input: ThreadLaunch.ThreadLaunchRequest) =>
         threads
           .dispatch({
             type: "thread.create",
@@ -141,7 +141,7 @@ const layerTools = Layer.mergeAll(
         Effect.succeed({
           id: input.projectId,
           title: input.title,
-          workspaceRoot: input.workspaceRoot,
+          workspaceRoot: input.workspaceRoot ?? "",
           defaultModelSelection: null,
           scripts: [],
           createdAt: "2026-10-18T00:00:00.000Z",

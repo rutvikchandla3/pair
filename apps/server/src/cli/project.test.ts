@@ -130,6 +130,35 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
+    // A workspace names registered repositories, each folder optionally renamed.
+    const otherRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-other-"));
+    for (const repository of [workspaceRoot, otherRoot]) {
+      NodeFS.mkdirSync(NodePath.join(repository, ".git"));
+    }
+    yield* runCli(["project", "add", otherRoot, "--base-dir", baseDir]);
+    const other = (yield* readProjects(baseDir)).projects.find(
+      (p) => p.workspaceRoot === otherRoot,
+    );
+    yield* runCli([
+      "project",
+      "add",
+      "--title",
+      "Stack",
+      "--root",
+      added?.id ?? "",
+      "--root",
+      `${otherRoot}=web`,
+      "--base-dir",
+      baseDir,
+    ]);
+    const stack = (yield* readProjects(baseDir)).projects.find((p) => p.title === "Stack");
+    assert.deepEqual(stack?.roots, [
+      { projectId: added!.id, name: NodePath.basename(workspaceRoot) },
+      { projectId: other!.id, name: "web" },
+    ]);
+    yield* runCli(["project", "remove", stack?.id ?? "", "--base-dir", baseDir]);
+    yield* runCli(["project", "remove", other?.id ?? "", "--base-dir", baseDir]);
+
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),

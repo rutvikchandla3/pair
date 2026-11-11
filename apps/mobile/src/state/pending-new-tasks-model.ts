@@ -55,6 +55,8 @@ export interface PendingDraftProjectDefaults {
   readonly defaultModeSettled: boolean;
   readonly cloudAvailable: boolean;
   readonly cloudLaunch: boolean;
+  /** A workspace's repositories each start from their own default branch. */
+  readonly workspace: boolean;
 }
 
 /**
@@ -65,6 +67,7 @@ export function pendingDraftBranchNeedsRefs(
   draft: ComposerDraft,
   defaults: PendingDraftProjectDefaults,
 ): boolean {
+  if (defaults.workspace) return false;
   const selection = defaults.canChooseWorkspace ? draft.workspaceSelection : undefined;
   return selection === undefined ? defaults.defaultMode !== "local" : selection.branch === null;
 }
@@ -77,6 +80,7 @@ export function resolvePendingDraftBranch(input: {
   readonly branches: Parameters<typeof resolveNewTaskDraftWorkspace>[0]["branches"];
   readonly projectCwd: string | null;
 }): string | null {
+  if (input.defaults.workspace) return null;
   return resolveNewTaskDraftWorkspace({
     selection: input.draft.workspaceSelection,
     canChooseWorkspace: input.defaults.canChooseWorkspace,
@@ -85,6 +89,7 @@ export function resolvePendingDraftBranch(input: {
     isGitRepo: input.isGitRepo,
     cloudAvailable: input.defaults.cloudAvailable,
     cloudLaunch: input.defaults.cloudLaunch,
+    workspace: input.defaults.workspace,
     branches: input.branches,
     projectCwd: input.projectCwd,
   }).branch;
