@@ -64,6 +64,8 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
     "export-unavailable",
   ]),
   baseRef: Schema.optional(Schema.String),
+  /** For `base-ref-missing`: the base is a branch on the host that origin lacks. */
+  baseOnHost: Schema.optional(Schema.Boolean),
   branch: Schema.optional(Schema.String),
   /** The remote that was checked, as `host/path`. */
   remote: Schema.optional(Schema.String),
@@ -80,7 +82,9 @@ export class CloudLaunchError extends Schema.TaggedError<CloudLaunchError>()("Cl
       case "no-origin":
         return "This project has no origin remote to clone in the cloud.";
       case "base-ref-missing":
-        return `${this.baseRef ?? "The base branch"} is not on origin. Push ${this.baseRef ?? "it"} first.`;
+        return this.baseOnHost === true
+          ? `${this.baseRef ?? "The base branch"} is not on origin. Push ${this.baseRef ?? "it"} first.`
+          : `${this.baseRef ?? "The base branch"} isn't a branch of ${this.remote ?? "this repository"}. Choose another base branch.`;
       case "branch-not-pushed":
         return `${this.branch} is not on ${this.remote}. Push ${this.branch} first.`;
       case "repo-unreadable":
@@ -455,10 +459,15 @@ export const checkoutInSandbox = Effect.fn("CloudPreparation.checkoutInSandbox")
     });
   }
   if (!pushed && !(yield* hasRemoteBranch(input.baseRef))) {
+    const baseOnHost = yield* git
+      .hasCommit({ cwd: input.projectRoot, refName: `refs/heads/${input.baseRef}` })
+      .pipe(Effect.orElseSucceed(() => false));
     return yield* new CloudLaunchError({
       projectId: input.projectId,
       reason: "base-ref-missing",
       baseRef: input.baseRef,
+      baseOnHost,
+      remote: normalizeGitRemoteUrl(url),
     });
   }
   const created = yield* git.createWorktree({

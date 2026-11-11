@@ -3305,10 +3305,19 @@ it.effect.each([
     reason: "This project has no origin remote to clone in the cloud.",
   },
   {
-    name: "the base branch was never pushed",
-    git: { hasCommit: () => Effect.succeed(false) },
+    name: "the base branch exists on the host but was never pushed",
+    git: {
+      hasCommit: ({ refName }) => Effect.succeed(refName === "refs/heads/main"),
+    } satisfies Partial<GitWorkflow.GitWorkflowService["Service"]>,
     machineFails: false,
     reason: "main is not on origin. Push main first.",
+  },
+  {
+    // A draft opened while the project still cloned can carry the unborn `master`.
+    name: "the base branch is not in the repository at all",
+    git: { hasCommit: () => Effect.succeed(false) },
+    machineFails: false,
+    reason: "main isn't a branch of github.com/acme/app. Choose another base branch.",
   },
   {
     // Origin said it had the branch at launch; it was deleted before the machine checked.
