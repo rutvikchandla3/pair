@@ -52,14 +52,23 @@ Everyone on the server sees every workspace, as with projects.
 - Each turn's changed files, the diff panel and reverting to an earlier turn cover every
   repository. Paths start with the repository's folder name, such as `frontend/src/app.ts`.
   A revert changes nothing if any repository is missing or has no checkpoint for that turn.
+- The thread lists its repositories with each one's branch, changes and pull request. Select one
+  and the branch, commit, push and pull request controls act on it. Switching a branch there
+  changes that repository only.
+- **All changed repositories** commits, pushes and opens pull requests in every repository that
+  has changes, in order, with one commit message. It stops at the first failure and reports which
+  repositories finished, which did not run and which were skipped. A repository on its default
+  branch or behind its upstream is skipped.
+- A pull request opened for the thread's branch in any repository is linked to the thread. The
+  thread settles once every linked pull request is merged or closed.
+- Storage cleanup removes a workspace thread's folder only when every repository in it passes the
+  usual checks. Otherwise it keeps the whole folder and names the repository that failed.
 
 You can't delete a project while a workspace uses it. Remove it from the workspace first.
 
 ## Not supported yet
 
-- Git controls and pull request actions for each repository. Commit, push and open pull requests
-  from the agent or a terminal inside each repository.
-- Automatic cleanup. Storage cleanup never removes a workspace thread's folder. When you delete
-  the thread, Pair may offer to remove it; otherwise remove it by hand.
+- The diff panel's **Changes**, **Uncommitted** and **Commits** views. A workspace thread shows
+  turn diffs only.
 - Cloud. A workspace thread can't run in Cloud or move between your Mac and Pair Cloud, and a Pair
   Cloud server has no workspaces.

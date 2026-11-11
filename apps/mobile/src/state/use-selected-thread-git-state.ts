@@ -7,22 +7,18 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import {
-  useSelectedThreadRepositories,
-  useSelectedThreadWorktree,
-} from "./use-selected-thread-worktree";
+import { useSelectedThreadGitTarget } from "./use-selected-thread-git-target";
+import { workspaceRunLabel } from "./use-selected-thread-workspace";
 
 export function useSelectedThreadGitState() {
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
-  // A workspace thread's folder holds several repositories and is not one itself.
-  const isWorkspaceThread = useSelectedThreadRepositories() !== null;
+  const target = useSelectedThreadGitTarget();
+  const workspaceRun = target.workspace?.run ?? null;
 
-  const selectedThreadGitTarget = {
+  const gitActionState = useVcsActionState({
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  };
-  const gitActionState = useVcsActionState(selectedThreadGitTarget);
+    cwd: target.cwd,
+  });
   const sourceControlDiscovery = useEnvironmentQuery(
     selectedThread === null
       ? null
@@ -34,7 +30,7 @@ export function useSelectedThreadGitState() {
 
   const selectedThreadBranchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: isWorkspaceThread ? null : selectedThreadCwd,
+    cwd: target.cwd,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
@@ -47,7 +43,9 @@ export function useSelectedThreadGitState() {
   );
 
   return {
-    gitOperationLabel: gitActionState.currentLabel,
+    // "All changed repositories" keeps every control busy until its last repository finishes.
+    gitOperationLabel:
+      workspaceRun === null ? gitActionState.currentLabel : workspaceRunLabel(workspaceRun),
     sourceControlDiscovery,
     selectedThreadBranches,
     selectedThreadBranchesLoading: selectedThreadBranchState.isPending,

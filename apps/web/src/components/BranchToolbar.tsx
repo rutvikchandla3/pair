@@ -1,6 +1,9 @@
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
+import {
+  isWorkspaceProject,
+  type ThreadRepository,
+} from "@t3tools/client-runtime/state/workspaces";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -120,6 +123,8 @@ interface BranchToolbarProps {
   trailing?: ReactNode;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  /** A workspace thread's selected repository, whose branch the picker shows and switches. */
+  repository?: ThreadRepository | null;
 }
 
 function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string) {
@@ -673,6 +678,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   availableEnvironments,
   onEnvironmentChange,
   trailing,
+  repository = null,
 }: BranchToolbarProps) {
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -834,8 +840,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             onAddToMachine={onAddToMachine}
           />
         ) : null}
-        {panelSection !== "workspace" && !workspace ? (
+        {panelSection !== "workspace" && (!workspace || repository !== null) ? (
           <BranchToolbarBranchSelector
+            {...(workspace && repository !== null ? { repository } : {})}
             displayMode="panel"
             className="w-full"
             environmentId={environmentId}
@@ -933,8 +940,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         </div>
       ) : null}
 
-      {showGitControls && !workspace ? (
+      {showGitControls && (!workspace || repository !== null) ? (
         <BranchToolbarBranchSelector
+          {...(workspace && repository !== null ? { repository } : {})}
           forceNewWorktree={forcesNewWorktree}
           ref={branchSelectorRef}
           className="min-w-0 flex-initial justify-end @xl/composer-surface:ml-auto"

@@ -1,8 +1,10 @@
 import type { GitRunStackedActionInput, GitRunStackedActionResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 
 import * as OrchestratorV2 from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { workspaceRootAt } from "../project/WorkspaceCheckouts.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 
 export const refreshPushedPullRequests = Effect.fn("refreshPushedPullRequests")(
@@ -16,7 +18,10 @@ export const refreshPushedPullRequests = Effect.fn("refreshPushedPullRequests")(
       const engine = yield* OrchestratorV2.OrchestratorV2;
       const thread = yield* engine.getThreadShell(input.threadId);
       if (thread !== null) {
-        yield* pullRequests.refreshAfterTurn(thread.projectId);
+        const path = yield* Path.Path;
+        yield* pullRequests.refreshAfterTurn(
+          workspaceRootAt(thread, input.cwd, path)?.projectId ?? thread.projectId,
+        );
         return;
       }
     }

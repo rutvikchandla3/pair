@@ -17,10 +17,10 @@ vi.mock("./use-thread-selection", () => ({
     selectedThreadProject: { workspaceRoot: harness.root },
   }),
 }));
-vi.mock("./use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({ selectedThreadCwd: harness.cwd }),
-  useSelectedThreadRepositories: () => null,
+vi.mock("./use-selected-thread-git-target", () => ({
+  useSelectedThreadGitTarget: () => ({ workspace: null, cwd: harness.cwd }),
 }));
+vi.mock("./use-selected-thread-workspace", () => ({ workspaceRunLabel: () => "" }));
 vi.mock("./use-vcs-action-state", () => ({
   useVcsActionState: () => ({ currentLabel: null }),
 }));

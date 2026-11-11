@@ -80,6 +80,7 @@ import {
   TurnItemId,
   NodeId,
   ProjectId,
+  ProjectRoot,
   ProviderInstanceId,
   MemberId,
   SandboxId as SandboxIdSchema,
@@ -215,6 +216,7 @@ export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
   | "projectId"
+  | "roots"
   | "branch"
   | "worktreePath"
   | "pullRequests"
@@ -663,6 +665,10 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
     ProjectionStoreV2Error
   >;
+  /** The roots of the latest workspace thread at a folder, deleted and archived ones included. */
+  readonly getWorktreeRoots: (
+    worktreePath: string,
+  ) => Effect.Effect<ReadonlyArray<ProjectRoot> | null, ProjectionStoreV2Error>;
   /**
    * Delegated tasks in a linked environment with work left for this one: no
    * result yet, or cancelled or stopped here without that stop reaching there,
@@ -1300,6 +1306,7 @@ const PullRequestThread = OrchestrationV2AppThreadJsonSchema.mapFields(
     linkedPullRequest,
     branchPullRequest,
     pullRequests,
+    roots,
   }) => ({
     id,
     projectId,
@@ -1312,12 +1319,16 @@ const PullRequestThread = OrchestrationV2AppThreadJsonSchema.mapFields(
     linkedPullRequest,
     branchPullRequest,
     pullRequests,
+    roots,
   }),
 );
 const decodePullRequestThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PullRequestThread),
 );
 
+const decodeWorktreeRoots = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(ProjectRoot)),
+);
 const decodeThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
@@ -7093,6 +7104,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
+    const getWorktreeRoots: ProjectionStoreV2Shape["getWorktreeRoots"] = Effect.fn(
+      "ProjectionStore.getWorktreeRoots",
+    )(
+      function* (worktreePath) {
+        const rows = yield* sql<{ readonly roots: string }>`
+        SELECT json_extract(payload_json, '$.roots') AS roots
+        FROM orchestration_v2_projection_threads
+        WHERE json_extract(payload_json, '$.worktreePath') = ${worktreePath}
+          AND json_extract(payload_json, '$.roots') IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `;
+        const row = rows[0];
+        return row === undefined ? null : yield* decodeWorktreeRoots(row.roots);
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const shellThreadStateFromRow =
       /* Runs once per shell row; the enclosing snapshot or thread read owns the span. */
       Effect.fnUntraced(function* (input: {
@@ -8068,6 +8097,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
+      getWorktreeRoots: readOnReader(getWorktreeRoots),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),
       getTurnStartContext: readOnReader(getTurnStartContext),

@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { GitCommandError, ProjectId } from "@t3tools/contracts";
+import { GitCommandError, ProjectId, type ProjectRoot } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as WorkspaceCheckouts from "./WorkspaceCheckouts.ts";
@@ -21,6 +22,7 @@ const roots = ["api", "web", "docs"].map((name) => ({
 const layerFor = (input: {
   readonly worktreesDir: string;
   readonly git: ReturnType<typeof fakeGit>;
+  readonly threadRoots?: ReadonlyArray<ProjectRoot>;
 }) =>
   WorkspaceCheckouts.layer.pipe(
     Layer.provide(
@@ -34,7 +36,16 @@ const layerFor = (input: {
           deleteLocalBranch: input.git.deleteLocalBranch,
           pruneWorktrees: () => Effect.void,
         }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getWorktreeRoots: () => Effect.succeed(input.threadRoots ?? null),
+        }),
         Layer.mock(ProjectService.ProjectService)({
+          getByWorkspaceRoot: (workspaceRoot) =>
+            Effect.succeedSome({
+              id: ProjectId.make("project:stack"),
+              workspaceRoot,
+              roots,
+            } as never),
           getById: (id) => {
             const name = id.replace("project:", "");
             return Effect.succeedSome({
@@ -167,5 +178,38 @@ it.effect("removes the roots it created when a later root fails", () =>
       );
       assert.isFalse(yield* fileSystem.exists(folder));
     }).pipe(Effect.provide(layerFor({ worktreesDir, git })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("removes a folder by the roots its thread started with, keeping the branch", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workspace-" });
+    const git = fakeGit(fileSystem);
+    const folder = path.join(worktreesDir, "stack", "feature");
+    // The workspace dropped mobile/ after this thread started with it.
+    const threadRoots = [
+      roots[0]!,
+      { projectId: ProjectId.make("project:mobile"), name: "mobile" },
+    ];
+    for (const name of ["api", "mobile"]) {
+      yield* fileSystem.makeDirectory(path.join(folder, name), { recursive: true });
+    }
+    yield* Effect.gen(function* () {
+      const checkouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
+      assert.isTrue(
+        yield* checkouts.removeFolder({ workspaceRoot: "/managed/workspaces/stack", folder }),
+      );
+      assert.deepEqual(
+        git.removeWorktree.mock.calls.map(([request]) => [request.cwd, request.path]),
+        [
+          ["/repos/api", path.join(folder, "api")],
+          ["/repos/mobile", path.join(folder, "mobile")],
+        ],
+      );
+      assert.equal(git.deleteLocalBranch.mock.calls.length, 0);
+      assert.isFalse(yield* fileSystem.exists(folder));
+    }).pipe(Effect.provide(layerFor({ worktreesDir, git, threadRoots })));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

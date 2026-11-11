@@ -2,7 +2,7 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
-import type { AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import {
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -19,10 +19,14 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { stoppedReadLabel } from "@t3tools/client-runtime/state/sandbox";
-import type { ThreadRepository } from "@t3tools/client-runtime/state/workspaces";
 
 import { useStoppedFiles } from "../../state/sandbox";
 import { useEnvironmentScope } from "../../state/session";
+import {
+  type SelectedThreadWorkspace,
+  selectWorkspaceRepository,
+  workspaceGitPlan,
+} from "../../state/use-selected-thread-workspace";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
@@ -100,8 +104,14 @@ export type ThreadGitMenuProps = {
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
-  /** A workspace thread's repositories, which replace the git actions; null for one repository. */
-  readonly repositories?: ReadonlyArray<ThreadRepository> | null;
+  /**
+   * A workspace thread's repositories; null for one repository. `gitStatus` and the actions are
+   * then the selected repository's.
+   */
+  readonly workspace?: Pick<
+    SelectedThreadWorkspace,
+    "threadKey" | "repositories" | "statuses" | "selected"
+  > | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
@@ -274,6 +284,14 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   };
 
+  const openWorkspaceRun = () => {
+    navigation.navigate("GitCommit", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+      scope: "all",
+    });
+  };
+
   const openGitInspector = () => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
@@ -292,6 +310,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     openFiles,
     openGitInspector,
     openReview,
+    openWorkspaceRun,
     quickAction,
     quickActionHint,
     quickActionIcon,
@@ -378,25 +397,8 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       identifier: "thread-right-git",
       label: "Git",
       menu: {
-        items: props.repositories
-          ? [
-              {
-                description: workspaceReviewSubtitle(props.hasThread),
-                disabled: props.hasThread === false,
-                icon: { name: "text.bubble", type: "sfSymbol" as const },
-                label: "Review changes",
-                onPress: model.openReview,
-                type: "action" as const,
-              },
-              ...workspaceRepositoryRows(props.repositories).map((row) => ({
-                description: row.subtitle,
-                disabled: true,
-                icon: { name: "folder", type: "sfSymbol" as const },
-                label: row.title,
-                onPress: (): void => {},
-                type: "action" as const,
-              })),
-            ]
+        items: props.workspace
+          ? headerMenuItems(workspaceMenuItems(props, props.workspace, model))
           : [
               {
                 description: model.menuStatus,
@@ -451,7 +453,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 type: "action",
               },
             ],
-        title: props.repositories ? "Repositories" : "Git",
+        title: props.workspace ? "Repositories" : "Git",
       },
       sharesBackground: true,
       type: "menu",
@@ -573,29 +575,12 @@ function threadGitMenuDefinition(
   props: ThreadGitMenuProps,
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
-  if (props.repositories) {
+  if (props.workspace) {
     return {
       title: "Repositories",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       separateBackground: false,
-      items: [
-        {
-          id: "git-review",
-          title: "Review changes",
-          icon: "text.bubble",
-          disabled: props.hasThread === false,
-          subtitle: workspaceReviewSubtitle(props.hasThread),
-          onPress: model.openReview,
-        },
-        ...workspaceRepositoryRows(props.repositories).map((row) => ({
-          id: `workspace-${row.key}`,
-          title: row.title,
-          icon: "folder" as const,
-          disabled: true,
-          subtitle: row.subtitle,
-          onPress: () => {},
-        })),
-      ],
+      items: workspaceMenuItems(props, props.workspace, model),
     };
   }
   return {
@@ -645,4 +630,107 @@ function threadGitMenuDefinition(
       },
     ],
   };
+}
+
+/** A workspace thread's menu: its repositories to pick from, then the picked one's actions. */
+function workspaceMenuItems(
+  props: ThreadGitMenuProps,
+  workspace: NonNullable<ThreadGitMenuProps["workspace"]>,
+  model: ReturnType<typeof useThreadGitControlModel>,
+): ReadonlyArray<AppBarMenuItem> {
+  const repository = workspace.selected;
+  const runnable = workspaceGitPlan(workspace).steps.length > 0;
+  return [
+    {
+      id: "git-review",
+      title: "Review changes",
+      icon: "text.bubble",
+      disabled: props.hasThread === false,
+      subtitle: workspaceReviewSubtitle(props.hasThread),
+      onPress: model.openReview,
+    },
+    {
+      id: "workspace-repositories",
+      title: "Repositories",
+      inline: true,
+      items: workspaceRepositoryRows(workspace).map((row) => ({
+        id: `workspace-${row.key}`,
+        title: row.title,
+        icon: "folder",
+        subtitle: row.subtitle,
+        selected: row.selected,
+        disabled: row.name === null,
+        onPress: () => {
+          if (row.name !== null) selectWorkspaceRepository(workspace.threadKey, row.name);
+        },
+      })),
+    },
+    ...(repository === null
+      ? []
+      : [
+          {
+            id: "workspace-selected",
+            title: repository.name,
+            inline: true,
+            items: [
+              {
+                id: "git-status",
+                title: compactMenuBranchLabel(model.currentBranchLabel),
+                icon: "point.topleft.down.curvedto.point.bottomright.up",
+                disabled: true,
+                subtitle: model.menuStatus,
+                onPress: () => {},
+              },
+              {
+                id: "git-quick-action",
+                title: model.quickAction.label,
+                icon: model.quickActionIcon,
+                disabled: model.quickAction.disabled,
+                subtitle: model.quickActionHint ?? undefined,
+                onPress: () => {
+                  void model.runQuickAction();
+                },
+              },
+              {
+                id: "git-more",
+                title: "More",
+                icon: "ellipsis",
+                disabled: props.hasThread === false,
+                subtitle: "Commit, files, branches",
+                onPress: model.openGitInspector,
+              },
+            ],
+          },
+          {
+            id: "workspace-run",
+            title: "All changed repositories",
+            icon: "square.stack.3d.up",
+            disabled: props.hasThread === false || !runnable,
+            subtitle: runnable ? "Commit, push and open pull requests" : "No changes to run",
+            onPress: model.openWorkspaceRun,
+          },
+        ]),
+  ];
+}
+
+/** The iOS 26 header bar's menu item shape for the same items. */
+function headerMenuItems(items: ReadonlyArray<AppBarMenuItem>): HeaderItems {
+  return items.map((item) =>
+    "items" in item
+      ? {
+          type: "submenu",
+          label: item.title ?? "",
+          inline: item.inline,
+          items: headerMenuItems(item.items),
+        }
+      : {
+          type: "action",
+          label: item.title,
+          description: item.subtitle,
+          ...(item.icon ? { icon: { name: item.icon, type: "sfSymbol" } } : {}),
+          ...(item.selected ? { state: "on" } : {}),
+          disabled: item.disabled,
+          onPress: item.onPress,
+        },
+  );
 }

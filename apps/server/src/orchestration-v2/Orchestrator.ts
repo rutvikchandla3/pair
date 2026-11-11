@@ -4325,7 +4325,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ];
           } else if (command.type === "thread.pull-request.unlink") {
             if (!existing) return thread;
-            const belongsToStack =
+            // Discovery would re-add a workspace thread's pull request, so it stays as a tombstone.
+            const tombstones =
+              thread.roots !== undefined ||
               existing.source === "stack" ||
               existing.stack !== null ||
               links.some(
@@ -4334,7 +4336,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   link.repository.toLowerCase() === key.repository &&
                   link.stack?.layers.some((layer) => layer.number === key.number),
               );
-            pullRequests = belongsToStack
+            pullRequests = tombstones
               ? links.map((link) =>
                   link === existing
                     ? {
@@ -4450,7 +4452,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request.watch" ? now : thread.updatedAt,
           };
         }
-        case "thread.pull-request.sync":
+        case "thread.pull-request.sync": {
+          const discovered = (command.discoveredPullRequests ?? []).filter(
+            (found) =>
+              !threadPullRequestsOf(thread).some((link) =>
+                threadPullRequestKeysEqual(link, normalizeThreadPullRequestKey(found)),
+              ),
+          );
+          if (discovered.length > 0) {
+            return {
+              ...thread,
+              pullRequests: [
+                ...threadPullRequestsOf(thread),
+                ...discovered.map((found) => ({
+                  ...normalizeThreadPullRequestKey(found),
+                  url: canonicalizeGitCafePullRequestUrl(found.url),
+                  source: "manual" as const,
+                  linkedAt: DateTime.formatIso(now),
+                  snapshot: null,
+                  stack: null,
+                })),
+              ],
+              updatedAt: thread.updatedAt,
+            };
+          }
           return {
             ...thread,
             branchPullRequest: command.branchPullRequest,
@@ -4483,6 +4508,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }),
             updatedAt: thread.updatedAt,
           };
+        }
         case "thread.title.regeneration.complete":
           return thread.titleRegeneration?.requestId === command.requestId
             ? {

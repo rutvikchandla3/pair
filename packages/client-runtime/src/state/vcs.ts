@@ -13,7 +13,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
@@ -286,6 +286,34 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:vcs:status",
+    idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+      subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        Stream.mapAccum(
+          () => null as VcsStatusResult | null,
+          (current, event) => {
+            const next = applyGitStatusStreamEvent(current, event);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+  const statusesFamily = Atom.family((key: string) => {
+    const [environmentId, cwds] = JSON.parse(key) as [EnvironmentId, string[]];
+    return Atom.make((get) =>
+      cwds.map((cwd) =>
+        AsyncResult.getOrElse(get(status({ environmentId, input: { cwd } })), () => null),
+      ),
+    ).pipe(Atom.withLabel(`environment-data:vcs:statuses:${key}`));
+  });
+  /** Several repositories' live statuses, in order; null for one still loading or failing. */
+  const statuses = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly cwds: ReadonlyArray<string>;
+  }) => statusesFamily(JSON.stringify([target.environmentId, target.cwds]));
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -294,20 +322,8 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
-      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
-    }),
+    status,
+    statuses,
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,

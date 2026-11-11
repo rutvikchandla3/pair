@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import type { EnvironmentProject, EnvironmentThreadShell } from "./models.ts";
+import { isWorkspaceProject } from "./workspaces.ts";
 
 export type CloudTarget =
   /** No paired environment reports cloudLaunch: Cloud stays hidden. */
@@ -315,7 +316,8 @@ export function resolveContinueInCloud(input: {
     (candidate) =>
       candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
   );
-  if (project === undefined) return HIDDEN_OFFER;
+  // A workspace thread spans several repositories; Cloud runs one.
+  if (project === undefined || isWorkspaceProject(project)) return HIDDEN_OFFER;
   return continueInCloudOffer({
     thread: {
       environmentId: thread.environmentId,

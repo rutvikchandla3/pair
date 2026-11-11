@@ -581,6 +581,10 @@ describe("resolveContinueInCloud", () => {
     expect(resolveContinueInCloud({ ...input, thread: shell(null), projects: [] })).toEqual({
       kind: "hidden",
     });
+    const workspace = { ...local, roots: [] } as EnvironmentProject;
+    expect(
+      resolveContinueInCloud({ ...input, thread: shell(null), projects: [workspace, onCloud] }),
+    ).toEqual({ kind: "hidden" });
   });
 });
 

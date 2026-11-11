@@ -11,7 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -76,11 +78,14 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
 const layerDependenciesFor = (
   dispatch: Orchestrator.OrchestratorV2Shape["dispatch"],
   threadShell: PullRequestTestThread | null = thread,
+  shells: ReadonlyArray<OrchestrationProjectShell> = [project],
 ) =>
   Layer.mergeAll(
     Layer.mock(ProjectService.ProjectService)({
-      getShell: () => Effect.succeedSome(project),
+      getShell: (id) =>
+        Effect.succeed(Option.fromNullishOr(shells.find((entry) => entry.id === id))),
     }),
+    Path.layer,
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: () => Effect.succeed(threadShell ? v2PullRequestThread(threadShell) : null),
       dispatch,
@@ -142,6 +147,7 @@ describe("linkCreatedPullRequest", () => {
       const { commands, dispatch } = yield* recordingDispatch();
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
+        cwd: project.workspaceRoot,
         result: prResult({
           status: "created",
           number: 42,
@@ -168,15 +174,43 @@ describe("linkCreatedPullRequest", () => {
   );
 });
 
+const workspaceThread: PullRequestTestThread = {
+  ...thread,
+  projectId: ProjectId.make("project-stack"),
+  branch: "feature",
+  worktreePath: "/worktrees/stack/feature",
+  roots: [
+    { projectId: ProjectId.make("project-web"), name: "web" },
+    { projectId: PROJECT_ID, name: "api" },
+  ],
+};
+
+it.effect("links a workspace thread's pull request in the repository the action ran in", () =>
+  Effect.gen(function* () {
+    const { commands, dispatch } = yield* recordingDispatch();
+    yield* linkCreatedPullRequest({
+      threadId: THREAD_ID,
+      cwd: "/worktrees/stack/feature/api",
+      result: prResult({ status: "created", number: 5, url: "https://ghe.internal/x/5" }),
+      commandId,
+    }).pipe(Effect.provide(layerDependenciesFor(dispatch, workspaceThread)));
+    expect(yield* Ref.get(commands)).toMatchObject([
+      { host: "github.acme.test", repository: "platform/api", number: 5, source: "created" },
+    ]);
+  }),
+);
+
 it.effect(
   "refreshes PR readers after a push from a thread or project, but not a local commit",
   () =>
     Effect.gen(function* () {
       const refreshed: string[] = [];
+      let current = thread;
       const layerDependencies = Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadShell: () => Effect.succeed(v2PullRequestThread(thread)),
+          getThreadShell: () => Effect.sync(() => v2PullRequestThread(current)),
         }),
+        Path.layer,
         Layer.mock(ProjectStore.ProjectStoreV2)({
           listShells: () => Effect.succeed([project]),
         }),
@@ -206,6 +240,12 @@ it.effect(
         { cwd: "/draft-worktree", projectId: PROJECT_ID },
         { push: { status: "pushed" } },
       ).pipe(Effect.provide(layerDependencies));
-      expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID]);
+      // A workspace thread's push refreshes the repository it ran in.
+      current = workspaceThread;
+      yield* refreshPushedPullRequests(
+        { cwd: "/worktrees/stack/feature/web", threadId: THREAD_ID },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(layerDependencies));
+      expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID, "project-web"]);
     }),
 );

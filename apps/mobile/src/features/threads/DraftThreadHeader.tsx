@@ -1,4 +1,5 @@
 import { uuidv4 } from "../../lib/uuid";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
@@ -72,7 +73,16 @@ export function DraftThreadHeader(props: {
         hasThread: false,
         currentBranch: props.thread.branch,
         gitStatus: status.data,
-        repositories,
+        // A draft has no folder yet, so no repository to act on.
+        workspace:
+          repositories === null
+            ? null
+            : {
+                threadKey: scopedThreadKey(environmentId, props.thread.id),
+                repositories,
+                statuses: [],
+                selected: null,
+              },
         gitOperationLabel: progress.currentLabel,
         canOpenTerminal: false,
         canOperateTerminal: false,

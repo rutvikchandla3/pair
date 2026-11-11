@@ -31,6 +31,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as WorkspaceCheckouts from "./project/WorkspaceCheckouts.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { describe, expect, it } from "@effect/vitest";
@@ -378,6 +379,9 @@ const cleanupFixture = (
     let memberPinnedThreadIds: string[] = [];
     let fullStatusCalls = 0;
     let snapshotReads = 0;
+    const workspaceRemovals: Array<
+      Parameters<WorkspaceCheckouts.WorkspaceCheckouts["Service"]["remove"]>
+    > = [];
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
@@ -490,6 +494,16 @@ const cleanupFixture = (
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
+      Effect.provideService(WorkspaceCheckouts.WorkspaceCheckouts, {
+        remove: (checkout, options) =>
+          Effect.sync(() => workspaceRemovals.push([checkout, options])).pipe(
+            Effect.andThen(fs.remove(checkout.folder, { recursive: true })),
+            Effect.orDie,
+          ),
+      } satisfies Pick<
+        WorkspaceCheckouts.WorkspaceCheckouts["Service"],
+        "remove"
+      > as unknown as WorkspaceCheckouts.WorkspaceCheckouts["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
         subscribeMetadata: (
           listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
@@ -587,6 +601,7 @@ const cleanupFixture = (
         }) ?? Effect.void,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
+      workspaceRemovals,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -2324,6 +2339,62 @@ describe("storage cleanup reports and local file policies", () => {
         expect(
           (yield* command(repo, ["show-ref", "--verify", "refs/heads/feature"])).stdout,
         ).not.toBe("");
+      }),
+    ),
+  );
+  it.live.each([
+    ["clean", "removed", "No commits beyond the project branch"],
+    ["dirty", "kept", "Has uncommitted changes (1 file) in web/"],
+    ["unmerged", "kept", "Has commits beyond the project branch in web/"],
+  ] as const)("checks every repository of a workspace folder: %s", ([state, outcome, reason]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        const { service, fs, repo, command, config } = fixture;
+        const web = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-web-" }),
+        );
+        yield* command(web, ["init", "-b", "main"]);
+        yield* command(web, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(web, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${web}/tracked.txt`, "original\n");
+        yield* command(web, ["add", "."]);
+        yield* command(web, ["commit", "-m", "initial"]);
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-workspace-" });
+        const folder = `${config.worktreesDir}/stack/feature`;
+        yield* command(repo, ["worktree", "add", "-b", "stack", `${folder}/api`]);
+        yield* command(web, ["worktree", "add", "-b", "stack", `${folder}/web`]);
+        const roots = [
+          { projectId: ProjectId.make("project-1"), name: "api" },
+          { projectId: ProjectId.make("project-2"), name: "web" },
+        ];
+        fixture.setProjectRoots([repo, web, workspace]);
+        fixture.setThreads([
+          shell({
+            projectId: ProjectId.make("project-3"),
+            branch: "stack",
+            worktreePath: folder,
+            roots,
+            archivedAt: at(-DAY_MS),
+          }),
+        ]);
+        if (state === "dirty") yield* fs.writeFileString(`${folder}/web/tracked.txt`, "edit\n");
+        if (state === "unmerged") {
+          yield* fs.writeFileString(`${folder}/web/tracked.txt`, "unmerged work\n");
+          yield* command(`${folder}/web`, ["commit", "-am", "unmerged work"]);
+        }
+
+        const report = yield* service.runNow;
+        expect(report.entries.filter((entry) => entry.path === folder)).toMatchObject([
+          { kind: "worktree", outcome, reason },
+        ]);
+        expect(yield* fs.exists(folder)).toBe(outcome === "kept");
+        expect(fixture.workspaceRemovals).toEqual(
+          outcome === "removed" ? [[{ folder, roots, branch: null }, { force: false }]] : [],
+        );
       }),
     ),
   );

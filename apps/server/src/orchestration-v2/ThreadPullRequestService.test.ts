@@ -483,6 +483,153 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       ),
   );
 
+  it.effect.each([
+    { linked: "nothing", existing: [], discovered: ["api", "web"] },
+    // An earlier sync linked api's pull request; web's joins it without clearing it.
+    { linked: "api's pull request", existing: ["api"], discovered: ["web"] },
+  ] as const)(
+    "links each workspace repository's pull request when $linked is linked",
+    ({ existing, discovered }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = "/worktrees/stack/feature";
+          const roots = ["api", "web"].map((name) => ({
+            projectId: ProjectId.make(`project:${name}`),
+            name,
+          }));
+          const pullRequest = (name: string) => ({
+            host: "github.com",
+            repository: `acme/${name}`,
+            number: name === "api" ? 11 : 12,
+            url: `https://github.com/acme/${name}/pull/${name === "api" ? 11 : 12}`,
+          });
+          const thread = {
+            ...threadShell("workspace-thread"),
+            projectId: ProjectId.make("project:stack"),
+            branch: "feature",
+            worktreePath: folder,
+            roots,
+            pullRequests: existing.map((name) => ({
+              ...pullRequest(name),
+              source: "manual" as const,
+              linkedAt: "2026-09-19T00:00:00.000Z",
+              snapshot: null,
+              stack: null,
+            })),
+          };
+          const project = (id: ProjectId, workspaceRoot: string): OrchestrationProjectShell => ({
+            id,
+            title: id,
+            workspaceRoot,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          });
+          const workspace = { ...project(thread.projectId, "/workspaces/stack"), roots };
+          const projects = [
+            workspace,
+            ...roots.map((root) => project(root.projectId, `/repos/${root.name}`)),
+          ];
+          const activation = yield* Deferred.make<void>();
+          const sweepStarted = yield* Deferred.make<void>();
+          const commands: Array<OrchestrationV2ServerCommand> = [];
+          const lookupCwds: Array<string> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.never,
+              getPullRequestSnapshot: () =>
+                Deferred.succeed(sweepStarted, undefined).pipe(
+                  Effect.as({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [thread],
+                    archivedThreads: [],
+                  }),
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return { sequence: 2, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed(projects),
+              getShell: (id) =>
+                Effect.succeed(Option.fromNullishOr(projects.find((entry) => entry.id === id))),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              branchPullRequest: (input) =>
+                Effect.sync(() => {
+                  lookupCwds.push(input.cwd);
+                  const name = input.cwd.split("/").at(-1)!;
+                  return {
+                    number: pullRequest(name).number,
+                    title: name,
+                    url: pullRequest(name).url,
+                    baseRef: "main",
+                    headRef: input.branch,
+                    state: "open" as const,
+                    repositoryKey: `github.com/acme/${name}`,
+                    updatedAt: "2026-09-20T00:00:00.000Z",
+                  };
+                }),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: (cwd) => {
+                const name = cwd.split("/").at(-1)!;
+                return Effect.succeed({
+                  canonicalKey: `github.com/acme/${name}`,
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: `git@github.com:acme/${name}.git`,
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  owner: "acme",
+                  name,
+                });
+              },
+            }),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            yield* Deferred.await(sweepStarted);
+            yield* service.drain;
+          }).pipe(
+            Effect.provide(
+              WorkspaceHostTesting.layerFromContext.pipe(Layer.provideMerge(dependencies)),
+            ),
+          );
+
+          expect(new Set(lookupCwds)).toEqual(
+            new Set(roots.map((root) => `${folder}/${root.name}`)),
+          );
+          expect(commands).toEqual([
+            expect.objectContaining({
+              type: "thread.pull-request.sync",
+              threadId: thread.id,
+              projectId: workspace.id,
+              expected: expect.objectContaining({ workspaceRoot: "/workspaces/stack" }),
+              branchPullRequest: null,
+              discoveredPullRequests: discovered.map(pullRequest),
+            }),
+          ]);
+        }),
+      ),
+  );
+
   it.effect("leaves delegated child threads to their own refresh instead of the sweep", () =>
     Effect.scoped(
       Effect.gen(function* () {

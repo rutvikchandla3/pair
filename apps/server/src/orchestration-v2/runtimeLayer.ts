@@ -122,7 +122,11 @@ export const layerProjectService = ProjectService.layer.pipe(
   ),
 );
 
-export const layerWorkspaceCheckouts = WorkspaceCheckouts.layer.pipe(
+const layerWorkspaceCheckoutsWithProjections = WorkspaceCheckouts.layer.pipe(
+  Layer.provide(ProjectionStore.layer),
+);
+
+export const layerWorkspaceCheckouts = layerWorkspaceCheckoutsWithProjections.pipe(
   Layer.provide(layerProjectService),
 );
 
@@ -195,7 +199,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
-      WorkspaceCheckouts.layer,
+      layerWorkspaceCheckoutsWithProjections,
       SandboxAttachments.layer,
     ),
   ),
@@ -224,7 +228,7 @@ const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.p
       layerProviderSessionManagerProvided,
       ThreadCommandExecutor.layer,
       layerRuntimePolicyProvided,
-      WorkspaceCheckouts.layer,
+      layerWorkspaceCheckoutsWithProjections,
     ),
   ),
 );

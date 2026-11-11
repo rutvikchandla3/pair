@@ -389,6 +389,8 @@ export const make = Effect.gen(function* () {
     ))
       .filter((thread) => thread !== null)
       .filter((thread) => visibleThreadPullRequests(thread.pullRequests ?? []).length === 0)
+      // A workspace folder is not a repository; its pull requests settle it once discovery links them.
+      .filter((thread) => thread.roots === undefined)
       .filter(
         (thread) =>
           thread.branch !== null ||

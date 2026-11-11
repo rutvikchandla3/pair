@@ -104,6 +104,7 @@ import {
   useSelectedThreadRepositories,
   useSelectedThreadWorktree,
 } from "../../state/use-selected-thread-worktree";
+import { workspaceRunLabel } from "../../state/use-selected-thread-workspace";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
@@ -646,11 +647,13 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
+  // A workspace thread's git controls act on its selected repository, never on its folder.
+  const gitCwd = gitActions.gitCwd;
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null && selectedThreadRepositories === null
+    selectedThread !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: gitCwd },
         })
       : null,
   );
@@ -670,11 +673,24 @@ function ThreadRouteContent(
     onReconnectEnvironment(environmentId);
   };
 
+  const workspaceRun = gitActions.workspace?.run ?? null;
   const gitActionProgressTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
+    cwd: workspaceRun?.cwd ?? gitCwd,
   };
-  const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
+  const actionProgress = useGitActionProgress(gitActionProgressTarget);
+  // "All changed repositories" names the repository in flight until the whole run reports.
+  const gitActionProgress =
+    workspaceRun === null
+      ? actionProgress
+      : {
+          phase: "running" as const,
+          label: workspaceRunLabel(workspaceRun),
+          description:
+            actionProgress.phase === "running"
+              ? (actionProgress.description ?? actionProgress.label)
+              : null,
+        };
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });
@@ -931,7 +947,7 @@ function ThreadRouteContent(
         ? null
         : orchestrationV2PendingWorktreeBase(selectedThreadDetail?.runs ?? [])),
     gitStatus: gitStatus.data,
-    repositories: selectedThreadRepositories,
+    workspace: gitActions.workspace,
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),

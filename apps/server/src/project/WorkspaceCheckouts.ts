@@ -1,4 +1,4 @@
-import type { ProjectRoot } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell, ProjectRoot } from "@t3tools/contracts";
 import {
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { resolveWorktreesDirectory, worktreeDirectoryName } from "../worktreePaths.ts";
@@ -33,6 +34,18 @@ export class WorkspaceCheckoutError extends Schema.TaggedError<WorkspaceCheckout
   override get message(): string {
     return this.detail;
   }
+}
+
+/** The root whose checkout `cwd` is in a workspace thread's folder. */
+export function workspaceRootAt(
+  thread: Pick<OrchestrationV2ThreadShell, "roots" | "worktreePath">,
+  cwd: string,
+  path: Path.Path,
+): ProjectRoot | undefined {
+  const { roots, worktreePath } = thread;
+  if (roots === undefined || worktreePath === null) return undefined;
+  const target = path.resolve(cwd);
+  return roots.find((root) => path.resolve(worktreePath, root.name) === target);
 }
 
 export interface WorkspaceCheckout {
@@ -59,11 +72,18 @@ export class WorkspaceCheckouts extends Context.Service<
       { readonly folder: string; readonly branch: string },
       WorkspaceCheckoutError
     >;
-    /** `git worktree remove` per root through that root's repository, its branch, then the folder. */
-    readonly remove: (checkout: WorkspaceCheckout) => Effect.Effect<void, WorkspaceCheckoutError>;
+    /**
+     * `git worktree remove` per root through that root's repository, its branch, then the folder.
+     * Forced unless `force` is false, when git refuses a checkout with changes.
+     */
+    readonly remove: (
+      checkout: WorkspaceCheckout,
+      options?: { readonly force?: boolean },
+    ) => Effect.Effect<void, WorkspaceCheckoutError>;
     /**
      * Removes a thread folder a client names by its project's folder, keeping branches as a
-     * single-repository worktree removal does. False when that project is not a workspace.
+     * single-repository worktree removal does. Uses the roots of the threads that own the folder,
+     * else the project's. False when that project is not a workspace.
      */
     readonly removeFolder: (input: {
       readonly workspaceRoot: string;
@@ -88,6 +108,7 @@ export class WorkspaceCheckouts extends Context.Service<
 const make = Effect.gen(function* () {
   const git = yield* GitWorkflow.GitWorkflowService;
   const projects = yield* ProjectService.ProjectService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -166,13 +187,14 @@ const make = Effect.gen(function* () {
     repository: string | undefined,
     worktreePath: string,
     branch: string | null,
+    force: boolean,
   ) {
     if (repository === undefined) {
       yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
       return;
     }
     if (yield* fileSystem.exists(worktreePath)) {
-      yield* git.removeWorktree({ cwd: repository, path: worktreePath, force: true });
+      yield* git.removeWorktree({ cwd: repository, path: worktreePath, force });
     } else {
       yield* git.pruneWorktrees({ cwd: repository });
     }
@@ -184,7 +206,7 @@ const make = Effect.gen(function* () {
   });
 
   const remove: WorkspaceCheckouts["Service"]["remove"] = Effect.fn("WorkspaceCheckouts.remove")(
-    function* (checkout) {
+    function* (checkout, options) {
       const repositories = yield* rootRepositories(checkout.roots).pipe(
         Effect.mapError(failure("remove", "Failed to read the workspace's repositories.")),
       );
@@ -194,6 +216,7 @@ const make = Effect.gen(function* () {
           project?.workspaceRoot,
           path.join(checkout.folder, root.name),
           checkout.branch,
+          options?.force ?? true,
         ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to remove a workspace repository checkout", {
@@ -230,7 +253,11 @@ const make = Effect.gen(function* () {
         detail: `${input.folder} is not a workspace thread's folder.`,
       });
     }
-    yield* remove({ folder: input.folder, roots: project.value.roots, branch: null });
+    // Roots edited after the thread started name repositories its folder does not hold.
+    const roots =
+      (yield* projections.getWorktreeRoots(input.folder).pipe(Effect.orElseSucceed(() => null))) ??
+      project.value.roots;
+    yield* remove({ folder: input.folder, roots, branch: null });
     return true;
   });
 

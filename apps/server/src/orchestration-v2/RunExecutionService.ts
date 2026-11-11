@@ -893,7 +893,14 @@ export const layer: Layer.Layer<
         };
         // Startup failure and stream shutdown can report the same attempt.
         const refreshAfterTurn = yield* Effect.cached(
-          finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
+          Effect.forEach(
+            [
+              input.appThread.projectId,
+              ...(input.appThread.roots ?? []).map((root) => root.projectId),
+            ],
+            finalizationObserver.refreshAfterTurn,
+            { discard: true },
+          ).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("failed to refresh pull requests after run termination", {
                 threadId: input.run.threadId,

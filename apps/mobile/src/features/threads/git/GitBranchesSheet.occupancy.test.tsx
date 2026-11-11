@@ -53,7 +53,12 @@ vi.mock("../../../state/use-selected-thread-git-state", () => ({
   }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
-  useSelectedThreadGitActions: () => ({ canChangeThreadBranch: true }),
+  useSelectedThreadGitActions: () => ({
+    canChangeThreadBranch: true,
+    canSwitchBranch: true,
+    gitCwd: checkout.worktreePath ?? checkout.projectRoot,
+    workspace: null,
+  }),
 }));
 vi.mock("../../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));

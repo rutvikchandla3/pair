@@ -178,8 +178,13 @@ T3 Code throughout.
 - **Diffs and revert across repositories.** A turn's changed files, the diff panel and revert
   cover every repository, with paths under each repository's folder name. The phone shows turn
   diffs.
-- Not built yet: per-repository git and pull request controls, automatic folder cleanup, and
-  Cloud.
+- **Git per repository.** The thread lists its repositories with branch, changes and pull
+  request. Pick one and the branch, commit, push and pull request controls act on it, or run
+  **All changed repositories** to commit, push and open pull requests in each. Pull requests
+  opened from the thread's branch are linked from every repository, and the thread settles when
+  all of them are merged or closed. Storage cleanup removes a thread's folder only when every
+  repository in it is safe to remove.
+- Not built yet: Cloud, and the diff panel's uncommitted and commit views.
 - User guide: [Workspaces](../user/workspaces.md).
 
 ## Not planned

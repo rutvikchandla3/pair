@@ -42,6 +42,10 @@ import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
+import {
+  type ThreadRepository,
+  workspaceRepositoryForPullRequest,
+} from "@t3tools/client-runtime/state/workspaces";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -91,6 +95,11 @@ interface BranchToolbarBranchSelectorProps {
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  /**
+   * One repository of a workspace thread: refs switch inside its folder and the thread's own
+   * branch metadata is left alone.
+   */
+  repository?: ThreadRepository;
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
@@ -114,6 +123,7 @@ export function BranchToolbarBranchSelector({
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
+  repository,
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -143,27 +153,34 @@ export function BranchToolbarBranchSelector({
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
-  const activeProjectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
+  const activeProjectRef = repository
+    ? scopeProjectRef(environmentId, repository.projectId)
+    : serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
   const activeProject = useProject(activeProjectRef);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
-  const activeThreadBranch =
-    activeThreadBranchOverride !== undefined
+  const activeThreadBranch = repository
+    ? null
+    : activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = forceNewWorktree
-    ? null
-    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
+  const activeWorktreePath = repository
+    ? repository.cwd
+    : forceNewWorktree
+      ? null
+      : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const isCloudThread = serverThread?.source.sandboxId !== undefined;
   // A cloud thread's refs and status are its machine's; the host checkout has neither.
   const branchCwd = activeWorktreePath ?? (isCloudThread ? null : activeProjectCwd);
   const hasServerThread = serverThread !== null;
-  const canUpdateThreadBranch = !hasServerThread || canOperateThread;
+  // A workspace repository's branch is its folder's, not thread metadata.
+  const updatesThread = hasServerThread && repository === undefined;
+  const canUpdateThreadBranch = !updatesThread || canOperateThread;
   const canChangeThreadBranch = canWriteSourceControl && canUpdateThreadBranch;
 
   const setThreadBranch = (
@@ -172,6 +189,7 @@ export function BranchToolbarBranchSelector({
     automatic = false,
   ) => {
     if (
+      repository ||
       !activeThreadId ||
       !activeProject ||
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
@@ -243,7 +261,7 @@ export function BranchToolbarBranchSelector({
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase = effectiveEnvMode !== "local" && !envLocked && !activeWorktreePath;
   const checkoutPullRequestItemValue =
-    canChangeThreadBranch && prReference && onCheckoutPullRequestRequest
+    canChangeThreadBranch && !repository && prReference && onCheckoutPullRequestRequest
       ? `__checkout_pull_request__:${prReference}`
       : null;
   const canCreateBranch =
@@ -364,7 +382,7 @@ export function BranchToolbarBranchSelector({
   const runBranchAction = (action: () => Promise<void>) => {
     if (
       !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
-      (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      (updatesThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     ) {
       toastManager.add(
         stackedThreadToast({
@@ -392,12 +410,19 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
-    const selectionTarget = resolveBranchSelectionTarget({
-      activeProjectCwd,
-      activeProjectCheckoutRoot,
-      activeWorktreePath,
-      refName,
-    });
+    // A workspace repository switches only inside its own folder, never the project's checkout.
+    const selectionTarget = repository
+      ? {
+          checkoutCwd: repository.cwd,
+          nextWorktreePath: repository.cwd,
+          reuseExistingWorktree: false,
+        }
+      : resolveBranchSelectionTarget({
+          activeProjectCwd,
+          activeProjectCheckoutRoot,
+          activeWorktreePath,
+          refName,
+        });
 
     if (selectionTarget.reuseExistingWorktree) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
@@ -539,36 +564,44 @@ export function BranchToolbarBranchSelector({
     [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending],
   );
 
-  const triggerLabel = resolveBranchTriggerLabel({
+  const branchTriggerLabel = resolveBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
   });
+  const triggerLabel =
+    repository && displayMode === "toolbar"
+      ? `${repository.name}: ${branchTriggerLabel}`
+      : branchTriggerLabel;
 
-  const branchPrBranch = resolveBranchToolbarPrBranch({
-    activeThreadBranch,
-    resolvedActiveBranch,
-  });
+  const branchPrBranch = repository
+    ? (branchStatusQuery.data?.refName ?? null)
+    : resolveBranchToolbarPrBranch({ activeThreadBranch, resolvedActiveBranch });
   const branchPr =
     branchPrBranch !== null && branchStatusQuery.data?.refName === branchPrBranch
       ? (branchStatusQuery.data.pr ?? null)
       : null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId);
+  // A workspace thread links pull requests from several repositories; show this one's.
+  const pullRequests =
+    repository && activeProject
+      ? (serverThread?.pullRequests ?? []).filter(
+          (link) => workspaceRepositoryForPullRequest(link, [activeProject]) !== undefined,
+        )
+      : serverThread?.pullRequests;
   const linkedStatus = useLinkedThreadPullRequest(
     environmentId,
-    serverThread?.linkedPullRequest,
+    repository ? undefined : serverThread?.linkedPullRequest,
     true,
-    serverThread?.pullRequests,
-    serverThread?.branchPullRequest,
+    pullRequests,
+    repository ? undefined : serverThread?.branchPullRequest,
   );
   const currentLinkedPr = supportsMultiplePullRequests
-    ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
+    ? resolveThreadCurrentPullRequestLink(pullRequests ?? [])
     : null;
-  const prBadge = supportsMultiplePullRequests
-    ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
-    : null;
+  const prBadge = supportsMultiplePullRequests ? resolveThreadPullRequestBadge(pullRequests) : null;
   const displayedPr = linkedStatus?.pr ?? (currentLinkedPr === null ? branchPr : null);
   const displayedPrStatus = prStatusIndicator(
     displayedPr,
@@ -644,7 +677,8 @@ export function BranchToolbarBranchSelector({
           !canUpdateThreadBranch ||
           (!canWriteSourceControl &&
             !isSelectingWorktreeBase &&
-            (!activeProjectCwd ||
+            (repository !== undefined ||
+              !activeProjectCwd ||
               !resolveBranchSelectionTarget({
                 activeProjectCwd,
                 activeProjectCheckoutRoot,
@@ -703,7 +737,7 @@ export function BranchToolbarBranchSelector({
           <ThreadPullRequestBadgeControl
             render={<ComposerControl size="xs" />}
             badge={prBadge}
-            pullRequests={serverThread?.pullRequests ?? []}
+            pullRequests={pullRequests ?? []}
             number={prNumber}
             url={prUrl}
             status={displayedPrStatus}
@@ -747,7 +781,7 @@ export function BranchToolbarBranchSelector({
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
           <ThreadDetailsPrRows
             threadRef={threadRef}
-            links={serverThread?.pullRequests ?? []}
+            links={pullRequests ?? []}
             currentLink={currentLinkedPr}
             onOpenLink={openPrLink}
             environmentId={environmentId}

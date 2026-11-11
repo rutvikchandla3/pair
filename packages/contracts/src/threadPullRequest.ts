@@ -24,7 +24,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
-/** stack-dismissed hides an unlinked native member and prevents sync from re-adding it. */
+/** stack-dismissed hides an unlinked stack member or workspace pull request so sync does not re-add it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",
   "created",

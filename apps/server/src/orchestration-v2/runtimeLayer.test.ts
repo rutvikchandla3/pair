@@ -2883,6 +2883,113 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("adds each workspace repository's pull request without clearing another's", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
+      const threadId = ThreadId.make("workspace-pr-sync");
+      const projectId = ProjectId.make("workspace-pr-project");
+      yield* seedProject({
+        projectId,
+        title: "Stack",
+        workspaceRoot: "/workspace/stack",
+        defaultModelSelection: null,
+        createdAt: "2026-09-17T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("workspace-pr-create"),
+        threadId,
+        projectId,
+        title: "Stack",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature",
+        worktreePath: "/worktrees/stack/feature",
+        roots: ["api", "web"].map((name) => ({ projectId: ProjectId.make(name), name })),
+      });
+      const pullRequest = (repository: string, number: number) => ({
+        host: "github.com",
+        repository,
+        number,
+        url: `https://github.com/${repository}/pull/${number}`,
+      });
+      const sync = (id: string, discovered: ReadonlyArray<ReturnType<typeof pullRequest>>) =>
+        Effect.flatMap(orchestrator.getShellSnapshot(), (snapshot) =>
+          orchestrator.dispatch({
+            type: "thread.pull-request.sync",
+            commandId: CommandId.make(id),
+            threadId,
+            projectId,
+            snapshotSequence: snapshot.snapshotSequence,
+            expected: {
+              workspaceRoot: "/workspace/stack",
+              branch: "feature",
+              worktreePath: "/worktrees/stack/feature",
+              linkedPullRequest: null,
+              branchPullRequest: null,
+            },
+            branchPullRequest: null,
+            discoveredPullRequests: discovered,
+          }),
+        );
+      const links = Effect.map(orchestrator.getThreadShell(threadId), (thread) =>
+        thread?.pullRequests?.map((link) => [link.repository, link.number, link.source]),
+      );
+      yield* sync("workspace-pr-sync-api", [pullRequest("acme/api", 11)]);
+      yield* sync("workspace-pr-sync-web", [
+        pullRequest("acme/web", 12),
+        pullRequest("Acme/API", 11),
+      ]);
+      assert.deepEqual(yield* links, [
+        ["acme/api", 11, "manual"],
+        ["acme/web", 12, "manual"],
+      ]);
+      const before = yield* orchestrator.getShellSnapshot();
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("workspace-pr-rename"),
+        threadId,
+        title: "Renamed",
+      });
+      const stale = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("workspace-pr-sync-stale"),
+          threadId,
+          projectId,
+          snapshotSequence: before.snapshotSequence,
+          expected: {
+            workspaceRoot: "/workspace/stack",
+            branch: "feature",
+            worktreePath: "/worktrees/stack/feature",
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: null,
+          discoveredPullRequests: [pullRequest("acme/docs", 13)],
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(stale, Orchestrator.OrchestratorDispatchError);
+      // Unlinking leaves a tombstone so the next discovery does not bring it back.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("workspace-pr-unlink"),
+        threadId,
+        ...pullRequest("acme/web", 12),
+      });
+      yield* sync("workspace-pr-sync-again", [pullRequest("acme/web", 12)]);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* links, [
+        ["acme/api", 11, "manual"],
+        ["acme/web", 12, "stack-dismissed"],
+      ]);
+    }),
+  );
+
   it.effect("retains multiple pull requests and dismissed stack members through rebuilds", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -1,26 +1,65 @@
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  summarizeWorkspaceRepository,
   type ThreadRepository,
-  WORKSPACE_GIT_CONTROLS_UNAVAILABLE,
 } from "@t3tools/client-runtime/state/workspaces";
+import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
 
 export const WORKSPACE_WORKTREE_REASON =
   "A workspace thread starts in a new worktree of each of its repositories.";
 
-export const WORKSPACE_REPOSITORIES_PENDING =
+const WORKSPACE_REPOSITORIES_PENDING =
   "Each repository gets its own worktree when the thread starts.";
 
-/** The read-only rows a workspace thread shows where a single repository's git controls go. */
-export function workspaceRepositoryRows(
-  repositories: ReadonlyArray<ThreadRepository>,
-): ReadonlyArray<{ readonly key: string; readonly title: string; readonly subtitle: string }> {
-  return [
-    ...(repositories.length === 0
-      ? [{ key: "pending", title: "Repositories", subtitle: WORKSPACE_REPOSITORIES_PENDING }]
-      : repositories.map((repository) => ({
-          key: repository.projectId,
-          title: repository.name,
-          subtitle: repository.cwd,
-        }))),
-    { key: "unavailable", title: "Git controls", subtitle: WORKSPACE_GIT_CONTROLS_UNAVAILABLE },
-  ];
+export const WORKSPACE_STEP_LABELS: Record<GitStackedAction, string> = {
+  commit: "Commit",
+  push: "Push",
+  create_pr: "Push and open a pull request",
+  commit_push: "Commit and push",
+  commit_push_pr: "Commit, push and open a pull request",
+};
+
+export interface WorkspaceRepositoryRow {
+  readonly key: string;
+  readonly title: string;
+  readonly subtitle: string;
+  /** Null for the row that stands in before the thread's folder exists. */
+  readonly name: string | null;
+  readonly selected: boolean;
+}
+
+/** One row per repository: its branch, line counts and pull request; the selected one marked. */
+export function workspaceRepositoryRows(workspace: {
+  readonly repositories: ReadonlyArray<ThreadRepository>;
+  readonly statuses: ReadonlyArray<VcsStatusResult | null>;
+  readonly selected: ThreadRepository | null;
+}): ReadonlyArray<WorkspaceRepositoryRow> {
+  if (workspace.repositories.length === 0) {
+    return [
+      {
+        key: "pending",
+        title: "Repositories",
+        subtitle: WORKSPACE_REPOSITORIES_PENDING,
+        name: null,
+        selected: false,
+      },
+    ];
+  }
+  return workspace.repositories.map((repository, index) => {
+    const summary = summarizeWorkspaceRepository(workspace.statuses[index] ?? null);
+    const parts = [summary?.refName ?? (summary === null ? "Checking status" : "Detached HEAD")];
+    if (summary !== null && summary.insertions + summary.deletions > 0) {
+      parts.push(`+${formatDiffCount(summary.insertions)} −${formatDiffCount(summary.deletions)}`);
+    }
+    if (summary?.pullRequest) {
+      parts.push(`#${summary.pullRequest.number} ${summary.pullRequest.state}`);
+    }
+    return {
+      key: repository.name,
+      title: repository.name,
+      subtitle: parts.join(" · "),
+      name: repository.name,
+      selected: workspace.selected?.name === repository.name,
+    };
+  });
 }

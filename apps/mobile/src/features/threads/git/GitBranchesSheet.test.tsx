@@ -50,12 +50,6 @@ vi.mock("../../../state/use-thread-selection", () => ({
     selectedThread: { environmentId: "environment", branch: state.branch },
   }),
 }));
-vi.mock("../../../state/use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({
-    selectedThreadCwd: "/repo",
-    selectedThreadWorktreePath: null,
-  }),
-}));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
     selectedThreadBranches: [],
@@ -66,6 +60,9 @@ vi.mock("../../../state/use-selected-thread-git-state", () => ({
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
     canChangeThreadBranch: true,
+    canSwitchBranch: true,
+    gitCwd: "/repo",
+    workspace: null,
     onCreateSelectedThreadWorktree: async (input: { baseBranch: string; newBranch: string }) => {
       state.worktrees.push(input);
       return null;

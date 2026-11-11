@@ -1646,6 +1646,7 @@ export const layerWsRpc = (
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const workspaceCheckouts = yield* WorkspaceCheckouts.WorkspaceCheckouts;
+      const pathService = yield* Path.Path;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3612,12 +3613,14 @@ export const layerWsRpc = (
                       ? Effect.void
                       : linkCreatedPullRequest({
                           threadId: input.threadId,
+                          cwd: input.cwd,
                           result,
                           commandId: serverCommandId("pr-created-link"),
                           actorId: currentSession.memberId,
                         }).pipe(
                           Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                           Effect.provideService(ProjectService.ProjectService, projectService),
+                          Effect.provideService(Path.Path, pathService),
                         )
                     ).pipe(
                       Effect.andThen(
@@ -3628,6 +3631,7 @@ export const layerWsRpc = (
                             PullRequestService.PullRequestService,
                             pullRequests,
                           ),
+                          Effect.provideService(Path.Path, pathService),
                         ),
                       ),
                       Effect.andThen(refreshGitStatus(input.cwd)),

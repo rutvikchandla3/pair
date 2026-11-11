@@ -28,6 +28,7 @@ export interface PullRequestTestThread {
   readonly archivedAt: string | null;
   readonly settledOverride: OrchestrationV2ThreadShell["settledOverride"];
   readonly settledAt: string | null;
+  readonly roots?: OrchestrationV2ThreadShell["roots"];
 }
 
 export function v2PullRequestThread(thread: PullRequestTestThread): OrchestrationV2ThreadShell {
@@ -70,5 +71,6 @@ export function v2PullRequestThread(thread: PullRequestTestThread): Orchestratio
     settledOverride: thread.settledOverride,
     settledAt: thread.settledAt ? DateTime.makeUnsafe(thread.settledAt) : null,
     deletedAt: null,
+    ...(thread.roots === undefined ? {} : { roots: thread.roots }),
   };
 }

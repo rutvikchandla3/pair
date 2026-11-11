@@ -176,7 +176,7 @@ export function useThreadHeaderOptions(props: {
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
-  const { environmentId, threadId, gitStatus, repositories } = props.gitControls;
+  const { environmentId, threadId, gitStatus, workspace } = props.gitControls;
   return {
     options,
     // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
@@ -194,7 +194,8 @@ export function useThreadHeaderOptions(props: {
       gitStatus?.isDefaultRef,
       gitStatus?.refName,
       gitStatus?.pr?.url,
-      repositories?.map((repository) => repository.cwd).join(",") ?? null,
+      // Menu callbacks act on the selected repository, which item labels may not reveal.
+      workspace?.selected?.cwd ?? null,
     ],
     fallback:
       !layout.usesSplitView && !props.usesNativeHeaderGlass ? (

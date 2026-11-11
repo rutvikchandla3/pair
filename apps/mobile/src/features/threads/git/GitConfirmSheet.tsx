@@ -15,7 +15,6 @@ import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useThreadSelection } from "../../../state/use-thread-selection";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitConfirmSheetProps = StaticScreenProps<{
@@ -34,10 +33,10 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
-  const { selectedThreadProject } = useThreadSelection();
+  const { canWriteSourceControl, canChangeThreadBranch, gitProject, workspace } = gitActions;
+  const repositoryName = workspace?.selected?.name ?? null;
   const terminology = sourceControlClients.get(
-    selectedThreadProject?.repositoryIdentity?.provider,
+    gitProject?.repositoryIdentity?.provider,
   ).changeRequest;
 
   const params = props.route.params;
@@ -130,7 +129,13 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         />
       ) : null}
       {Platform.OS === "android" ? (
-        <AppBar sheet title="Confirm action" onBack={() => navigation.goBack()} hideBottomBorder />
+        <AppBar
+          sheet
+          title="Confirm action"
+          subtitle={repositoryName}
+          onBack={() => navigation.goBack()}
+          hideBottomBorder
+        />
       ) : (
         <View className="min-h-4 pt-2" />
       )}
@@ -150,7 +155,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           <View className="android:gap-2 android:rounded-[20px] android:bg-card android:p-3 ios:items-center ios:gap-1 ios:px-5 ios:pb-3 ios:pt-4">
             {Platform.OS !== "android" ? (
               <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-                Confirm
+                {repositoryName ?? "Confirm"}
               </Text>
             ) : null}
             <Text className="android:text-xl android:font-t3-medium ios:text-center ios:text-3xl ios:font-t3-bold">
@@ -175,13 +180,15 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
               disabled={!canWriteSourceControl}
               onPress={() => void continuePendingAction()}
             />
-            <SheetActionButton
-              icon="arrow.branch"
-              label="Feature branch & continue"
-              disabled={!canChangeThreadBranch}
-              tone="primary"
-              onPress={() => void movePendingActionToFeatureBranch()}
-            />
+            {workspace === null ? (
+              <SheetActionButton
+                icon="arrow.branch"
+                label="Feature branch & continue"
+                disabled={!canChangeThreadBranch}
+                tone="primary"
+                onPress={() => void movePendingActionToFeatureBranch()}
+              />
+            ) : null}
           </View>
         </ScrollView>
       </ScreenContent>

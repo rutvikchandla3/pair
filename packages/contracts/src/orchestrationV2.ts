@@ -3574,6 +3574,10 @@ export const OrchestrationV2Command = Schema.Union([
     }),
     branchPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
     linkedPullRequest: Schema.optional(ThreadLinkedPullRequest),
+    /** A workspace thread's pull requests, one per repository; sync only adds missing links. */
+    discoveredPullRequests: Schema.optional(
+      Schema.Array(Schema.Struct({ ...ThreadPullRequestKey.fields, url: TrimmedNonEmptyString })),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.title.regeneration.complete"),

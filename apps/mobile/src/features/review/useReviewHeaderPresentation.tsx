@@ -5,7 +5,6 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
 import { useThreadGitMenuDefinition } from "../threads/ThreadGitControls";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { ThreadRepository } from "@t3tools/client-runtime/state/workspaces";
 import type { ReviewSectionItem } from "./reviewModel";
 import type { AppBarMenuItem, AppBarMenu } from "../../components/ui/AppBar.types";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
@@ -26,18 +25,19 @@ export function useReviewHeaderPresentation(props: {
   readonly androidSubtitle: string;
   /** The folder whose git status the menu shows; null for a workspace thread. */
   readonly selectedThreadCwd: string | null;
-  readonly repositories: ReadonlyArray<ThreadRepository> | null;
   readonly selectedSection: ReviewSectionItem | null;
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
   const { selectedThread } = useThreadSelection();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
+  // A workspace thread's menu acts on its selected repository.
+  const statusCwd = gitActions.workspace === null ? props.selectedThreadCwd : gitActions.gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && props.selectedThreadCwd !== null
+    selectedThread !== null && statusCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: props.selectedThreadCwd },
+          input: { cwd: statusCwd },
         })
       : null,
   );
@@ -50,7 +50,7 @@ export function useReviewHeaderPresentation(props: {
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatusQuery.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    repositories: props.repositories,
+    workspace: gitActions.workspace,
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   });

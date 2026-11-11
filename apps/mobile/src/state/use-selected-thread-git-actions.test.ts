@@ -1,8 +1,12 @@
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  ProjectId,
+} from "@t3tools/contracts";
 import type { VcsListRefsResult } from "@t3tools/contracts";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -27,6 +31,10 @@ const state = vi.hoisted(() => ({
   repositories: null as readonly unknown[] | null,
   mounted: [] as unknown[],
   branchCwds: [] as (string | null)[],
+  gitCwds: [] as string[],
+  stackedInputs: [] as { cwd: string | null; action: string; threadId?: string }[],
+  statuses: {} as Record<string, unknown>,
+  registry: null as AtomRegistry.AtomRegistry | null,
 }));
 
 vi.mock("react", () => ({
@@ -35,6 +43,7 @@ vi.mock("react", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomMount: (atom: unknown) => state.mounted.push(atom),
+  useAtomValue: (atom: never) => state.registry!.get(atom),
 }));
 vi.mock("@t3tools/client-runtime/state/vcs", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -67,7 +76,15 @@ vi.mock("./queries", () => ({
   },
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./atom-registry", async () => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  state.registry = AtomRegistry.make();
+  return { appAtomRegistry: state.registry };
+});
+vi.mock("./entities", () => ({
+  useProject: (ref: { projectId: string } | null) =>
+    ref === null ? null : { id: ref.projectId, workspaceRoot: `/projects/${ref.projectId}` },
+}));
 vi.mock("./use-remote-environment-registry", () => ({
   environmentConnectedAtom: () => null,
   setPendingConnectionError: () => {},
@@ -95,35 +112,12 @@ vi.mock("./threads", () => ({
     },
   },
 }));
-vi.mock("./vcs", () => ({
-  vcsEnvironment: {
-    readRefs: state.readRefs,
-    refreshStatus: async () => {
-      state.statusRefreshes += 1;
-      return AsyncResult.success({ refName: state.branch });
-    },
-    switchRef: async ({ input }: { input: { refName: string } }) => {
-      state.branch = input.refName;
-      state.afterGitAction?.();
-      return AsyncResult.success({ refName: state.branch });
-    },
-    createRef: async ({ input }: { input: { refName: string } }) => {
-      state.branch = input.refName;
-      state.afterGitAction?.();
-      return AsyncResult.success({ refName: state.branch });
-    },
-    createWorktree: async ({ input }: { input: { newRefName: string } }) => {
-      state.worktrees.push("/repo-worktree");
-      state.afterGitAction?.();
-      return AsyncResult.success({
-        worktree: { path: "/repo-worktree", refName: input.newRefName },
-      });
-    },
-    pull: async () => AsyncResult.success({ status: "pulled", refName: state.branch }),
-  },
-  vcsActionManager: {
-    track: (_registry: unknown, _target: unknown, _operation: unknown, run: () => unknown) => run(),
-    runStackedAction: () => async (input: { action: string; featureBranch?: boolean }) => {
+vi.mock("./vcs", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const runStackedAction =
+    (target: { cwd: string | null }) =>
+    async (input: { action: string; featureBranch?: boolean; threadId?: string }) => {
+      state.stackedInputs.push({ cwd: target.cwd, action: input.action, threadId: input.threadId });
       if (input.featureBranch) state.branch = "feature";
       if (input.action === "commit") state.commits += 1;
       if (input.action === "push") state.pushes += 1;
@@ -134,11 +128,52 @@ vi.mock("./vcs", () => ({
           : { status: "skipped_not_requested" },
         toast: { title: "Done", description: "Done", cta: { kind: "none" } },
       });
+    };
+  return {
+    vcsEnvironment: {
+      statuses: ({ cwds }: { cwds: ReadonlyArray<string> }) =>
+        Atom.make(cwds.map((cwd) => state.statuses[cwd] ?? null)),
+      readRefs: state.readRefs,
+      refreshStatus: async ({ input }: { input: { cwd: string } }) => {
+        state.gitCwds.push(input.cwd);
+        state.statusRefreshes += 1;
+        return AsyncResult.success({ refName: state.branch });
+      },
+      switchRef: async ({ input }: { input: { cwd: string; refName: string } }) => {
+        state.gitCwds.push(input.cwd);
+        state.branch = input.refName;
+        state.afterGitAction?.();
+        return AsyncResult.success({ refName: state.branch });
+      },
+      createRef: async ({ input }: { input: { refName: string } }) => {
+        state.branch = input.refName;
+        state.afterGitAction?.();
+        return AsyncResult.success({ refName: state.branch });
+      },
+      createWorktree: async ({ input }: { input: { newRefName: string } }) => {
+        state.worktrees.push("/repo-worktree");
+        state.afterGitAction?.();
+        return AsyncResult.success({
+          worktree: { path: "/repo-worktree", refName: input.newRefName },
+        });
+      },
+      pull: async () => AsyncResult.success({ status: "pulled", refName: state.branch }),
     },
-  },
-}));
+    vcsActionManager: {
+      track: (_registry: unknown, _target: unknown, _operation: unknown, run: () => unknown) =>
+        run(),
+      // The hook calls the command directly; runAtomCommand calls its `run`.
+      runStackedAction: (target: { cwd: string | null }) =>
+        Object.assign(runStackedAction(target), {
+          run: (_registry: unknown, input: Parameters<ReturnType<typeof runStackedAction>>[0]) =>
+            runStackedAction(target)(input),
+        }),
+    },
+  };
+});
 
 import { useSelectedThreadGitActions } from "./use-selected-thread-git-actions";
+import { selectWorkspaceRepository } from "./use-selected-thread-workspace";
 
 describe("thread Git mutation permissions", () => {
   beforeEach(() => {
@@ -320,13 +355,43 @@ describe("automatic feature branch refs", () => {
 });
 
 describe("workspace threads", () => {
+  // Each case gets its own thread, since a stored repository choice outlives the hook.
+  let threadCount = 0;
+  const repositories = [
+    { name: "api", cwd: "/workspace/api", projectId: ProjectId.make("api") },
+    { name: "web", cwd: "/workspace/web", projectId: ProjectId.make("web") },
+  ];
+  const changed = {
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName: "feature",
+    hasWorkingTreeChanges: true,
+    workingTree: { files: [], insertions: 2, deletions: 0 },
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: null,
+  };
+
   beforeEach(() => {
     state.scopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.commits = 0;
     state.statusRefreshes = 0;
-    state.readRefs.mockClear();
+    state.readRefs.mockReset();
+    state.readRefs.mockImplementation(async ({ input }: { input: { cwd: string } }) => {
+      state.gitCwds.push(input.cwd);
+      return AsyncResult.success({ refs: [] });
+    });
     state.mounted = [];
     state.branchCwds = [];
+    state.gitCwds = [];
+    state.stackedInputs = [];
+    state.metadataRequests = [];
+    state.results = [];
+    state.afterGitAction = undefined;
+    state.statuses = { "/workspace/web": changed };
+    state.thread.id = `thread-${(threadCount += 1)}`;
   });
 
   it.each([
@@ -352,4 +417,52 @@ describe("workspace threads", () => {
       }
     },
   );
+
+  it.each([
+    ["the first changed repository", null, "/workspace/web"],
+    ["the stored choice", "api", "/workspace/api"],
+  ] as const)("runs git in %s once the folder exists", async (_, chosen, cwd) => {
+    state.repositories = repositories;
+    try {
+      if (chosen !== null) {
+        selectWorkspaceRepository(useSelectedThreadGitActions().workspace!.threadKey, chosen);
+        state.mounted = [];
+        state.branchCwds = [];
+      }
+      const actions = useSelectedThreadGitActions();
+      expect(actions.gitCwd).toBe(cwd);
+      expect(state.mounted).toEqual([{ environmentId: "environment", cwd }]);
+      expect(state.branchCwds).toEqual([cwd]);
+      await actions.refreshSelectedThreadGitStatus();
+      await actions.refreshSelectedThreadBranches();
+      await actions.onRunSelectedThreadGitAction({ action: "commit" });
+      expect(await actions.onCheckoutSelectedThreadBranch("other")).toEqual({ refName: "other" });
+      expect(state.gitCwds.every((gitCwd) => gitCwd === cwd)).toBe(true);
+      expect(state.gitCwds.length).toBeGreaterThan(0);
+      expect(state.stackedInputs.map((input) => input.cwd)).toEqual([cwd]);
+      expect(state.metadataRequests).toEqual([]);
+    } finally {
+      state.repositories = null;
+    }
+  });
+
+  it("runs every changed repository's next step with the thread id", async () => {
+    state.repositories = repositories;
+    state.statuses = { "/workspace/api": changed, "/workspace/web": changed };
+    try {
+      const actions = useSelectedThreadGitActions();
+      const plan = {
+        steps: repositories.map((repository) => ({ repository, action: "commit_push" as const })),
+        skipped: [],
+      };
+      await actions.onRunWorkspaceGitActions({ plan, commitMessage: "Ship it" });
+      expect(state.stackedInputs).toEqual([
+        { cwd: "/workspace/api", action: "commit_push", threadId: state.thread.id },
+        { cwd: "/workspace/web", action: "commit_push", threadId: state.thread.id },
+      ]);
+      expect(state.results.map((result) => result.type)).toEqual(["success"]);
+    } finally {
+      state.repositories = null;
+    }
+  });
 });

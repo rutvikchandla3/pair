@@ -36,7 +36,6 @@ import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { Inspector, useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { useSelectedThreadRepositories } from "../../state/use-selected-thread-worktree";
 import { useStoppedFiles } from "../../state/sandbox";
 import { StoppedFilesNotice } from "../threads/StoppedMachineNotice";
 import { useReviewCacheForThread } from "./reviewState";
@@ -374,7 +373,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage, draftContext } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
-  const repositories = useSelectedThreadRepositories();
   const stoppedFiles = useStoppedFiles({ environmentId, threadId });
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
@@ -637,7 +635,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
         androidSubtitle={androidHeaderSubtitle}
         iconColor={headerIcon}
         selectedThreadCwd={gitCwd}
-        repositories={repositories}
         sectionMenu={sectionMenu}
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}

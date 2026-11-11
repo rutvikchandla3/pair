@@ -957,11 +957,19 @@ describe("ThreadSettlementServiceV2 worker", () => {
               worktreePath: "/worktrees/emptied",
               latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
             }),
+            // A workspace folder is not a repository; only its linked pull requests settle it.
+            makeThread("workspace-folder", {
+              branch: "workspace",
+              worktreePath: "/worktrees/workspace",
+              roots: [{ projectId: ProjectId.make("project:api"), name: "api" }],
+              latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+            }),
           ]),
           existingWorktreePaths: [
             "/worktrees/linked",
             "/worktrees/linked/.git",
             "/worktrees/emptied",
+            "/worktrees/workspace",
           ],
         });
 

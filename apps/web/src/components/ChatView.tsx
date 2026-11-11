@@ -49,7 +49,11 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { isWorkspaceProject, threadRepositories } from "@t3tools/client-runtime/state/workspaces";
+import {
+  isWorkspaceProject,
+  threadRepositories,
+  workspaceRepositoryForPullRequest,
+} from "@t3tools/client-runtime/state/workspaces";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -275,6 +279,7 @@ import {
   useQuietThreadShell,
   useThreadCheckpointSummaries,
 } from "../state/entities";
+import { useWorkspaceRepositories } from "../state/workspaceRepositories";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ComposerTypingLine } from "./chat/ComposerTypingLine";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1727,6 +1732,20 @@ export default function ChatView(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
+  // Each repository holds a status subscription, so only the thread on screen mounts them.
+  const workspaceRepositories = useWorkspaceRepositories(
+    activeProjectIsWorkspace && !backgroundThread ? activeThreadRef : null,
+    activeProjectIsWorkspace && activeThread
+      ? threadRepositories(activeThread, activeProject)
+      : null,
+  );
+  const selectedRepository = workspaceRepositories?.selected ?? null;
+  const selectedRepositoryProject = useProject(
+    selectedRepository === null
+      ? null
+      : scopeProjectRef(environmentId, selectedRepository.projectId),
+  );
+  const openInCwd = selectedRepository?.cwd ?? gitCwd;
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -1744,7 +1763,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? environmentId,
     keybindings,
     availableEditors,
-    openInCwd: gitCwd,
+    openInCwd,
   });
   const manualCompactionProviderAvailable = hasAvailableCompactionProvider({
     providers: providerInstanceEntries,
@@ -2478,14 +2497,25 @@ export default function ChatView(props: ChatViewProps) {
     if (activeThreadReferenceCopyTarget === null) return;
     void copyThreadReference(activeThreadReferenceCopyTarget);
   };
-  const pullRequestPanelTarget = activeThread
-    ? threadPullRequestPanelTarget({
-        projectId: activeThread.projectId,
-        pullRequests: visiblePullRequests,
-        linkedPullRequest: linkedThreadPullRequest,
-        branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-      })
-    : null;
+  // A workspace thread's "current pull request" is the selected repository's.
+  const pullRequestPanelTarget = !activeThread
+    ? null
+    : activeProjectIsWorkspace
+      ? selectedRepository === null || selectedRepositoryProject === null
+        ? null
+        : threadPullRequestPanelTarget({
+            projectId: selectedRepository.projectId,
+            pullRequests: visiblePullRequests.filter(
+              (link) =>
+                workspaceRepositoryForPullRequest(link, [selectedRepositoryProject]) !== undefined,
+            ),
+          })
+      : threadPullRequestPanelTarget({
+          projectId: activeThread.projectId,
+          pullRequests: visiblePullRequests,
+          linkedPullRequest: linkedThreadPullRequest,
+          branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+        });
   const {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
@@ -3011,7 +3041,8 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses,
     lockedProvider,
     supportsProviderSwitchingViaHandoff,
-    multipleModelSelections,
+    // One workspace thread already spans several repositories; it never fans out to models.
+    multipleModelSelections: activeProjectIsWorkspace ? null : multipleModelSelections,
     runtimeMode,
     interactionMode,
     interactionModeEnabled,
@@ -3760,9 +3791,12 @@ export default function ChatView(props: ChatViewProps) {
                             <ChatComposer
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
-                              multipleModelSelections={multipleModelSelections}
+                              multipleModelSelections={
+                                activeProjectIsWorkspace ? null : multipleModelSelections
+                              }
                               supportsMultipleModels={
                                 routedCloud === null &&
+                                !activeProjectIsWorkspace &&
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
                                   true
                               }
@@ -3940,6 +3974,7 @@ export default function ChatView(props: ChatViewProps) {
                                 worktreePath={activeThread.worktreePath}
                                 isServerThread={isServerThread}
                                 showGitControls={isGitRepo || activeProjectIsWorkspace}
+                                repository={selectedRepository}
                                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                 onEnvModeChange={onEnvModeChangeStable}
                                 startFromOrigin={startFromOrigin}
@@ -4058,12 +4093,9 @@ export default function ChatView(props: ChatViewProps) {
                     )
                   }
                   gitCwd={gitCwd}
+                  openInCwd={openInCwd}
                   isGitRepo={isGitRepo || activeProjectIsWorkspace}
-                  repositories={
-                    activeProjectIsWorkspace
-                      ? threadRepositories(activeThread, activeProject)
-                      : null
-                  }
+                  workspace={workspaceRepositories}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}
