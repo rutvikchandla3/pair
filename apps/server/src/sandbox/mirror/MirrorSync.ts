@@ -499,17 +499,18 @@ export const make = Effect.fn("MirrorSync.make")(function* (
       );
       const bytes = yield* fs.readFile(bundle.file).pipe(Effect.mapError(failed));
       yield* host.fileSystem.writeFile(remote, bytes).pipe(Effect.mapError(fromPlatform(threadId)));
+      // git drops a ref its prerequisites exclude, so a branch still on the seed may be missing;
+      // the snapshot's parent is the head and carries its objects.
       yield* git(host, clonePath, [
         "fetch",
         "--quiet",
         "--no-tags",
         "--no-write-fetch-head",
         remote,
-        `+${branchRef}:refs/heads/${branch}`,
-        ...(snapshot === null ? [] : [`+${snapshotRef}:${snapshotRef}`]),
+        snapshot === null ? `+${branchRef}:refs/heads/${branch}` : `+${snapshotRef}:${snapshotRef}`,
       ]);
-    } else {
-      // Every object is in the clone already, from origin.
+    }
+    if (bundle.file === null || snapshot !== null) {
       yield* git(host, clonePath, ["branch", "--force", "--", branch, bundle.head]);
     }
     yield* git(host, clonePath, ["worktree", "add", "--quiet", "--", worktreePath, branch]);

@@ -237,6 +237,41 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     const sync = yield* MirrorSync.MirrorSync;
     const snapshotRef = CheckpointMirror.sandboxSnapshotRef(threadId);
     const vcs = yield* VcsDriver.VcsDriver;
+    const project = (yield* git(sandbox, ["remote", "get-url", "origin"])).trim();
+    const originTip = yield* git(sandbox, ["rev-parse", "origin/main"]);
+
+    // The disk is gone: a fresh clone of origin, and the thread's worktree path is empty.
+    const root = yield* SandboxRoot;
+    const rebuild = Effect.fn("MirrorSyncTest.rebuild")(function* (name: string) {
+      const clonePath = path.join(root, `${name}-clone`);
+      const worktreePath = path.join(root, `${name}-worktree`);
+      yield* git(root, ["clone", "--quiet", "--no-local", project, clonePath]);
+      const restored = yield* sync.restore({
+        threadId,
+        projectId,
+        clonePath,
+        worktreePath,
+        branch: "work",
+      });
+      return { restored, worktreePath };
+    });
+
+    // Only uncommitted work on the seed: the bundle leaves out the branch the seed excludes.
+    yield* fs.writeFileString(path.join(sandbox, "pending.txt"), "uncommitted\n");
+    yield* vcs.checkpoints.captureCheckpoint({
+      cwd: sandbox,
+      checkpointRef: CheckpointRef.make(snapshotRef),
+    });
+    yield* sync.sync({ threadId, cwd: sandbox, checkpointRefs: [CheckpointRef.make(snapshotRef)] });
+    const pending = yield* rebuild("pending");
+    assert.isTrue(pending.restored?.snapshotAt != null);
+    assert.equal(yield* git(pending.worktreePath, ["rev-parse", "HEAD"]), originTip);
+    assert.equal(yield* git(pending.worktreePath, ["branch", "--show-current"]), "work");
+    assert.equal(
+      yield* fs.readFileString(path.join(pending.worktreePath, "pending.txt")),
+      "uncommitted\n",
+    );
+
     yield* fs.writeFileString(path.join(sandbox, "committed.txt"), "unpushed\n");
     yield* git(sandbox, ["add", "."]);
     yield* git(sandbox, ["commit", "--quiet", "-m", "unpushed"]);
@@ -252,8 +287,6 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
       checkpointRefs: [CheckpointRef.make(snapshotRef)],
     });
     const branchTip = yield* git(sandbox, ["rev-parse", "HEAD"]);
-    const project = (yield* git(sandbox, ["remote", "get-url", "origin"])).trim();
-    const originTip = yield* git(sandbox, ["rev-parse", "origin/main"]);
     const snapshotOid = yield* git(sandbox, ["rev-parse", snapshotRef]);
 
     // What Continue locally downloads: the branch and the snapshot on its tip, past the haves.
@@ -292,21 +325,6 @@ it.effect("rebuilds a lost checkout from the mirror's branch and a snapshot on i
     const empty = yield* Effect.scoped(bundled([snapshotOid]));
     assert.deepEqual([empty.file, empty.head], [null, branchTip]);
 
-    // The disk is gone: a fresh clone of origin, and the thread's worktree path is empty.
-    const root = yield* SandboxRoot;
-    const rebuild = Effect.fn("MirrorSyncTest.rebuild")(function* (name: string) {
-      const clonePath = path.join(root, `${name}-clone`);
-      const worktreePath = path.join(root, `${name}-worktree`);
-      yield* git(root, ["clone", "--quiet", "--no-local", project, clonePath]);
-      const restored = yield* sync.restore({
-        threadId,
-        projectId,
-        clonePath,
-        worktreePath,
-        branch: "work",
-      });
-      return { restored, worktreePath };
-    });
     const { restored, worktreePath } = yield* rebuild("fresh");
 
     assert.isTrue(restored?.snapshotAt != null && DateTime.isDateTime(restored.snapshotAt));
