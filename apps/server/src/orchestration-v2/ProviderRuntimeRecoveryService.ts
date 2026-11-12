@@ -955,7 +955,10 @@ export const make = Effect.gen(function* () {
     const local: Array<ThreadId> = [];
     for (const threadId of candidates) {
       const shell = yield* projections.getThreadShell(threadId).pipe(read);
-      if (shell !== null && shell.sandboxId === undefined) local.push(threadId);
+      // A room's @pair reply is an HTTP client in the server, not local work (spaces-agent §14.8).
+      if (shell !== null && shell.sandboxId === undefined && shell.space?.kind !== "room") {
+        local.push(threadId);
+      }
     }
     if (local.length > 0) return yield* new CloudOnlyLocalWorkError({ threadIds: local });
   });

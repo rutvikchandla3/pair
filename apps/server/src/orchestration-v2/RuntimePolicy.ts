@@ -184,8 +184,9 @@ export const layerFromProjectStore: Layer.Layer<
                     }),
                   ),
                 // A workspace's own folder holds no code; its threads run in their own folder.
+                // A space's room never touches a folder; its adapter ignores `cwd`.
                 onSome: (project) =>
-                  project.roots === undefined
+                  project.roots === undefined || input.thread.space?.kind === "room"
                     ? Effect.succeed(project.workspaceRoot)
                     : Effect.fail(
                         new RuntimePolicyResolveError({

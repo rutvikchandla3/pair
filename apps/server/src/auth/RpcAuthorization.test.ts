@@ -169,7 +169,14 @@ describe("RPC authorization scopes", () => {
     for (const method of [WS_METHODS.spacesList, WS_METHODS.spacesGet]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }
-    for (const method of [WS_METHODS.spacesMutate, WS_METHODS.spacesPost, WS_METHODS.spacesTask]) {
+    for (const method of [
+      WS_METHODS.spacesMutate,
+      WS_METHODS.spacesPost,
+      WS_METHODS.spacesTask,
+      WS_METHODS.spacesAction,
+      WS_METHODS.spacesNotes,
+      WS_METHODS.spacesReply,
+    ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
       expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
     }

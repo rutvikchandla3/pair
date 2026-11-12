@@ -938,8 +938,9 @@ export const layer: Layer.Layer<
             ),
           );
           // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          // A space's room has no folder at all.
           yield* (
-            input.appThread.lineage.sideChat === true
+            input.appThread.lineage.sideChat === true || input.appThread.space?.kind === "room"
               ? Effect.void
               : checkpointService.captureBaseline({
                   scope: input.checkpointScope,

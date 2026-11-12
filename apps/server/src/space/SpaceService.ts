@@ -18,6 +18,12 @@ import {
   type SpaceTaskResult,
   type SpaceView,
   type ThreadId,
+  MessageId,
+  type SpaceActionInput,
+  type SpaceActionResult,
+  type SpaceNotesEditInput,
+  type SpaceNotesEditResult,
+  type SpaceReplyInput,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Context from "effect/Context";
@@ -30,6 +36,8 @@ import * as Schema from "effect/Schema";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import { spaceReplyTrigger } from "./SpaceAgentDecisions.ts";
+import { SpaceIntake } from "./SpaceIntake.ts";
 
 const DEFAULT_ROOM_PAGE = 100;
 
@@ -63,6 +71,20 @@ export class SpaceService extends Context.Service<
       caller: SpaceCaller,
       input: SpaceTaskAction,
     ) => Effect.Effect<SpaceTaskResult, SpaceError>;
+    /** Confirm or cancel a card, or Undo a record; only the tagger. */
+    readonly action: (
+      caller: SpaceCaller,
+      input: SpaceActionInput,
+    ) => Effect.Effect<SpaceActionResult, SpaceError>;
+    readonly notes: (
+      caller: SpaceCaller,
+      input: SpaceNotesEditInput,
+    ) => Effect.Effect<SpaceNotesEditResult, SpaceError>;
+    /** Cancel a queued `@pair` reply, Stop a running one, or Retry a failed one. */
+    readonly reply: (
+      caller: SpaceCaller,
+      input: SpaceReplyInput,
+    ) => Effect.Effect<Record<string, never>, SpaceError>;
   }
 >()("t3/space/SpaceService") {}
 
@@ -83,6 +105,7 @@ const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const digest = yield* Digest.Digest;
+  const intake = yield* SpaceIntake;
 
   /** Stable across retries of one command, which the room thread's receipt makes idempotent. */
   const spaceIdFor = (commandId: CommandId) =>
@@ -155,6 +178,10 @@ const make = Effect.gen(function* () {
         hasMoreEntries: page.length > limit,
         tasks: shells.flatMap((shell) =>
           shell === null || shell.deletedAt !== null ? [] : [shell],
+        ),
+        notes: yield* read(projections.listSpaceNotes(space.id)),
+        actions: yield* read(
+          projections.listSpaceActions({ spaceId: space.id, limit: SPACE_ROOM_PAGE_LIMIT }),
         ),
       };
     },
@@ -364,7 +391,161 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return SpaceService.of({ list, get, mutate, post, task });
+  const forbidden = (reason: SpaceError["reason"], message: string) =>
+    new SpaceError({ reason, message });
+  const viaIntake = (command: Parameters<SpaceIntake["Service"]["dispatch"]>[0]) =>
+    intake.dispatch(command).pipe(Effect.mapError(toSpaceError));
+
+  const requireMemberSpace = Effect.fn("SpaceService.requireMemberSpace")(function* (
+    caller: SpaceCaller,
+    spaceId: SpaceId,
+  ) {
+    const space = yield* requireSpace(spaceId);
+    if (!isSpaceActiveMember(space, caller.memberId)) {
+      return yield* forbidden("not-member", `You are not in space ${space.id}.`);
+    }
+    return space;
+  });
+
+  const action: SpaceService["Service"]["action"] = Effect.fn("SpaceService.action")(
+    function* (caller, input) {
+      const record = yield* read(projections.getSpaceAction(input.actionId));
+      if (record === null) {
+        return yield* forbidden("action-not-found", `Action ${input.actionId} not found.`);
+      }
+      const space = yield* requireMemberSpace(caller, record.spaceId);
+      if (record.actorId !== caller.memberId) {
+        return yield* forbidden("not-tagger", "Only the person who asked @pair can answer this.");
+      }
+      const base = {
+        commandId: yield* commandId(`action.${input.type}`),
+        threadId: space.roomThreadId,
+        spaceId: space.id,
+        actorId: caller.memberId,
+        actionId: record.id,
+      };
+      if (input.type === "answer" && input.answer === "cancel") {
+        yield* dispatch({ ...base, type: "space.action.cancel" });
+      } else if (input.type === "answer") {
+        // Confirm runs exactly the stored input, through the tagger's own guards.
+        if (record.request.type !== "task.message" || record.via === null) {
+          return yield* forbidden("action-closed", "This card has nothing to confirm.");
+        }
+        yield* viaIntake({
+          type: "message.dispatch",
+          commandId: CommandId.make(`space.action.confirm:${record.id}`),
+          threadId: record.request.taskId,
+          actorId: caller.memberId,
+          messageId: MessageId.make(`pair-message:${record.id}`),
+          text: record.request.text,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          via: { pair: record.via },
+          spaceActionId: record.id,
+          createdBy: "user",
+          creationSource: "server",
+        });
+      } else {
+        yield* undoInverse(caller, record);
+        yield* dispatch({ ...base, type: "space.action.undo" });
+      }
+      const after = yield* read(projections.getSpaceAction(record.id));
+      if (after === null) return yield* failed(`Action ${record.id} was not recorded.`);
+      return { action: after };
+    },
+  );
+
+  /** Undo's inverse command, sent as the person who clicked; notes revert inside the undo. */
+  const undoInverse = Effect.fn("SpaceService.undoInverse")(function* (
+    caller: SpaceCaller,
+    record: NonNullable<Effect.Success<ReturnType<typeof projections.getSpaceAction>>>,
+  ) {
+    if (record.state !== "done" || record.outcome === null) return;
+    if (record.outcome.type === "task.created") {
+      const shell = yield* read(projections.getThreadShell(record.outcome.threadId));
+      if (shell === null || shell.deletedAt !== null) return;
+      if (shell.latestRunId !== null || shell.ownerId !== record.outcome.ownerId) {
+        return yield* forbidden("not-undoable", "The task has started or changed hands.");
+      }
+      yield* viaIntake({
+        type: "thread.delete",
+        commandId: CommandId.make(`space.action.undo:${record.id}`),
+        threadId: record.outcome.threadId,
+        actorId: caller.memberId,
+      });
+      return;
+    }
+    if (record.outcome.type === "task.message.queued") {
+      const messageId = record.outcome.messageId;
+      const task = yield* read(projections.getThreadProjection(record.outcome.threadId));
+      const run = task.runs.find((candidate) => candidate.userMessageId === messageId);
+      if (run?.status === "cancelled") return;
+      if (run?.status !== "queued") {
+        return yield* forbidden("not-undoable", "The message was already delivered.");
+      }
+      yield* viaIntake({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`space.action.undo:${record.id}`),
+        threadId: record.outcome.threadId,
+        runId: run.id,
+        actorId: caller.memberId,
+      });
+    }
+  });
+
+  const notes: SpaceService["Service"]["notes"] = Effect.fn("SpaceService.notes")(
+    function* (caller, input) {
+      const space = yield* requireMemberSpace(caller, input.spaceId);
+      yield* dispatch({
+        type: "space.notes.edit",
+        commandId: yield* commandId("notes.edit"),
+        threadId: space.roomThreadId,
+        spaceId: space.id,
+        actorId: caller.memberId,
+        changes: input.changes,
+        via: null,
+      });
+      return { notes: yield* read(projections.listSpaceNotes(space.id)) };
+    },
+  );
+
+  const reply: SpaceService["Service"]["reply"] = Effect.fn("SpaceService.reply")(
+    function* (caller, input) {
+      const space = yield* requireMemberSpace(caller, input.spaceId);
+      const room = yield* read(projections.getThreadProjection(space.roomThreadId));
+      const run = room.runs.find((candidate) => candidate.id === input.runId);
+      const post =
+        run?.userMessageId == null
+          ? null
+          : yield* read(projections.getSpaceRoomEntry(spaceReplyTrigger(run.userMessageId)));
+      if (run === undefined || post?.type !== "post") {
+        return yield* forbidden("reply-not-found", `Reply ${input.runId} not found.`);
+      }
+      if (caller.memberId !== post.authorId && caller.memberId !== space.ownerId) {
+        return yield* forbidden("not-tagger", "Only the person who asked, or the owner, can.");
+      }
+      const base = {
+        commandId: yield* commandId(`reply.${input.action}`),
+        threadId: space.roomThreadId,
+        runId: run.id,
+        actorId: caller.memberId,
+      };
+      switch (input.action) {
+        case "cancel":
+          yield* dispatch({ ...base, type: "queued-run.cancel" });
+          break;
+        case "stop":
+          yield* dispatch({ ...base, type: "run.interrupt" });
+          break;
+        case "retry":
+          yield* dispatch({ ...base, spaceId: space.id, type: "space.reply.retry" });
+          break;
+      }
+      return {};
+    },
+  );
+
+  return SpaceService.of({ list, get, mutate, post, task, action, notes, reply });
 });
 
 export const layer = Layer.effect(SpaceService, make);

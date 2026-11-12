@@ -157,6 +157,11 @@ import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
+import * as SpaceAgentAdapter from "./space/SpaceAgentAdapter.ts";
+import * as SpaceAgentAdapterSlot from "./space/SpaceAgentAdapterSlot.ts";
+import * as SpaceAgentTools from "./space/SpaceAgentTools.ts";
+import * as SpaceContext from "./space/SpaceContext.ts";
+import * as SpaceIntake from "./space/SpaceIntake.ts";
 import * as SpaceService from "./space/SpaceService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
@@ -1008,6 +1013,15 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // @pair, the in-process room agent, joins the provider adapter registry.
+  SpaceAgentAdapter.layerRegister.pipe(
+    Layer.provide(
+      SpaceContext.layer.pipe(
+        Layer.provideMerge(SpaceAgentTools.layer),
+        Layer.provide(SpaceIntake.layer),
+      ),
+    ),
+  ),
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
@@ -1038,7 +1052,9 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ChiefOfStaffVoice.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
   // Spaces for WebSocket clients and /mcp agents.
   Layer.provide(
-    SpaceService.layer.pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, IdAllocator.layer))),
+    SpaceService.layer.pipe(
+      Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, IdAllocator.layer, SpaceIntake.layer)),
+    ),
   ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
@@ -1412,6 +1428,12 @@ const layerMakeServer = Layer.unwrap(
         ),
       ),
       Layer.provide(layerActivation),
+      Layer.provide(
+        Layer.succeed(
+          SpaceAgentAdapterSlot.SpaceAgentAdapterSlot,
+          SpaceAgentAdapterSlot.makeSlot(),
+        ),
+      ),
       Layer.provideMerge(
         RelayTracing.layerServerRelayBroker.pipe(Layer.provide(ManagedPolicy.layer)),
       ),

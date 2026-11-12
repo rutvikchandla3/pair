@@ -2,10 +2,14 @@ import {
   isSpaceActiveMember,
   type MemberId,
   MessageId,
+  type ModelSelection,
   type OrchestrationV2AppThread,
+  type OrchestrationV2Command,
   type OrchestrationV2SpaceCommand,
   type ProjectId,
   type Space,
+  SPACE_AGENT_DEFAULT_MODEL,
+  SPACE_AGENT_INSTANCE_ID,
   SPACE_QUOTE_MAX_LENGTH,
   type SpaceMention,
   type SpaceMember,
@@ -17,6 +21,43 @@ import {
   type ThreadSpace,
   type ThreadSpaceTask,
 } from "@t3tools/contracts";
+
+import type { SpaceAgentCommand } from "./SpaceAgentDecisions.ts";
+
+/** A room thread runs only on `spaceAgent`; any other selection becomes its default. */
+export const spaceAgentSelection = (current: ModelSelection): ModelSelection =>
+  current.instanceId === SPACE_AGENT_INSTANCE_ID
+    ? current
+    : { instanceId: SPACE_AGENT_INSTANCE_ID, model: SPACE_AGENT_DEFAULT_MODEL };
+
+/**
+ * Never steer: a message `@pair` sends only queues (spaces-agent §7). Only room threads run on
+ * `spaceAgent`, and a room takes no other provider.
+ */
+export function spaceMessageRefusal(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  thread: Pick<OrchestrationV2AppThread, "space">,
+): string | null {
+  if (
+    command.via !== undefined &&
+    (command.dispatchMode.type !== "queue_after_active" ||
+      command.deliveryIntent !== undefined ||
+      command.steerOthersTurn === true ||
+      command.restartContinuationOfRunId !== undefined)
+  ) {
+    return "A message @pair sends only queues; it never steers or restarts a turn.";
+  }
+  if (command.via !== undefined && thread.space?.kind !== "task") {
+    return "@pair only messages the tasks of a space.";
+  }
+  const onSpaceAgent = command.modelSelection?.instanceId === SPACE_AGENT_INSTANCE_ID;
+  const isRoom = thread.space?.kind === "room";
+  if (onSpaceAgent && !isRoom) return "Only a space's room runs on @pair.";
+  if (isRoom && command.modelSelection !== undefined && !onSpaceAgent) {
+    return "A space's room runs only on @pair.";
+  }
+  return null;
+}
 
 /** Why a space command is refused; the client sees it as a `SpaceError`. */
 export type SpaceRefusal = Exclude<SpaceError["reason"], "failed">;
@@ -84,8 +125,11 @@ const normalizeMentions = (
   return kept;
 };
 
+/** The Spaces core commands; `@pair`'s are decided in `SpaceAgentDecisions`. */
+export type SpaceCoreCommand = Exclude<OrchestrationV2SpaceCommand, SpaceAgentCommand>;
+
 export interface SpaceCommandInput {
-  readonly command: OrchestrationV2SpaceCommand;
+  readonly command: SpaceCoreCommand;
   readonly space: Space | null;
   /** The entry a `space.post` quotes, read by the caller. */
   readonly quoted?: SpaceRoomEntry | null;
@@ -398,7 +442,7 @@ export function decideTaskCreate(input: {
   ]);
 }
 
-const roomThreadOf = (command: OrchestrationV2SpaceCommand, input: SpaceCommandInput) =>
+const roomThreadOf = (command: SpaceCoreCommand, input: SpaceCommandInput) =>
   command.type === "space.task.update" ? (input.space?.roomThreadId ?? null) : command.threadId;
 
 const withRemoved = (

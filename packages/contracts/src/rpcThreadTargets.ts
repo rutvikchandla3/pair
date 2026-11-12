@@ -290,6 +290,9 @@ export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.threadMoveToLocal]: "`threadId` is the thread this server just made for the caller.",
   [WS_METHODS.spacesPost]:
     "The caller's own post, in a room they are a member of; only system lines name tasks.",
+  [WS_METHODS.spacesAction]:
+    "The caller's own action, in a room they are a member of; it names only that space's tasks, which members open.",
+  [WS_METHODS.spacesNotes]: "Notes cite posts in a room the caller is a member of, or its tasks.",
   [WS_METHODS.serverListAcpRegistrySessions]: refusedOnCloudOnly,
   [WS_METHODS.serverImportAcpRegistrySession]: refusedOnCloudOnly,
   [WS_METHODS.agentSessionsScan]: refusedOnCloudOnly,

@@ -58,6 +58,14 @@ import {
   SpaceTaskBase,
   ThreadSpace,
 } from "./space.ts";
+import {
+  SpaceAction,
+  SpaceActionId,
+  SpaceActionRequest,
+  SpaceNoteChange,
+  SpaceNotesChange,
+  SpacePairVia,
+} from "./spaceAgent.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -1533,6 +1541,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
    * the workflow's opening instead and keep the script behind a disclosure.
    */
   workflowScript: Schema.optional(Schema.Boolean),
+  /** Sent by `@pair` for its tagger (the author); it never steers and is never promoted. */
+  via: Schema.optional(Schema.Struct({ pair: SpacePairVia })),
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -2339,6 +2349,18 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("space.room-entry"),
     payload: SpaceRoomEntry,
+  }),
+  /** On the room thread's stream: a record, confirm card or receipt after the change. */
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("space.action.updated"),
+    payload: SpaceAction,
+  }),
+  /** On the room thread's stream: one notes item before and after. */
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("space.notes.changed"),
+    payload: SpaceNotesChange,
   }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
@@ -3332,6 +3354,16 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("space.room-entry"),
     payload: SpaceRoomEntry,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("space.action.updated"),
+    payload: SpaceAction,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("space.notes.changed"),
+    payload: SpaceNotesChange,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -3382,6 +3414,9 @@ export const OrchestrationV2Command = Schema.Union([
     ownerId: Schema.optional(MemberId),
     /** Only the server sets this, from `SpaceService`; a client's thread.create never carries one. */
     space: Schema.optional(ThreadSpace),
+    /** Only the server sets these, when Pair creates a space task for the tagger. */
+    via: Schema.optional(Schema.Struct({ pair: SpacePairVia })),
+    spaceActionId: Schema.optional(SpaceActionId),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
@@ -3679,6 +3714,10 @@ export const OrchestrationV2Command = Schema.Union([
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     /** The sender chose to steer or restart a turn another member started; without it, that send queues. */
     steerOthersTurn: Schema.optional(Schema.Boolean),
+    /** Only the server sets this, from `SpaceTasks`; such a message only ever queues. */
+    via: Schema.optional(Schema.Struct({ pair: SpacePairVia })),
+    /** The action this message records, or the confirm card it carries out. */
+    spaceActionId: Schema.optional(SpaceActionId),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,
@@ -3968,6 +4007,45 @@ export const OrchestrationV2SpaceCommand = Schema.Union([
       Schema.Struct({ type: Schema.Literal("hand-back"), reason: TrimmedNonEmptyString }),
       Schema.Struct({ type: Schema.Literal("remind") }),
     ]),
+  }),
+  /** Pair stores a confirm card for a task the tagger doesn't own; nothing else changes. */
+  Schema.Struct({
+    type: Schema.Literal("space.action.propose"),
+    ...SpaceCommandFields,
+    actionId: SpaceActionId,
+    request: SpaceActionRequest,
+    via: SpacePairVia,
+  }),
+  /** The tagger cancels a confirm card. Confirm is the proposed command itself, carrying the id. */
+  Schema.Struct({
+    type: Schema.Literal("space.action.cancel"),
+    ...SpaceCommandFields,
+    actionId: SpaceActionId,
+  }),
+  /** A task Pair created for its tagger has started; its record says so only from then. */
+  Schema.Struct({
+    type: Schema.Literal("space.action.started"),
+    ...SpaceCommandFields,
+    actionId: SpaceActionId,
+  }),
+  /** Reverts a notes receipt item by item, or records an Undo whose inverse command committed. */
+  Schema.Struct({
+    type: Schema.Literal("space.action.undo"),
+    ...SpaceCommandFields,
+    actionId: SpaceActionId,
+  }),
+  /** A person's edit of the notes, or Pair's for the tagger when `via` is set. */
+  Schema.Struct({
+    type: Schema.Literal("space.notes.edit"),
+    ...SpaceCommandFields,
+    changes: Schema.Array(SpaceNoteChange),
+    via: Schema.NullOr(SpacePairVia),
+  }),
+  /** A failed or stopped `@pair` reply runs again, as a new run for the same post. */
+  Schema.Struct({
+    type: Schema.Literal("space.reply.retry"),
+    ...SpaceCommandFields,
+    runId: RunId,
   }),
 ]);
 export type OrchestrationV2SpaceCommand = typeof OrchestrationV2SpaceCommand.Type;

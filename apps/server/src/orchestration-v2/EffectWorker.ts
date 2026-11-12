@@ -30,7 +30,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxEffects from "../sandbox/lifecycle/SandboxEffects.ts";
 import * as CheckpointMirror from "../sandbox/mirror/CheckpointMirror.ts";
 import * as TeamImageEffects from "../sandbox/image/TeamImageEffects.ts";
-import * as SpacePairReplies from "../space/SpacePairReplies.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -145,8 +144,6 @@ export const layerExecutor: Layer.Layer<
     const checkpointMirror = yield* Effect.serviceOption(CheckpointMirror.CheckpointMirror);
     // Optional too: the live layer ships with team-image builds.
     const teamImages = yield* Effect.serviceOption(TeamImageEffects.TeamImageEffects);
-    // Optional until the @pair agent provides it; without it a tag is recorded and not answered.
-    const pairReplies = yield* Effect.serviceOption(SpacePairReplies.SpacePairReplies);
     return OrchestrationEffectExecutorV2.of({
       reportExhausted: Effect.fn("OrchestrationEffectExecutorV2.reportExhausted")(
         function* (effect, cause) {
@@ -684,18 +681,6 @@ export const layerExecutor: Layer.Layer<
             return sandboxEffects
               .handOver({ sandboxId: effect.request.sandboxId, fromThreadId: effect.threadId })
               .pipe(Effect.mapError(sandboxExecutionError(effect)));
-          case "space.pair-reply.request":
-            return Option.isNone(pairReplies)
-              ? Effect.logInfo("space.pair-reply.request dropped: no @pair agent", {
-                  spaceId: effect.request.spaceId,
-                  postId: effect.request.postId,
-                })
-              : pairReplies.value.request({
-                  spaceId: effect.request.spaceId,
-                  roomThreadId: effect.threadId,
-                  postId: effect.request.postId,
-                  taggerId: effect.request.taggerId,
-                });
         }
       }),
     });

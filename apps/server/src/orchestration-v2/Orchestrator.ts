@@ -1,8 +1,16 @@
-import { isSpaceActiveMember, spaceMembershipChange } from "@t3tools/contracts";
+import {
+  isSpaceActiveMember,
+  SPACE_NOTE_TOMBSTONE_DAYS,
+  type SpaceAction,
+  type SpaceActionId,
+  SpaceId,
+  SpaceNoteId,
+  type SpaceNotesChange,
+  spaceMembershipChange,
+} from "@t3tools/contracts";
 import type {
   GuestShareId,
   MemberId,
-  OrchestrationV2SpaceCommand,
   ThreadSpaceTask,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -96,7 +104,26 @@ import {
   decideTaskMessage,
   nextTaskPlacement,
   spaceRefusal,
+  type SpaceRefusal,
+  spaceAgentSelection,
+  spaceMessageRefusal,
+  type SpaceCoreCommand,
 } from "../space/SpaceDecisions.ts";
+import {
+  decideNotesEdit,
+  decideNotesUndo,
+  decidePropose,
+  decideRecordUndo,
+  decidePairTaskMessage,
+  decideTaskCreateAction,
+  type SpaceAgentCommand,
+  spaceActionExpired,
+  spaceNotesReceiptId,
+  spaceReplyTrigger,
+  spaceRetryMessageId,
+  type SpaceSourceLookup,
+  spaceTaskSnapshot,
+} from "../space/SpaceAgentDecisions.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import { NOT_CLOUD_ONLY_MESSAGE } from "@t3tools/shared/sandbox";
 import {
@@ -764,6 +791,12 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "space.join.cancel":
     case "space.post":
     case "space.task.update":
+    case "space.action.propose":
+    case "space.action.cancel":
+    case "space.action.started":
+    case "space.action.undo":
+    case "space.notes.edit":
+    case "space.reply.retry":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
@@ -2115,6 +2148,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         instanceDisabledForProject ||
         (failureClass !== undefined &&
           failureClass !== "validation_error" &&
+          // One failed @pair reply doesn't block the room; a rejected or spent key does (§8).
+          (projection.thread.space?.kind !== "room" ||
+            failureClass === "usage_limit" ||
+            failureClass === "permission_error") &&
           failedRun?.providerInstanceId === queuedRun.providerInstanceId)
       ) {
         const now = yield* DateTime.now;
@@ -3382,6 +3419,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (decision._tag === "NoOp" || space === null) return;
+    if (command.via !== undefined) {
+      const roomMessageId = command.via.pair.roomMessageId;
+      const others = (yield* projectionStore
+        .listSpaceActions({ roomMessageId })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        )).filter(
+        (action) =>
+          action.id !== command.spaceActionId &&
+          action.request.type === "task.create" &&
+          action.state === "done",
+      );
+      const ownerId = command.ownerId ?? command.actorId ?? placement.createdBy;
+      const recorded = decideTaskCreateAction({
+        command,
+        space,
+        ownerId,
+        othersThisReply: others.length,
+        now: DateTime.formatIso(now),
+      });
+      if (recorded._tag === "Refuse") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: spaceRefusal(placement.spaceId, "a task from @pair", recorded.reason),
+        });
+      }
+      yield* emitSpaceAction(command, recorded.action, events);
+    }
     for (const entry of decision.entries) {
       yield* emit(
         events,
@@ -3397,7 +3465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /** Re-decides against the space read under the room's lock; `SpaceService` checked first. */
   const dispatchSpaceCommand = Effect.fn("Orchestrator.dispatchSpaceCommand")(function* (
-    command: OrchestrationV2SpaceCommand,
+    command: SpaceCoreCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
@@ -3448,7 +3516,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.name,
-          modelSelection: command.modelSelection,
+          modelSelection: spaceAgentSelection(command.modelSelection),
           runtimeMode: "approval-required",
           interactionMode: "default",
           branch: null,
@@ -3479,22 +3547,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: entry,
       });
     }
-    if (decision.pairReply !== null) {
-      const request = {
-        type: "space.pair-reply.request" as const,
-        spaceId: command.spaceId,
-        postId: decision.pairReply.postId,
-        taggerId: decision.pairReply.taggerId,
-      };
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
+    if (decision.pairReply !== null && command.type === "space.post") {
+      // The reply is a run on the room thread; its user message mirrors the post, under its id.
+      const room = yield* getProjectionWithPendingEvents(roomThreadId, events);
+      yield* dispatchMessage(
         {
-          id: `effect:${command.commandId}:${request.type}`,
+          type: "message.dispatch",
           commandId: command.commandId,
           threadId: roomThreadId,
-          request,
+          actorId: decision.pairReply.taggerId,
+          messageId: decision.pairReply.postId,
+          text: command.text,
+          attachments: [],
+          modelSelection: spaceAgentSelection(room.thread.modelSelection),
+          dispatchMode: { type: "queue_after_active" },
+          // Not a client send, so a tag never releases a held queue.
+          createdBy: "user",
+          creationSource: "server",
         },
-      ]);
+        events,
+        effects,
+      );
     }
     if (command.type === "space.task.update" && taskThread?.space?.kind === "task") {
       const change = command.change;
@@ -3514,6 +3587,331 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
+    }
+  });
+
+  /** The task a confirm card or record names, as the card snapshots it. */
+  const spaceTaskSnapshotOf = Effect.fn("Orchestrator.spaceTaskSnapshotOf")(function* (
+    command: { readonly threadId: ThreadId },
+    taskId: ThreadId,
+  ) {
+    const shell = yield* projectionStore
+      .getThreadShell(taskId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (shell === null || shell.deletedAt !== null || shell.space?.kind !== "task") {
+      return { snapshot: null, spaceId: null };
+    }
+    return {
+      snapshot: spaceTaskSnapshot({
+        id: shell.id,
+        title: shell.title,
+        ownerId: shell.ownerId,
+        latestRunId: shell.latestRunId,
+        updatedAt: DateTime.formatIso(shell.updatedAt),
+      }),
+      spaceId: shell.space.spaceId,
+    };
+  });
+
+  /** An action recorded under a task command still goes on the room's stream, which clients read. */
+  const emitSpaceAction = Effect.fn("Orchestrator.emitSpaceAction")(function* (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    action: SpaceAction,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const space = yield* projectionStore
+      .getSpace(action.spaceId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (space === null) return;
+    yield* emit(
+      events,
+      command as OrchestrationV2ServerCommand,
+    )({
+      type: "space.action.updated",
+      threadId: space.roomThreadId,
+      occurredAt: yield* DateTime.now,
+      payload: action,
+    });
+  });
+
+  /** `@pair`'s message into a task: refused, a card that can't run any more, or sent with its record. */
+  const decideSpaceTaskMessage = Effect.fn("Orchestrator.decideSpaceTaskMessage")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    thread: OrchestrationV2AppThread,
+  ) {
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const spaceId = thread.space?.kind === "task" ? thread.space.spaceId : null;
+    const space =
+      spaceId === null ? null : yield* projectionStore.getSpace(spaceId).pipe(mapProjection);
+    const task = yield* spaceTaskSnapshotOf(command, command.threadId);
+    const decision = decidePairTaskMessage({
+      command,
+      space,
+      taskSpaceId: task.spaceId,
+      snapshot: task.snapshot,
+      existing:
+        command.spaceActionId === undefined
+          ? null
+          : yield* projectionStore.getSpaceAction(command.spaceActionId).pipe(mapProjection),
+      now: DateTime.formatIso(yield* DateTime.now),
+    });
+    if (decision._tag === "Refuse") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: spaceRefusal(
+          spaceId ?? SpaceId.make("none"),
+          "a message from @pair",
+          decision.reason,
+        ),
+      });
+    }
+    return decision;
+  });
+
+  /** `@pair`'s commands: notes, confirm cards, Undo and Retry (spaces-agent §5–§7). */
+  const dispatchSpaceAgentCommand = Effect.fn("Orchestrator.dispatchSpaceAgentCommand")(function* (
+    command: SpaceAgentCommand,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const mapProjection = Effect.mapError(
+      (cause: unknown) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+    );
+    const refuse = (reason: SpaceRefusal) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: spaceRefusal(command.spaceId, command.type, reason),
+      });
+    const space = yield* projectionStore.getSpace(command.spaceId).pipe(mapProjection);
+    if (space === null || space.roomThreadId !== command.threadId) {
+      return yield* refuse("not-found");
+    }
+    const now = yield* DateTime.now;
+    const nowIso = DateTime.formatIso(now);
+    const emitEvent = emit(events, command);
+    const emitAction = (action: SpaceAction) =>
+      emitEvent({
+        type: "space.action.updated",
+        threadId: space.roomThreadId,
+        occurredAt: now,
+        payload: action,
+      });
+    const emitNotes = (changes: ReadonlyArray<SpaceNotesChange>) =>
+      Effect.forEach(changes, (change) =>
+        emitEvent({
+          type: "space.notes.changed",
+          threadId: space.roomThreadId,
+          occurredAt: now,
+          payload: change,
+        }),
+      );
+    const requireAction = Effect.fn("Orchestrator.requireSpaceAction")(function* (
+      actionId: SpaceActionId,
+    ) {
+      const action = yield* projectionStore.getSpaceAction(actionId).pipe(mapProjection);
+      if (action === null || action.spaceId !== space.id) {
+        return yield* refuse("action-not-found");
+      }
+      return action;
+    });
+
+    switch (command.type) {
+      case "space.notes.edit": {
+        const sourceIds = new Set(
+          command.changes.flatMap((change) =>
+            change.op === "remove" ? [] : (change.sourceIds ?? []),
+          ),
+        );
+        const sources = new Map<MessageId, SpaceSourceLookup>();
+        for (const id of sourceIds) {
+          const found = yield* projectionStore.findSpaceMessage(space.id, id).pipe(mapProjection);
+          if (found === null) continue;
+          sources.set(id, {
+            source: {
+              messageId: id,
+              threadId: found.threadId,
+              authorId: found.authorId,
+              at: found.at,
+            },
+            byPerson: found.byPerson,
+          });
+        }
+        const cutoff = DateTime.formatIso(
+          DateTime.subtract(now, { days: SPACE_NOTE_TOMBSTONE_DAYS }),
+        );
+        const decision = decideNotesEdit({
+          space,
+          actorId: command.actorId,
+          via: command.via,
+          changes: command.changes,
+          notes: yield* projectionStore.listSpaceNotes(space.id).pipe(mapProjection),
+          tombstones: yield* projectionStore
+            .listSpaceNoteTombstones(space.id, cutoff)
+            .pipe(mapProjection),
+          sources,
+          receipt:
+            command.via === null
+              ? null
+              : yield* projectionStore
+                  .getSpaceAction(spaceNotesReceiptId(command.via.roomMessageId))
+                  .pipe(mapProjection),
+          newNoteId: (index) => SpaceNoteId.make(`note:${command.commandId}:${index}`),
+          now: nowIso,
+        });
+        if (decision._tag === "Refuse") return yield* refuse(decision.reason);
+        yield* emitNotes(decision.changes);
+        if (decision.receipt !== null) yield* emitAction(decision.receipt);
+        return;
+      }
+      case "space.action.propose": {
+        const task =
+          command.request.type === "task.message"
+            ? yield* spaceTaskSnapshotOf(command, command.request.taskId)
+            : { snapshot: null, spaceId: null };
+        const decision = decidePropose({
+          command,
+          space,
+          existing: yield* projectionStore.getSpaceAction(command.actionId).pipe(mapProjection),
+          snapshot: task.snapshot,
+          taskSpaceId: task.spaceId,
+          now: nowIso,
+        });
+        if (decision._tag === "Refuse") return yield* refuse(decision.reason);
+        if (decision._tag === "Accept") yield* emitAction(decision.action);
+        return;
+      }
+      case "space.action.cancel": {
+        const action = yield* requireAction(command.actionId);
+        if (action.actorId !== command.actorId) return yield* refuse("not-tagger");
+        if (action.state !== "proposed") {
+          return action.state === "cancelled" ? undefined : yield* refuse("action-closed");
+        }
+        yield* emitAction({
+          ...action,
+          state: spaceActionExpired(action, nowIso) ? "expired" : "cancelled",
+          resolvedBy: command.actorId,
+          updatedAt: nowIso,
+        });
+        return;
+      }
+      case "space.action.started": {
+        const action = yield* requireAction(command.actionId);
+        if (action.actorId !== command.actorId) return yield* refuse("not-tagger");
+        if (action.outcome?.type !== "task.created" || action.outcome.started) return;
+        yield* emitAction({
+          ...action,
+          outcome: { ...action.outcome, started: true },
+          updatedAt: nowIso,
+        });
+        return;
+      }
+      case "space.action.undo": {
+        const action = yield* requireAction(command.actionId);
+        if (action.state === "undone") return;
+        if (action.outcome?.type === "notes.changed") {
+          if (action.actorId !== command.actorId) return yield* refuse("not-tagger");
+          const decision = decideNotesUndo({
+            action,
+            notes: yield* projectionStore.listSpaceNotes(space.id).pipe(mapProjection),
+            beforeById: yield* projectionStore
+              .listSpaceNotesBeforeAction(action.id)
+              .pipe(mapProjection),
+            actorId: command.actorId,
+            now: nowIso,
+          });
+          if (decision._tag === "Refuse") return yield* refuse(decision.reason);
+          yield* emitNotes(decision.changes);
+          yield* emitAction({
+            ...action,
+            state: "undone",
+            undo: { by: command.actorId, at: nowIso, notUndone: decision.notUndone },
+            updatedAt: nowIso,
+          });
+          return;
+        }
+        let reverted = false;
+        if (action.outcome?.type === "task.created") {
+          const shell = yield* projectionStore
+            .getThreadShell(action.outcome.threadId)
+            .pipe(mapProjection);
+          reverted = shell === null || shell.deletedAt !== null;
+        } else if (action.outcome?.type === "task.message.queued") {
+          const messageId = action.outcome.messageId;
+          const task = yield* projectionStore
+            .getThreadProjection(action.outcome.threadId)
+            .pipe(mapProjection);
+          reverted = task.runs.some(
+            (run) => run.userMessageId === messageId && run.status === "cancelled",
+          );
+        }
+        const decision = decideRecordUndo({
+          action,
+          actorId: command.actorId,
+          reverted,
+          now: nowIso,
+        });
+        if (decision._tag === "Refuse") return yield* refuse(decision.reason);
+        yield* emitAction(decision.action);
+        return;
+      }
+      case "space.reply.retry": {
+        const room = yield* getProjectionWithPendingEvents(space.roomThreadId, events);
+        const run = room.runs.find((candidate) => candidate.id === command.runId);
+        if (run === undefined || run.userMessageId === null) {
+          return yield* refuse("reply-not-found");
+        }
+        const trigger = spaceReplyTrigger(run.userMessageId);
+        const post = yield* projectionStore.getSpaceRoomEntry(trigger).pipe(mapProjection);
+        if (post?.type !== "post" || post.spaceId !== space.id) {
+          return yield* refuse("reply-not-found");
+        }
+        if (command.actorId !== post.authorId && command.actorId !== space.ownerId) {
+          return yield* refuse("not-tagger");
+        }
+        if (space.archivedAt !== null) return yield* refuse("archived");
+        const replies = room.runs.filter(
+          (candidate) =>
+            candidate.userMessageId !== null &&
+            spaceReplyTrigger(candidate.userMessageId) === trigger,
+        );
+        const latest = replies.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        if (
+          latest?.id !== run.id ||
+          (run.status !== "failed" && run.status !== "interrupted" && run.status !== "cancelled")
+        ) {
+          return yield* refuse("action-closed");
+        }
+        yield* dispatchMessage(
+          {
+            type: "message.dispatch",
+            commandId: command.commandId,
+            threadId: space.roomThreadId,
+            actorId: post.authorId,
+            messageId: spaceRetryMessageId(trigger, replies.length),
+            text: post.text,
+            attachments: [],
+            modelSelection: spaceAgentSelection(room.thread.modelSelection),
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "server",
+          },
+          events,
+          effects,
+        );
+        return;
+      }
     }
   });
 
@@ -6579,6 +6977,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const pairRefusal = spaceMessageRefusal(command, projection.thread);
+    if (pairRefusal !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: pairRefusal,
+      });
+    }
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -7343,6 +7749,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...(command.via === undefined ? {} : { via: command.via }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -7712,6 +8119,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+        ...(command.via === undefined ? {} : { via: command.via }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -8477,6 +8885,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { scheduledTaskId: command.scheduledTaskId }),
       ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
       ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
+      ...(command.via === undefined ? {} : { via: command.via }),
       id: command.messageId,
       threadId: command.threadId,
       runId,
@@ -10861,6 +11270,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Automatic completion deliveries cannot be promoted to Steer.",
       });
     }
+    if (queuedMessage.via !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A message @pair queued never steers; write your own message to steer.",
+      });
+    }
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
@@ -11714,7 +12130,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // A thread without a machine ran on this server; on a cloud-only server it takes no new work.
   const refuseLocalThread = Effect.fn("Orchestrator.refuseLocalThread")(function* (
     command: { readonly commandId: CommandId; readonly threadId: ThreadId },
-    loaded?: Pick<OrchestrationV2AppThread, "sandboxId">,
+    loaded?: Pick<OrchestrationV2AppThread, "sandboxId" | "space">,
   ) {
     if (!cloudOnly) return;
     const thread =
@@ -11726,7 +12142,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         ));
-    if (thread.sandboxId === undefined) {
+    // `spaceAgent` has no shell, files or subprocess; a room is the one exception (§14.8).
+    if (thread.sandboxId === undefined && thread.space?.kind !== "room") {
       return yield* new OrchestratorLocalThreadReadOnlyError({
         commandId: command.commandId,
         threadId: command.threadId,
@@ -15105,7 +15522,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 text: guestSend.text,
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
+        const pairAction =
+          command.via === undefined ? null : yield* decideSpaceTaskMessage(command, thread);
+        if (pairAction?._tag === "Close") {
+          yield* emitSpaceAction(command, pairAction.action, events);
+          break;
+        }
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
+        if (pairAction?._tag === "Send") yield* emitSpaceAction(command, pairAction.action, events);
         yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
         break;
       }
@@ -15200,6 +15624,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             selectedMessage === undefined ||
             selectedMessage.delegatedCompletion !== undefined ||
             selectedMessage.notification !== undefined ||
+            // @pair's message waits for the next turn; it is never sent now.
+            selectedMessage.via !== undefined ||
             projection.runs.some(isActiveRun)
           ) {
             return yield* new OrchestratorDispatchError({
@@ -15350,6 +15776,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "space.post":
       case "space.task.update":
         yield* dispatchSpaceCommand(command, events, effects);
+        break;
+      case "space.action.propose":
+      case "space.action.cancel":
+      case "space.action.started":
+      case "space.action.undo":
+      case "space.notes.edit":
+      case "space.reply.retry":
+        yield* dispatchSpaceAgentCommand(command, events, effects);
         break;
       default:
         return yield* dispatchUnsupported(command);

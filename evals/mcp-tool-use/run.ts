@@ -70,6 +70,14 @@ import {
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
+import {
+  callLabel,
+  foundCall,
+  isRecord,
+  matches,
+  ToolCallCheck as McpToolUseCall,
+  valueText,
+} from "../shared/toolChecks.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import {
@@ -172,11 +180,6 @@ const PriorToolCall = Schema.Struct({
  * One expected call. `args` match partially: `~text` is a case-insensitive substring,
  * `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
  */
-const McpToolUseCall = Schema.Struct({
-  tool: Schema.String,
-  args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-});
-type McpToolUseCall = typeof McpToolUseCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
 const McpToolUseExpect = Schema.Struct({
@@ -354,8 +357,6 @@ const ToolUse = Schema.Struct({
 });
 const isToolUse = Schema.is(ToolUse);
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }));
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const Count = Schema.optional(Schema.NullOr(Schema.Number));
 const ApiResponse = Schema.Struct({
   content: Schema.Array(AnyBlock),
@@ -378,8 +379,6 @@ const addUsage = (total: Usage, usage: typeof ApiResponse.Type.usage) => {
 
 const text = (value: string): Block => ({ type: "text", text: value });
 const reminder = (value: string) => text(`<system-reminder>\n${value}\n</system-reminder>`);
-const valueText = (value: unknown) =>
-  typeof value === "string" ? value : (JSON.stringify(value) ?? "");
 const toolResult = (id: string, content: unknown): Block => ({
   type: "tool_result",
   tool_use_id: id,
@@ -1620,34 +1619,6 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     : toolResult(call.id, output);
 });
 
-const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
-/**
- * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
- * matches a missing or null value.
- */
-const matches = (expected: unknown, actual: unknown): boolean => {
-  if (expected === null) return actual === undefined || actual === null;
-  const bound = typeof expected === "string" ? BOUND.exec(expected) : null;
-  if (bound !== null) {
-    const limit = Number(bound[2]);
-    return typeof actual === "number" && (bound[1] === "<=" ? actual <= limit : actual >= limit);
-  }
-  if (typeof expected === "string" && expected.startsWith("~")) {
-    return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
-  }
-  if (Array.isArray(expected)) {
-    return (
-      Array.isArray(actual) && expected.every((item) => actual.some((at) => matches(item, at)))
-    );
-  }
-  if (!isRecord(expected)) return expected === actual;
-  const at = (path: string) =>
-    path
-      .split(".")
-      .reduce<unknown>((value, key) => (isRecord(value) ? value[key] : undefined), actual);
-  return Object.entries(expected).every(([path, value]) => matches(value, at(path)));
-};
-
 /** Each new top-level thread request in a run; a failed call created nothing. */
 const newThreadRequests = (calls: ReadonlyArray<Call>) =>
   calls.flatMap((call): ReadonlyArray<{ request: unknown; brief: unknown }> => {
@@ -1705,9 +1676,8 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall) =>
-    calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
-  const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
+  const found = (check: McpToolUseCall) => foundCall(calls, check);
+  const label = callLabel;
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);

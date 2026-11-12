@@ -237,6 +237,26 @@ says **Away** instead of **Online**. Members who aren't connected show no status
 shows who's around too; it reports the thread on screen and counts as **Away** while it's in the
 background.
 
+## Ask @pair in a Space
+
+Tag `@pair` in a Space's room to ask where the work stands, to create or message a task, or to
+keep the room's notes. It replies to one post at a time and acts as the person who tagged it, with
+their permissions, inside that Space only. Posts from agents and API tokens never start a reply.
+
+- **Someone else's task:** a message waits on a card until you confirm it. Messages always queue
+  after the task's current turn; `@pair` never interrupts, restarts or approves anything.
+- **Records:** every task it creates, message it sends and notes change shows in the room with
+  **Undo**, which only you can use.
+- **Notes:** decisions, open questions and how the team works, each citing the posts it came from.
+  An item a person edited or removed is left alone unless you ask.
+- **Cancel, Retry, Stop:** on your queued or running reply. A Retry doesn't repeat what the failed
+  attempt already did.
+
+Replies are paid by the team's Claude API key: in **Settings → Providers**, add a Claude instance
+that belongs to no member and set `ANTHROPIC_API_KEY` in its environment (and `ANTHROPIC_BASE_URL`
+if the key is for a gateway). Personal Claude accounts and the server's own environment don't pay
+for `@pair`.
+
 ## What is yours and what is shared
 
 Pins and their order, the order of your active threads, unread state, and snoozes are yours.

@@ -6,6 +6,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -22,6 +23,7 @@ import {
   SpaceRoomEntry,
   SpaceTaskBase,
 } from "./space.ts";
+import { SpaceAction, SpaceActionId, SpaceNoteChange, SpaceNoteItem } from "./spaceAgent.ts";
 
 export const SPACE_ROOM_PAGE_LIMIT = 200;
 
@@ -43,6 +45,19 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
     "not-task-creator",
     "not-task-owner",
     "own-task",
+    "action-not-found",
+    "not-tagger",
+    "action-closed",
+    "not-undoable",
+    "notes-full",
+    "note-not-found",
+    "note-stale",
+    "bad-source",
+    "removed-source",
+    "unstarted",
+    "over-limit",
+    "not-allowed",
+    "reply-not-found",
     "failed",
   ]),
   message: Schema.String,
@@ -68,6 +83,10 @@ export const SpaceView = Schema.Union([
     hasMoreEntries: Schema.Boolean,
     /** The space's tasks, newest first, as the viewer may open them. */
     tasks: Schema.Array(OrchestrationV2ThreadShell),
+    /** Pair's notes; `space.notes.changed` events update them. */
+    notes: Schema.Array(SpaceNoteItem),
+    /** Records, confirm cards and receipts, newest last; `space.action.updated` updates them. */
+    actions: Schema.Array(SpaceAction),
   }),
   Schema.Struct({
     type: Schema.Literal("not_member"),
@@ -181,3 +200,35 @@ export const SpaceTaskResult = Schema.Struct({
   sequence: Schema.optionalKey(NonNegativeInt),
 });
 export type SpaceTaskResult = typeof SpaceTaskResult.Type;
+
+/** Answer a confirm card or Undo a record. Only the action's tagger may. */
+export const SpaceActionInput = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("answer"),
+    actionId: SpaceActionId,
+    answer: Schema.Literals(["confirm", "cancel"]),
+  }),
+  Schema.Struct({ type: Schema.Literal("undo"), actionId: SpaceActionId }),
+]);
+export type SpaceActionInput = typeof SpaceActionInput.Type;
+
+export const SpaceActionResult = Schema.Struct({ action: SpaceAction });
+export type SpaceActionResult = typeof SpaceActionResult.Type;
+
+/** A person edits the notes directly; human edits win over Pair's. */
+export const SpaceNotesEditInput = Schema.Struct({
+  spaceId: SpaceId,
+  changes: Schema.Array(SpaceNoteChange),
+});
+export type SpaceNotesEditInput = typeof SpaceNotesEditInput.Type;
+
+export const SpaceNotesEditResult = Schema.Struct({ notes: Schema.Array(SpaceNoteItem) });
+export type SpaceNotesEditResult = typeof SpaceNotesEditResult.Type;
+
+/** A `@pair` reply's controls: the tagger or the space owner. */
+export const SpaceReplyInput = Schema.Struct({
+  spaceId: SpaceId,
+  runId: RunId,
+  action: Schema.Literals(["cancel", "retry", "stop"]),
+});
+export type SpaceReplyInput = typeof SpaceReplyInput.Type;

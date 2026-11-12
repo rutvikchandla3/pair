@@ -3122,6 +3122,9 @@ export const layerWsRpc = (
         [WS_METHODS.spacesMutate]: (input) => spaces.mutate(spaceCaller, input),
         [WS_METHODS.spacesPost]: (input) => spaces.post(spaceCaller, input),
         [WS_METHODS.spacesTask]: (input) => spaces.task(spaceCaller, input),
+        [WS_METHODS.spacesAction]: (input) => spaces.action(spaceCaller, input),
+        [WS_METHODS.spacesNotes]: (input) => spaces.notes(spaceCaller, input),
+        [WS_METHODS.spacesReply]: (input) => spaces.reply(spaceCaller, input),
         [WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input),
         [WS_METHODS.threadMoveToCloud]: (input) =>
           cloudMoves.continueInCloud({

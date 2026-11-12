@@ -12,6 +12,7 @@ import {
   MemberId,
   MessageId,
   ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   SandboxId,
   ThreadId,
@@ -87,6 +88,7 @@ const layerFailingDispatchHandler =
 
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
+    getThreadShell: () => Effect.succeed(null),
     dispatch: layerFailingDispatchHandler(captured),
   });
 
@@ -236,6 +238,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
           dispatch: (command) =>
             Effect.fail(
               new OrchestratorCommandPreviouslyRejectedError({
@@ -303,6 +306,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     }).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -373,6 +377,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     const retry = yield* dispatchCommand(command).pipe(
       Effect.provide(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
           dispatch: (dispatched) => {
             captured.push(dispatched);
             return Effect.succeed({ sequence: 1, storedEvents: [] });
@@ -561,7 +566,13 @@ it.effect.each([
   // [the thread's place in a space, command, actor, outcome]
   ["room", "message.dispatch", "member-bob", "space_room"],
   ["room", "thread.metadata.update", "member-bob", "space_room"],
+  ["room", "run.interrupt", "member-bob", "space_room"],
+  ["room", "queue.resume", "member-bob", "space_room"],
+  ["room", "queued-run.cancel", "member-bob", "space_room"],
   ["room", "thread.visit", "member-carol", "dispatched"],
+  // Only Pair's tools act "via Pair"; a client that claims it is refused even on its own task.
+  ["task", "via-pair", "member-bob", "rejected"],
+  ["task", "space-action-id", "member-bob", "rejected"],
   ["task", "thread.model-selection.set", "member-carol", "space_task_owner_only"],
   ["task", "thread.model-selection.set", "member-bob", "dispatched"],
   ["task", "message.dispatch", "member-carol", "dispatched"],
@@ -570,31 +581,46 @@ it.effect.each([
     const threadId = ThreadId.make("thread-space");
     const actorId = MemberId.make(actor);
     const commandId = CommandId.make(`space-${type}`);
+    const message: OrchestrationV2Command = {
+      type: "message.dispatch",
+      commandId,
+      threadId,
+      actorId,
+      messageId: MessageId.make("message-space"),
+      text: "hi",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    };
     const command: OrchestrationV2Command =
       type === "message.dispatch"
-        ? {
-            type,
-            commandId,
-            threadId,
-            actorId,
-            messageId: MessageId.make("message-space"),
-            text: "hi",
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "user",
-            creationSource: "web",
-          }
-        : type === "thread.model-selection.set"
+        ? message
+        : type === "via-pair"
           ? {
-              type,
-              commandId,
-              threadId,
-              actorId,
-              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+              ...message,
+              via: { pair: { runId: RunId.make("run-pair"), roomMessageId: message.messageId } },
             }
-          : type === "thread.visit"
-            ? { type, commandId, threadId, actorId, visitedAt: "2026-11-12T00:00:00.000Z" }
-            : { type, commandId, threadId, actorId, title: "Renamed" };
+          : type === "space-action-id"
+            ? ({ ...message, spaceActionId: "space-action:post-1:x" } as OrchestrationV2Command)
+            : type === "run.interrupt" || type === "queued-run.cancel"
+              ? { type, commandId, threadId, actorId, runId: RunId.make("run-room") }
+              : type === "queue.resume"
+                ? ({ type, commandId, threadId, actorId } as OrchestrationV2Command)
+                : type === "thread.model-selection.set"
+                  ? {
+                      type,
+                      commandId,
+                      threadId,
+                      actorId,
+                      modelSelection: {
+                        instanceId: ProviderInstanceId.make("codex"),
+                        model: "gpt-5",
+                      },
+                    }
+                  : type === "thread.visit"
+                    ? { type, commandId, threadId, actorId, visitedAt: "2026-11-12T00:00:00.000Z" }
+                    : { type, commandId, threadId, actorId, title: "Renamed" };
     const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* dispatchCommand(command).pipe(
       Effect.provide(
@@ -609,7 +635,11 @@ it.effect.each([
       ),
       Effect.flip,
       Effect.map((error) =>
-        error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
+        error._tag === "ThreadMessageIntakeForbiddenError"
+          ? error.reason
+          : error._tag === "OrchestratorCommandRejectedError"
+            ? "rejected"
+            : "dispatched",
       ),
     );
     expect(result).toBe(outcome);

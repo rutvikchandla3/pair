@@ -141,6 +141,8 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "sandbox.access-changed":
     case "space.updated":
     case "space.room-entry":
+    case "space.action.updated":
+    case "space.notes.changed":
       return false;
   }
 }

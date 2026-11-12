@@ -8,8 +8,12 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  SPACE_AGENT_DRIVER,
+  SPACE_AGENT_INSTANCE_ID,
   type SpaceMutation,
   SpaceId,
+  type SpaceNoteChange,
+  type SpacePairVia,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -31,6 +35,8 @@ import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as SpaceHandlers from "../mcp/toolkits/space/handlers.ts";
 import { SpaceToolkit } from "../mcp/toolkits/space/tools.ts";
+import { spaceActionIdFor } from "./SpaceAgentDecisions.ts";
+import * as SpaceIntake from "./SpaceIntake.ts";
 import * as SpaceService from "./SpaceService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -44,6 +50,12 @@ const adapter = {
   openSession: () => Effect.die("Spaces never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
+const pairAdapter = {
+  ...adapter,
+  instanceId: SPACE_AGENT_INSTANCE_ID,
+  driver: SPACE_AGENT_DRIVER,
+} as ProviderAdapter.ProviderAdapterV2["Service"];
+
 const launched: Array<ThreadLaunch.ThreadLaunchRequest> = [];
 
 const layerDatabase = SqlitePersistence.layerMemory;
@@ -53,7 +65,7 @@ const layerCore = Layer.mergeAll(
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "spaces" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter, pairAdapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
@@ -63,6 +75,7 @@ const layer = SpaceService.layer.pipe(
     Layer.mergeAll(
       IdAllocator.layer,
       NodeCrypto.layer,
+      SpaceIntake.layerDirect.pipe(Layer.provide(layerCore)),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) =>
           Effect.sync(() => {
@@ -132,10 +145,14 @@ const refusal = <A, E>(effect: Effect.Effect<A, E, Orchestrator.OrchestratorV2>)
     }),
   );
 
-const pairEffects = (id: CommandId) =>
-  Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) => outbox.listByCommandId(id)).pipe(
-    Effect.map((effects) => effects.filter((e) => e.request.type === "space.pair-reply.request")),
-  );
+/** The reply runs a tag queued on the room thread: its trigger post and provider instance. */
+const pairRuns = Effect.flatMap(ProjectionStore.ProjectionStoreV2, (projections) =>
+  projections.getThreadProjection(roomThreadId),
+).pipe(
+  Effect.map((projection) =>
+    projection.runs.map((run) => [run.userMessageId, run.providerInstanceId] as const),
+  ),
+);
 
 it.layer(layer)("space orchestration", (it) => {
   it.effect("creates the room, posts, queues @pair for people only, and archives", () =>
@@ -168,20 +185,15 @@ it.layer(layer)("space orchestration", (it) => {
         mentions: [{ type: "pair" }, { type: "member" as const, memberId: hanad }],
         authorKind: "user",
       });
-      const queued = yield* pairEffects(tagged);
+      assert.deepStrictEqual(yield* pairRuns, [
+        [MessageId.make("message:tag"), SPACE_AGENT_INSTANCE_ID],
+      ]);
+      const effects = yield* Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
+        outbox.listByCommandId(tagged),
+      );
       assert.deepStrictEqual(
-        queued.map((effect) => [effect.threadId, effect.request]),
-        [
-          [
-            roomThreadId,
-            {
-              type: "space.pair-reply.request",
-              spaceId,
-              postId: MessageId.make("message:tag"),
-              taggerId: kousik,
-            },
-          ],
-        ],
+        effects.map((effect) => effect.request.type),
+        ["provider-turn.start"],
       );
 
       const fromAgent = commandId("agent");
@@ -195,7 +207,7 @@ it.layer(layer)("space orchestration", (it) => {
         mentions: [{ type: "pair" }],
         authorKind: "agent",
       });
-      assert.deepStrictEqual(yield* pairEffects(fromAgent), []);
+      assert.strictEqual((yield* pairRuns).length, 1);
 
       yield* post(rutvik, "Replying", { quoteEntryId: MessageId.make("message:tag") });
       const entries = yield* projections.listSpaceRoomEntries({ spaceId, limit: 10 });
@@ -517,6 +529,173 @@ it.layer(layer)("space orchestration", (it) => {
       for (const [memberId, action, expected] of rows) {
         assert.deepInclude(yield* manage(memberId, action), expected, action.type);
       }
+    }),
+  );
+
+  it.effect("Pair's records: notes receipts, tombstones, one task per reply, never steering", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const pairSpace = SpaceId.make("spc_00000000000000000a1e");
+      const pairRoom = ThreadId.make("thread:pair-room");
+      const at = { spaceId: pairSpace, threadId: pairRoom } as const;
+      yield* dispatch({
+        type: "space.create",
+        ...at,
+        commandId: commandId("create"),
+        actorId: rutvik,
+        createdBy: "user",
+        creationSource: "web",
+        name: "Pair",
+        brief: "",
+        projectId,
+        memberIds: [kousik],
+        pairBilling: { type: "team" },
+        modelSelection,
+      });
+      const tagId = MessageId.make("message:pair-tag");
+      yield* dispatch({
+        type: "space.post",
+        ...at,
+        commandId: commandId("tag"),
+        actorId: kousik,
+        messageId: tagId,
+        text: "@pair we're going with SQLite, note it",
+        mentions: [{ type: "pair" }],
+        authorKind: "user",
+      });
+      const run = (yield* projections.getThreadProjection(pairRoom)).runs.at(-1)!;
+      assert.strictEqual(run.userMessageId, tagId);
+      const via = { runId: run.id, roomMessageId: tagId };
+      const notes = (
+        changes: ReadonlyArray<SpaceNoteChange>,
+        by: SpacePairVia | null,
+        actorId = kousik,
+      ) =>
+        dispatch({
+          type: "space.notes.edit",
+          ...at,
+          commandId: commandId("notes"),
+          actorId,
+          changes,
+          via: by,
+        });
+      const add = {
+        op: "add",
+        section: "decision",
+        text: "Use SQLite",
+        sourceIds: [tagId],
+      } as const;
+
+      yield* notes([add], via);
+      yield* notes([{ ...add, text: "Postgres later" }], via);
+      const [item, later] = yield* projections.listSpaceNotes(pairSpace);
+      // One receipt per reply: the second edit merges into it.
+      const receipt = yield* projections.getSpaceAction(spaceActionIdFor(tagId, "notes"));
+      assert.strictEqual(receipt?.state, "done");
+      assert.deepStrictEqual(
+        receipt?.outcome?.type === "notes.changed" ? receipt.outcome.changes.map((c) => c.op) : [],
+        ["add", "add"],
+      );
+      assert.include(yield* refusal(notes([add], via, rutvik)), "not-tagger");
+      assert.include(
+        yield* refusal(notes([{ op: "edit", noteId: item!.id, version: 2, text: "x" }], null)),
+        "note-stale",
+      );
+
+      // A person removes it; Pair may not bring it back from the same post unless asked.
+      yield* notes([{ op: "remove", noteId: item!.id, version: 1 }], null, rutvik);
+      assert.include(yield* refusal(notes([add], via)), "removed-source");
+      yield* notes([{ ...add, restoreRemoved: true }], via);
+
+      // Undo reverts Pair's items, leaving the ones a person edited or removed since.
+      yield* notes([{ op: "edit", noteId: later!.id, version: 1, text: "Postgres in Q3" }], null);
+      yield* dispatch({
+        type: "space.action.undo",
+        ...at,
+        commandId: commandId("undo"),
+        actorId: kousik,
+        actionId: receipt!.id,
+      });
+      const undone = yield* projections.getSpaceAction(receipt!.id);
+      assert.strictEqual(undone?.state, "undone");
+      assert.deepStrictEqual(undone?.undo?.notUndone, [item!.id, later!.id]);
+      assert.deepStrictEqual(
+        (yield* projections.listSpaceNotes(pairSpace)).map((note) => note.text),
+        ["Postgres in Q3"],
+      );
+
+      const createTask = (threadId: string, key: string) =>
+        dispatch({
+          type: "thread.create",
+          commandId: commandId("pair-task"),
+          actorId: kousik,
+          threadId: ThreadId.make(threadId),
+          projectId,
+          title: "Migrate to SQLite",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "server",
+          ownerId: kousik,
+          space: {
+            kind: "task",
+            spaceId: pairSpace,
+            createdBy: kousik,
+            description: "Move the store to SQLite",
+            base: { baseRef: "main" },
+          },
+          via: { pair: via },
+          spaceActionId: spaceActionIdFor(tagId, key),
+        });
+      yield* createTask("thread:pair-task", "task-1");
+      const createdId = spaceActionIdFor(tagId, "task-1");
+      const created = yield* projections.getSpaceAction(createdId);
+      assert.deepInclude(created?.outcome, { type: "task.created", started: false });
+      // Only the tagger marks it started, once the start went through.
+      const started = (actorId: MemberId) =>
+        dispatch({
+          type: "space.action.started",
+          ...at,
+          commandId: commandId("pair-started"),
+          actorId,
+          actionId: createdId,
+        });
+      assert.include(yield* refusal(started(rutvik)), "not-tagger");
+      yield* started(kousik);
+      assert.deepInclude((yield* projections.getSpaceAction(createdId))?.outcome, {
+        type: "task.created",
+        started: true,
+      });
+      assert.include(yield* refusal(createTask("thread:pair-task-2", "task-2")), "over-limit");
+
+      const steer = (
+        dispatchMode: { type: "start_immediately" } | { type: "queue_after_active" },
+      ) =>
+        dispatch({
+          type: "message.dispatch",
+          commandId: commandId("pair-message"),
+          actorId: kousik,
+          threadId: ThreadId.make("thread:pair-task"),
+          messageId: MessageId.make(`message:${counter}`),
+          text: "Also drop the old tables",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "server",
+          dispatchMode,
+          deliveryIntent: "steer",
+          via: { pair: via },
+        });
+      assert.include(
+        yield* refusal(steer({ type: "start_immediately" })),
+        "refused a message from @pair: not-allowed",
+      );
+      assert.include(
+        yield* refusal(steer({ type: "queue_after_active" })),
+        "refused a message from @pair: not-allowed",
+      );
     }),
   );
 });

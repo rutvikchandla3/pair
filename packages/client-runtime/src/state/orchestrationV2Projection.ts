@@ -425,6 +425,8 @@ export function applyOrchestrationV2ProjectionEvent(
     // The room's state lives in its space, not in the thread projection.
     case "space.updated":
     case "space.room-entry":
+    case "space.action.updated":
+    case "space.notes.changed":
       return projection;
   }
 }

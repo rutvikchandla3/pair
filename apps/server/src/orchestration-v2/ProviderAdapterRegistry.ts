@@ -1,6 +1,7 @@
 import {
   ProviderInstanceId,
   ProviderSetupError,
+  SPACE_AGENT_INSTANCE_ID,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { SpaceAgentAdapterSlot } from "../space/SpaceAgentAdapterSlot.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -67,8 +69,14 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   ProviderAdapterRegistryV2,
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    // @pair runs in process and stays out of the instance registry and every picker.
+    const spaceAgent = yield* SpaceAgentAdapterSlot;
+    const spaceAgentAdapter = (instanceId: ProviderInstanceId) =>
+      instanceId === SPACE_AGENT_INSTANCE_ID ? spaceAgent?.current : undefined;
     return ProviderAdapterRegistryV2.of({
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
+        const inProcess = spaceAgentAdapter(instanceId);
+        if (inProcess !== undefined) return Effect.succeed(inProcess);
         return instances.getInstance(instanceId).pipe(
           Effect.flatMap((instance) => {
             if (instance === undefined)
@@ -132,6 +140,21 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
         );
       }),
       getMetadata: Effect.fn("ProviderAdapterRegistry.getMetadata")(function* (instanceId) {
+        const inProcess = spaceAgentAdapter(instanceId);
+        if (inProcess !== undefined) {
+          return {
+            driver: inProcess.driver,
+            continuationKey: SPACE_AGENT_INSTANCE_ID,
+            enabled: true,
+            capabilities: yield* inProcess
+              .getCapabilities()
+              .pipe(
+                Effect.mapError(
+                  (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
+                ),
+              ),
+          };
+        }
         const instance = yield* instances.getInstance(instanceId);
         if (instance === undefined) {
           return yield* new ProviderAdapterRegistryLookupError({ instanceId });

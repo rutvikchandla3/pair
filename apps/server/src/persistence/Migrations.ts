@@ -104,6 +104,7 @@ import Migration0097 from "./Migrations/097_SandboxAccess.ts";
 import Migration0098 from "./Migrations/098_ScheduledTaskAccess.ts";
 import Migration0099 from "./Migrations/099_ProjectionProjectRoots.ts";
 import Migration0100 from "./Migrations/100_Spaces.ts";
+import Migration0101 from "./Migrations/101_SpaceAgent.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -207,6 +208,7 @@ const migrationEntries = [
   [98, "ScheduledTaskAccess", Migration0098],
   [99, "ProjectionProjectRoots", Migration0099],
   [100, "Spaces", Migration0100],
+  [101, "SpaceAgent", Migration0101],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

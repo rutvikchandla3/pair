@@ -158,7 +158,10 @@ page says how it must behave. The decisions came from a product design review du
 ## Non-goals
 
 - Private local threads, per-project permissions, a Viewer role, several teams on one server.
-- An activity feed, side chat, and @mentions for now.
+- An activity feed, and chat or @mentions outside a Space. A Space's room is the one place
+  members talk to each other and to `@pair`. There, an @mention notifies only the member named,
+  `@pair` notifies the asker when it replies, other posts give unread state, and there is no
+  @everyone.
 - Thread locks, shared composers, live cursors.
 - Switching accounts per prompter, and account pools.
 - Avatar uploads, SSO and billing.

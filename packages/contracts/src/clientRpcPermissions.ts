@@ -49,6 +49,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.spacesMutate]: AuthOrchestrationOperateScope,
   [WS_METHODS.spacesPost]: AuthOrchestrationOperateScope,
   [WS_METHODS.spacesTask]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesNotes]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesReply]: AuthOrchestrationOperateScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,

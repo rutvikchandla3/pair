@@ -34,9 +34,11 @@ boundary"](./01-product.md) repeats it for Pair Cloud: "Private threads stay a n
 That reasoning holds on a server where every member's agent runs as one user on one box. It
 stopped holding on Pair Cloud once these landed:
 
-- **Cloud-only confinement (2.22, 2.45).** No agent, terminal or script runs on the server, so a
-  member has no shell there and cannot read the database, the checkpoint mirror or other members'
-  tokens.
+- **Cloud-only confinement (2.22, 2.45).** No shell, filesystem access or subprocess runs on the
+  server for an agent, so a member has no shell there and cannot read the database, the checkpoint
+  mirror or other members' tokens. The one agent in the server process is a Space's `@pair`, an
+  HTTP client of the Messages API whose tools read and write only through the orchestrator
+  ([spaces-agent §14.8](../spaces-agent.md#14-open-decisions)).
 - **One machine per session (M1, and VMs with the gce driver in M5).** A member's agent runs in
   its own machine with that session's credentials only.
 - **Brokered credentials (06 §3).** A machine holds its own thread's provider and git credential,

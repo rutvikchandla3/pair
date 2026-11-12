@@ -1,6 +1,15 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { pendingGuestMessageCount, threadHasImportedHistory } from "@t3tools/contracts";
-import type { Space, SpaceId, SpaceRoomEntry } from "@t3tools/contracts";
+import type {
+  Space,
+  SpaceAction,
+  SpaceActionId,
+  SpaceId,
+  SpaceNoteId,
+  SpaceNoteItem,
+  SpaceNoteTombstone,
+  SpaceRoomEntry,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -496,6 +505,15 @@ export interface ThreadMemberStateEntry {
   readonly updatedAt: DateTime.Utc;
 }
 
+/** A message a note may cite, found in a space's room or tasks. */
+export interface SpaceMessageRef {
+  readonly threadId: ThreadId;
+  readonly authorId: MemberId;
+  readonly at: string;
+  readonly text: string;
+  readonly byPerson: boolean;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -636,6 +654,52 @@ export interface ProjectionStoreV2Shape {
   readonly getSpaceRoomEntry: (
     entryId: MessageId,
   ) => Effect.Effect<SpaceRoomEntry | null, ProjectionStoreV2Error>;
+  readonly getSpaceAction: (
+    actionId: SpaceActionId,
+  ) => Effect.Effect<SpaceAction | null, ProjectionStoreV2Error>;
+  readonly listSpaceActions: (
+    input:
+      | { readonly spaceId: SpaceId; readonly limit: number; readonly since?: string | undefined }
+      | { readonly roomMessageId: MessageId },
+  ) => Effect.Effect<ReadonlyArray<SpaceAction>, ProjectionStoreV2Error>;
+  /** Pair's finished replies in a room, oldest first, with the post each answered. */
+  readonly listSpaceRoomReplies: (input: {
+    readonly roomThreadId: ThreadId;
+    readonly since?: string | undefined;
+    readonly limit: number;
+  }) => Effect.Effect<
+    ReadonlyArray<{
+      readonly message: OrchestrationV2ConversationMessage;
+      readonly triggerId: MessageId | null;
+    }>,
+    ProjectionStoreV2Error
+  >;
+  readonly getMessageInThreads: (
+    threadIds: ReadonlyArray<ThreadId>,
+    messageId: MessageId,
+  ) => Effect.Effect<OrchestrationV2ConversationMessage | null, ProjectionStoreV2Error>;
+  readonly searchSpaceMessages: (input: {
+    readonly spaceId: SpaceId;
+    readonly roomThreadId: ThreadId;
+    readonly taskThreadIds: ReadonlyArray<ThreadId>;
+    readonly needle: string;
+    readonly before?: string | undefined;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<SpaceProjection.SpaceSearchRow>, ProjectionStoreV2Error>;
+  readonly listSpaceNotes: (
+    spaceId: SpaceId,
+  ) => Effect.Effect<ReadonlyArray<SpaceNoteItem>, ProjectionStoreV2Error>;
+  readonly listSpaceNoteTombstones: (
+    spaceId: SpaceId,
+    since: string,
+  ) => Effect.Effect<ReadonlyArray<SpaceNoteTombstone>, ProjectionStoreV2Error>;
+  readonly listSpaceNotesBeforeAction: (
+    actionId: SpaceActionId,
+  ) => Effect.Effect<ReadonlyMap<SpaceNoteId, SpaceNoteItem | null>, ProjectionStoreV2Error>;
+  readonly findSpaceMessage: (
+    spaceId: SpaceId,
+    messageId: MessageId,
+  ) => Effect.Effect<SpaceMessageRef | null, ProjectionStoreV2Error>;
   readonly listSpaceTaskThreadIds: (
     spaceId: SpaceId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -1120,6 +1184,8 @@ export function applyToProjection(
     case "sandbox.access-changed":
     // Spaces project into their own tables; a room line is still its room's activity.
     case "space.updated":
+    case "space.action.updated":
+    case "space.notes.changed":
       return projection;
     case "space.room-entry":
       return base;
@@ -3132,6 +3198,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "space.room-entry":
               yield* withSql(SpaceProjection.applySpaceRoomEntry(event));
               break;
+            case "space.action.updated":
+              yield* withSql(SpaceProjection.applySpaceActionUpdated(event));
+              break;
+            case "space.notes.changed":
+              yield* withSql(SpaceProjection.applySpaceNotesChanged(event));
+              break;
             case "context-transfer.created":
             case "context-transfer.updated": {
               const payloadJson = yield* encodeContextTransferPayload(event.payload);
@@ -3199,7 +3271,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // Machine state must not reorder threads.
             event.type !== "sandbox.updated" &&
             event.type !== "sandbox.access-changed" &&
-            event.type !== "space.updated"
+            event.type !== "space.updated" &&
+            event.type !== "space.action.updated" &&
+            event.type !== "space.notes.changed"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -5636,7 +5710,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const threadRows = yield* sql<{ readonly side_chat: number | null }>`
-          SELECT json_extract(payload_json, '$.lineage.sideChat') AS side_chat
+          SELECT CASE
+            -- A space's room has no folder of its own to snapshot, like a side chat.
+            WHEN json_extract(payload_json, '$.space.kind') = 'room' THEN 1
+            ELSE json_extract(payload_json, '$.lineage.sideChat')
+          END AS side_chat
           FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1`;
             if (threadRows[0] === undefined) {
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
@@ -8077,6 +8155,67 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     const getSpaceRoomEntry: ProjectionStoreV2Shape["getSpaceRoomEntry"] = (entryId) =>
       withSql(SpaceProjection.getRoomEntry(entryId)).pipe(Effect.mapError(spaceReadError(entryId)));
+    const getSpaceAction: ProjectionStoreV2Shape["getSpaceAction"] = (actionId) =>
+      withSql(SpaceProjection.getSpaceAction(actionId)).pipe(
+        Effect.mapError(spaceReadError(actionId)),
+      );
+    const listSpaceActions: ProjectionStoreV2Shape["listSpaceActions"] = (input) =>
+      withSql(SpaceProjection.listSpaceActions(input)).pipe(
+        Effect.mapError(spaceReadError("spaceId" in input ? input.spaceId : input.roomMessageId)),
+      );
+    const listSpaceRoomReplies: ProjectionStoreV2Shape["listSpaceRoomReplies"] = (input) =>
+      withSql(SpaceProjection.listRoomReplies(input)).pipe(
+        Effect.map((replies) =>
+          replies.map((reply) => ({
+            message: reply.message,
+            triggerId: reply.triggerId === null ? null : MessageId.make(reply.triggerId),
+          })),
+        ),
+        Effect.mapError(spaceReadError(input.roomThreadId)),
+      );
+    const getMessageInThreads: ProjectionStoreV2Shape["getMessageInThreads"] = (
+      threadIds,
+      messageId,
+    ) =>
+      withSql(SpaceProjection.getThreadsMessage(threadIds, messageId)).pipe(
+        Effect.mapError(spaceReadError(messageId)),
+      );
+    const searchSpaceMessages: ProjectionStoreV2Shape["searchSpaceMessages"] = (input) =>
+      withSql(SpaceProjection.searchSpaceMessages(input)).pipe(
+        Effect.mapError(spaceReadError(input.spaceId)),
+      );
+    const listSpaceNotes: ProjectionStoreV2Shape["listSpaceNotes"] = (spaceId) =>
+      withSql(SpaceProjection.listSpaceNotes(spaceId)).pipe(
+        Effect.mapError(spaceReadError(spaceId)),
+      );
+    const listSpaceNoteTombstones: ProjectionStoreV2Shape["listSpaceNoteTombstones"] = (
+      spaceId,
+      since,
+    ) =>
+      withSql(SpaceProjection.listSpaceNoteTombstones(spaceId, since)).pipe(
+        Effect.mapError(spaceReadError(spaceId)),
+      );
+    const listSpaceNotesBeforeAction: ProjectionStoreV2Shape["listSpaceNotesBeforeAction"] = (
+      actionId,
+    ) =>
+      withSql(SpaceProjection.listSpaceNotesBeforeAction(actionId)).pipe(
+        Effect.mapError(spaceReadError(actionId)),
+      );
+    const findSpaceMessage: ProjectionStoreV2Shape["findSpaceMessage"] = (spaceId, messageId) =>
+      withSql(SpaceProjection.findSpaceMessage(spaceId, messageId)).pipe(
+        Effect.map((found) =>
+          found === null || found.authorId === null
+            ? null
+            : {
+                threadId: ThreadId.make(found.threadId),
+                authorId: found.authorId,
+                at: found.at,
+                text: found.text,
+                byPerson: found.byPerson,
+              },
+        ),
+        Effect.mapError(spaceReadError(messageId)),
+      );
     const listSpaceTaskThreadIds: ProjectionStoreV2Shape["listSpaceTaskThreadIds"] = (spaceId) =>
       withSql(SpaceProjection.listSpaceTaskThreadIds(spaceId)).pipe(
         Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
@@ -8151,6 +8290,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listSpaceRoomEntries: readOnReader(listSpaceRoomEntries),
       getSpaceRoomEntry: readOnReader(getSpaceRoomEntry),
       listSpaceTaskThreadIds: readOnReader(listSpaceTaskThreadIds),
+      getSpaceAction: readOnReader(getSpaceAction),
+      listSpaceActions: readOnReader(listSpaceActions),
+      listSpaceRoomReplies: readOnReader(listSpaceRoomReplies),
+      getMessageInThreads: readOnReader(getMessageInThreads),
+      searchSpaceMessages: readOnReader(searchSpaceMessages),
+      listSpaceNotes: readOnReader(listSpaceNotes),
+      listSpaceNoteTombstones: readOnReader(listSpaceNoteTombstones),
+      listSpaceNotesBeforeAction: readOnReader(listSpaceNotesBeforeAction),
+      findSpaceMessage: readOnReader(findSpaceMessage),
       listSandboxThreads: readOnReader(listSandboxThreads),
       listSandboxImageBuildIds: readOnReader(listSandboxImageBuildIds),
       countSandboxAdmission: readOnReader(countSandboxAdmission),

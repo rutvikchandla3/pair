@@ -74,8 +74,13 @@ import {
   ChiefOfStaffVoiceList,
 } from "./chiefOfStaff.ts";
 import {
+  SpaceActionInput,
+  SpaceActionResult,
   SpaceError,
   SpaceGetInput,
+  SpaceNotesEditInput,
+  SpaceNotesEditResult,
+  SpaceReplyInput,
   SpaceListResult,
   SpaceMutation,
   SpaceMutationResult,
@@ -605,6 +610,9 @@ export const WS_METHODS = {
   spacesMutate: "spaces.mutate",
   spacesPost: "spaces.post",
   spacesTask: "spaces.task",
+  spacesAction: "spaces.action",
+  spacesNotes: "spaces.notes",
+  spacesReply: "spaces.reply",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -1016,6 +1024,26 @@ const WsSpacesPostRpc = Rpc.make(WS_METHODS.spacesPost, {
 const WsSpacesTaskRpc = Rpc.make(WS_METHODS.spacesTask, {
   payload: SpaceTaskAction,
   success: SpaceTaskResult,
+  error: spaceRpcError,
+});
+
+/** Confirm, Cancel or Undo one of `@pair`'s actions, as its tagger. */
+const WsSpacesActionRpc = Rpc.make(WS_METHODS.spacesAction, {
+  payload: SpaceActionInput,
+  success: SpaceActionResult,
+  error: spaceRpcError,
+});
+
+const WsSpacesNotesRpc = Rpc.make(WS_METHODS.spacesNotes, {
+  payload: SpaceNotesEditInput,
+  success: SpaceNotesEditResult,
+  error: spaceRpcError,
+});
+
+/** Cancel, Retry or Stop a `@pair` reply. */
+const WsSpacesReplyRpc = Rpc.make(WS_METHODS.spacesReply, {
+  payload: SpaceReplyInput,
+  success: Schema.Struct({}),
   error: spaceRpcError,
 });
 
@@ -2513,6 +2541,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacesMutateRpc,
   WsSpacesPostRpc,
   WsSpacesTaskRpc,
+  WsSpacesActionRpc,
+  WsSpacesNotesRpc,
+  WsSpacesReplyRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

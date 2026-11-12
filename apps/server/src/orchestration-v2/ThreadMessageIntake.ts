@@ -151,8 +151,22 @@ const assertMayAssign = Effect.fn("ThreadMessageIntake.assertMayAssign")(functio
   });
 });
 
-/** Generic commands that would change a room behind its space, or a task's model. */
-const SPACE_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+/** A member's own view of a room. Every other generic command on a room is refused. */
+const ROOM_MEMBER_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+  "thread.visit",
+  "thread.mark-unread",
+  "thread.pin",
+  "thread.unpin",
+  "thread.pin.reorder",
+  "thread.follow",
+  "thread.unfollow",
+  "thread.snooze",
+  "thread.unsnooze",
+  "thread.active.reorder",
+]);
+
+/** Generic commands that would change a task's record or model. */
+const SPACE_TASK_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "message.dispatch",
   "thread.metadata.update",
   "thread.owner.set",
@@ -172,7 +186,7 @@ const SPACE_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new 
 const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(function* (
   command: OrchestrationV2Command,
 ) {
-  if (!SPACE_GUARDED_COMMANDS.has(command.type) || !("threadId" in command)) return;
+  if (ROOM_MEMBER_COMMANDS.has(command.type) || !("threadId" in command)) return;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const shell = yield* threads.getThreadShell(command.threadId);
   const space = shell?.space;
@@ -183,6 +197,7 @@ const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(funct
   if (space.kind === "room") {
     return yield* forbid("space_room", actorId ?? shell.ownerId ?? MemberId.make("unknown"));
   }
+  if (!SPACE_TASK_GUARDED_COMMANDS.has(command.type)) return;
   if (
     (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
     actorId !== undefined &&
@@ -210,6 +225,17 @@ const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission
   }
   if (command.type !== "thread.delete" || command.actorId === undefined) return;
   if (yield* actorOwnsThreadOrAdmin(command.actorId, command.threadId)) return;
+  // A space task's creator may delete it until its first turn: nothing ran and nothing is lost.
+  const shell = yield* (yield* ThreadManagement.ThreadManagementService).getThreadShell(
+    command.threadId,
+  );
+  if (
+    shell?.space?.kind === "task" &&
+    shell.space.createdBy === command.actorId &&
+    shell.latestRunId === null
+  ) {
+    return;
+  }
   return yield* new ThreadMessageIntakeForbiddenError({
     threadId: command.threadId,
     memberId: command.actorId,
@@ -498,7 +524,25 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/** A member's command. Only the space agent's tools act "via Pair", so a client can't forge a record. */
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
+  incoming: OrchestrationV2Command,
+) {
+  if ("via" in incoming || "spaceActionId" in incoming) {
+    return yield* new Orchestrator.OrchestratorCommandRejectedError({
+      commandId: incoming.commandId,
+      commandType: incoming.type,
+      cause: "Only Pair can act for a space.",
+    });
+  }
+  return yield* dispatchMemberCommand(incoming);
+});
+
+/** The space agent's commands for its tagger: the member's guards, plus Pair's record fields. */
+export const dispatchPairCommand = (command: OrchestrationV2Command) =>
+  dispatchMemberCommand(command);
+
+const dispatchMemberCommand = Effect.fn("ThreadMessageIntake.dispatchMemberCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
   if (isSandboxClientCommand(incoming)) return yield* dispatchSandboxCommand(incoming);

@@ -3,14 +3,13 @@ import {
   CommandId,
   MemberId,
   MessageId,
-  type OrchestrationV2SpaceCommand,
   ProjectId,
   type Space,
   SpaceId,
   ThreadId,
 } from "@t3tools/contracts";
 
-import { decideSpaceCommand, type SpaceDecision } from "./SpaceDecisions.ts";
+import { decideSpaceCommand, type SpaceCoreCommand, type SpaceDecision } from "./SpaceDecisions.ts";
 
 const owner = MemberId.make("member:owner");
 const member = MemberId.make("member:member");
@@ -39,7 +38,7 @@ const space: Space = {
   archivedBy: null,
 };
 
-type Change = { readonly type: OrchestrationV2SpaceCommand["type"] } & Record<string, unknown>;
+type Change = { readonly type: SpaceCoreCommand["type"] } & Record<string, unknown>;
 const decide = (change: Change, actorId: MemberId, at: Space = space): SpaceDecision =>
   decideSpaceCommand({
     command: {
@@ -48,7 +47,7 @@ const decide = (change: Change, actorId: MemberId, at: Space = space): SpaceDeci
       spaceId,
       actorId,
       ...change,
-    } as OrchestrationV2SpaceCommand,
+    } as SpaceCoreCommand,
     space: at,
     now,
   });
