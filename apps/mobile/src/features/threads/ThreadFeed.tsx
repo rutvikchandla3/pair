@@ -288,6 +288,7 @@ import {
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
+import { SpaceTaskIntro } from "../spaces/SpaceTask";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
@@ -3939,6 +3940,7 @@ export const ThreadFeed = memo(function ThreadFeed({
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
+                <SpaceTaskIntro environmentId={props.environmentId} threadId={props.threadId} />
                 <View ref={headerEndRef} collapsable={false} />
               </>
             }

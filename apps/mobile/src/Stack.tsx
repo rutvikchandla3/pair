@@ -62,6 +62,13 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ContinueInCloudSheet } from "./features/threads/ContinueInCloudSheet";
 import { ShareThreadSheet } from "./features/threads/ShareThreadSheet";
+import { SpaceConfirmSheet } from "./features/spaces/SpaceConfirmSheet";
+import { SpaceMembersSheet } from "./features/spaces/SpaceMembersSheet";
+import { SpaceNewSheet } from "./features/spaces/SpaceNewSheet";
+import { SpaceNewTaskSheet } from "./features/spaces/SpaceNewTaskSheet";
+import { SpaceRoomScreen } from "./features/spaces/SpaceRoomScreen";
+import { SpaceSettingsSheet } from "./features/spaces/SpaceSettingsSheet";
+import { SpaceTasksSheet } from "./features/spaces/SpaceTasksSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
@@ -208,6 +215,13 @@ const THREAD_SETTINGS_SHEET_OPTIONS = {
 // Settings pages are root routes so they share the workspace's columns and header. The
 // `Settings` route marks the Settings tab as open (see settings-navigation.ts).
 const SETTINGS_PAGE_OPTIONS = SHEET_GLASS_HEADER_OPTIONS;
+
+const SPACE_SHEET_OPTIONS: AppScreenOptions = {
+  ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
+  ...HORIZONTAL_FORM_SHEET_OPTIONS,
+  sheetAllowedDetents: formSheetDetents(0.6, 0.95),
+  sheetGrabberVisible: true,
+};
 
 const SETTINGS_SCREENS = {
   Settings: createNativeStackScreen({
@@ -716,6 +730,29 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetAllowedDetents: formSheetDetents(0.75),
         sheetGrabberVisible: true,
       },
+    }),
+    SpaceRoom: createNativeStackScreen({
+      screen: SpaceRoomScreen,
+      linking: "spaces/:environmentId/:spaceId",
+      options: { headerShown: false },
+    }),
+    SpaceTasks: createNativeStackScreen({ screen: SpaceTasksSheet, options: SPACE_SHEET_OPTIONS }),
+    SpaceMembers: createNativeStackScreen({
+      screen: SpaceMembersSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SpaceSettings: createNativeStackScreen({
+      screen: SpaceSettingsSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SpaceNew: createNativeStackScreen({ screen: SpaceNewSheet, options: SPACE_SHEET_OPTIONS }),
+    SpaceNewTask: createNativeStackScreen({
+      screen: SpaceNewTaskSheet,
+      options: SPACE_SHEET_OPTIONS,
+    }),
+    SpaceConfirm: createNativeStackScreen({
+      screen: SpaceConfirmSheet,
+      options: SPACE_SHEET_OPTIONS,
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,

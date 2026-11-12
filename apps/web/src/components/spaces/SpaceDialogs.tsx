@@ -1,5 +1,6 @@
 import { activeTeamMembers } from "@t3tools/client-runtime/state/team";
 import {
+  type SpaceConfirm,
   type SpaceViewer,
   isSpaceOwner,
   orderSpaceMembers,
@@ -45,7 +46,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
-import { SpaceConfirmDialog, type SpaceConfirm } from "./SpaceConfirmDialog";
+import { SpaceConfirmDialog } from "./SpaceConfirmDialog";
 import { SpaceModelPicker, useSpaceModelSelection } from "./SpaceModelPicker";
 
 /** Mounted once in the app shell; the room, sidebar, palette and shortcuts open dialogs here. */

@@ -520,13 +520,13 @@ describe("MemberPushNotifier", () => {
         },
       });
       assert.deepStrictEqual(
-        harness.requests.map((batch) => batch.map((m) => [m.to, m.title, m.data.deepLink])),
+        harness.requests.map((batch) => batch.map((m) => [m.to, m.title, m.body, m.data.deepLink])),
         [
           [
-            [token(BOB), "Alice added you to Billing", `/spaces/env-1/${SPACE_ID}`],
-            [token(CAROL), "Alice added you to Billing", `/spaces/env-1/${SPACE_ID}`],
+            [token(BOB), "Billing: Alice added you", "", `/spaces/env-1/${SPACE_ID}`],
+            [token(CAROL), "Billing: Alice added you", "", `/spaces/env-1/${SPACE_ID}`],
           ],
-          [[token(CAROL), "Bob mentioned you in Billing", `/spaces/env-1/${SPACE_ID}`]],
+          [[token(CAROL), "Billing: Bob mentioned you", "", `/spaces/env-1/${SPACE_ID}`]],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),

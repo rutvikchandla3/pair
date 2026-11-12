@@ -285,3 +285,6 @@ Tasks in a space are threads with an owner. A task you assign to someone else wa
 press **Start**, and it runs on their account with the model they choose. **Assigned to me** in
 the sidebar lists the tasks waiting on you. Only the owner can manage members, rename the space,
 change who pays, or archive it; an archived space is read-only until its owner unarchives it.
+
+On mobile, **Assigned to me** and **Spaces** sit at the top of Home. A space notification shows
+only who mentioned or added you, never the message, and opens the room.

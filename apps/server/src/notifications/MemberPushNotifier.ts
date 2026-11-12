@@ -88,7 +88,6 @@ const threadDeepLink = (environmentId: string, threadId: ThreadId) =>
   `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
 const spaceDeepLink = (environmentId: string, spaceId: SpaceId) =>
   `/spaces/${encodeURIComponent(environmentId)}/${encodeURIComponent(spaceId)}`;
-const SPACE_PUSH_BODY_MAX = 180;
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -419,14 +418,8 @@ export const make = Effect.gen(function* () {
       });
     const actorName = yield* memberName(actorId);
     yield* sendToMembers(recipients, {
-      title:
-        entry.type === "post"
-          ? `${actorName} mentioned you in ${spaceName}`
-          : `${actorName} added you to ${spaceName}`,
-      body:
-        entry.type === "post"
-          ? entry.text.slice(0, SPACE_PUSH_BODY_MAX)
-          : (space?.brief.slice(0, SPACE_PUSH_BODY_MAX) ?? ""),
+      title: `${spaceName}: ${actorName} ${entry.type === "post" ? "mentioned" : "added"} you`,
+      body: "",
       deepLink: spaceDeepLink(yield* environment.getEnvironmentId, entry.spaceId),
     });
   });

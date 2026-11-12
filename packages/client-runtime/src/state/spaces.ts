@@ -1,6 +1,9 @@
 import {
   type EnvironmentId,
+  type MemberId,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ThreadShell,
+  type ServerConfig,
   type SpaceId,
   type SpaceRoomEntry,
   type SpaceView,
@@ -11,7 +14,8 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { request, subscribe } from "../rpc/client.ts";
@@ -22,6 +26,8 @@ import {
   applySpaceRoomEvent,
   mergeSpaceRoomView,
   prependSpaceEntries,
+  spaceSidebarShells,
+  spaceTasksIn,
 } from "../spaces.ts";
 import {
   createEnvironmentCommand,
@@ -172,4 +178,105 @@ export function createSpaceEnvironmentAtoms<R, E>(
       tag: WS_METHODS.spacesTask,
     }),
   };
+}
+
+export type SpaceRoomResult =
+  | { readonly type: "loading" }
+  | { readonly type: "error"; readonly message: string; readonly reason: string | null }
+  | { readonly type: "ready"; readonly room: SpaceRoomState };
+
+export function spaceRoomResultOf(
+  result: AsyncResult.AsyncResult<SpaceRoomState, unknown>,
+): SpaceRoomResult {
+  if (AsyncResult.isSuccess(result)) return { type: "ready", room: result.value };
+  if (AsyncResult.isFailure(result)) {
+    const error = Cause.squash(result.cause) as {
+      readonly reason?: unknown;
+      readonly message?: unknown;
+    };
+    return {
+      type: "error",
+      message: typeof error?.message === "string" ? error.message : "Could not open the space.",
+      reason: typeof error?.reason === "string" ? error.reason : null,
+    };
+  }
+  return { type: "loading" };
+}
+
+export interface SpaceSidebarShells {
+  /** Every unarchived task in any space here. */
+  readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  /** Rooms with others' activity since the viewer last opened them. */
+  readonly unreadRoomIds: ReadonlySet<string>;
+  readonly roomsKey: string;
+}
+
+const EMPTY_TASKS: ReadonlyArray<OrchestrationV2ThreadShell> = [];
+const EMPTY_SIDEBAR_SHELLS: SpaceSidebarShells = {
+  tasks: EMPTY_TASKS,
+  unreadRoomIds: new Set(),
+  roomsKey: "",
+};
+
+const sameItems = <T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
+
+/** What the clients derive from their own shells: where spaces live, and each space's tasks. */
+export function createSpaceShellAtoms(input: {
+  readonly label: string;
+  readonly connectedEnvironmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
+  readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
+  readonly currentMemberIdAtom: (environmentId: EnvironmentId) => Atom.Atom<MemberId | null>;
+  readonly environmentThreadsAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<OrchestrationV2ThreadShell>>;
+}) {
+  /** Spaces live on Pair Cloud: connected cloud-only servers where the viewer is a member. */
+  const environmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
+    const previous = Option.getOrUndefined(get.self<ReadonlyArray<EnvironmentId>>());
+    const next = get(input.connectedEnvironmentIdsAtom).filter(
+      (id) =>
+        get(input.serverConfigValueAtom(id))?.environment.capabilities.cloudLaunch === true &&
+        get(input.currentMemberIdAtom(id)) !== null,
+    );
+    return previous !== undefined && sameItems(previous, next) ? previous : next;
+  }).pipe(Atom.withLabel(`${input.label}:space-environment-ids`));
+
+  /** The space's tasks from the live shell, keyed `env\u0000spaceId`; held while none changes. */
+  const tasksAtom = Atom.family((key: string) => {
+    const separator = key.indexOf("\u0000");
+    const environmentId = key.slice(0, separator) as EnvironmentId;
+    const spaceId = key.slice(separator + 1);
+    let previous = EMPTY_TASKS;
+    return Atom.make((get) => {
+      const next = spaceTasksIn(get(input.environmentThreadsAtom(environmentId)), spaceId);
+      if (sameItems(next, previous)) return previous;
+      previous = next.length === 0 ? EMPTY_TASKS : next;
+      return previous;
+    }).pipe(Atom.withLabel(`${input.label}:space-shell-tasks:${key}`));
+  });
+
+  /** Held while no task, room or unread flag changes, so streaming turns elsewhere don't redraw it. */
+  const sidebarShellsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous = EMPTY_SIDEBAR_SHELLS;
+    return Atom.make((get) => {
+      const next = spaceSidebarShells(
+        get(input.environmentThreadsAtom(environmentId)),
+        get(input.currentMemberIdAtom(environmentId)),
+      );
+      const sameTasks = sameItems(next.tasks, previous.tasks);
+      const sameUnread =
+        next.unreadRoomIds.size === previous.unreadRoomIds.size &&
+        [...next.unreadRoomIds].every((id) => previous.unreadRoomIds.has(id));
+      if (sameTasks && sameUnread && next.roomsKey === previous.roomsKey) return previous;
+      previous = {
+        tasks: sameTasks ? previous.tasks : next.tasks,
+        unreadRoomIds: sameUnread ? previous.unreadRoomIds : next.unreadRoomIds,
+        roomsKey: next.roomsKey,
+      };
+      return previous;
+    }).pipe(Atom.withLabel(`${input.label}:space-sidebar-shells:${environmentId}`));
+  });
+
+  return { environmentIdsAtom, tasksAtom, sidebarShellsAtom };
 }

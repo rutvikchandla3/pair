@@ -32,6 +32,7 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { cn } from "../../lib/cn";
+import { HomeSpacesSection } from "../spaces/HomeSpacesSection";
 import {
   ANDROID_READING_MAX_WIDTH,
   deriveCenteredContentHorizontalPadding,
@@ -760,6 +761,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      {hasSearchQuery ? null : <HomeSpacesSection />}
     </>
   );
 
@@ -797,6 +799,11 @@ export function HomeScreen(props: HomeScreenProps) {
           className="flex-1 items-center justify-center px-4"
           style={{ paddingBottom: insets.bottom }}
         >
+          {hasSearchQuery ? null : (
+            <View className="w-full self-stretch">
+              <HomeSpacesSection />
+            </View>
+          )}
           {v2ListEmpty}
         </View>
       </ScreenContent>

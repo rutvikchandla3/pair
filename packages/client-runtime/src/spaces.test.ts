@@ -21,7 +21,10 @@ import {
   orderSpaceMembers,
   resolveSpaceMentions,
   spaceComposerHint,
+  spaceConfirmUndo,
   spaceControls,
+  spaceFeedRows,
+  spaceTaskChangeHint,
   spaceTaskControls,
   spaceMentionCandidates,
   spaceMentionQuery,
@@ -299,6 +302,32 @@ describe("space room state", () => {
     expect(spaceNewDividerIndex(entries, "2026-11-10T10:01:00.000Z", rutvik)).toBe(2);
     expect(spaceNewDividerIndex(entries, null, rutvik)).toBeNull();
   });
+
+  it("groups a run of posts until a new day, the New divider or a Pair item breaks it", () => {
+    const entries = [
+      post("a", "2026-11-12T10:00:00"),
+      post("b", "2026-11-12T10:01:00"),
+      post("c", "2026-11-12T10:02:00"),
+      post("d", "2026-11-12T10:04:00"),
+      post("e", "2026-11-13T09:00:00"),
+    ];
+    const rows = spaceFeedRows(
+      entries,
+      [{ key: "p1", createdAt: "2026-11-12T10:03:00" }],
+      2,
+      // @effect-diagnostics-next-line globalDate:off - the feed labels local calendar days
+      new Date("2026-11-13T12:00:00"),
+    );
+    expect(
+      rows.map((row) =>
+        row.type === "entry" ? `${row.entry.id}${row.continued ? "+" : ""}` : row.type,
+      ),
+    ).toEqual(["day", "a", "b+", "new", "c", "pair", "d", "day", "e"]);
+    expect(rows.flatMap((row) => (row.type === "day" ? [row.label] : []))).toEqual([
+      "Yesterday",
+      "Today",
+    ]);
+  });
 });
 
 describe("space controls", () => {
@@ -364,5 +393,26 @@ describe("space controls", () => {
       canNudge: false,
       stopNeedsConfirm: true,
     });
+  });
+
+  it("names who can change a task, once when its creator owns it", () => {
+    const placement = { kind: "task" as const, spaceId, createdBy: kousik, description: "" };
+    const task = { ownerId: rutvik, space: { ...placement, base: { baseRef: "main" } } };
+    expect(spaceTaskChangeHint(task, viewer)).toBe("Only Rutvik or Kousik can change this");
+    expect(spaceTaskChangeHint({ ...task, ownerId: kousik }, viewer)).toBe(
+      "Only Kousik can change this",
+    );
+  });
+
+  it("offers each confirmed change its way back", () => {
+    expect(spaceConfirmUndo({ type: "leave", space }, viewer)).toMatchObject({
+      label: "Ask to be added back",
+      mutation: { type: "join.request", spaceId },
+    });
+    expect(spaceConfirmUndo({ type: "remove", space, memberId: hanad }, viewer)).toMatchObject({
+      title: "Removed Hanad Ali",
+      mutation: { type: "member.add", memberIds: [hanad], restore: true },
+    });
+    expect(spaceConfirmUndo({ type: "transfer", space, memberId: hanad }, viewer)).toBeNull();
   });
 });

@@ -1,6 +1,11 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isWorkspaceProject } from "@t3tools/client-runtime/state/workspaces";
-import { orderSpaceMembers, spaceTaskControls } from "@t3tools/client-runtime/spaces";
+import {
+  joinNames,
+  orderSpaceMembers,
+  spaceTaskChangeHint,
+  spaceTaskControls,
+} from "@t3tools/client-runtime/spaces";
 import type {
   EnvironmentId,
   MemberId,
@@ -333,7 +338,6 @@ export function SpaceTaskStartBar(props: {
     return <SpaceTaskStartComposer environmentId={props.environmentId} task={task} />;
   }
   const ownerName = ownerNameOf(task);
-  const creatorName = task.viewer.nameOf(task.placement.createdBy);
   const reassign = (ownerId: MemberId) =>
     void act({ type: "reassign", threadId: task.thread.id, ownerId }, "Could not reassign");
   return (
@@ -369,9 +373,7 @@ export function SpaceTaskStartBar(props: {
         </>
       ) : (
         <span className="text-muted-foreground text-xs">
-          {task.thread.ownerId === task.placement.createdBy
-            ? `Only ${ownerName} can change this`
-            : `Only ${ownerName} or ${creatorName} can change this`}
+          {spaceTaskChangeHint(task.thread, task.viewer)}
         </span>
       )}
     </div>
@@ -506,11 +508,6 @@ function SpaceTaskStartComposer(props: {
       ) : null}
     </div>
   );
-}
-
-function joinNames(names: ReadonlyArray<string>) {
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
 function HandBackDialog(props: {

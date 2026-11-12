@@ -2,6 +2,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import {
+  type SpaceConfirm,
   type SpaceRoomMemberState,
   type SpaceViewer,
   joinedSpaceOlderEntries,
@@ -44,7 +45,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SpaceComposer } from "./SpaceComposer";
-import { SpaceConfirmDialog, type SpaceConfirm } from "./SpaceConfirmDialog";
+import { SpaceConfirmDialog } from "./SpaceConfirmDialog";
 import { SpaceFeed } from "./SpaceFeed";
 import { SpaceMembersPopover } from "./SpaceMembersPopover";
 import { SpaceRoomPanel } from "./SpaceRoomPanel";

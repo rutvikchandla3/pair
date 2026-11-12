@@ -1,7 +1,9 @@
 import { LegendList } from "@legendapp/list/react";
 import type { SpacePairFeedItem } from "@t3tools/client-runtime/spaceAgent";
 import {
+  type SpaceFeedRow,
   type SpaceViewer,
+  spaceFeedRows,
   spaceSystemLineText,
   spaceTaskStatus,
   splitSpacePostText,
@@ -17,83 +19,6 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
 import { SpaceStatusIcon } from "./SpaceStatusIcon";
-
-type SpaceFeedRow =
-  | { readonly type: "day"; readonly key: string; readonly label: string }
-  | { readonly type: "new"; readonly key: "new" }
-  | {
-      readonly type: "entry";
-      readonly key: string;
-      readonly entry: SpaceRoomEntry;
-      /** Same author within a few minutes: no name line. */
-      readonly continued: boolean;
-    }
-  | { readonly type: "pair"; readonly key: string; readonly item: SpacePairFeedItem };
-
-const CONTINUE_WITHIN_MS = 5 * 60_000;
-
-function dayLabel(iso: string, now: Date): string {
-  const date = new Date(iso);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  if (day === today) return "Today";
-  if (day === today - 86_400_000) return "Yesterday";
-  return date.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
-  });
-}
-
-function buildRows(
-  entries: ReadonlyArray<SpaceRoomEntry>,
-  pairItems: ReadonlyArray<SpacePairFeedItem>,
-  newIndex: number | null,
-): ReadonlyArray<SpaceFeedRow> {
-  const now = new Date();
-  const rows: SpaceFeedRow[] = [];
-  let lastDay: string | null = null;
-  let previous: SpaceRoomEntry | null = null;
-  let pairIndex = 0;
-  const pushDay = (createdAt: string) => {
-    const label = dayLabel(createdAt, now);
-    if (label === lastDay) return;
-    lastDay = label;
-    const date = new Date(createdAt);
-    rows.push({
-      type: "day",
-      key: `day:${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`,
-      label,
-    });
-  };
-  entries.forEach((entry, index) => {
-    while (pairIndex < pairItems.length && pairItems[pairIndex]!.createdAt < entry.createdAt) {
-      const item = pairItems[pairIndex++]!;
-      pushDay(item.createdAt);
-      rows.push({ type: "pair", key: `pair:${item.key}`, item });
-      previous = null;
-    }
-    pushDay(entry.createdAt);
-    if (index === newIndex) rows.push({ type: "new", key: "new" });
-    const continued =
-      index !== newIndex &&
-      previous !== null &&
-      previous.type === "post" &&
-      entry.type === "post" &&
-      previous.authorId === entry.authorId &&
-      Date.parse(entry.createdAt) - Date.parse(previous.createdAt) < CONTINUE_WITHIN_MS &&
-      rows.at(-1)?.type === "entry";
-    rows.push({ type: "entry", key: entry.id, entry, continued });
-    previous = entry;
-  });
-  for (; pairIndex < pairItems.length; pairIndex++) {
-    const item = pairItems[pairIndex]!;
-    pushDay(item.createdAt);
-    rows.push({ type: "pair", key: `pair:${item.key}`, item });
-  }
-  return rows;
-}
 
 const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
@@ -114,7 +39,7 @@ export interface SpaceFeedProps {
 
 export function SpaceFeed(props: SpaceFeedProps) {
   const members = useTeamMembers(props.environmentId);
-  const rows = buildRows(props.entries, props.pairItems, props.newIndex);
+  const rows = spaceFeedRows(props.entries, props.pairItems, props.newIndex);
   const tasksById = props.pairContext.tasksById;
 
   const renderTaskChip = (threadId: ThreadId) => {
@@ -242,7 +167,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
     );
   };
 
-  const renderRow = (item: SpaceFeedRow) => {
+  const renderRow = (item: SpaceFeedRow<SpacePairFeedItem>) => {
     switch (item.type) {
       case "day":
         return (
@@ -267,7 +192,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
   };
 
   // Same lane as ChatView, so the room and the task screen line up.
-  const renderItem = ({ item }: { item: SpaceFeedRow }) => (
+  const renderItem = ({ item }: { item: SpaceFeedRow<SpacePairFeedItem> }) => (
     <div className="chat-composer-lane">
       <div className="chat-content-lane">{renderRow(item)}</div>
     </div>
@@ -290,7 +215,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
   );
 
   return (
-    <LegendList<SpaceFeedRow>
+    <LegendList<SpaceFeedRow<SpacePairFeedItem>>
       data={rows}
       extraData={props.pairContext}
       keyExtractor={(row) => row.key}

@@ -36,15 +36,18 @@ function identifierFromNotificationResponse(response: unknown): string | null {
   return typeof identifier === "string" ? identifier : null;
 }
 
-function encodeThreadDeepLink(input: {
-  readonly environmentId: string;
-  readonly threadId: string;
-}): string | null {
+// A thread's screen, or a space's room.
+type DeepLinkRoot = "threads" | "spaces";
+
+function encodeThreadDeepLink(
+  input: { readonly environmentId: string; readonly threadId: string },
+  root: DeepLinkRoot = "threads",
+): string | null {
   if (input.environmentId.length === 0 || input.threadId.length === 0) {
     return null;
   }
   try {
-    return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
+    return `/${root}/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
   } catch {
     return null;
   }
@@ -61,26 +64,30 @@ function normalizeThreadDeepLink(value: string): string | null {
   }
 
   const parts = value.split("/");
-  if (parts.length !== 4 || parts[0] !== "" || parts[1] !== "threads") {
+  const root = parts[1];
+  if (parts.length !== 4 || parts[0] !== "" || (root !== "threads" && root !== "spaces")) {
     return null;
   }
 
   try {
-    return encodeThreadDeepLink({
-      environmentId: decodeURIComponent(parts[2] ?? ""),
-      threadId: decodeURIComponent(parts[3] ?? ""),
-    });
+    return encodeThreadDeepLink(
+      {
+        environmentId: decodeURIComponent(parts[2] ?? ""),
+        threadId: decodeURIComponent(parts[3] ?? ""),
+      },
+      root,
+    );
   } catch {
     return null;
   }
 }
 
 export function threadDeepLinkOnScreen(pathname: string): string | null {
-  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
-  if (!match?.[1] || !match[2]) {
+  const match = /^\/(threads|spaces)\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  if (!match?.[2] || !match[3]) {
     return null;
   }
-  return `/threads/${match[1]}/${match[2]}`;
+  return `/${match[1]}/${match[2]}/${match[3]}`;
 }
 
 // Pushes not tied to a live thread: archive opens Archived threads, a team image build opens Machines.

@@ -6,6 +6,7 @@ import { consumeLastAgentNotificationResponse } from "./notificationResponseCons
 import {
   extractAgentNotificationDeepLink,
   routeAgentNotificationResponseOnce,
+  threadDeepLinkOnScreen,
 } from "./notificationPayload";
 
 function responseWithData(data: Record<string, unknown>, identifier = "notification-1") {
@@ -107,6 +108,16 @@ describe("extractAgentNotificationDeepLink", () => {
     expect(
       extractAgentNotificationDeepLink(responseWithData({ deepLink: "/settings/machines" })),
     ).toBe("/settings/machines");
+  });
+
+  it("opens the room from a space push, and knows when it is already on screen", () => {
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/spaces/env%201/spc_1" })),
+    ).toBe("/spaces/env%201/spc_1");
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/spaces/env/spc_1/x" })),
+    ).toBeNull();
+    expect(threadDeepLinkOnScreen("/spaces/env%201/spc_1")).toBe("/spaces/env%201/spc_1");
   });
 
   it("opens Archived threads from a team archive push", () => {

@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { useSpaceTaskComposerLock } from "../spaces/SpaceTask";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -422,6 +423,10 @@ function ThreadRouteContent(
     selectedEnvironmentConnection,
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
+  const spaceTaskLock = useSpaceTaskComposerLock(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.id ?? null,
+  );
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -799,13 +804,19 @@ function ThreadRouteContent(
     ) {
       return;
     }
-    return interruptThreadTurn({
-      environmentId: selectedThread.environmentId,
-      input: {
-        threadId: selectedThread.id,
-        runId: composer.interruptibleRunId,
-      },
-    });
+    const input = { threadId: selectedThread.id, runId: composer.interruptibleRunId };
+    const stop = () =>
+      void interruptThreadTurn({ environmentId: selectedThread.environmentId, input });
+    if (spaceTaskLock?.stopNeedsConfirm) {
+      Dialog.confirm({
+        title: `Stop ${spaceTaskLock.ownerName}'s turn?`,
+        confirmText: "Stop",
+        destructive: true,
+        onConfirm: stop,
+      });
+      return;
+    }
+    return interruptThreadTurn({ environmentId: selectedThread.environmentId, input });
   };
 
   const handleResumeQueue = async () => {
@@ -1237,7 +1248,7 @@ function ThreadRouteContent(
           }
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
-          canSwitchThreadProvider={composer.canSwitchThreadProvider}
+          canSwitchThreadProvider={composer.canSwitchThreadProvider && spaceTaskLock === null}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}

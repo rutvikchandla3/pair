@@ -5,6 +5,7 @@ import type {
   SpaceMember,
   SpaceMention,
   SpaceAction,
+  SpaceMutation,
   SpaceNoteItem,
   SpacePairBilling,
   SpaceRoomEntry,
@@ -360,7 +361,8 @@ export function spaceComposerHint(
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-function joinNames(names: ReadonlyArray<string>): string {
+/** "Kousik", "Kousik and Hanad", "Kousik, Hanad and Ankur". */
+export function joinNames(names: ReadonlyArray<string>): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
@@ -695,4 +697,206 @@ export function spaceSidebarShells<T extends ShellLike>(
   // Changes when a space is shared, renamed, archived or left, so the list can refetch.
   const roomsKey = roomIds.sort().join(",");
   return { tasks, unreadRoomIds, roomsKey };
+}
+
+/** Who may still change an unstarted task, for the members who can't. */
+export function spaceTaskChangeHint(
+  thread: Pick<SpaceTaskThread, "ownerId" | "space">,
+  viewer: SpaceViewer,
+): string {
+  const ownerName = thread.ownerId == null ? "its owner" : viewer.nameOf(thread.ownerId);
+  const createdBy = thread.space?.kind === "task" ? thread.space.createdBy : null;
+  return createdBy === null || thread.ownerId === createdBy
+    ? `Only ${ownerName} can change this`
+    : `Only ${ownerName} or ${viewer.nameOf(createdBy)} can change this`;
+}
+
+// The room feed's rows: day dividers, the "New" divider, entries, and `@pair` items merged by
+// time. Same author within a few minutes continues the previous post without a name line.
+
+export interface SpaceFeedItem {
+  readonly key: string;
+  readonly createdAt: string;
+}
+
+export type SpaceFeedRow<P extends SpaceFeedItem = SpaceFeedItem> =
+  | { readonly type: "day"; readonly key: string; readonly label: string }
+  | { readonly type: "new"; readonly key: "new" }
+  | {
+      readonly type: "entry";
+      readonly key: string;
+      readonly entry: SpaceRoomEntry;
+      readonly continued: boolean;
+    }
+  | { readonly type: "pair"; readonly key: string; readonly item: P };
+
+const CONTINUE_WITHIN_MS = 5 * 60_000;
+
+function spaceDayLabel(iso: string, now: Date): string {
+  // @effect-diagnostics-next-line globalDate:off - local calendar days, for display
+  const date = new Date(iso);
+  // @effect-diagnostics-next-line globalDate:off - local calendar days, for display
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  // @effect-diagnostics-next-line globalDate:off - local calendar days, for display
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  if (day === today) return "Today";
+  if (day === today - 86_400_000) return "Yesterday";
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+export function spaceFeedRows<P extends SpaceFeedItem>(
+  entries: ReadonlyArray<SpaceRoomEntry>,
+  pairItems: ReadonlyArray<P>,
+  newIndex: number | null,
+  // @effect-diagnostics-next-line globalDate:off - local calendar days, for display
+  now: Date = new Date(),
+): ReadonlyArray<SpaceFeedRow<P>> {
+  const rows: SpaceFeedRow<P>[] = [];
+  let lastDay: string | null = null;
+  let previous: SpaceRoomEntry | null = null;
+  let pairIndex = 0;
+  const pushDay = (createdAt: string) => {
+    const label = spaceDayLabel(createdAt, now);
+    if (label === lastDay) return;
+    lastDay = label;
+    // @effect-diagnostics-next-line globalDate:off - local calendar days, for display
+    const date = new Date(createdAt);
+    rows.push({
+      type: "day",
+      key: `day:${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`,
+      label,
+    });
+  };
+  entries.forEach((entry, index) => {
+    while (pairIndex < pairItems.length && pairItems[pairIndex]!.createdAt < entry.createdAt) {
+      const item = pairItems[pairIndex++]!;
+      pushDay(item.createdAt);
+      rows.push({ type: "pair", key: `pair:${item.key}`, item });
+      previous = null;
+    }
+    pushDay(entry.createdAt);
+    if (index === newIndex) rows.push({ type: "new", key: "new" });
+    const continued =
+      index !== newIndex &&
+      previous !== null &&
+      previous.type === "post" &&
+      entry.type === "post" &&
+      previous.authorId === entry.authorId &&
+      Date.parse(entry.createdAt) - Date.parse(previous.createdAt) < CONTINUE_WITHIN_MS &&
+      rows.at(-1)?.type === "entry";
+    rows.push({ type: "entry", key: entry.id, entry, continued });
+    previous = entry;
+  });
+  for (; pairIndex < pairItems.length; pairIndex++) {
+    const item = pairItems[pairIndex]!;
+    pushDay(item.createdAt);
+    rows.push({ type: "pair", key: `pair:${item.key}`, item });
+  }
+  return rows;
+}
+
+// Confirms for archive, leave, remove and transfer: the copy, the mutation, and the way back the
+// toast offers once the change lands.
+
+export type SpaceConfirm =
+  | { readonly type: "archive"; readonly space: Space }
+  | { readonly type: "leave"; readonly space: Space }
+  | { readonly type: "remove"; readonly space: Space; readonly memberId: MemberId }
+  | { readonly type: "transfer"; readonly space: Space; readonly memberId: MemberId };
+
+export function spaceConfirmCopy(confirm: SpaceConfirm, viewer: SpaceViewer) {
+  const name =
+    confirm.type === "remove" || confirm.type === "transfer" ? viewer.nameOf(confirm.memberId) : "";
+  switch (confirm.type) {
+    case "archive":
+      return {
+        title: `Archive ${confirm.space.name}?`,
+        description: `It becomes read-only for all ${activeMemberCount(confirm.space)} members and moves to Archived in the sidebar. Running tasks keep running.`,
+        action: "Archive",
+        destructive: false,
+      };
+    case "leave":
+      return {
+        title: `Leave ${confirm.space.name}?`,
+        description:
+          "You stop getting its messages and can no longer open it. Tasks you own stay yours.",
+        action: "Leave",
+        destructive: true,
+      };
+    case "remove":
+      return {
+        title: `Remove ${name}?`,
+        description: `${name} can no longer open ${confirm.space.name}. Tasks they own stay with them.`,
+        action: "Remove",
+        destructive: true,
+      };
+    case "transfer":
+      return {
+        title: `Make ${name} the owner?`,
+        description: `${name} can then manage members, archive the space and choose who pays for Pair. You stay a member.`,
+        action: "Make owner",
+        destructive: false,
+      };
+  }
+}
+
+function activeMemberCount(space: Pick<Space, "members">): number {
+  return space.members.filter((member) => member.removedAt === null).length;
+}
+
+export function spaceConfirmMutation(confirm: SpaceConfirm): SpaceMutation {
+  const spaceId = confirm.space.id;
+  switch (confirm.type) {
+    case "archive":
+      return { type: "archive", spaceId };
+    case "leave":
+      return { type: "leave", spaceId };
+    case "remove":
+      return { type: "member.remove", spaceId, memberId: confirm.memberId };
+    case "transfer":
+      return { type: "owner.transfer", spaceId, ownerId: confirm.memberId };
+  }
+}
+
+/** The toast after the change lands, with the way back; transfer has none. */
+export function spaceConfirmUndo(
+  confirm: SpaceConfirm,
+  viewer: SpaceViewer,
+): {
+  readonly title: string;
+  readonly label: string;
+  readonly failure: string;
+  readonly mutation: SpaceMutation;
+} | null {
+  const spaceId = confirm.space.id;
+  switch (confirm.type) {
+    case "archive":
+      return {
+        title: `Archived ${confirm.space.name}`,
+        label: "Undo",
+        failure: "Could not undo",
+        mutation: { type: "unarchive", spaceId },
+      };
+    case "remove":
+      return {
+        title: `Removed ${viewer.nameOf(confirm.memberId)}`,
+        label: "Undo",
+        failure: "Could not undo",
+        mutation: { type: "member.add", spaceId, memberIds: [confirm.memberId], restore: true },
+      };
+    case "leave":
+      return {
+        title: `Left ${confirm.space.name}`,
+        label: "Ask to be added back",
+        failure: "Could not ask to join",
+        mutation: { type: "join.request", spaceId },
+      };
+    case "transfer":
+      return null;
+  }
 }
