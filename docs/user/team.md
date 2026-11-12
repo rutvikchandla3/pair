@@ -253,3 +253,15 @@ On a server with more than one member, new threads start in **New worktree** unl
 project chose a workspace mode, so people don't overwrite each other's changes in the main
 checkout. Settings show this as **New worktree (team default)**. A project can start new threads
 in Cloud instead; see [Cloud threads](./cloud.md).
+
+## Spaces
+
+A space is a shared room on Pair Cloud for a few teammates and Pair, tied to one project. Create
+one with **+** next to **Spaces** in the sidebar, or **New space** in the command palette
+(`mod+alt+s`). Type `@` in the room to mention a teammate or `@pair`; the hint under the composer
+says who will be notified and whose Claude account pays for Pair's reply.
+
+Tasks in a space are threads with an owner. A task you assign to someone else waits until they
+press **Start**, and it runs on their account with the model they choose. **Assigned to me** in
+the sidebar lists the tasks waiting on you. Only the owner can manage members, rename the space,
+change who pays, or archive it; an archived space is read-only until its owner unarchives it.

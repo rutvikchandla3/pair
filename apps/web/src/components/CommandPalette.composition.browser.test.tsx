@@ -98,6 +98,9 @@ vi.mock("../state/query", async (original) => ({
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
+vi.mock("./spaces/SpaceShortcuts", () => ({
+  useSpaceShortcutTarget: () => ({ environmentId: null, space: null, spaces: [] }),
+}));
 
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {

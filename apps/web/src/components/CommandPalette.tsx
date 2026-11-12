@@ -4,6 +4,8 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { isChiefOfStaffLive } from "../chiefOfStaff/chiefOfStaff.logic";
 import { startChiefOfStaff, stopChiefOfStaff, useChiefOfStaffStore } from "../chiefOfStaff/session";
 import { useChiefOfStaffTarget } from "../chiefOfStaff/useChiefOfStaffTarget";
+import { openSpaceDialog } from "../spaceDialogStore";
+import { useSpaceShortcutTarget } from "./spaces/SpaceShortcuts";
 
 import {
   scopedThreadKey,
@@ -90,6 +92,8 @@ import {
   EyeOffIcon,
   MicIcon,
   MicOffIcon,
+  UsersRoundIcon,
+  ListPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -505,6 +509,7 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
   const chiefOfStaffTarget = useChiefOfStaffTarget();
+  const spaceTarget = useSpaceShortcutTarget();
   const chiefOfStaffLive = isChiefOfStaffLive(useChiefOfStaffStore((view) => view.phase));
   const projects = useProjects();
   const referenceThreadRef =
@@ -561,7 +566,9 @@ function OpenCommandPaletteDialog(props: {
     await copyThreadReference(activeThreadReferenceCopyTarget);
   };
   // Side chats and subagents open inside their parent, so opening a project never lands on one.
-  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
+  const threads = useVisibleThreadShells().filter(
+    (thread) => !isSidebarHiddenThread(thread) && thread.source.space?.kind !== "room",
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
@@ -1840,6 +1847,47 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         if (chiefOfStaffLive) stopChiefOfStaff();
         else if (startIn !== null) startChiefOfStaff(startIn);
+      },
+    });
+  }
+
+  if (spaceTarget.environmentId !== null) {
+    const environmentId = spaceTarget.environmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:space-new",
+      searchTerms: ["space", "room", "team", "new space"],
+      title: "New space",
+      shortcutCommand: "space.new",
+      icon: <UsersRoundIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openSpaceDialog({ type: "new-space", environmentId }),
+    });
+  }
+  if (spaceTarget.space !== null) {
+    const space = spaceTarget.space;
+    actionItems.push({
+      kind: "action",
+      value: "action:space-new-task",
+      searchTerms: ["task", "space", "assign", "new task"],
+      title: "New task in this space",
+      shortcutCommand: "space.newTask",
+      icon: <ListPlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openSpaceDialog({ type: "new-task", ...space }),
+    });
+  }
+
+  for (const { environmentId, space } of spaceTarget.spaces) {
+    actionItems.push({
+      kind: "action",
+      value: `action:space-open:${environmentId}:${space.id}`,
+      searchTerms: ["space", "room", "open space", space.name],
+      title: space.archivedAt === null ? `Open ${space.name}` : `Open ${space.name} (archived)`,
+      icon: <UsersRoundIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/spaces/$environmentId/$spaceId",
+          params: { environmentId, spaceId: space.id },
+        });
       },
     });
   }

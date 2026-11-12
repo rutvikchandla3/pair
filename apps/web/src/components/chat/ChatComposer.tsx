@@ -422,6 +422,8 @@ export interface ChatComposerProps {
   interactionMode: ProviderInteractionMode;
 
   lockedProvider: ProviderDriverKind | null;
+  /** Someone else's space task: the model is its owner's. */
+  modelLocked?: boolean;
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
@@ -550,6 +552,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     runtimeMode,
     interactionMode: requestedInteractionMode,
     lockedProvider,
+    modelLocked,
     providerStatuses,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
@@ -2358,6 +2361,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       providerSetupInstanceId={providerSetupInstanceId}
       onOpenProviderSetup={onOpenProviderSetup}
       providerCatalogPending={providerCatalogPending}
+      modelLocked={modelLocked ?? false}
       isSendBusy={isSendBusy}
       multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
       multipleModelSelections={multipleModelSelections}

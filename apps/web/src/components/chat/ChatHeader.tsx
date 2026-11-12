@@ -44,6 +44,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { SpaceTaskCrumb } from "../spaces/SpaceTaskScreen";
 import { useQuietThreadShell } from "../../state/entities";
 import { useSetThreadFollowed, useThreadFollowing } from "../../state/team";
 import { useThreadPresence } from "../../state/presence";
@@ -337,6 +338,7 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
+        <SpaceTaskCrumb environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         {parentThreadLink ? (
           <>
             <WorkspaceBreadcrumbItem>

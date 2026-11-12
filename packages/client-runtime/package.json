@@ -327,6 +327,10 @@
       "types": "./src/state/team.ts",
       "default": "./src/state/team.ts"
     },
+    "./state/spaces": {
+      "types": "./src/state/spaces.ts",
+      "default": "./src/state/spaces.ts"
+    },
     "./state/team-image": {
       "types": "./src/state/teamImage.ts",
       "default": "./src/state/teamImage.ts"
@@ -482,6 +486,10 @@
     "./thread-reference": {
       "types": "./src/threadReference.ts",
       "default": "./src/threadReference.ts"
+    },
+    "./spaces": {
+      "types": "./src/spaces.ts",
+      "default": "./src/spaces.ts"
     },
     "./pull-request-project-filter": {
       "types": "./src/pullRequestProjectFilter.ts",

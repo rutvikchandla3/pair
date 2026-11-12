@@ -18,6 +18,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { SpaceDialogHost } from "../components/spaces/SpaceDialogs";
 import { AssignThreadDialogHost } from "../components/team/AssignThreadDialog";
 import { ShareThreadDialogHost } from "../components/team/ShareThreadDialog";
 import { ContinueInCloudDialogHost } from "../components/sandbox/ContinueInCloudDialog";
@@ -230,6 +231,7 @@ function RootRouteBranch() {
         <TeamImageBuildToasts />
         <AddProjectToMachineDialogHost />
         <NewWorkspaceDialogHost />
+        <SpaceDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
         {primaryEnvironmentAuthenticated ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />

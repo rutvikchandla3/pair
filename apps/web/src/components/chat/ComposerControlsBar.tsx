@@ -70,6 +70,8 @@ export function ComposerControlsBar(props: {
   providerSetupInstanceId: ProviderInstanceId | undefined;
   onOpenProviderSetup: ChatComposerProps["onOpenProviderSetup"];
   providerCatalogPending: boolean;
+  /** Someone else's space task: the model is its owner's. */
+  modelLocked?: boolean;
   isSendBusy: boolean;
   multipleModelsEnabled: boolean;
   multipleModelSelections: ChatComposerProps["multipleModelSelections"];
@@ -118,6 +120,7 @@ export function ComposerControlsBar(props: {
     providerSetupInstanceId,
     onOpenProviderSetup,
     providerCatalogPending,
+    modelLocked = false,
     isSendBusy,
     multipleModelsEnabled,
     multipleModelSelections,
@@ -195,7 +198,7 @@ export function ComposerControlsBar(props: {
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.
       popupAlign={composerControlsCollapsed ? "start" : "end"}
-      disabled={providerCatalogPending || isSendBusy}
+      disabled={providerCatalogPending || isSendBusy || modelLocked}
       multipleModelsEnabled={multipleModelsEnabled}
       multipleModelSelections={multipleModelSelections}
       onMultipleModelSelectionsChange={onMultipleModelSelectionsChange}

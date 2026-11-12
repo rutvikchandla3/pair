@@ -246,6 +246,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-diff-addition-foreground: var(--diff-addition-foreground);
   --color-diff-deletion-foreground: var(--diff-deletion-foreground);
   --color-info-foreground: var(--info-foreground);
+  --color-input-foreground: var(--input-foreground);
   --color-info: var(--info);
   --color-guest: var(--guest);
   --color-pair-mark: var(--pair-mark);
@@ -1156,6 +1157,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
+  /* A task that needs an answer from someone. */
+  --input-foreground: var(--color-indigo-600);
   /* Messages from a guest link, and the sidebar Request status. */
   --guest: var(--color-fuchsia-500);
   /* Pair teal: only the brand mark's accent bracket uses it. */
@@ -1215,6 +1218,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --border: --alpha(var(--color-white) / 8%);
     --input: --alpha(var(--color-white) / 11%);
     --info-foreground: var(--color-blue-400);
+    --input-foreground: var(--color-indigo-300);
     --guest-foreground: var(--color-fuchsia-300);
     --pair-mark: #2dd4bf;
     --success-foreground: var(--color-emerald-400);
