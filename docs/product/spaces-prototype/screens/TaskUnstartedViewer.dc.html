@@ -1,0 +1,3254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Task assigned to Hanad, seen by Rutvik</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <style>
+          /*shared-start*/
+          body {
+            margin: 0;
+          }
+          .pair {
+            --background: #fcfcfc;
+            --foreground: #18181b;
+            --card: #ffffff;
+            --popover: #ffffff;
+            --muted: #fafafa;
+            --muted-foreground: #71717a;
+            --accent: #f4f4f5;
+            --border: #e4e4e7;
+            --input: #d4d4d8;
+            --primary: oklch(0.488 0.217 264);
+            --primary-foreground: #ffffff;
+            --info-foreground: #1d4ed8;
+            --success-foreground: #047857;
+            --warning-foreground: #b45309;
+            --input-foreground: #4f46e5;
+            --warning-surface: rgba(245, 158, 11, 0.08);
+            --error-foreground: #b91c1c;
+            --destructive: #dc2626;
+            --sidebar: #fafafa;
+            --sidebar-row-selected: #ffffff;
+            --overlay: rgba(9, 9, 11, 0.32);
+            --shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 4px 12px rgba(9, 9, 11, 0.04);
+            font-family:
+              -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--foreground);
+            background: var(--background);
+            -webkit-font-smoothing: antialiased;
+          }
+          @media (prefers-color-scheme: dark) {
+            .pair:not([data-theme="light"]) {
+              --background: #000000;
+              --foreground: #f1f3f7;
+              --card: #0c0c0d;
+              --popover: #141416;
+              --muted: rgba(255, 255, 255, 0.03);
+              --muted-foreground: #a1a1aa;
+              --accent: rgba(255, 255, 255, 0.06);
+              --border: rgba(255, 255, 255, 0.08);
+              --input: rgba(255, 255, 255, 0.12);
+              --primary: oklch(0.571 0.21 264);
+              --info-foreground: #60a5fa;
+              --success-foreground: #34d399;
+              --warning-foreground: #fbbf24;
+              --input-foreground: #a5b4fc;
+              --warning-surface: rgba(245, 158, 11, 0.16);
+              --error-foreground: #f87171;
+              --destructive: #dc2626;
+              --sidebar: #0c0c0d;
+              --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+              --overlay: rgba(0, 0, 0, 0.6);
+              --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+            }
+          }
+          .pair[data-theme="dark"] {
+            --background: #000000;
+            --foreground: #f1f3f7;
+            --card: #0c0c0d;
+            --popover: #141416;
+            --muted: rgba(255, 255, 255, 0.03);
+            --muted-foreground: #a1a1aa;
+            --accent: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --input: rgba(255, 255, 255, 0.12);
+            --primary: oklch(0.571 0.21 264);
+            --info-foreground: #60a5fa;
+            --success-foreground: #34d399;
+            --warning-foreground: #fbbf24;
+            --input-foreground: #a5b4fc;
+            --warning-surface: rgba(245, 158, 11, 0.16);
+            --error-foreground: #f87171;
+            --destructive: #dc2626;
+            --sidebar: #0c0c0d;
+            --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+            --overlay: rgba(0, 0, 0, 0.6);
+            --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          }
+          .pair * {
+            box-sizing: border-box;
+          }
+          .pair a {
+            color: inherit;
+            text-decoration: none;
+          }
+          .pair button,
+          .pair input,
+          .pair select,
+          .pair textarea {
+            font: inherit;
+            color: inherit;
+          }
+          .pair :focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 1px;
+            border-radius: 6px;
+          }
+          .pair svg {
+            flex: none;
+          }
+          .shell {
+            display: flex;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+          }
+          .muted {
+            color: var(--muted-foreground);
+          }
+          .t12 {
+            font-size: 12px;
+          }
+          .t11 {
+            font-size: 11px;
+          }
+          .w5 {
+            font-weight: 500;
+          }
+          .w6 {
+            font-weight: 600;
+          }
+          .ell {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .grow {
+            flex: 1;
+            min-width: 0;
+          }
+          .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          /* sidebar */
+          .side {
+            flex: 0 0 260px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+          }
+          .side-top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+          }
+          .side-body {
+            padding: 0 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+          }
+          .slabel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 28px;
+            margin-top: 12px;
+            padding: 0 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .srow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 32px;
+            padding: 0 8px;
+            border-radius: 6px;
+          }
+          .srow:hover {
+            background: var(--accent);
+          }
+          .srow[aria-current] {
+            background: var(--sidebar-row-selected);
+            font-weight: 500;
+            box-shadow: 0 0 0 1px var(--border);
+          }
+          .srow.sub {
+            padding-left: 36px;
+            min-height: 36px;
+          }
+          .srow.more {
+            padding-left: 56px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .srow .meta {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--primary);
+            flex: none;
+          }
+          /* columns */
+          .col {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+          }
+          .top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px 0 16px;
+            border-bottom: 1px solid var(--border);
+          }
+          .scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+          }
+          .feed {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 24px 24px;
+          }
+          /* buttons */
+          .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--input);
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .btn:hover {
+            background: var(--accent);
+          }
+          .btn.lg {
+            height: 32px;
+            padding: 0 12px;
+            font-size: 13px;
+          }
+          .btn.primary {
+            background: var(--primary);
+            border-color: transparent;
+            color: var(--primary-foreground);
+          }
+          .btn.primary:hover {
+            filter: brightness(1.08);
+          }
+          .btn.ghost {
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted-foreground);
+          }
+          .btn.ghost:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.ghost[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.icon {
+            width: 28px;
+            padding: 0;
+          }
+          .btn.sm {
+            height: 24px;
+            padding: 0 8px;
+          }
+          .btn.icon.sm {
+            width: 24px;
+            padding: 0;
+          }
+          .btn.danger {
+            background: var(--destructive);
+            border-color: transparent;
+            color: #fff;
+          }
+          .btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+          }
+          .linkbtn {
+            border: 0;
+            background: none;
+            padding: 0;
+            cursor: pointer;
+            font: inherit;
+          }
+          .pair .linkbtn {
+            font-weight: 500;
+            color: inherit;
+          }
+          .pair .linkbtn:hover {
+            color: var(--foreground);
+          }
+          /* avatars */
+          .av {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            color: #fff;
+            font-weight: 500;
+            line-height: 1;
+            flex: none;
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+          }
+          .av.xs {
+            width: 14px;
+            height: 14px;
+            font-size: 8px;
+          }
+          .av.md {
+            width: 32px;
+            height: 32px;
+            font-size: 13px;
+          }
+          .av.r {
+            background: #2563eb;
+          }
+          .av.k {
+            background: #ea580c;
+          }
+          .av.h {
+            background: #059669;
+          }
+          .av.a {
+            background: #7c3aed;
+          }
+          .av.n {
+            background: #71717a;
+          }
+          .stack {
+            display: inline-flex;
+          }
+          .stack .av {
+            box-shadow: 0 0 0 2px var(--background);
+          }
+          .stack .av + .av {
+            margin-left: -4px;
+          }
+          .pairmark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: var(--primary);
+            flex: none;
+          }
+          /* chips, mentions, tags */
+          .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 4px;
+            margin: 0 -1px;
+            border-radius: 4px;
+            font-weight: 500;
+            vertical-align: baseline;
+            white-space: nowrap;
+          }
+          .chip svg {
+            position: relative;
+            top: 1px;
+          }
+          .chip:hover {
+            background: var(--accent);
+          }
+          .mention {
+            color: var(--primary);
+            font-weight: 500;
+          }
+          .mention.me {
+            background: var(--warning-surface);
+            border-radius: 4px;
+            padding: 0 2px;
+          }
+          .tag {
+            display: inline-flex;
+            align-items: center;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--muted-foreground);
+            font-size: 11px;
+            font-weight: 500;
+          }
+          /* messages */
+          .daysep {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .daysep::before,
+          .daysep::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+          }
+          .newsep {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 16px 0 0;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--primary);
+          }
+          .newsep::before {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--primary);
+            opacity: 0.4;
+          }
+          .msg {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            column-gap: 8px;
+            margin-top: 16px;
+          }
+          .msg .head {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-height: 20px;
+            align-self: center;
+          }
+          .msg .body {
+            grid-column: 2;
+            margin-top: 2px;
+          }
+          .msg.cont {
+            margin-top: 4px;
+          }
+          .msg p {
+            margin: 0;
+          }
+          .msg p + p {
+            margin-top: 6px;
+          }
+          .sys {
+            display: block;
+            margin-top: 4px;
+            padding-left: 28px;
+            font-size: 12px;
+            line-height: 22px;
+            color: var(--muted-foreground);
+          }
+          .sys > svg {
+            vertical-align: -2px;
+            margin-right: 4px;
+          }
+          .sys.first {
+            margin-top: 12px;
+          }
+          .sys .chip {
+            font-size: 13px;
+            color: var(--foreground);
+            vertical-align: -1px;
+          }
+          .nw {
+            white-space: nowrap;
+          }
+          .receipt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 10px 12px;
+          }
+          .card.warn {
+            background: var(--warning-surface);
+            border-color: transparent;
+          }
+          /* composer */
+          .composer-wrap {
+            flex: none;
+            padding: 0 24px 16px;
+          }
+          .composer {
+            max-width: 712px;
+            margin: 0 auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+            box-shadow: var(--shadow);
+            padding: 10px 10px 8px 14px;
+          }
+          .composer:focus-within {
+            border-color: var(--input);
+          }
+          .composer textarea {
+            display: block;
+            width: 100%;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            padding: 0;
+            min-height: 40px;
+          }
+          .composer textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .composer .foot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+          }
+          .send {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 0;
+            background: var(--primary);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .pair .send {
+            color: var(--primary-foreground);
+          }
+          .pair .send:disabled {
+            background: var(--accent);
+            color: var(--muted-foreground);
+            cursor: default;
+          }
+          /* right panel */
+          .panel {
+            flex: 0 0 360px;
+            min-width: 320px;
+            border-left: 1px solid var(--border);
+            background: var(--card);
+            display: flex;
+            flex-direction: column;
+          }
+          .tabs {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px 0 8px;
+            border-bottom: 1px solid var(--border);
+          }
+          .tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 24px;
+            padding: 0 8px 0 6px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+          }
+          .tab:hover {
+            background: var(--accent);
+          }
+          .tab[aria-selected="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .toolbar {
+            height: 40px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px;
+          }
+          .seg {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            padding: 0 8px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+          }
+          .seg[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+            font-weight: 500;
+          }
+          .seg .n {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .ov {
+            padding: 6px;
+          }
+          .ghead {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            height: 28px;
+            margin: 6px 0 2px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 13px;
+            font-weight: 400;
+            text-align: left;
+            cursor: pointer;
+          }
+          .ghead:first-child {
+            margin-top: 0;
+          }
+          .ghead .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .trow {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .trow:hover {
+            background: var(--accent);
+          }
+          .trow .st {
+            margin-top: 2px;
+          }
+          .trow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .trow .l1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .trow .l2 {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            margin-top: 1px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .trow .l2 .who {
+            color: var(--foreground);
+          }
+          .trow .rc {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: space-between;
+            min-width: 32px;
+            align-self: stretch;
+            padding: 5px 0 1px;
+          }
+          .trow .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .newrow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 28px;
+            margin-top: 4px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+            text-align: left;
+          }
+          .newrow:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .band {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 4px 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+          }
+          .band .lbl {
+            flex: 1;
+            font-size: 13px;
+          }
+          .needsyou {
+            color: var(--warning-foreground);
+            font-weight: 500;
+          }
+          .add {
+            color: #047857;
+          }
+          .del {
+            color: var(--error-foreground);
+          }
+          .pair .add {
+            color: var(--success-foreground);
+          }
+          /* forms */
+          .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .field > .lbl {
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .input {
+            height: 32px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 0 10px;
+            width: 100%;
+          }
+          textarea.input {
+            height: auto;
+            padding: 8px 10px;
+            resize: none;
+            line-height: 1.45;
+          }
+          .input:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            border-color: transparent;
+          }
+          .help {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .dialog {
+            background: var(--popover);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(9, 9, 11, 0.16);
+            display: flex;
+            flex-direction: column;
+          }
+          .dialog .dh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 12px 0 20px;
+          }
+          .dialog .db {
+            padding: 12px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .dialog .df {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+          }
+          .propchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+          }
+          .propchip:hover {
+            background: var(--accent);
+          }
+          .kbd {
+            font-size: 11px;
+            color: inherit;
+            opacity: 0.7;
+          }
+          .backdrop {
+            background: var(--overlay);
+          }
+          /*shared-end*/
+          .shell {
+            position: relative;
+          }
+          main.col {
+            position: relative;
+          }
+          .mono,
+          .pair code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+          }
+          .fg {
+            color: var(--foreground);
+          }
+          .warnt {
+            color: var(--warning-foreground);
+          }
+          .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            white-space: nowrap;
+          }
+          /* header: breadcrumb + facts */
+          .hd {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 2px;
+          }
+          .crumb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            height: 18px;
+          }
+          .crumb .sp {
+            flex: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted-foreground);
+            border-radius: 4px;
+          }
+          .crumb .sp:hover {
+            color: var(--foreground);
+          }
+          .crumb h1 {
+            margin: 0;
+            min-width: 0;
+            font-size: 13px;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .facts {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            height: 16px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            overflow: hidden;
+          }
+          .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            background: var(--accent);
+            color: var(--muted-foreground);
+          }
+          @media (max-width: 760px) {
+            .facts .opt {
+              display: none;
+            }
+          }
+          .fi {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: none;
+          }
+          .ptoggle {
+            display: none;
+          }
+          .shell[data-panel="hidden"] .ptoggle {
+            display: inline-flex;
+          }
+          /* timeline */
+          .sys.tsys {
+            padding-left: 0;
+          }
+          .um {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            margin-top: 16px;
+          }
+          .um .who {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 20px;
+          }
+          .bub {
+            max-width: 80%;
+            margin-top: 4px;
+            padding: 8px 12px;
+            border-radius: 16px;
+            background: var(--accent);
+          }
+          .bub p {
+            margin: 0;
+          }
+          .bub.pending {
+            background: transparent;
+            border: 1px dashed var(--input);
+          }
+          .ctx {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          a.ctx:hover {
+            color: var(--foreground);
+          }
+          .lk {
+            font-weight: 500;
+          }
+          .lk:hover {
+            color: var(--foreground);
+          }
+          .roomline {
+            margin-top: 8px;
+            padding: 6px 12px 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+          }
+          .roomline .sys {
+            padding-left: 0;
+            margin-top: 2px;
+          }
+          .steps {
+            margin: 2px 0 0 6px;
+            padding-left: 14px;
+            border-left: 1px solid var(--border);
+          }
+          .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 24px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            overflow: hidden;
+          }
+          .step code {
+            color: var(--foreground);
+          }
+          .step.cur {
+            color: var(--foreground);
+          }
+          .live {
+            margin-top: 16px;
+          }
+          .live .lh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 24px;
+          }
+          /* composer slot */
+          .cwrap {
+            position: relative;
+            max-width: 712px;
+            margin: 0 auto;
+          }
+          .replybar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: -2px -2px 8px -6px;
+            padding: 4px 4px 4px 8px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .replybar .lk {
+            margin-left: auto;
+            padding-right: 4px;
+            white-space: nowrap;
+          }
+          .composer textarea.desc {
+            min-height: 60px;
+          }
+          .acct.warn {
+            color: var(--warning-foreground);
+          }
+          .banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 40px;
+            margin-bottom: 8px;
+            padding: 6px 6px 6px 12px;
+            border-radius: 12px;
+            background: var(--warning-surface);
+          }
+          .pair .stop {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 0;
+            background: var(--destructive);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .under {
+            margin-top: 6px;
+            padding-left: 14px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .waitbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 52px;
+            padding: 8px 10px 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+            box-shadow: var(--shadow);
+          }
+          /* popovers: menus and the confirm; bottom sheets below 640 */
+          .popscrim {
+            position: fixed;
+            inset: 0;
+            z-index: 15;
+          }
+          .pop {
+            position: absolute;
+            bottom: calc(100% + 6px);
+            z-index: 20;
+            width: 280px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--popover);
+            box-shadow: 0 12px 32px color-mix(in srgb, var(--foreground) 14%, transparent);
+          }
+          .pop.l {
+            left: 0;
+          }
+          .pop.r {
+            right: 0;
+          }
+          .pop.wide {
+            width: 320px;
+          }
+          .plabel {
+            display: flex;
+            align-items: center;
+            height: 24px;
+            padding: 0 8px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .mitem {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 32px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+          }
+          .mitem:hover {
+            background: var(--accent);
+          }
+          .mitem.tall {
+            height: 40px;
+          }
+          .mitem[aria-disabled="true"] {
+            cursor: default;
+          }
+          .mitem[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .anch {
+            position: relative;
+            display: inline-flex;
+          }
+          .pop.cant {
+            right: 0;
+          }
+          .composer .pop textarea.input {
+            min-height: 56px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 8px 10px;
+          }
+          .composer .pop .pact .btn {
+            flex: none;
+          }
+          .btn.ghost[aria-expanded="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .mitem .acc {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .msep {
+            height: 1px;
+            margin: 4px 0;
+            background: var(--border);
+          }
+          .psearch {
+            padding: 4px 4px 6px;
+          }
+          .pfoot {
+            margin-top: 4px;
+            padding: 8px 8px 4px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .pbody {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 8px 8px 4px;
+          }
+          .pbody p {
+            margin: 0;
+          }
+          .pact {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 8px 4px 4px;
+          }
+          @media (max-width: 639px) {
+            .popscrim {
+              background: var(--overlay);
+            }
+            .pop,
+            .pop.wide {
+              position: fixed;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              width: auto;
+              padding: 8px;
+              border-radius: 12px 12px 0 0;
+            }
+          }
+          /* panel */
+          .tp {
+            flex-basis: 520px;
+            min-width: 0;
+            position: relative;
+          }
+          .ov .trow[aria-current] {
+            background: var(--sidebar-row-selected);
+            box-shadow: 0 0 0 1px var(--border);
+          }
+          .shell[data-panel="hidden"] .tp {
+            display: none;
+          }
+          .tab .n {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .tdot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--info-foreground);
+          }
+          .surface {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+          }
+          .bt {
+            height: 36px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 0 6px;
+            border-bottom: 1px solid var(--border);
+          }
+          .url {
+            flex: 1;
+            min-width: 0;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 0 4px;
+            padding: 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 24px;
+            text-align: center;
+          }
+          .term {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            margin: 0;
+            padding: 10px 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            line-height: 20px;
+            white-space: pre;
+            color: var(--foreground);
+          }
+          .term .m {
+            color: var(--muted-foreground);
+          }
+          .term .ok {
+            color: var(--success-foreground);
+          }
+          .term .run {
+            color: var(--info-foreground);
+          }
+          /* overlay sheet below 1280 */
+          .scrim {
+            display: none;
+            position: absolute;
+            inset: 0;
+            z-index: 25;
+            background: var(--overlay);
+          }
+          @media (max-width: 1279px) {
+            .tp {
+              position: absolute;
+              top: 0;
+              right: 0;
+              bottom: 0;
+              width: 480px;
+              max-width: 100%;
+              z-index: 30;
+              display: none;
+              box-shadow: -16px 0 48px color-mix(in srgb, var(--foreground) 14%, transparent);
+            }
+            .shell[data-sheet="true"] .tp {
+              display: flex;
+            }
+            .shell[data-sheet="true"] .scrim {
+              display: block;
+            }
+            .ptoggle {
+              display: inline-flex;
+            }
+          }
+          /* sidebar off-canvas below 768, compact header below 640 */
+          .sidetoggle,
+          .sscrim {
+            display: none;
+          }
+          @media (max-width: 767px) {
+            .side {
+              position: absolute;
+              top: 0;
+              left: 0;
+              bottom: 0;
+              width: 260px;
+              z-index: 36;
+              display: none;
+              box-shadow: 16px 0 48px color-mix(in srgb, var(--foreground) 14%, transparent);
+            }
+            .shell[data-side="true"] .side {
+              display: flex;
+            }
+            .sscrim {
+              position: absolute;
+              inset: 0;
+              z-index: 35;
+              background: var(--overlay);
+            }
+            .shell[data-side="true"] .sscrim {
+              display: block;
+            }
+            .sidetoggle {
+              display: inline-flex;
+            }
+            .top {
+              padding-left: 8px;
+            }
+          }
+          @media (max-width: 639px) {
+            .top {
+              height: auto;
+              min-height: 52px;
+              padding-top: 6px;
+              padding-bottom: 6px;
+            }
+            .facts {
+              flex-wrap: wrap;
+              height: auto;
+              overflow: visible;
+              white-space: normal;
+              column-gap: 10px;
+              row-gap: 2px;
+            }
+            .facts .sep {
+              display: none;
+            }
+            .hlong {
+              display: none;
+            }
+          }
+        </style>
+      </helmet>
+      <div
+        class="pair shell"
+        data-sheet="{{sheetOpen}}"
+        data-panel="{{panelState}}"
+        data-side="{{sideOpen}}"
+      >
+        <div class="sscrim" onClick="{{closeSide}}"></div>
+
+        <nav class="side" aria-label="Sidebar">
+          <div class="side-top">
+            <span class="w6">Pair</span><span class="t12 muted">Pair Cloud</span>
+          </div>
+          <div class="side-body">
+            <a class="srow" href="#new"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path d="M8 3v10M3 8h10" /></svg
+              >New thread</a
+            >
+            <a class="srow" href="#mine"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <circle cx="8" cy="5.5" r="2.5" />
+                <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
+              ><span class="grow">Assigned to me</span
+              ><span class="meta">{{assignedCount}}</span></a
+            >
+
+            <div class="slabel">
+              <span>Spaces</span
+              ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+              ></a>
+            </div>
+            <a class="srow" href="Main.dc.html"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                /></svg
+              ><span class="grow ell">Question creation</span></a
+            >
+            <sc-if value="{{isR}}" hint-placeholder-val="{{false}}">
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--warning-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" /></svg
+                ><span class="grow ell">Seed role catalog</span
+                ><span class="meta" style="color: var(--warning-foreground)">Needs you</span></a
+              >
+            </sc-if>
+            <sc-if value="{{isK}}" hint-placeholder-val="{{false}}">
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--error-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M8 4.8v3.6M8 11h.01" /></svg
+                ><span class="grow ell">Sample role fixtures</span
+                ><span class="meta">Failed</span></a
+              >
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--info-foreground)"
+                  stroke-width="1.6"
+                  stroke-dasharray="2.2 2.2"
+                >
+                  <circle cx="8" cy="8" r="6" /></svg
+                ><span class="grow ell">Generate question from prompt</span
+                ><span class="meta">Working</span></a
+              >
+            </sc-if>
+            <a class="srow sub" href="TaskUnstarted.dc.html" aria-current="page"
+              ><svg
+                aria-hidden="true"
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="{{stC}}"
+                stroke-width="1.6"
+                stroke-dasharray="{{stDash}}"
+              >
+                <path d="M8 2a6 6 0 1 1 0 12a6 6 0 1 1 0-12z" />
+                <path d="{{halfD}}" fill="var(--muted-foreground)" stroke="none" /></svg
+              ><span class="grow ell">Difficulty tagging</span
+              ><span class="meta">{{sideMeta}}</span></a
+            >
+            <sc-if value="{{isR}}" hint-placeholder-val="{{false}}">
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--success-foreground)"
+                  stroke-width="1.7"
+                >
+                  <circle cx="4.5" cy="3.8" r="1.8" />
+                  <circle cx="4.5" cy="12.2" r="1.8" />
+                  <circle cx="11.5" cy="12.2" r="1.8" />
+                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
+                ><span class="grow ell">Question schema v2</span
+                ><span class="meta">In review</span></a
+              >
+            </sc-if>
+            <a class="srow more" href="Main.dc.html">{{moreCount}} more</a>
+            <a class="srow" href="#space-2"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                /></svg
+              ><span class="grow ell">Onboarding revamp</span
+              ><span class="dot" role="img" aria-label="Unread"></span
+            ></a>
+
+            <div class="slabel"><span>Projects</span></div>
+            <a class="srow" href="#p1"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              >pair-fe</a
+            >
+            <a class="srow sub" href="#t1"
+              ><span class="grow ell">Fix sidebar drag flicker</span><span class="meta">2d</span></a
+            >
+            <a class="srow" href="#p2"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              >pair-be</a
+            >
+            <a class="srow sub" href="#t3"
+              ><span class="grow ell">Bundle upload retries</span><span class="meta">5d</span></a
+            >
+          </div>
+        </nav>
+
+        <main class="col">
+          <header class="top">
+            <button
+              type="button"
+              class="btn ghost icon sidetoggle"
+              aria-label="Show sidebar"
+              aria-expanded="{{sideOpen}}"
+              onClick="{{toggleSide}}"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M6 3v10" />
+              </svg>
+            </button>
+            <div class="hd">
+              <div class="crumb">
+                <a class="sp" href="Main.dc.html" title="Open Question creation"
+                  ><svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                  >
+                    <circle cx="5.5" cy="6" r="2.5" />
+                    <circle cx="10.5" cy="6" r="2.5" />
+                    <path
+                      d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                    /></svg
+                  >Question creation</a
+                >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.5"
+                >
+                  <path d="M6 4l4 4-4 4" />
+                </svg>
+                <h1 title="Difficulty tagging">Difficulty tagging</h1>
+              </div>
+              <div class="facts">
+                <span class="fi"
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="{{stC}}"
+                    stroke-width="1.6"
+                    stroke-dasharray="{{stDash}}"
+                  >
+                    <path d="M8 2a6 6 0 1 1 0 12a6 6 0 1 1 0-12z" />
+                    <path d="{{halfD}}" fill="var(--muted-foreground)" stroke="none" /></svg
+                  ><span class="fg" title="{{statusTitle}}">{{statusText}}</span></span
+                >
+                <span class="fi"
+                  ><span class="sep" aria-hidden="true">·</span
+                  ><sc-if value="{{ownerAvH}}" hint-placeholder-val="{{true}}"
+                    ><span class="av xs h" aria-hidden="true">H</span></sc-if
+                  ><sc-if value="{{ownerAvK}}" hint-placeholder-val="{{false}}"
+                    ><span class="av xs {{toCls}}" aria-hidden="true">{{toInit}}</span></sc-if
+                  ><span>{{ownerLabel}}</span></span
+                >
+                <span class="fi opt"
+                  ><span class="sep" aria-hidden="true">·</span><span>{{factB}}</span></span
+                >
+              </div>
+            </div>
+            <sc-if value="{{isR}}" hint-placeholder-val="{{false}}">
+              <button
+                type="button"
+                class="btn ghost icon"
+                aria-label="Unfollow task"
+                aria-pressed="true"
+                title="Following: you hear when Hanad starts it or it needs someone. Click to unfollow"
+              >
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16">
+                  <path
+                    d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"
+                    fill="currentColor"
+                  />
+                  <circle cx="8" cy="8" r="1.8" fill="var(--background)" />
+                </svg>
+              </button>
+            </sc-if>
+            <sc-if value="{{isK}}" hint-placeholder-val="{{false}}">
+              <button
+                type="button"
+                class="btn ghost icon"
+                aria-label="Follow task"
+                title="Follow: hear when it starts, needs someone or finishes"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" />
+                  <circle cx="8" cy="8" r="1.8" />
+                </svg>
+              </button>
+            </sc-if>
+            <button
+              type="button"
+              class="btn ghost icon"
+              aria-label="Copy link to this task"
+              title="Copy link"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path
+                  d="M7 9a3 3 0 0 0 4.2 0l2-2A3 3 0 0 0 9 2.8l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2A3 3 0 0 0 7 13.2l.8-.8"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="btn ghost icon"
+              aria-label="More: open in Question creation, assign to…"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <circle cx="3.5" cy="8" r="1.2" />
+                <circle cx="8" cy="8" r="1.2" />
+                <circle cx="12.5" cy="8" r="1.2" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="btn ghost icon ptoggle"
+              aria-label="{{ptoggleLabel}}"
+              title="{{ptoggleTitle}}"
+              aria-pressed="{{sheetOpen}}"
+              onClick="{{togglePanel}}"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M10 3v10" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="scroll">
+            <div class="feed" role="log" aria-label="Task timeline">
+              <div class="sys tsys first">
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <circle cx="8" cy="5.5" r="2.5" />
+                  <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
+                >{{sysAssign}}
+                <a
+                  class="chip"
+                  href="Main.dc.html#rutvik-1031"
+                  title="Open Rutvik's message in Question creation"
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                  >
+                    <circle cx="5.5" cy="6" r="2.5" />
+                    <circle cx="10.5" cy="6" r="2.5" />
+                    <path
+                      d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                    /></svg
+                  >Question creation</a
+                ><span class="nw"> · Tue 10:30</span>
+              </div>
+
+              <sc-if value="{{showPending}}" hint-placeholder-val="{{false}}">
+                <div class="um">
+                  <div class="who">
+                    <span class="av r" aria-hidden="true">R</span><span class="w6">Rutvik</span
+                    ><span class="t12 muted">10:30</span>
+                  </div>
+                  <div class="bub pending" aria-label="Task description, not sent yet">
+                    <p>
+                      Add a difficulty tag (easy, medium, hard) that a reviewer sets after reading a
+                      drafted question. Store it on the question in schema v2 and show it in the
+                      review list.
+                    </p>
+                  </div>
+                  <div class="ctx">
+                    <svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M8 5v3l2 1.5" /></svg
+                    >{{pendingNote}}<sc-if value="{{isR}}" hint-placeholder-val="{{false}}"
+                      ><span aria-hidden="true">·</span
+                      ><button type="button" class="linkbtn">Edit</button></sc-if
+                    >
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{declined}}" hint-placeholder-val="{{false}}">
+                <div class="sys tsys">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M6.5 4L3 7.5 6.5 11" />
+                    <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" /></svg
+                  >You handed this back to Rutvik<span class="nw"> · 11:06</span>
+                </div>
+                <div class="roomline" aria-label="Line posted in Question creation">
+                  <div class="t11 w5 muted">Posted in Question creation</div>
+                  <div class="sys">
+                    <svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M6.5 4L3 7.5 6.5 11" />
+                      <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" /></svg
+                    ><a class="chip" href="TaskUnstarted.dc.html"
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="var(--muted-foreground)"
+                        stroke-width="1.6"
+                      >
+                        <circle cx="8" cy="8" r="6" /></svg
+                      >Difficulty tagging</a
+                    >
+                    is unassigned again. Hanad can't take it: "On the review list until
+                    Thursday."<span class="nw"> · 11:06</span>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{assigned}}" hint-placeholder-val="{{false}}">
+                <div class="sys tsys">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <circle cx="6" cy="5.5" r="2.5" />
+                    <path
+                      d="M1.5 13.5c.5-2.2 2.2-3.5 4.5-3.5 1 0 1.9.2 2.6.7M11 9.5l2.5 2.5-2.5 2.5M8.5 12h5"
+                    /></svg
+                  >You assigned this to {{toName}}. Rutvik and {{toName}} were notified<span
+                    class="nw"
+                  >
+                    · 11:06</span
+                  >
+                </div>
+              </sc-if>
+
+              <sc-if value="{{started}}" hint-placeholder-val="{{false}}">
+                <div class="sys tsys">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path
+                      d="M4.5 12.5h7a3 3 0 0 0 .4-6 4 4 0 0 0-7.7 1A2.5 2.5 0 0 0 4.5 12.5z"
+                    /></svg
+                  >You started it with Opus 5.5 on your Claude account<span class="nw">
+                    · 11:06</span
+                  >
+                </div>
+                <div class="um">
+                  <div class="who">
+                    <span class="av h" aria-hidden="true">H</span><span class="w6">Hanad</span
+                    ><span class="t12 muted">11:06</span>
+                  </div>
+                  <div class="bub"><p>{{sentText}}</p></div>
+                  <a class="ctx" href="Main.dc.html#notes"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                      <path d="M6 8h4M6 10.5h4" /></svg
+                    >Also reads the space brief and Pair's notes</a
+                  >
+                </div>
+                <div class="live" aria-live="polite">
+                  <div class="lh">
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--muted-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path
+                        d="M8 2a6 6 0 0 0 0 12z"
+                        fill="var(--muted-foreground)"
+                        stroke="none"
+                      /></svg
+                    ><span class="w5">Starting machine</span><span class="t12 muted">· 14s</span>
+                  </div>
+                  <div class="steps">
+                    <div class="step">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path
+                          d="M4.5 12.5h7a3 3 0 0 0 .4-6 4 4 0 0 0-7.7 1A2.5 2.5 0 0 0 4.5 12.5z"
+                        /></svg
+                      ><span class="ell">Machine <code>k7f2</code> ready 9s</span>
+                    </div>
+                    <div class="step">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                      ><span class="ell">Cloned <code>pair-fe</code> 3s</span>
+                    </div>
+                    <div class="step cur">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                      ><span class="ell"
+                        >Cloning <code>pair-be</code> ·
+                        <button type="button" class="linkbtn" onClick="{{goTerminal}}">
+                          Open terminal
+                        </button></span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div class="composer-wrap">
+            <div class="cwrap">
+              <sc-if value="{{anyPop}}" hint-placeholder-val="{{false}}"
+                ><div class="popscrim" onClick="{{closePops}}"></div
+              ></sc-if>
+
+              <sc-if value="{{menuAccount}}" hint-placeholder-val="{{false}}">
+                <div class="pop l" role="menu" aria-label="Run on">
+                  <div class="plabel">Runs on</div>
+                  <sc-if value="{{hasAcct}}" hint-placeholder-val="{{true}}">
+                    <button type="button" class="mitem" role="menuitemradio" aria-checked="true">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8" /></svg
+                      ><span class="grow">Claude</span><span class="t12 muted">Your account</span
+                      ><svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{noAcct}}" hint-placeholder-val="{{false}}">
+                    <div class="plabel" style="font-weight: 400; font-size: 12px; height: 32px">
+                      No Claude or Codex account connected
+                    </div>
+                  </sc-if>
+                  <div class="msep"></div>
+                  <button type="button" class="mitem" role="menuitem">
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M8 3v10M3 8h10" /></svg
+                    >Connect an account…
+                  </button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{menuAssign}}" hint-placeholder-val="{{false}}">
+                <div
+                  class="pop r wide"
+                  role="dialog"
+                  aria-label="Assign to a member of Question creation"
+                >
+                  <div class="psearch">
+                    <input
+                      class="input"
+                      type="search"
+                      aria-label="Search members"
+                      placeholder="Search members"
+                    />
+                  </div>
+                  <div class="plabel">Members of Question creation</div>
+                  <button type="button" class="mitem tall">
+                    <span class="av r" aria-hidden="true">R</span
+                    ><span class="grow ell"
+                      ><span class="w5">Rutvik</span>
+                      <span class="t12 muted">{{rutvikTag}}</span></span
+                    ><span class="acc"
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8" /></svg
+                      >Claude</span
+                    >
+                  </button>
+                  <button type="button" class="mitem tall" onClick="{{assignKousik}}">
+                    <span class="av k" aria-hidden="true">K</span
+                    ><span class="grow ell"
+                      ><span class="w5">Kousik</span> <span class="t12 muted">2 tasks</span></span
+                    ><span class="acc"
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8" /></svg
+                      >Claude</span
+                    >
+                  </button>
+                  <button type="button" class="mitem tall" onClick="{{assignAnkur}}">
+                    <span class="av a" aria-hidden="true">A</span
+                    ><span class="grow ell"
+                      ><span class="w5">Ankur</span> <span class="t12 muted">Codex only</span></span
+                    ><span class="acc"
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <rect x="2.5" y="3" width="11" height="10" rx="2" />
+                        <path d="M5.5 7l1.5 1.5L5.5 10M8.5 10h2" /></svg
+                      >Codex</span
+                    >
+                  </button>
+                  <button type="button" class="mitem tall" aria-disabled="true" aria-current="true">
+                    <span class="av h" aria-hidden="true">H</span
+                    ><span class="grow ell"
+                      ><span class="w5">Hanad</span>
+                      <span class="t12 muted">{{hanadTag}}</span></span
+                    ><span class="acc {{hanadAcctCls}}"
+                      ><svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="{{hanadAcctIcon}}" /></svg
+                      >{{hanadAcct}}</span
+                    ><svg
+                      aria-label="Assigned now"
+                      role="img"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--foreground)"
+                      stroke-width="1.8"
+                    >
+                      <path d="M3.5 8.5l3 3 6-7" />
+                    </svg>
+                  </button>
+                  <div class="pfoot">
+                    Only members of Question creation. The task runs on their own account.
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{pre}}" hint-placeholder-val="{{true}}">
+                <sc-if value="{{noAcct}}" hint-placeholder-val="{{false}}">
+                  <div class="banner" role="status">
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--warning-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M8 4.8v3.6M8 11h.01" /></svg
+                    ><span class="grow"
+                      >You haven't connected Claude or Codex to Pair Cloud. Connect one, or hand
+                      this to someone who has.</span
+                    ><button type="button" class="btn lg primary">Connect account</button>
+                  </div>
+                </sc-if>
+                <div class="composer" style="max-width: none">
+                  <div class="replybar">
+                    <svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                      <path d="M6 8h4M6 10.5h4" /></svg
+                    ><span class="w5 fg nw">Rutvik's description</span
+                    ><span class="ell">· edit it before you start</span
+                    ><a
+                      class="lk"
+                      href="Main.dc.html#notes"
+                      title="The agent also reads the space brief and Pair's notes"
+                      >Also reads brief and notes</a
+                    >
+                  </div>
+                  <textarea
+                    class="desc"
+                    aria-label="First message to the agent, from Rutvik's description"
+                    rows="3"
+                    value="{{draft}}"
+                    onChange="{{onDraft}}"
+                  ></textarea>
+                  <div class="foot">
+                    <button
+                      type="button"
+                      class="btn ghost acct {{acctCls}}"
+                      aria-haspopup="menu"
+                      aria-expanded="{{menuAccount}}"
+                      aria-label="Runs on: {{acctLabel}}"
+                      onClick="{{openAcct}}"
+                      style="padding: 0 6px 0 8px"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="{{acctIcon}}" /></svg
+                      >{{acctLabel}}<svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <path d="M4 6l4 4 4-4" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn ghost"
+                      aria-label="Model: Opus 5.5"
+                      style="padding: 0 6px 0 8px"
+                    >
+                      Opus 5.5<svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <path d="M4 6l4 4 4-4" />
+                      </svg>
+                    </button>
+                    <span class="grow"></span>
+                    <span class="anch">
+                      <button
+                        type="button"
+                        class="btn ghost"
+                        aria-haspopup="dialog"
+                        aria-expanded="{{showCant}}"
+                        onClick="{{openCant}}"
+                      >
+                        Can't take it
+                      </button>
+                      <sc-if value="{{showCant}}" hint-placeholder-val="{{false}}">
+                        <div
+                          class="pop wide cant"
+                          role="dialog"
+                          aria-labelledby="cant-title"
+                          aria-describedby="cant-desc"
+                        >
+                          <div class="pbody">
+                            <div id="cant-title" class="w6">Tell Rutvik you can't take it?</div>
+                            <p id="cant-desc" class="t12 muted">
+                              The task goes back to unassigned and Rutvik picks who takes it. Pair
+                              posts one line in Question creation.
+                            </p>
+                            <textarea
+                              class="input"
+                              rows="2"
+                              aria-label="Reason, optional"
+                              placeholder="Reason (optional)"
+                            ></textarea>
+                          </div>
+                          <div class="pact">
+                            <button type="button" class="btn lg" onClick="{{closePops}}">
+                              Cancel</button
+                            ><button type="button" class="btn lg primary" onClick="{{doDecline}}">
+                              Send to Rutvik
+                            </button>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </span>
+                    <button
+                      type="button"
+                      class="{{assignCls}}"
+                      aria-haspopup="dialog"
+                      aria-expanded="{{menuAssign}}"
+                      onClick="{{openAssign}}"
+                    >
+                      Assign to…
+                    </button>
+                    <button
+                      type="button"
+                      class="{{startCls}}"
+                      disabled="{{startDisabled}}"
+                      title="{{startTitle}}"
+                      onClick="{{doStart}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                      >
+                        <path d="M5 3.2v9.6L12.5 8z" /></svg
+                      >Start task<span class="kbd">⌘↵</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="under">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path
+                      d="M4.5 12.5h7a3 3 0 0 0 .4-6 4 4 0 0 0-7.7 1A2.5 2.5 0 0 0 4.5 12.5z"
+                    /></svg
+                  >Starts a cloud machine with pair-fe and pair-be. Nothing runs until then.
+                </div>
+              </sc-if>
+
+              <sc-if value="{{started}}" hint-placeholder-val="{{false}}">
+                <div class="composer" style="max-width: none">
+                  <textarea
+                    aria-label="Message the task agent"
+                    rows="2"
+                    placeholder="Ask for follow-up changes"
+                    value="{{draft}}"
+                    onChange="{{onDraft}}"
+                  ></textarea>
+                  <div class="foot">
+                    <button
+                      type="button"
+                      class="btn ghost"
+                      aria-label="Model: Opus 5.5"
+                      style="padding: 0 6px 0 8px"
+                    >
+                      Opus 5.5<svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <path d="M4 6l4 4 4-4" />
+                      </svg>
+                    </button>
+                    <span class="grow ell t12 muted"
+                      >↵ queue<span class="hlong"> · ⌘↵ steer now</span></span
+                    >
+                    <button
+                      type="button"
+                      class="stop"
+                      aria-label="Stop the turn"
+                      title="Stop the turn"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="currentColor"
+                      >
+                        <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="send"
+                      aria-label="Queue message (↵). Steer now (⌘↵)"
+                      title="Queue (↵) · Steer now (⌘↵)"
+                      disabled="{{emptyDraft}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M2.5 4h8M2.5 8h8M2.5 12h5M12 9.5v5M9.5 12h5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="under">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path
+                      d="M4.5 12.5h7a3 3 0 0 0 .4-6 4 4 0 0 0-7.7 1A2.5 2.5 0 0 0 4.5 12.5z"
+                    /></svg
+                  >Runs on your Claude account
+                </div>
+              </sc-if>
+
+              <sc-if value="{{showWait}}" hint-placeholder-val="{{false}}">
+                <div class="waitbar" role="status">
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.5"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M8 5v3l2 1.5" />
+                  </svg>
+                  <span class="grow ell"
+                    ><span class="w5">{{waitTitle}}</span>
+                    <span class="t12 muted">{{waitMeta}}</span></span
+                  >
+                  <sc-if value="{{isR}}" hint-placeholder-val="{{false}}">
+                    <button type="button" class="btn lg">Remind Hanad</button>
+                    <button
+                      type="button"
+                      class="btn lg"
+                      aria-haspopup="dialog"
+                      aria-expanded="{{menuAssign}}"
+                      onClick="{{openAssign}}"
+                    >
+                      Reassign
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{isK}}" hint-placeholder-val="{{false}}">
+                    <span class="t12 muted nw">Only Hanad or Rutvik can change this</span>
+                  </sc-if>
+                  <sc-if value="{{canUndo}}" hint-placeholder-val="{{false}}">
+                    <button type="button" class="btn lg" onClick="{{undo}}">Undo</button>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </main>
+
+        <div class="scrim" onClick="{{closeSheet}}"></div>
+        <aside class="panel tp" aria-label="Task panel">
+          <div class="tabs">
+            <div role="tablist" aria-label="Task panel" class="row" style="gap: 4px">
+              <button
+                type="button"
+                class="tab"
+                role="tab"
+                aria-selected="{{tOv}}"
+                onClick="{{goOverview}}"
+                title="Question creation: all tasks"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path
+                    d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
+                  /></svg
+                >Overview
+              </button>
+              <sc-if value="{{started}}" hint-placeholder-val="{{false}}">
+                <button
+                  type="button"
+                  class="tab"
+                  role="tab"
+                  aria-selected="{{tBr}}"
+                  onClick="{{goBrowser}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M2 8h12M8 2c1.8 2 1.8 10 0 12M8 2c-1.8 2-1.8 10 0 12" /></svg
+                  >Browser
+                </button>
+                <button
+                  type="button"
+                  class="tab"
+                  role="tab"
+                  aria-selected="{{tTe}}"
+                  onClick="{{goTerminal}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+                    <path d="M4.5 6l2 2-2 2M8 10.5h3.5" /></svg
+                  >Terminal<span class="tdot" role="img" aria-label="Command running"></span>
+                </button>
+                <button
+                  type="button"
+                  class="tab"
+                  role="tab"
+                  aria-selected="{{tCh}}"
+                  onClick="{{goChanges}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M4 1.5h5.5L12.5 4.5V14.5H4z" />
+                    <path d="M8.25 6v4M6.25 8h4M6.25 12h4" /></svg
+                  >Changes
+                </button>
+              </sc-if>
+            </div>
+            <button
+              type="button"
+              class="btn ghost icon sm"
+              aria-label="Add: notes, files, pull request, new task"
+              title="Open notes, files or a pull request, or add a task"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path d="M8 3v10M3 8h10" />
+              </svg>
+            </button>
+            <span class="grow"></span>
+            <sc-if value="{{started}}" hint-placeholder-val="{{false}}">
+              <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
+                </svg>
+              </button>
+            </sc-if>
+            <button
+              type="button"
+              class="btn ghost icon sm"
+              aria-label="Hide panel"
+              onClick="{{hidePanel}}"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M10 3v10" />
+              </svg>
+            </button>
+          </div>
+
+          <sc-if value="{{tTe}}" hint-placeholder-val="{{false}}">
+            <div class="surface">
+              <div class="bt">
+                <span class="t12 muted" style="padding: 0 6px">k7f2 · setup</span
+                ><span class="grow"></span
+                ><button type="button" class="btn ghost icon sm" aria-label="New terminal">
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
+                </button>
+              </div>
+              <pre
+                class="term"
+                role="log"
+                aria-label="Machine setup output"
+              ><span class="m">Pair Cloud · machine k7f2 · 4 vCPU · 8 GB</span>
+
+ <span class="ok">✓</span> Machine ready <span class="m">9s</span>
+ <span class="ok">✓</span> Cloned pair-fe <span class="m">main · 3s</span>
+ <span class="run">›</span> Cloning pair-be <span class="m">main</span>
+</pre>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{tBr}}" hint-placeholder-val="{{false}}">
+            <div class="surface">
+              <div class="bt" role="toolbar" aria-label="Browser">
+                <button type="button" class="btn ghost icon sm" aria-label="Back" disabled="true">
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M10 3.5L5.5 8l4.5 4.5" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="btn ghost icon sm"
+                  aria-label="Forward"
+                  disabled="true"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M6 3.5L10.5 8 6 12.5" />
+                  </svg>
+                </button>
+                <div class="url"><span class="ell">No preview yet</span></div>
+              </div>
+              <div class="empty">
+                <svg
+                  aria-hidden="true"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.4"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M2 8h12M8 2c1.8 2 1.8 10 0 12M8 2c-1.8 2-1.8 10 0 12" />
+                </svg>
+                <div class="w5">No preview yet</div>
+                <div class="t12 muted">
+                  A shareable preview link appears here when a dev server starts on the machine.
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{tCh}}" hint-placeholder-val="{{false}}">
+            <div class="surface">
+              <div class="empty">
+                <svg
+                  aria-hidden="true"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.4"
+                >
+                  <path d="M4 1.5h5.5L12.5 4.5V14.5H4z" />
+                </svg>
+                <div class="w5">No changes yet</div>
+                <div class="t12 muted">Edits the agent makes show here as a diff.</div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{tOv}}" hint-placeholder-val="{{true}}">
+            <div class="scroll ov">
+              <sc-if value="{{isR}}" hint-placeholder-val="{{false}}">
+                <button type="button" class="ghead" aria-expanded="true">
+                  Needs you <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a class="trow" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--warning-foreground)"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
+                    <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Seed role catalog</span
+                    ><span class="l2"
+                      >for you · <span class="ell">wants to run pnpm db:migrate</span></span
+                    ></span
+                  >
+                  <span class="rc"
+                    ><span class="dot" role="img" aria-label="Updated since you looked"></span
+                    ><span class="when">2m</span></span
+                  >
+                </a>
+              </sc-if>
+
+              <button type="button" class="ghead" aria-expanded="true">
+                In progress <span class="n">{{ipCount}}</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <sc-if value="{{notR}}" hint-placeholder-val="{{true}}">
+                <a class="trow" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--warning-foreground)"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
+                    <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Seed role catalog</span
+                    ><span class="l2"
+                      >for <span class="av xs r" aria-hidden="true">R</span
+                      ><span class="who">Rutvik</span> ·
+                      <span class="ell">needs Rutvik: wants to run pnpm db:migrate</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">2m</span></span>
+                </a>
+              </sc-if>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--error-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M8 4.8v3.6M8 11h.01" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Sample role fixtures</span
+                  ><span class="l2"
+                    >for
+                    <sc-if value="{{notK}}" hint-placeholder-val="{{true}}"
+                      ><span class="av xs k" aria-hidden="true">K</span
+                      ><span class="who">Kousik</span></sc-if
+                    ><sc-if value="{{isK}}" hint-placeholder-val="{{false}}">you</sc-if> ·
+                    <span class="ell">failed: fixtures.test.ts</span></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">1h</span></span>
+              </a>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--input-foreground)"
+                  stroke-width="1.5"
+                >
+                  <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                  <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Preview renderer</span
+                  ><span class="l2"
+                    >for <span class="av xs a" aria-hidden="true">A</span
+                    ><span class="who">Ankur</span> ·
+                    <span class="ell">needs Ankur: Which image sizes…</span></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">12m</span></span>
+              </a>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--info-foreground)"
+                  stroke-width="1.6"
+                  stroke-dasharray="2.2 2.2"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Generate question from prompt</span
+                  ><span class="l2"
+                    >for
+                    <sc-if value="{{notK}}" hint-placeholder-val="{{true}}"
+                      ><span class="av xs k" aria-hidden="true">K</span
+                      ><span class="who">Kousik</span></sc-if
+                    ><sc-if value="{{isK}}" hint-placeholder-val="{{false}}">you</sc-if></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">4m</span></span>
+              </a>
+              <sc-if value="{{started}}" hint-placeholder-val="{{false}}">
+                <a
+                  class="trow"
+                  href="TaskUnstarted.dc.html"
+                  aria-current="page"
+                  title="You're here"
+                >
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M8 2a6 6 0 0 0 0 12z" fill="var(--muted-foreground)" stroke="none" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Difficulty tagging</span
+                    ><span class="l2"
+                      >for you · <span class="ell">starting machine</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">now</span></span>
+                </a>
+              </sc-if>
+
+              <sc-if value="{{notStarted}}" hint-placeholder-val="{{true}}">
+                <button type="button" class="ghead" aria-expanded="true">
+                  Not started <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a
+                  class="trow"
+                  href="TaskUnstarted.dc.html"
+                  aria-current="page"
+                  title="You're here"
+                >
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Difficulty tagging</span
+                    ><span class="l2"
+                      ><sc-if value="{{diffForYou}}" hint-placeholder-val="{{true}}"
+                        >for you · </sc-if
+                      ><sc-if value="{{diffForH}}" hint-placeholder-val="{{false}}"
+                        >for <span class="av xs h" aria-hidden="true">H</span
+                        ><span class="who">Hanad</span> · </sc-if
+                      ><sc-if value="{{diffForK}}" hint-placeholder-val="{{false}}"
+                        >for <span class="av xs {{toCls}}" aria-hidden="true">{{toInit}}</span
+                        ><span class="who">{{toName}}</span> · </sc-if
+                      ><span class="ell">{{diffDetail}}</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">{{diffWhen}}</span></span>
+                </a>
+              </sc-if>
+
+              <button type="button" class="ghead" aria-expanded="true">
+                In review <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--success-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="4.5" cy="3.8" r="1.8" />
+                  <circle cx="4.5" cy="12.2" r="1.8" />
+                  <circle cx="11.5" cy="12.2" r="1.8" />
+                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1"
+                    ><span
+                      class="muted"
+                      style="font-weight: 400; font-variant-numeric: tabular-nums"
+                      >pair-be#482</span
+                    >
+                    Question schema v2</span
+                  ><span class="l2"
+                    ><span class="ell"
+                      >main ← rutvik/schema-v2 <span class="add">+212</span>
+                      <span class="del">−40</span> · for {{schemaFor}}</span
+                    ></span
+                  ></span
+                >
+                <span class="rc"
+                  ><svg
+                    role="img"
+                    aria-label="Checks passed"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--success-foreground)"
+                    stroke-width="1.8"
+                  >
+                    <path d="M3.5 8.5l3 3 6-7" /></svg
+                  ><span class="when">20m</span></span
+                >
+              </a>
+
+              <button type="button" class="ghead" aria-expanded="false">
+                Done <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M6 4l4 4-4 4" />
+                </svg>
+              </button>
+              <a class="newrow" href="NewTask.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+                >New task</a
+              >
+            </div>
+          </sc-if>
+        </aside>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+      // State keys:
+      // TaskUnstarted.dc.html with Rutvik as the default viewer. viewer: 'rutvik' (default, creator: Remind Hanad, Reassign, Edit) | 'hanad' (the assignee deciding) | 'kousik' (another member: read-only)
+      // account: 'claude' (default) | 'none' (Hanad has no Claude or Codex account: Start disabled, Connect account banner)
+      // menu: 'account' (Runs-on menu) | 'assign' (member picker: Hanad's Assign to…, or Rutvik's Reassign)
+      // confirm: 'cant' ("Tell Rutvik you can't take it?" popover)
+      // after: 'started' (machine starting, panel on Terminal) | 'declined' (handed back to Rutvik, room line) | 'assigned' (Hanad gave it to Kousik, or to: 'ankur')
+      // panel: 'open' shows the Overview panel before there is a machine | 'hidden' hides the panel after Start
+      // sheet: true opens the panel overlay below 1280px after Start; tab: 'overview' | 'browser' | 'terminal' | 'changes'; side: true opens the sidebar drawer below 768px
+      // draft: composer text (before Start it defaults to Rutvik's description)
+      class Component extends DCLogic {
+      renderVals() {
+      const s = this.state || {};
+      const set = (p) => this.setState(p);
+      const DESC = 'Add a difficulty tag (easy, medium, hard) that a reviewer sets after reading a drafted question. Store it on the question in schema v2 and show it in the review list.';
+      const viewer = s.viewer === 'hanad' || s.viewer === 'kousik' ? s.viewer : 'rutvik';
+      const isH = viewer === 'hanad', isR = viewer === 'rutvik', isK = viewer === 'kousik';
+      const after = isH ? (s.after || '') : '';
+      const started = after === 'started', declined = after === 'declined', assigned = after === 'assigned';
+      const pre = isH && !after;
+      const toA = s.to === 'ankur';
+      const toName = toA ? 'Ankur' : 'Kousik';
+      const waiting = !pre && !started;
+      const noAcct = s.account === 'none';
+      const draft = s.draft !== undefined && s.draft !== null ? s.draft : (pre ? DESC : '');
+      const menu = pre || isR ? (s.menu || '') : '';
+      const showCant = pre && s.confirm === 'cant';
+      const menuAccount = pre && menu === 'account';
+      const menuAssign = menu === 'assign';
+      const tab = started ? (s.tab || 'terminal') : 'overview';
+      const panelShown = started ? s.panel !== 'hidden' : s.panel === 'open';
+      const sheetOpen = started ? !!s.sheet : s.panel === 'open';
+      const ALERT = 'M8 2a6 6 0 1 1 0 12a6 6 0 1 1 0-12zM8 4.8v3.6M8 11h.01';
+      const SPARK = 'M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8';
+      const yours = isH && (pre || started);
+      return {
+      isR: isR, isK: isK, notR: !isR, notK: !isK,
+      pre: pre, started: started, declined: declined, assigned: assigned,
+      assignedCount: isR || yours ? '1' : '',
+      moreCount: isH ? 6 : 4,
+      stC: 'var(--muted-foreground)',
+      stDash: 'none',
+      halfD: started ? 'M8 2a6 6 0 0 0 0 12z' : '',
+      statusText: started ? 'Starting' : 'Not started',
+      statusTitle: started ? 'Machine k7f2 is starting. Working begins with the first step' : '',
+      sideMeta: started ? 'Starting' : 'Not started',
+      ownerAvH: yours || isR || isK, ownerAvK: assigned,
+      toName: toName, toInit: toName[0], toCls: toA ? 'a' : 'k',
+      ownerLabel: yours ? 'Your task' : assigned ? toName + "'s task" : declined ? 'Unassigned' : "Hanad's task",
+      factB: started ? 'Opus 5.5' : isR || assigned ? 'Assigned by you' : declined ? 'Created by Rutvik' : 'Assigned by Rutvik',
+      sysAssign: isH ? 'Rutvik assigned this to you in' : isR ? 'You assigned this to Hanad in' : 'Rutvik assigned this to Hanad in',
+      showPending: waiting,
+      pendingNote: 'Not sent yet · sends when ' + (assigned ? toName + ' starts' : declined ? 'someone starts' : 'Hanad starts') + ' the task',
+      sentText: s.sent || DESC,
+      anyPop: menuAccount || menuAssign || showCant,
+      menuAccount: menuAccount, menuAssign: menuAssign, showCant: showCant,
+      hasAcct: !noAcct, noAcct: noAcct,
+      rutvikTag: isR ? 'you · Owner' : 'Owner · 2 tasks',
+      hanadTag: isH ? 'you' : '',
+      hanadAcct: noAcct ? 'No account' : 'Claude',
+      hanadAcctCls: noAcct ? 'warnt' : '',
+      hanadAcctIcon: noAcct ? ALERT : SPARK,
+      draft: draft,
+      onDraft: (e) => set({ draft: e.target.value }),
+      emptyDraft: draft.trim() === '',
+      acctLabel: noAcct ? 'No account' : 'Your Claude',
+      acctCls: noAcct ? 'warn' : '',
+      acctIcon: noAcct ? ALERT : SPARK,
+      assignCls: noAcct ? 'btn' : 'btn ghost',
+      startCls: noAcct || showCant ? 'btn lg' : 'btn lg primary',
+      startDisabled: noAcct || showCant || draft.trim() === '',
+      startTitle: noAcct ? 'Connect a Claude or Codex account to start' : 'Start the task (⌘↵)',
+      openAcct: () => set({ menu: menu === 'account' ? null : 'account', confirm: null }),
+      openAssign: () => set({ menu: menu === 'assign' ? null : 'assign', confirm: null }),
+      openCant: () => set({ confirm: s.confirm === 'cant' ? null : 'cant', menu: null }),
+      closePops: () => set({ menu: null, confirm: null }),
+      assignKousik: () => isH ? set({ after: 'assigned', to: null, menu: null }) : set({ menu: null }),
+      assignAnkur: () => isH ? set({ after: 'assigned', to: 'ankur', menu: null }) : set({ menu: null }),
+      doDecline: () => set({ after: 'declined', confirm: null }),
+      doStart: () => set({ after: 'started', sent: draft, draft: null, menu: null, confirm: null }),
+      undo: () => set({ after: null, to: null }),
+      showWait: waiting,
+      waitTitle: assigned ? 'Waiting for ' + toName + ' to start' : declined ? 'Unassigned' : 'Waiting for Hanad to start',
+      waitMeta: assigned ? '· runs on his ' + (toA ? 'Codex' : 'Claude') + ' account · assigned at 11:06' : declined ? '· Rutvik picks who takes it' : '· assigned 34m ago',
+      canUndo: declined || assigned,
+      panelState: panelShown ? 'shown' : 'hidden',
+      sheetOpen: sheetOpen,
+      ptoggleLabel: started ? 'Show panel: overview, browser, terminal, changes' : "Show Question creation's tasks",
+      ptoggleTitle: started ? 'Show panel' : "Show Question creation's tasks. Browser, Terminal and Changes open once the task has a machine",
+      togglePanel: () => started ? (s.panel === 'hidden' ? set({ panel: null, sheet: true }) : set({ sheet: !s.sheet })) : set({ panel: s.panel === 'open' ? null : 'open' }),
+      hidePanel: () => started ? set({ panel: 'hidden', sheet: false }) : set({ panel: null }),
+      closeSheet: () => started ? set({ sheet: false }) : set({ panel: null }),
+      sideOpen: !!s.side,
+      toggleSide: () => set({ side: !s.side }),
+      closeSide: () => set({ side: false }),
+      tOv: tab === 'overview', tBr: tab === 'browser', tTe: tab === 'terminal', tCh: tab === 'changes',
+      goOverview: () => set({ tab: 'overview' }), goBrowser: () => set({ tab: 'browser' }),
+      goTerminal: () => set({ tab: 'terminal' }), goChanges: () => set({ tab: 'changes' }),
+      ipCount: isR ? 3 : started ? 5 : 4,
+      notStarted: !started,
+      diffForYou: pre, diffForH: isR || isK, diffForK: assigned,
+      diffDetail: declined ? "unassigned · Hanad can't take it" : assigned ? 'assigned by Hanad' : 'assigned by Rutvik',
+      diffWhen: declined || assigned ? 'now' : '34m',
+      schemaFor: isR ? 'you' : 'Rutvik'
+      };
+      }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,178 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-12T16:10:00Z"
+  },
+  "title": "Pair Spaces prototype",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "1. Space room",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Task.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "2. Task, running",
+      "expand": "fill"
+    },
+    "TaskUnstarted.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "3. Task assigned to you, not started",
+      "expand": "fill"
+    },
+    "TaskUnstartedViewer.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "3b. Someone else's task, not started",
+      "expand": "fill"
+    },
+    "SpaceEmpty.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "5. New space, first @pair ask",
+      "expand": "fill"
+    },
+    "SpaceProposal.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "5b. @pair proposes tasks",
+      "expand": "fill"
+    },
+    "NotMember.dc.html": {
+      "x": 3040,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "6. Not a member",
+      "expand": "fill"
+    },
+    "NewSpace.dc.html": {
+      "x": 0,
+      "y": 2040,
+      "w": 1440,
+      "h": 900,
+      "title": "4. New space",
+      "expand": "fill"
+    },
+    "NewSpacePicker.dc.html": {
+      "x": 1520,
+      "y": 2040,
+      "w": 1440,
+      "h": 900,
+      "title": "4b. New space, picking people",
+      "expand": "fill"
+    },
+    "NewTask.dc.html": {
+      "x": 3040,
+      "y": 2040,
+      "w": 1440,
+      "h": 900,
+      "title": "7. New task",
+      "expand": "fill"
+    },
+    "NewTaskAssign.dc.html": {
+      "x": 4560,
+      "y": 2040,
+      "w": 1440,
+      "h": 900,
+      "title": "7b. New task, picking an owner",
+      "expand": "fill"
+    },
+    "SpaceSettings.dc.html": {
+      "x": 0,
+      "y": 3060,
+      "w": 1440,
+      "h": 900,
+      "title": "8. Space settings",
+      "expand": "fill"
+    },
+    "SpaceMembers.dc.html": {
+      "x": 1520,
+      "y": 3060,
+      "w": 1440,
+      "h": 900,
+      "title": "8b. Members",
+      "expand": "fill"
+    },
+    "SpaceMemberRemove.dc.html": {
+      "x": 3040,
+      "y": 3060,
+      "w": 1440,
+      "h": 900,
+      "title": "8c. Remove a member",
+      "expand": "fill"
+    },
+    "MobileRoom.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "9. Mobile room"
+    },
+    "PairActions.dc.html": {
+      "x": 6080,
+      "y": 1020,
+      "w": 760,
+      "h": 2580,
+      "title": "10. What @pair did, and Undo"
+    },
+    "SpaceArchived.dc.html": {
+      "x": 4560,
+      "y": 3060,
+      "w": 1440,
+      "h": 900,
+      "title": "8d. Archived space",
+      "expand": "fill"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Task.dc.html",
+    "TaskUnstarted.dc.html",
+    "TaskUnstartedViewer.dc.html",
+    "SpaceEmpty.dc.html",
+    "SpaceProposal.dc.html",
+    "NotMember.dc.html",
+    "NewSpace.dc.html",
+    "NewSpacePicker.dc.html",
+    "NewTask.dc.html",
+    "NewTaskAssign.dc.html",
+    "SpaceSettings.dc.html",
+    "SpaceMembers.dc.html",
+    "SpaceMemberRemove.dc.html",
+    "SpaceArchived.dc.html",
+    "MobileRoom.dc.html",
+    "PairActions.dc.html"
+  ],
+  "notes": {
+    "heading": {
+      "x": 0,
+      "y": -300,
+      "text": "Pair Spaces, draft for alignment",
+      "kind": "title1",
+      "maxW": 6840
+    }
+  },
+  "designSystems": []
+}

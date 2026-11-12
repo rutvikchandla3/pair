@@ -1,0 +1,2323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile room</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <style>
+          /*shared-start*/
+          body {
+            margin: 0;
+          }
+          .pair {
+            --background: #fcfcfc;
+            --foreground: #18181b;
+            --card: #ffffff;
+            --popover: #ffffff;
+            --muted: #fafafa;
+            --muted-foreground: #71717a;
+            --accent: #f4f4f5;
+            --border: #e4e4e7;
+            --input: #d4d4d8;
+            --primary: oklch(0.488 0.217 264);
+            --primary-foreground: #ffffff;
+            --info-foreground: #1d4ed8;
+            --success-foreground: #047857;
+            --warning-foreground: #b45309;
+            --input-foreground: #4f46e5;
+            --warning-surface: rgba(245, 158, 11, 0.08);
+            --error-foreground: #b91c1c;
+            --destructive: #dc2626;
+            --sidebar: #fafafa;
+            --sidebar-row-selected: #ffffff;
+            --overlay: rgba(9, 9, 11, 0.32);
+            --shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 4px 12px rgba(9, 9, 11, 0.04);
+            font-family:
+              -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--foreground);
+            background: var(--background);
+            -webkit-font-smoothing: antialiased;
+          }
+          @media (prefers-color-scheme: dark) {
+            .pair:not([data-theme="light"]) {
+              --background: #000000;
+              --foreground: #f1f3f7;
+              --card: #0c0c0d;
+              --popover: #141416;
+              --muted: rgba(255, 255, 255, 0.03);
+              --muted-foreground: #a1a1aa;
+              --accent: rgba(255, 255, 255, 0.06);
+              --border: rgba(255, 255, 255, 0.08);
+              --input: rgba(255, 255, 255, 0.12);
+              --primary: oklch(0.571 0.21 264);
+              --info-foreground: #60a5fa;
+              --success-foreground: #34d399;
+              --warning-foreground: #fbbf24;
+              --input-foreground: #a5b4fc;
+              --warning-surface: rgba(245, 158, 11, 0.16);
+              --error-foreground: #f87171;
+              --destructive: #dc2626;
+              --sidebar: #0c0c0d;
+              --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+              --overlay: rgba(0, 0, 0, 0.6);
+              --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+            }
+          }
+          .pair[data-theme="dark"] {
+            --background: #000000;
+            --foreground: #f1f3f7;
+            --card: #0c0c0d;
+            --popover: #141416;
+            --muted: rgba(255, 255, 255, 0.03);
+            --muted-foreground: #a1a1aa;
+            --accent: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --input: rgba(255, 255, 255, 0.12);
+            --primary: oklch(0.571 0.21 264);
+            --info-foreground: #60a5fa;
+            --success-foreground: #34d399;
+            --warning-foreground: #fbbf24;
+            --input-foreground: #a5b4fc;
+            --warning-surface: rgba(245, 158, 11, 0.16);
+            --error-foreground: #f87171;
+            --destructive: #dc2626;
+            --sidebar: #0c0c0d;
+            --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+            --overlay: rgba(0, 0, 0, 0.6);
+            --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          }
+          .pair * {
+            box-sizing: border-box;
+          }
+          .pair a {
+            color: inherit;
+            text-decoration: none;
+          }
+          .pair button,
+          .pair input,
+          .pair select,
+          .pair textarea {
+            font: inherit;
+            color: inherit;
+          }
+          .pair :focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 1px;
+            border-radius: 6px;
+          }
+          .pair svg {
+            flex: none;
+          }
+          .shell {
+            display: flex;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+          }
+          .muted {
+            color: var(--muted-foreground);
+          }
+          .t12 {
+            font-size: 12px;
+          }
+          .t11 {
+            font-size: 11px;
+          }
+          .w5 {
+            font-weight: 500;
+          }
+          .w6 {
+            font-weight: 600;
+          }
+          .ell {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .grow {
+            flex: 1;
+            min-width: 0;
+          }
+          .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          /* sidebar */
+          .side {
+            flex: 0 0 260px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+          }
+          .side-top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+          }
+          .side-body {
+            padding: 0 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+          }
+          .slabel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 28px;
+            margin-top: 12px;
+            padding: 0 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .srow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 32px;
+            padding: 0 8px;
+            border-radius: 6px;
+          }
+          .srow:hover {
+            background: var(--accent);
+          }
+          .srow[aria-current] {
+            background: var(--sidebar-row-selected);
+            font-weight: 500;
+            box-shadow: 0 0 0 1px var(--border);
+          }
+          .srow.sub {
+            padding-left: 36px;
+            min-height: 36px;
+          }
+          .srow.more {
+            padding-left: 56px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .srow .meta {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--primary);
+            flex: none;
+          }
+          /* columns */
+          .col {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+          }
+          .top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px 0 16px;
+            border-bottom: 1px solid var(--border);
+          }
+          .scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+          }
+          .feed {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 24px 24px;
+          }
+          /* buttons */
+          .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--input);
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .btn:hover {
+            background: var(--accent);
+          }
+          .btn.lg {
+            height: 32px;
+            padding: 0 12px;
+            font-size: 13px;
+          }
+          .btn.primary {
+            background: var(--primary);
+            border-color: transparent;
+            color: var(--primary-foreground);
+          }
+          .btn.primary:hover {
+            filter: brightness(1.08);
+          }
+          .btn.ghost {
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted-foreground);
+          }
+          .btn.ghost:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.ghost[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.icon {
+            width: 28px;
+            padding: 0;
+          }
+          .btn.sm {
+            height: 24px;
+            padding: 0 8px;
+          }
+          .btn.icon.sm {
+            width: 24px;
+            padding: 0;
+          }
+          .btn.danger {
+            background: var(--destructive);
+            border-color: transparent;
+            color: #fff;
+          }
+          .btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+          }
+          .linkbtn {
+            border: 0;
+            background: none;
+            padding: 0;
+            cursor: pointer;
+            font: inherit;
+          }
+          .pair .linkbtn {
+            font-weight: 500;
+            color: inherit;
+          }
+          .pair .linkbtn:hover {
+            color: var(--foreground);
+          }
+          /* avatars */
+          .av {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            color: #fff;
+            font-weight: 500;
+            line-height: 1;
+            flex: none;
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+          }
+          .av.xs {
+            width: 14px;
+            height: 14px;
+            font-size: 8px;
+          }
+          .av.md {
+            width: 32px;
+            height: 32px;
+            font-size: 13px;
+          }
+          .av.r {
+            background: #2563eb;
+          }
+          .av.k {
+            background: #ea580c;
+          }
+          .av.h {
+            background: #059669;
+          }
+          .av.a {
+            background: #7c3aed;
+          }
+          .av.n {
+            background: #71717a;
+          }
+          .stack {
+            display: inline-flex;
+          }
+          .stack .av {
+            box-shadow: 0 0 0 2px var(--background);
+          }
+          .stack .av + .av {
+            margin-left: -4px;
+          }
+          .pairmark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: var(--primary);
+            flex: none;
+          }
+          /* chips, mentions, tags */
+          .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 4px;
+            margin: 0 -1px;
+            border-radius: 4px;
+            font-weight: 500;
+            vertical-align: baseline;
+            white-space: nowrap;
+          }
+          .chip svg {
+            position: relative;
+            top: 1px;
+          }
+          .chip:hover {
+            background: var(--accent);
+          }
+          .mention {
+            color: var(--primary);
+            font-weight: 500;
+          }
+          .mention.me {
+            background: var(--warning-surface);
+            border-radius: 4px;
+            padding: 0 2px;
+          }
+          .tag {
+            display: inline-flex;
+            align-items: center;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--muted-foreground);
+            font-size: 11px;
+            font-weight: 500;
+          }
+          /* messages */
+          .daysep {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .daysep::before,
+          .daysep::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+          }
+          .newsep {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 16px 0 0;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--primary);
+          }
+          .newsep::before {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--primary);
+            opacity: 0.4;
+          }
+          .msg {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            column-gap: 8px;
+            margin-top: 16px;
+          }
+          .msg .head {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-height: 20px;
+            align-self: center;
+          }
+          .msg .body {
+            grid-column: 2;
+            margin-top: 2px;
+          }
+          .msg.cont {
+            margin-top: 4px;
+          }
+          .msg p {
+            margin: 0;
+          }
+          .msg p + p {
+            margin-top: 6px;
+          }
+          .sys {
+            display: block;
+            margin-top: 4px;
+            padding-left: 28px;
+            font-size: 12px;
+            line-height: 22px;
+            color: var(--muted-foreground);
+          }
+          .sys > svg {
+            vertical-align: -2px;
+            margin-right: 4px;
+          }
+          .sys.first {
+            margin-top: 12px;
+          }
+          .sys .chip {
+            font-size: 13px;
+            color: var(--foreground);
+            vertical-align: -1px;
+          }
+          .nw {
+            white-space: nowrap;
+          }
+          .receipt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 10px 12px;
+          }
+          .card.warn {
+            background: var(--warning-surface);
+            border-color: transparent;
+          }
+          /* composer */
+          .composer-wrap {
+            flex: none;
+            padding: 0 24px 16px;
+          }
+          .composer {
+            max-width: 712px;
+            margin: 0 auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+            box-shadow: var(--shadow);
+            padding: 10px 10px 8px 14px;
+          }
+          .composer:focus-within {
+            border-color: var(--input);
+          }
+          .composer textarea {
+            display: block;
+            width: 100%;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            padding: 0;
+            min-height: 40px;
+          }
+          .composer textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .composer .foot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+          }
+          .send {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 0;
+            background: var(--primary);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .pair .send {
+            color: var(--primary-foreground);
+          }
+          .pair .send:disabled {
+            background: var(--accent);
+            color: var(--muted-foreground);
+            cursor: default;
+          }
+          /* right panel */
+          .panel {
+            flex: 0 0 360px;
+            min-width: 320px;
+            border-left: 1px solid var(--border);
+            background: var(--card);
+            display: flex;
+            flex-direction: column;
+          }
+          .tabs {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px 0 8px;
+            border-bottom: 1px solid var(--border);
+          }
+          .tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 24px;
+            padding: 0 8px 0 6px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+          }
+          .tab:hover {
+            background: var(--accent);
+          }
+          .tab[aria-selected="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .toolbar {
+            height: 40px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px;
+          }
+          .seg {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            padding: 0 8px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+          }
+          .seg[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+            font-weight: 500;
+          }
+          .seg .n {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .ov {
+            padding: 6px;
+          }
+          .ghead {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            height: 28px;
+            margin: 6px 0 2px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 13px;
+            font-weight: 400;
+            text-align: left;
+            cursor: pointer;
+          }
+          .ghead:first-child {
+            margin-top: 0;
+          }
+          .ghead .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .trow {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .trow:hover {
+            background: var(--accent);
+          }
+          .trow .st {
+            margin-top: 2px;
+          }
+          .trow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .trow .l1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .trow .l2 {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            margin-top: 1px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .trow .l2 .who {
+            color: var(--foreground);
+          }
+          .trow .rc {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: space-between;
+            min-width: 32px;
+            align-self: stretch;
+            padding: 5px 0 1px;
+          }
+          .trow .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .newrow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 28px;
+            margin-top: 4px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+            text-align: left;
+          }
+          .newrow:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .band {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 4px 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+          }
+          .band .lbl {
+            flex: 1;
+            font-size: 13px;
+          }
+          .needsyou {
+            color: var(--warning-foreground);
+            font-weight: 500;
+          }
+          .add {
+            color: #047857;
+          }
+          .del {
+            color: var(--error-foreground);
+          }
+          .pair .add {
+            color: var(--success-foreground);
+          }
+          /* forms */
+          .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .field > .lbl {
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .input {
+            height: 32px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 0 10px;
+            width: 100%;
+          }
+          textarea.input {
+            height: auto;
+            padding: 8px 10px;
+            resize: none;
+            line-height: 1.45;
+          }
+          .input:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            border-color: transparent;
+          }
+          .help {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .dialog {
+            background: var(--popover);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(9, 9, 11, 0.16);
+            display: flex;
+            flex-direction: column;
+          }
+          .dialog .dh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 12px 0 20px;
+          }
+          .dialog .db {
+            padding: 12px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .dialog .df {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+          }
+          .propchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+          }
+          .propchip:hover {
+            background: var(--accent);
+          }
+          .kbd {
+            font-size: 11px;
+            color: inherit;
+            opacity: 0.7;
+          }
+          .backdrop {
+            background: var(--overlay);
+          }
+          /*shared-end*/
+          .m {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+            font-size: 15px;
+            line-height: 1.4;
+          }
+          .sbar {
+            height: 47px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 28px 0 36px;
+            font-size: 15px;
+            font-weight: 600;
+          }
+          .mtop {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px 0 0;
+            border-bottom: 1px solid var(--border);
+          }
+          .ib {
+            width: 44px;
+            height: 44px;
+            flex: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            color: var(--foreground);
+            cursor: pointer;
+          }
+          .ib:hover {
+            background: var(--accent);
+          }
+          .ttlbtn {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1px;
+            padding: 2px 6px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+          }
+          .ttlbtn:hover {
+            background: var(--accent);
+          }
+          .ttlbtn .t {
+            max-width: 100%;
+            font-weight: 600;
+          }
+          .ttlbtn .s {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 100%;
+            font-size: 13px;
+            color: var(--muted-foreground);
+          }
+          .stack.s16 .av {
+            width: 16px;
+            height: 16px;
+            font-size: 8px;
+          }
+          .stack.s16 .av + .av {
+            margin-left: -3px;
+          }
+          .tasksbtn {
+            height: 32px;
+            padding: 0 8px 0 10px;
+            font-size: 13px;
+          }
+          .badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 999px;
+            background: var(--warning-foreground);
+            color: var(--background);
+            font-size: 11px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+          }
+          .mscroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            display: flex;
+            flex-direction: column-reverse;
+          }
+          .mfeed {
+            padding: 4px 12px 12px;
+          }
+          .mfeed .daysep {
+            margin: 12px 0;
+          }
+          .mfeed .msg {
+            grid-template-columns: 28px minmax(0, 1fr);
+            margin-top: 16px;
+          }
+          .mfeed .msg > .av {
+            width: 28px;
+            height: 28px;
+            font-size: 12px;
+          }
+          .mfeed .msg > .pairmark {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+          }
+          .mfeed .msg .head {
+            min-height: 28px;
+            gap: 8px;
+          }
+          .mfeed .msg .head .t12 {
+            font-size: 13px;
+          }
+          .mfeed .msg .body {
+            margin-top: 0;
+          }
+          .mfeed .msg p + p {
+            margin-top: 8px;
+          }
+          .quote {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            margin: 0 0 2px;
+            font-size: 13px;
+            color: var(--muted-foreground);
+          }
+          .quote .ell {
+            flex: 1;
+            min-width: 0;
+          }
+          .mfeed .sys {
+            padding-left: 36px;
+            font-size: 13px;
+            line-height: 20px;
+            margin-top: 6px;
+          }
+          .mfeed .sys.first {
+            margin-top: 12px;
+          }
+          .mfeed .sys .chip {
+            font-size: 14px;
+          }
+          .mfeed .receipt {
+            font-size: 13px;
+          }
+          .mfeed .newsep {
+            margin-top: 16px;
+          }
+          .mcomp {
+            flex: none;
+            padding: 8px 12px 0;
+            border-top: 1px solid var(--border);
+            background: var(--background);
+          }
+          .mhint {
+            padding: 0 4px 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .mrow {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+          }
+          .atpair {
+            position: relative;
+            height: 32px;
+            margin-bottom: 4px;
+            padding: 0 8px;
+            font-size: 13px;
+          }
+          .atpair::after,
+          .sheet .tab::after {
+            content: "";
+            position: absolute;
+            inset: -6px 0;
+          }
+          .mfield {
+            flex: 1;
+            min-width: 0;
+            min-height: 40px;
+            padding: 9px 14px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+          }
+          .mfield textarea {
+            display: block;
+            width: 100%;
+            height: 20px;
+            padding: 0;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            font-size: 15px;
+            line-height: 20px;
+          }
+          .mfield textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .mrow .send {
+            margin-bottom: 4px;
+          }
+          .home {
+            height: 34px;
+            flex: none;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 8px;
+          }
+          .home.over {
+            position: absolute;
+            z-index: 12;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+          }
+          .home span {
+            width: 134px;
+            height: 5px;
+            border-radius: 3px;
+            background: var(--foreground);
+          }
+          .scrim {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            background: var(--overlay);
+          }
+          .sheet {
+            position: absolute;
+            z-index: 11;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 60%;
+            display: flex;
+            flex-direction: column;
+            border-radius: 12px 12px 0 0;
+            background: var(--popover);
+            box-shadow: var(--shadow);
+          }
+          .sheet.large {
+            height: calc(100% - 56px);
+          }
+          .sheet.fit {
+            height: auto;
+          }
+          .grab {
+            width: 100%;
+            height: 20px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border: 0;
+            background: none;
+            cursor: grab;
+          }
+          .grab span {
+            width: 36px;
+            height: 5px;
+            border-radius: 3px;
+            background: var(--input);
+          }
+          .shead {
+            height: 48px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 4px 0 12px;
+            border-bottom: 1px solid var(--border);
+          }
+          .sheet .tab {
+            position: relative;
+            height: 32px;
+            padding: 0 12px 0 10px;
+            font-size: 13px;
+          }
+          .sbody {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 8px 8px 34px;
+          }
+          .sheet .ghead {
+            height: 36px;
+            margin: 8px 0 2px;
+            padding: 0 12px;
+            font-size: 15px;
+          }
+          .sheet .ghead:first-child {
+            margin-top: 0;
+          }
+          .trow.t {
+            min-height: 60px;
+            padding: 10px 12px;
+            gap: 12px;
+          }
+          .trow.t .st {
+            margin-top: 3px;
+          }
+          .trow.t .l1 {
+            font-size: 15px;
+          }
+          .trow.t .l2 {
+            gap: 6px;
+            margin-top: 2px;
+            font-size: 13px;
+          }
+          .trow.t .l2 .av {
+            width: 16px;
+            height: 16px;
+            font-size: 8px;
+          }
+          .trow.t .rc {
+            padding: 5px 0 1px;
+          }
+          .trow.t .when {
+            font-size: 13px;
+          }
+          .sheet .newrow {
+            height: 44px;
+            margin-top: 4px;
+            padding: 0 12px;
+            gap: 12px;
+            font-size: 15px;
+          }
+          .sheet .band {
+            height: 36px;
+            padding: 0 4px 0 12px;
+          }
+          .sheet .band .lbl {
+            font-size: 15px;
+          }
+          .sheet .band .t12 {
+            font-size: 13px;
+          }
+          .note {
+            padding: 8px 0;
+          }
+          .note .src {
+            display: block;
+            font-size: 13px;
+            color: var(--muted-foreground);
+          }
+          .note .src a:hover {
+            text-decoration: underline;
+          }
+          .note .src.row {
+            display: flex;
+          }
+          .nsub {
+            margin-top: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .mem {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 52px;
+            padding: 0 12px;
+            border-radius: 8px;
+          }
+          .mem .av {
+            width: 28px;
+            height: 28px;
+            font-size: 12px;
+          }
+          .cc {
+            max-width: 420px;
+            margin-top: 8px;
+            padding: 0;
+            overflow: hidden;
+          }
+          .cc > .trow {
+            border-radius: 0;
+            padding: 10px 12px;
+          }
+          .ccb {
+            padding: 10px 12px 0;
+            border-top: 1px solid var(--border);
+          }
+          .ccb p {
+            margin: 0;
+          }
+          .ccb p + p {
+            margin-top: 4px;
+          }
+          .ccf {
+            display: flex;
+            gap: 8px;
+            padding: 12px;
+          }
+          .ccf .btn {
+            flex: 1;
+            height: 44px;
+            font-size: 15px;
+          }
+          @media (max-width: 359px) {
+            .ccf {
+              flex-direction: column;
+            }
+          }
+        </style>
+      </helmet>
+      <div class="pair m">
+        <div class="sbar" aria-hidden="true">
+          <span>9:41</span
+          ><span class="row" style="gap: 6px"
+            ><svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor">
+              <rect x="0" y="8" width="3" height="4" rx="1" />
+              <rect x="5" y="5.5" width="3" height="6.5" rx="1" />
+              <rect x="10" y="3" width="3" height="9" rx="1" />
+              <rect x="15" y="0" width="3" height="12" rx="1" /></svg
+            ><svg width="26" height="12" viewBox="0 0 26 12" fill="none" stroke="currentColor">
+              <rect x=".5" y=".5" width="22" height="11" rx="3" opacity=".4" />
+              <rect x="2" y="2" width="16" height="8" rx="1.5" fill="currentColor" stroke="none" />
+              <path d="M24.5 4v4" stroke-width="1.5" opacity=".4" /></svg
+          ></span>
+        </div>
+
+        <header class="mtop">
+          <a class="ib" href="#spaces" aria-label="Back to spaces"
+            ><svg
+              aria-hidden="true"
+              width="20"
+              height="20"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            >
+              <path d="M10 3L5 8l5 5" /></svg
+          ></a>
+          <button
+            type="button"
+            class="ttlbtn"
+            aria-label="Question creation. 4 members, pair-fe and pair-be. Show members"
+            onClick="{{openMembers}}"
+          >
+            <span class="t ell">Question creation</span>
+            <span class="s"
+              ><span class="stack s16" aria-hidden="true"
+                ><span class="av r">R</span><span class="av k">K</span><span class="av h">H</span
+                ><span class="av a">A</span></span
+              ><span class="ell">pair-fe, pair-be</span></span
+            >
+          </button>
+          <button
+            type="button"
+            class="btn tasksbtn"
+            aria-label="Tasks, 1 needs you"
+            onClick="{{openTasks}}"
+          >
+            Tasks<span class="badge" aria-hidden="true">1</span>
+          </button>
+        </header>
+
+        <div class="mscroll">
+          <div class="mfeed" role="log" aria-label="Room messages">
+            <div class="daysep">Tuesday 10 November</div>
+
+            <div class="sys">
+              Rutvik created
+              <a class="chip" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--info-foreground)"
+                  stroke-width="1.6"
+                  stroke-dasharray="2.2 2.2"
+                >
+                  <circle cx="8" cy="8" r="6" /></svg
+                >Generate question from prompt</a
+              >
+              for Kousik and
+              <a class="chip" href="TaskUnstarted.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" /></svg
+                >Difficulty tagging</a
+              >
+              for Hanad <span class="nw">· 10:30</span>
+            </div>
+
+            <div class="msg">
+              <span class="av r" aria-hidden="true">R</span>
+              <div class="head">
+                <span class="w6">Rutvik</span><span class="t12 muted">10:31</span>
+              </div>
+              <div class="body">
+                <p>
+                  <span class="mention">@Kousik</span> <span class="mention">@Hanad</span> two tasks
+                  are assigned to you. Can you pick them up?
+                </p>
+              </div>
+            </div>
+
+            <div class="msg">
+              <span class="av a" aria-hidden="true">A</span>
+              <div class="head">
+                <span class="w6">Ankur</span><span class="t12 muted">10:34</span>
+              </div>
+              <div class="body"><p>I'll take the preview renderer.</p></div>
+            </div>
+            <div class="sys">
+              Ankur created
+              <a class="chip" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--input-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                  <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+                >Preview renderer</a
+              ><span class="nw"> · 10:34</span>
+            </div>
+
+            <div class="newsep">New</div>
+
+            <div class="msg">
+              <span class="av k" aria-hidden="true">K</span>
+              <div class="head">
+                <span class="w6">Kousik</span><span class="t12 muted">10:40</span>
+              </div>
+              <div class="body">
+                <p>Do we tag difficulty when the question is generated, or after review?</p>
+              </div>
+            </div>
+
+            <div class="msg">
+              <span class="av h" aria-hidden="true">H</span>
+              <div class="head">
+                <span class="w6">Hanad</span><span class="t12 muted">10:42</span>
+              </div>
+              <div class="body">
+                <a class="quote" href="#kousik-1040"
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M3 3v4.5a2 2 0 0 0 2 2h8M10 6.5l3 3-3 3" /></svg
+                  ><span class="w5" style="color: var(--foreground)">Kousik</span
+                  ><span class="ell"
+                    >Do we tag difficulty when the question is generated, or after review?</span
+                  ></a
+                >
+                <p>After review. The reviewer usually changes it anyway.</p>
+              </div>
+            </div>
+
+            <div class="sys first">
+              <svg
+                aria-hidden="true"
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="var(--input-foreground)"
+                stroke-width="1.6"
+              >
+                <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+              ><a class="chip" href="Task.dc.html">Preview renderer</a> needs Ankur: Which image
+              sizes should the preview support?<span class="nw"> · 10:58</span>
+            </div>
+
+            <div class="msg">
+              <span class="av r" aria-hidden="true">R</span>
+              <div class="head">
+                <span class="w6">Rutvik</span><span class="t12 muted">11:05</span>
+              </div>
+              <div class="body">
+                <p>
+                  <span class="mention">@pair</span> what did we decide on difficulty tagging, and
+                  is anything blocked?
+                </p>
+              </div>
+            </div>
+
+            <div class="msg">
+              <span class="pairmark" aria-hidden="true"
+                ><svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <circle cx="6" cy="8" r="3.5" />
+                  <circle cx="10" cy="8" r="3.5" /></svg
+              ></span>
+              <div class="head">
+                <span class="w6">Pair</span><span class="tag">Agent</span
+                ><span class="t12 muted">11:05</span>
+              </div>
+              <div class="body">
+                <p>
+                  Difficulty is tagged after review, not when a question is generated (Hanad,
+                  10:42).
+                </p>
+                <p>
+                  One task is blocked:
+                  <a class="chip" href="Task.dc.html"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--input-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                      <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+                    >Preview renderer</a
+                  >
+                  is waiting on Ankur to choose image sizes.
+                </p>
+                <div class="receipt">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" /></svg
+                  ><span
+                    >Added to
+                    <button type="button" class="linkbtn" onClick="{{openNotes}}">notes</button> ·
+                    <button type="button" class="linkbtn">Undo</button></span
+                  >
+                </div>
+              </div>
+            </div>
+
+            <sc-if value="{{notConfirm}}" hint-placeholder-val="{{true}}">
+              <div class="msg">
+                <span class="av h" aria-hidden="true">H</span>
+                <div class="head">
+                  <span class="w6">Hanad</span><span class="t12 muted">11:12</span>
+                </div>
+                <div class="body">
+                  <p><span class="mention">@pair</span> which task touches the review list?</p>
+                </div>
+              </div>
+              <div class="sys">
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-dasharray="2.2 2.2"
+                >
+                  <circle cx="8" cy="8" r="6" /></svg
+                >Pair is replying to Hanad
+              </div>
+            </sc-if>
+
+            <sc-if value="{{isConfirm}}" hint-placeholder-val="{{false}}">
+              <div class="msg">
+                <span class="av r" aria-hidden="true">R</span>
+                <div class="head">
+                  <span class="w6">Rutvik</span><span class="t12 muted">11:20</span>
+                </div>
+                <div class="body">
+                  <p>
+                    <span class="mention">@pair</span> stop the preview renderer, we're dropping
+                    image previews
+                  </p>
+                </div>
+              </div>
+              <div class="msg">
+                <span class="pairmark" aria-hidden="true"
+                  ><svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <circle cx="6" cy="8" r="3.5" />
+                    <circle cx="10" cy="8" r="3.5" /></svg
+                ></span>
+                <div class="head">
+                  <span class="w6">Pair</span><span class="tag">Agent</span
+                  ><span class="t12 muted">11:20</span>
+                </div>
+                <div class="body">
+                  <p>Preview renderer is Ankur's task, so I'm checking with you first.</p>
+                  <div class="card cc" role="group" aria-label="Stop Preview renderer?">
+                    <a class="trow t" href="Task.dc.html">
+                      <svg
+                        class="st"
+                        aria-hidden="true"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="var(--input-foreground)"
+                        stroke-width="1.5"
+                      >
+                        <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                        <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
+                      </svg>
+                      <span class="tx"
+                        ><span class="l1">Preview renderer</span
+                        ><span class="l2"
+                          >for <span class="av xs a" aria-hidden="true">A</span
+                          ><span class="who">Ankur</span> ·
+                          <span class="ell">needs Ankur: Which image sizes…</span></span
+                        ></span
+                      >
+                      <span class="rc"><span></span><span class="when">22m</span></span>
+                    </a>
+                    <div class="ccb">
+                      <p class="w6">Stop this task?</p>
+                      <p>
+                        Its question to Ankur closes and the machine sleeps. Nothing is deleted.
+                        Ankur is notified, and Undo puts it back to Needs Ankur.
+                      </p>
+                      <p class="muted" style="font-size: 13px">
+                        You can stop it as the space owner. Only you can answer this.
+                      </p>
+                    </div>
+                    <div class="ccf">
+                      <button type="button" class="btn primary">Stop task</button
+                      ><button type="button" class="btn">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+
+        <sc-if value="{{noSheet}}" hint-placeholder-val="{{true}}">
+          <div class="mcomp">
+            <sc-if value="{{showHint}}" hint-placeholder-val="{{false}}"
+              ><div class="mhint" aria-live="polite">{{hint}}</div></sc-if
+            >
+            <div class="mrow">
+              <button
+                type="button"
+                class="btn ghost atpair"
+                aria-pressed="{{hasPair}}"
+                onClick="{{tagPair}}"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--primary)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="6" cy="8" r="3.5" />
+                  <circle cx="10" cy="8" r="3.5" /></svg
+                >@pair
+              </button>
+              <div class="mfield">
+                <textarea
+                  aria-label="Message Question creation"
+                  rows="1"
+                  placeholder="Message the space"
+                  value="{{draft}}"
+                  onChange="{{onDraft}}"
+                ></textarea>
+              </div>
+              <button type="button" class="send" aria-label="Send" disabled="{{emptyDraft}}">
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                >
+                  <path d="M8 13V3M4 7l4-4 4 4" />
+                </svg>
+              </button>
+            </div>
+            <div class="home" aria-hidden="true"><span></span></div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{tasksOpen}}" hint-placeholder-val="{{false}}">
+          <div class="scrim" onClick="{{close}}"></div>
+          <div
+            class="sheet {{detent}}"
+            role="dialog"
+            aria-label="Tasks and notes for Question creation"
+          >
+            <button
+              type="button"
+              class="grab"
+              aria-label="{{grabLabel}}"
+              onClick="{{toggleDetent}}"
+            >
+              <span></span>
+            </button>
+            <div class="shead">
+              <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
+                <button
+                  type="button"
+                  class="tab"
+                  role="tab"
+                  aria-selected="{{isTasks}}"
+                  onClick="{{showTasks}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path
+                      d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
+                    /></svg
+                  >Overview
+                </button>
+                <button
+                  type="button"
+                  class="tab"
+                  role="tab"
+                  aria-selected="{{isNotes}}"
+                  onClick="{{showNotes}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                    <path d="M6 8h4M6 10.5h4" /></svg
+                  >Notes
+                </button>
+              </div>
+              <span class="grow"></span>
+              <button
+                type="button"
+                class="ib"
+                aria-label="Close"
+                onClick="{{close}}"
+                style="color: var(--muted-foreground)"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+
+            <sc-if value="{{isTasks}}" hint-placeholder-val="{{true}}">
+              <div class="sbody">
+                <button type="button" class="ghead" aria-expanded="true">
+                  Needs you <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a class="trow t" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--warning-foreground)"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
+                    <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Seed role catalog</span
+                    ><span class="l2"
+                      >for you · <span class="ell">wants to run pnpm db:migrate</span></span
+                    ></span
+                  >
+                  <span class="rc"
+                    ><span class="dot" role="img" aria-label="Updated since you looked"></span
+                    ><span class="when">2m</span></span
+                  >
+                </a>
+
+                <button type="button" class="ghead" aria-expanded="true">
+                  In progress <span class="n">3</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a class="trow t" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--error-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M8 4.8v3.6M8 11h.01" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Sample role fixtures</span
+                    ><span class="l2"
+                      >for <span class="av xs k" aria-hidden="true">K</span
+                      ><span class="who">Kousik</span> ·
+                      <span class="ell">failed: fixtures.test.ts</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">1h</span></span>
+                </a>
+                <a class="trow t" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--input-foreground)"
+                    stroke-width="1.5"
+                  >
+                    <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                    <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Preview renderer</span
+                    ><span class="l2"
+                      >for <span class="av xs a" aria-hidden="true">A</span
+                      ><span class="who">Ankur</span> ·
+                      <span class="ell">needs Ankur: Which image sizes…</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">12m</span></span>
+                </a>
+                <a class="trow t" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--info-foreground)"
+                    stroke-width="1.6"
+                    stroke-dasharray="2.2 2.2"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Generate question from prompt</span
+                    ><span class="l2"
+                      >for <span class="av xs k" aria-hidden="true">K</span
+                      ><span class="who">Kousik</span></span
+                    ></span
+                  >
+                  <span class="rc"
+                    ><span class="dot" role="img" aria-label="Updated since you looked"></span
+                    ><span class="when">4m</span></span
+                  >
+                </a>
+
+                <button type="button" class="ghead" aria-expanded="true">
+                  Not started <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a class="trow t" href="TaskUnstarted.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1">Difficulty tagging</span
+                    ><span class="l2"
+                      >for <span class="av xs h" aria-hidden="true">H</span
+                      ><span class="who">Hanad</span> ·
+                      <span class="ell">assigned by Rutvik</span></span
+                    ></span
+                  >
+                  <span class="rc"><span></span><span class="when">34m</span></span>
+                </a>
+
+                <button type="button" class="ghead" aria-expanded="true">
+                  In review <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <a class="trow t" href="Task.dc.html">
+                  <svg
+                    class="st"
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--success-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="4.5" cy="3.8" r="1.8" />
+                    <circle cx="4.5" cy="12.2" r="1.8" />
+                    <circle cx="11.5" cy="12.2" r="1.8" />
+                    <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" />
+                  </svg>
+                  <span class="tx"
+                    ><span class="l1"
+                      ><span
+                        class="muted"
+                        style="font-weight: 400; font-variant-numeric: tabular-nums"
+                        >pair-be#482</span
+                      >
+                      Question schema v2</span
+                    ><span class="l2"
+                      ><span class="ell"
+                        >main ← rutvik/schema-v2 <span class="add">+212</span>
+                        <span class="del">−40</span> · for you</span
+                      ></span
+                    ></span
+                  >
+                  <span class="rc"
+                    ><svg
+                      role="img"
+                      aria-label="Checks passed"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--success-foreground)"
+                      stroke-width="1.8"
+                    >
+                      <path d="M3.5 8.5l3 3 6-7" /></svg
+                    ><span class="when">20m</span></span
+                  >
+                </a>
+
+                <button
+                  type="button"
+                  class="ghead"
+                  aria-expanded="{{doneOpen}}"
+                  onClick="{{toggleDone}}"
+                >
+                  Done <span class="n">1</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="{{doneChevron}}" />
+                  </svg>
+                </button>
+                <sc-if value="{{doneOpen}}" hint-placeholder-val="{{false}}">
+                  <a class="trow t" href="Task.dc.html">
+                    <svg
+                      class="st"
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--success-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M5.5 8.2l1.8 1.8 3.4-3.6" />
+                    </svg>
+                    <span class="tx"
+                      ><span class="l1">Prompt library loader</span
+                      ><span class="l2"
+                        >for <span class="av xs h" aria-hidden="true">H</span
+                        ><span class="who">Hanad</span> ·
+                        <span class="ell">merged pair-be#471</span></span
+                      ></span
+                    >
+                    <span class="rc"><span></span><span class="when">Mon</span></span>
+                  </a>
+                </sc-if>
+
+                <a class="newrow" href="NewTask.dc.html"
+                  ><svg
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 3v10M3 8h10" /></svg
+                  >New task</a
+                >
+              </div>
+            </sc-if>
+
+            <sc-if value="{{isNotes}}" hint-placeholder-val="{{false}}">
+              <div class="sbody">
+                <div class="band">
+                  <span class="lbl">Brief</span><span class="t12 muted">Rutvik · Mon</span
+                  ><button
+                    type="button"
+                    class="ib"
+                    aria-label="Edit brief"
+                    style="color: var(--muted-foreground)"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                    </svg>
+                  </button>
+                </div>
+                <p style="margin: 10px 12px 16px; line-height: 1.5">
+                  Let a recruiter describe a role and get interview questions drafted, tagged and
+                  previewed. Questions follow schema v2. Out of scope: scoring answers.
+                </p>
+                <div class="band">
+                  <span
+                    class="pairmark"
+                    aria-hidden="true"
+                    style="width: 18px; height: 18px; border-radius: 5px"
+                    ><svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    >
+                      <circle cx="6" cy="8" r="3.5" />
+                      <circle cx="10" cy="8" r="3.5" /></svg></span
+                  ><span class="lbl">Pair's notes</span>
+                  <button
+                    type="button"
+                    class="ib"
+                    aria-label="What Pair reads"
+                    title="On every reply Pair reads the brief, these notes, the task list and recent messages. It searches older messages when it needs them."
+                    style="color: var(--muted-foreground)"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                      <path d="M8 7.2V11M8 5h.01" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="ib"
+                    aria-label="Edit notes"
+                    style="color: var(--muted-foreground)"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                    </svg>
+                  </button>
+                </div>
+                <div style="padding: 0 12px">
+                  <div class="nsub">Decisions</div>
+                  <div class="note">
+                    Difficulty is tagged after review, not at generation.<span class="src"
+                      ><a href="#hanad-1042">Hanad · Tue 10:42</a> · added by Pair</span
+                    >
+                  </div>
+                  <div class="note">
+                    Questions use schema v2.<span class="src"
+                      ><a href="#rutvik-mon">Rutvik · Mon</a> · edited</span
+                    >
+                  </div>
+                  <div class="nsub">Open questions</div>
+                  <div class="note">
+                    Which image sizes does the preview support?<span
+                      class="src row"
+                      style="gap: 6px"
+                      ><span class="av xs a" aria-hidden="true">A</span>Ankur to answer</span
+                    >
+                  </div>
+                  <div class="nsub">How we work</div>
+                  <div class="note">
+                    One pull request per task.<span class="src"
+                      ><a href="#rutvik-mon2">Rutvik · Mon</a></span
+                    >
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{membersOpen}}" hint-placeholder-val="{{false}}">
+          <div class="scrim" onClick="{{close}}"></div>
+          <div class="sheet fit" role="dialog" aria-label="Members">
+            <div class="grab" aria-hidden="true"><span></span></div>
+            <div class="shead">
+              <span class="grow w6">Members</span
+              ><button
+                type="button"
+                class="ib"
+                aria-label="Close"
+                onClick="{{close}}"
+                style="color: var(--muted-foreground)"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+            <div style="padding: 8px 8px 34px">
+              <div class="mem">
+                <span class="av r" aria-hidden="true">R</span
+                ><span class="grow w5"
+                  >Rutvik <span class="muted" style="font-weight: 400">(you)</span></span
+                ><span class="muted" style="font-size: 13px">Owner</span>
+              </div>
+              <div class="mem">
+                <span class="av k" aria-hidden="true">K</span><span class="grow w5">Kousik</span>
+              </div>
+              <div class="mem">
+                <span class="av h" aria-hidden="true">H</span><span class="grow w5">Hanad</span>
+              </div>
+              <div class="mem">
+                <span class="av a" aria-hidden="true">A</span><span class="grow w5">Ankur</span>
+              </div>
+              <a
+                class="newrow"
+                href="SpaceSettings.dc.html"
+                style="height: 44px; padding: 0 12px; gap: 12px; font-size: 15px"
+                ><svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+                >Add people</a
+              >
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{sheetOpen}}" hint-placeholder-val="{{false}}"
+          ><div class="home over" aria-hidden="true"><span></span></div
+        ></sc-if>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+      // The composer hides while a sheet is open. Sheet tabs and the @pair chip get a 44px tap area through ::after.
+      // state keys: sheet ('tasks' Tasks sheet | 'members' member list | none), detent ('medium' 60% | 'large'), tab ('tasks'|'notes' inside the sheet),
+      // done (Done section open), draft (composer text; drives the hint above the field), confirm (true: Pair's stop-task confirm card at the end of the feed)
+      class Component extends DCLogic {
+      renderVals() {
+      const s = this.state || {};
+      const tab = s.tab || 'tasks';
+      const draft = s.draft || '';
+      const lower = draft.toLowerCase();
+      const hasPair = lower.indexOf('@pair') !== -1;
+      const named = ['kousik', 'hanad', 'ankur'].filter((p) => lower.indexOf('@' + p) !== -1).map((p) => p[0].toUpperCase() + p.slice(1));
+      let hint = '';
+      if (hasPair) hint = 'Pair replies here · Team Claude key';
+      else if (named.length) hint = named.join(' and ') + ' will be notified';
+      const doneOpen = !!s.done;
+      const large = s.detent === 'large';
+      return {
+      tasksOpen: s.sheet === 'tasks',
+      noSheet: s.sheet !== 'tasks' && s.sheet !== 'members',
+      sheetOpen: s.sheet === 'tasks' || s.sheet === 'members',
+      membersOpen: s.sheet === 'members',
+      openTasks: () => this.setState({ sheet: 'tasks' }),
+      openMembers: () => this.setState({ sheet: 'members' }),
+      openNotes: () => this.setState({ sheet: 'tasks', tab: 'notes' }),
+      close: () => this.setState({ sheet: '' }),
+      detent: large ? 'large' : '',
+      grabLabel: large ? 'Shrink sheet' : 'Expand sheet',
+      toggleDetent: () => this.setState({ detent: large ? 'medium' : 'large' }),
+      isTasks: tab === 'tasks',
+      isNotes: tab === 'notes',
+      showTasks: () => this.setState({ tab: 'tasks' }),
+      showNotes: () => this.setState({ tab: 'notes' }),
+      doneOpen: doneOpen,
+      doneChevron: doneOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4',
+      toggleDone: () => this.setState({ done: !doneOpen }),
+      isConfirm: !!s.confirm,
+      notConfirm: !s.confirm,
+      draft: draft,
+      hint: hint,
+      showHint: hint !== '',
+      hasPair: hasPair,
+      emptyDraft: draft.trim() === '',
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      tagPair: () => this.setState({ draft: hasPair ? draft : '@pair ' + draft })
+      };
+      }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,2715 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Empty space, first run</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <style>
+          /*shared-start*/
+          body {
+            margin: 0;
+          }
+          .pair {
+            --background: #fcfcfc;
+            --foreground: #18181b;
+            --card: #ffffff;
+            --popover: #ffffff;
+            --muted: #fafafa;
+            --muted-foreground: #71717a;
+            --accent: #f4f4f5;
+            --border: #e4e4e7;
+            --input: #d4d4d8;
+            --primary: oklch(0.488 0.217 264);
+            --primary-foreground: #ffffff;
+            --info-foreground: #1d4ed8;
+            --success-foreground: #047857;
+            --warning-foreground: #b45309;
+            --input-foreground: #4f46e5;
+            --warning-surface: rgba(245, 158, 11, 0.08);
+            --error-foreground: #b91c1c;
+            --destructive: #dc2626;
+            --sidebar: #fafafa;
+            --sidebar-row-selected: #ffffff;
+            --overlay: rgba(9, 9, 11, 0.32);
+            --shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 4px 12px rgba(9, 9, 11, 0.04);
+            font-family:
+              -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--foreground);
+            background: var(--background);
+            -webkit-font-smoothing: antialiased;
+          }
+          @media (prefers-color-scheme: dark) {
+            .pair:not([data-theme="light"]) {
+              --background: #000000;
+              --foreground: #f1f3f7;
+              --card: #0c0c0d;
+              --popover: #141416;
+              --muted: rgba(255, 255, 255, 0.03);
+              --muted-foreground: #a1a1aa;
+              --accent: rgba(255, 255, 255, 0.06);
+              --border: rgba(255, 255, 255, 0.08);
+              --input: rgba(255, 255, 255, 0.12);
+              --primary: oklch(0.571 0.21 264);
+              --info-foreground: #60a5fa;
+              --success-foreground: #34d399;
+              --warning-foreground: #fbbf24;
+              --input-foreground: #a5b4fc;
+              --warning-surface: rgba(245, 158, 11, 0.16);
+              --error-foreground: #f87171;
+              --destructive: #dc2626;
+              --sidebar: #0c0c0d;
+              --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+              --overlay: rgba(0, 0, 0, 0.6);
+              --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+            }
+          }
+          .pair[data-theme="dark"] {
+            --background: #000000;
+            --foreground: #f1f3f7;
+            --card: #0c0c0d;
+            --popover: #141416;
+            --muted: rgba(255, 255, 255, 0.03);
+            --muted-foreground: #a1a1aa;
+            --accent: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --input: rgba(255, 255, 255, 0.12);
+            --primary: oklch(0.571 0.21 264);
+            --info-foreground: #60a5fa;
+            --success-foreground: #34d399;
+            --warning-foreground: #fbbf24;
+            --input-foreground: #a5b4fc;
+            --warning-surface: rgba(245, 158, 11, 0.16);
+            --error-foreground: #f87171;
+            --destructive: #dc2626;
+            --sidebar: #0c0c0d;
+            --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+            --overlay: rgba(0, 0, 0, 0.6);
+            --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          }
+          .pair * {
+            box-sizing: border-box;
+          }
+          .pair a {
+            color: inherit;
+            text-decoration: none;
+          }
+          .pair button,
+          .pair input,
+          .pair select,
+          .pair textarea {
+            font: inherit;
+            color: inherit;
+          }
+          .pair :focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 1px;
+            border-radius: 6px;
+          }
+          .pair svg {
+            flex: none;
+          }
+          .shell {
+            display: flex;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+          }
+          .muted {
+            color: var(--muted-foreground);
+          }
+          .t12 {
+            font-size: 12px;
+          }
+          .t11 {
+            font-size: 11px;
+          }
+          .w5 {
+            font-weight: 500;
+          }
+          .w6 {
+            font-weight: 600;
+          }
+          .ell {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .grow {
+            flex: 1;
+            min-width: 0;
+          }
+          .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          /* sidebar */
+          .side {
+            flex: 0 0 260px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+          }
+          .side-top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+          }
+          .side-body {
+            padding: 0 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+          }
+          .slabel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 28px;
+            margin-top: 12px;
+            padding: 0 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .srow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 32px;
+            padding: 0 8px;
+            border-radius: 6px;
+          }
+          .srow:hover {
+            background: var(--accent);
+          }
+          .srow[aria-current] {
+            background: var(--sidebar-row-selected);
+            font-weight: 500;
+            box-shadow: 0 0 0 1px var(--border);
+          }
+          .srow.sub {
+            padding-left: 36px;
+            min-height: 36px;
+          }
+          .srow.more {
+            padding-left: 56px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .srow .meta {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--primary);
+            flex: none;
+          }
+          /* columns */
+          .col {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+          }
+          .top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px 0 16px;
+            border-bottom: 1px solid var(--border);
+          }
+          .scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+          }
+          .feed {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 24px 24px;
+          }
+          /* buttons */
+          .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--input);
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .btn:hover {
+            background: var(--accent);
+          }
+          .btn.lg {
+            height: 32px;
+            padding: 0 12px;
+            font-size: 13px;
+          }
+          .btn.primary {
+            background: var(--primary);
+            border-color: transparent;
+            color: var(--primary-foreground);
+          }
+          .btn.primary:hover {
+            filter: brightness(1.08);
+          }
+          .btn.ghost {
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted-foreground);
+          }
+          .btn.ghost:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.ghost[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.icon {
+            width: 28px;
+            padding: 0;
+          }
+          .btn.sm {
+            height: 24px;
+            padding: 0 8px;
+          }
+          .btn.icon.sm {
+            width: 24px;
+            padding: 0;
+          }
+          .btn.danger {
+            background: var(--destructive);
+            border-color: transparent;
+            color: #fff;
+          }
+          .btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+          }
+          .linkbtn {
+            border: 0;
+            background: none;
+            padding: 0;
+            cursor: pointer;
+            font: inherit;
+          }
+          .pair .linkbtn {
+            font-weight: 500;
+            color: inherit;
+          }
+          .pair .linkbtn:hover {
+            color: var(--foreground);
+          }
+          /* avatars */
+          .av {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            color: #fff;
+            font-weight: 500;
+            line-height: 1;
+            flex: none;
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+          }
+          .av.xs {
+            width: 14px;
+            height: 14px;
+            font-size: 8px;
+          }
+          .av.md {
+            width: 32px;
+            height: 32px;
+            font-size: 13px;
+          }
+          .av.r {
+            background: #2563eb;
+          }
+          .av.k {
+            background: #ea580c;
+          }
+          .av.h {
+            background: #059669;
+          }
+          .av.a {
+            background: #7c3aed;
+          }
+          .av.n {
+            background: #71717a;
+          }
+          .stack {
+            display: inline-flex;
+          }
+          .stack .av {
+            box-shadow: 0 0 0 2px var(--background);
+          }
+          .stack .av + .av {
+            margin-left: -4px;
+          }
+          .pairmark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: var(--primary);
+            flex: none;
+          }
+          /* chips, mentions, tags */
+          .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 4px;
+            margin: 0 -1px;
+            border-radius: 4px;
+            font-weight: 500;
+            vertical-align: baseline;
+            white-space: nowrap;
+          }
+          .chip svg {
+            position: relative;
+            top: 1px;
+          }
+          .chip:hover {
+            background: var(--accent);
+          }
+          .mention {
+            color: var(--primary);
+            font-weight: 500;
+          }
+          .mention.me {
+            background: var(--warning-surface);
+            border-radius: 4px;
+            padding: 0 2px;
+          }
+          .tag {
+            display: inline-flex;
+            align-items: center;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--muted-foreground);
+            font-size: 11px;
+            font-weight: 500;
+          }
+          /* messages */
+          .daysep {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .daysep::before,
+          .daysep::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+          }
+          .newsep {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 16px 0 0;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--primary);
+          }
+          .newsep::before {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--primary);
+            opacity: 0.4;
+          }
+          .msg {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            column-gap: 8px;
+            margin-top: 16px;
+          }
+          .msg .head {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-height: 20px;
+            align-self: center;
+          }
+          .msg .body {
+            grid-column: 2;
+            margin-top: 2px;
+          }
+          .msg.cont {
+            margin-top: 4px;
+          }
+          .msg p {
+            margin: 0;
+          }
+          .msg p + p {
+            margin-top: 6px;
+          }
+          .sys {
+            display: block;
+            margin-top: 4px;
+            padding-left: 28px;
+            font-size: 12px;
+            line-height: 22px;
+            color: var(--muted-foreground);
+          }
+          .sys > svg {
+            vertical-align: -2px;
+            margin-right: 4px;
+          }
+          .sys.first {
+            margin-top: 12px;
+          }
+          .sys .chip {
+            font-size: 13px;
+            color: var(--foreground);
+            vertical-align: -1px;
+          }
+          .nw {
+            white-space: nowrap;
+          }
+          .receipt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 10px 12px;
+          }
+          .card.warn {
+            background: var(--warning-surface);
+            border-color: transparent;
+          }
+          /* composer */
+          .composer-wrap {
+            flex: none;
+            padding: 0 24px 16px;
+          }
+          .composer {
+            max-width: 712px;
+            margin: 0 auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+            box-shadow: var(--shadow);
+            padding: 10px 10px 8px 14px;
+          }
+          .composer:focus-within {
+            border-color: var(--input);
+          }
+          .composer textarea {
+            display: block;
+            width: 100%;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            padding: 0;
+            min-height: 40px;
+          }
+          .composer textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .composer .foot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+          }
+          .send {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 0;
+            background: var(--primary);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .pair .send {
+            color: var(--primary-foreground);
+          }
+          .pair .send:disabled {
+            background: var(--accent);
+            color: var(--muted-foreground);
+            cursor: default;
+          }
+          /* right panel */
+          .panel {
+            flex: 0 0 360px;
+            min-width: 320px;
+            border-left: 1px solid var(--border);
+            background: var(--card);
+            display: flex;
+            flex-direction: column;
+          }
+          .tabs {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px 0 8px;
+            border-bottom: 1px solid var(--border);
+          }
+          .tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 24px;
+            padding: 0 8px 0 6px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+          }
+          .tab:hover {
+            background: var(--accent);
+          }
+          .tab[aria-selected="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .toolbar {
+            height: 40px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px;
+          }
+          .seg {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            padding: 0 8px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+          }
+          .seg[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+            font-weight: 500;
+          }
+          .seg .n {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .ov {
+            padding: 6px;
+          }
+          .ghead {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            height: 28px;
+            margin: 6px 0 2px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 13px;
+            font-weight: 400;
+            text-align: left;
+            cursor: pointer;
+          }
+          .ghead:first-child {
+            margin-top: 0;
+          }
+          .ghead .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .trow {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .trow:hover {
+            background: var(--accent);
+          }
+          .trow .st {
+            margin-top: 2px;
+          }
+          .trow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .trow .l1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .trow .l2 {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            margin-top: 1px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .trow .l2 .who {
+            color: var(--foreground);
+          }
+          .trow .rc {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: space-between;
+            min-width: 32px;
+            align-self: stretch;
+            padding: 5px 0 1px;
+          }
+          .trow .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .newrow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 28px;
+            margin-top: 4px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+            text-align: left;
+          }
+          .newrow:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .band {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 4px 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+          }
+          .band .lbl {
+            flex: 1;
+            font-size: 13px;
+          }
+          .needsyou {
+            color: var(--warning-foreground);
+            font-weight: 500;
+          }
+          .add {
+            color: #047857;
+          }
+          .del {
+            color: var(--error-foreground);
+          }
+          .pair .add {
+            color: var(--success-foreground);
+          }
+          /* forms */
+          .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .field > .lbl {
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .input {
+            height: 32px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 0 10px;
+            width: 100%;
+          }
+          textarea.input {
+            height: auto;
+            padding: 8px 10px;
+            resize: none;
+            line-height: 1.45;
+          }
+          .input:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            border-color: transparent;
+          }
+          .help {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .dialog {
+            background: var(--popover);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(9, 9, 11, 0.16);
+            display: flex;
+            flex-direction: column;
+          }
+          .dialog .dh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 12px 0 20px;
+          }
+          .dialog .db {
+            padding: 12px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .dialog .df {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+          }
+          .propchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+          }
+          .propchip:hover {
+            background: var(--accent);
+          }
+          .kbd {
+            font-size: 11px;
+            color: inherit;
+            opacity: 0.7;
+          }
+          .backdrop {
+            background: var(--overlay);
+          }
+          /*shared-end*/
+          .msg {
+            position: relative;
+            grid-template-columns: 20px minmax(0, 1fr);
+          }
+          main.col {
+            container-type: inline-size;
+          }
+          .repos {
+            min-width: 0;
+          }
+          @container (max-width:520px) {
+            .repos {
+              display: none;
+            }
+          }
+          .scroll.bottom {
+            display: flex;
+            flex-direction: column;
+          }
+          .scroll.bottom > .feed {
+            margin: auto auto 0;
+            width: 100%;
+          }
+          .intro {
+            display: grid;
+            grid-template-columns: 20px 1fr;
+            column-gap: 8px;
+            margin-top: 16px;
+          }
+          .intro .ico {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: var(--muted-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+          }
+          .intro .ttl {
+            align-self: center;
+            font-weight: 600;
+          }
+          .intro .brief {
+            grid-column: 2;
+            margin: 2px 0 0;
+            line-height: 1.5;
+            max-width: 600px;
+          }
+          .intro .meta {
+            grid-column: 2;
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .starts {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 12px 0 0 -8px;
+            max-width: 520px;
+          }
+          .start {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 44px;
+            padding: 6px 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+          }
+          .start:hover {
+            background: var(--accent);
+          }
+          .start .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .start .l1 {
+            display: block;
+            font-weight: 500;
+          }
+          .start .l2 {
+            display: block;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .plusbox {
+            width: 20px;
+            height: 20px;
+            border: 1px solid var(--input);
+            border-radius: 6px;
+            color: var(--muted-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: none;
+          }
+          .prop {
+            padding: 0;
+            margin-top: 8px;
+            max-width: 560px;
+          }
+          .prow {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 52px;
+            padding: 6px 8px 6px 12px;
+          }
+          .prow + .prow {
+            border-top: 1px solid var(--border);
+          }
+          .prow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .prow.off .ptitle,
+          .prow.off .pt {
+            color: var(--muted-foreground);
+          }
+          .cb {
+            width: 16px;
+            height: 16px;
+            padding: 0;
+            border: 1px solid var(--input);
+            border-radius: 4px;
+            background: var(--card);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .pair .cb {
+            color: var(--primary-foreground);
+          }
+          .cb[aria-checked="true"] {
+            background: var(--primary);
+            border-color: transparent;
+          }
+          .cb[aria-checked="false"] svg {
+            visibility: hidden;
+          }
+          .pair .rec .linkbtn.again {
+            font-size: 13px;
+          }
+          .ptitle {
+            display: block;
+            width: 100%;
+            height: 22px;
+            margin-left: -4px;
+            padding: 0 4px;
+            border: 0;
+            border-radius: 4px;
+            background: transparent;
+            font-weight: 500;
+          }
+          .ptitle:hover {
+            background: var(--accent);
+          }
+          .ptitle:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            background: var(--card);
+          }
+          .pt {
+            display: block;
+            font-weight: 500;
+            line-height: 22px;
+          }
+          .pdesc {
+            display: block;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .owner {
+            position: relative;
+            flex: none;
+          }
+          .ownbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 6px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .ownbtn:hover,
+          .ownbtn[aria-expanded="true"] {
+            background: var(--accent);
+          }
+          .ownstatic {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 6px;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+          }
+          .menu {
+            position: absolute;
+            right: 0;
+            bottom: 32px;
+            z-index: 5;
+            width: 184px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--popover);
+            box-shadow: var(--shadow);
+          }
+          .menu .mh {
+            padding: 4px 8px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .mi {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 28px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+          }
+          .mi:hover {
+            background: var(--accent);
+          }
+          .mi[aria-checked="false"] .ck {
+            visibility: hidden;
+          }
+          .pfoot {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-top: 1px solid var(--border);
+          }
+          .recs {
+            margin-top: 8px;
+          }
+          .rec {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            column-gap: 8px;
+            margin-top: 2px;
+            font-size: 12px;
+            line-height: 22px;
+            color: var(--muted-foreground);
+          }
+          .rec > .g {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 22px;
+          }
+          .rec .chip {
+            font-size: 13px;
+            color: var(--foreground);
+            vertical-align: -1px;
+          }
+          .rl {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            white-space: nowrap;
+          }
+          .rl > .rx,
+          .rl > .rm {
+            flex: none;
+          }
+          .rl > .chip {
+            flex: 0 1 auto;
+            min-width: 0;
+          }
+          .rt {
+            color: var(--foreground);
+          }
+          .empty {
+            margin: 0;
+            padding: 6px 8px 2px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .replyline {
+            cursor: default;
+          }
+          .band .hov {
+            visibility: hidden;
+          }
+          .band:hover .hov,
+          .band:focus-within .hov {
+            visibility: visible;
+          }
+        </style>
+      </helmet>
+      <div class="pair shell">
+        <nav class="side" aria-label="Sidebar">
+          <div class="side-top">
+            <span class="w6">Pair</span><span class="t12 muted">Pair Cloud</span>
+          </div>
+          <div class="side-body">
+            <a class="srow" href="#new"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path d="M8 3v10M3 8h10" /></svg
+              >New thread</a
+            >
+            <a class="srow" href="#mine"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <circle cx="8" cy="5.5" r="2.5" />
+                <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
+              ><span class="grow">Assigned to me</span
+              ><sc-if value="{{sideMine}}" hint-placeholder-val="{{false}}"
+                ><span class="meta">{{mineCount}}</span></sc-if
+              ></a
+            >
+
+            <div class="slabel">
+              <span>Spaces</span
+              ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+              ></a>
+            </div>
+            <a class="srow" href="#room" aria-current="page"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                /></svg
+              ><span class="grow ell">Question creation</span></a
+            >
+            <sc-if value="{{sideMine}}" hint-placeholder-val="{{false}}">
+              <a class="srow sub" href="TaskUnstarted.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" /></svg
+                ><span class="grow ell">{{sideTitle}}</span><span class="meta">Not started</span></a
+              >
+            </sc-if>
+            <sc-if value="{{sideMore}}" hint-placeholder-val="{{false}}">
+              <a class="srow more" href="#room">{{sideMoreLabel}}</a>
+            </sc-if>
+            <a class="srow" href="#space-2"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                /></svg
+              ><span class="grow ell">Onboarding revamp</span
+              ><span class="dot" role="img" aria-label="Unread"></span
+            ></a>
+
+            <div class="slabel"><span>Projects</span></div>
+            <a class="srow" href="#p1"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              >pair-fe</a
+            >
+            <a class="srow sub" href="#t1"
+              ><span class="grow ell">Fix sidebar drag flicker</span><span class="meta">2d</span></a
+            >
+            <a class="srow" href="#p2"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              >pair-be</a
+            >
+            <a class="srow sub" href="#t3"
+              ><span class="grow ell">Bundle upload retries</span><span class="meta">5d</span></a
+            >
+          </div>
+        </nav>
+
+        <main class="col">
+          <header class="top">
+            <svg
+              aria-hidden="true"
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="var(--muted-foreground)"
+              stroke-width="1.4"
+            >
+              <circle cx="5.5" cy="6" r="2.5" />
+              <circle cx="10.5" cy="6" r="2.5" />
+              <path d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3" />
+            </svg>
+            <h1
+              class="w6 ell"
+              style="margin: 0; font-size: 13px; flex: 0 0 auto; max-width: 50%"
+              title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed. Repos: pair-fe, pair-be"
+            >
+              Question creation
+            </h1>
+            <span class="row t12 muted repos" style="gap: 4px"
+              ><svg
+                aria-hidden="true"
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+              ><span class="ell">pair-fe, pair-be</span></span
+            >
+            <span class="grow"></span>
+            <button
+              type="button"
+              class="btn ghost"
+              aria-label="4 members: Rutvik (owner), Kousik, Hanad, Ankur. Manage members"
+              style="padding: 0 6px"
+            >
+              <span class="stack"
+                ><span class="av r" aria-hidden="true">R</span
+                ><span class="av k" aria-hidden="true">K</span
+                ><span class="av h" aria-hidden="true">H</span
+                ><span class="av a" aria-hidden="true">A</span></span
+              >
+            </button>
+            <a
+              class="btn ghost icon"
+              href="SpaceSettings.dc.html"
+              aria-label="Space settings: rename, brief, members, leave, archive"
+              ><svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <circle cx="3.5" cy="8" r="1.2" />
+                <circle cx="8" cy="8" r="1.2" />
+                <circle cx="12.5" cy="8" r="1.2" /></svg
+            ></a>
+          </header>
+
+          <div class="scroll bottom">
+            <div class="feed" role="log" aria-label="Room messages">
+              <div class="daysep">Monday 9 November</div>
+
+              <div class="intro">
+                <span class="ico" aria-hidden="true"
+                  ><svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                  >
+                    <circle cx="5.5" cy="6" r="2.5" />
+                    <circle cx="10.5" cy="6" r="2.5" />
+                    <path
+                      d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                    /></svg
+                ></span>
+                <span class="ttl">Question creation</span>
+                <p class="brief">
+                  Let a recruiter describe a role and get interview questions drafted, tagged and
+                  previewed. Questions follow schema v2. Out of scope: scoring answers.
+                </p>
+                <div class="meta">
+                  Rutvik created this space with Kousik, Hanad and Ankur<span class="nw">
+                    · 09:12</span
+                  >
+                  ·
+                  <button type="button" class="linkbtn" onClick="{{showNotes}}">Edit brief</button>
+                </div>
+              </div>
+
+              <sc-if value="{{isEmpty}}" hint-placeholder-val="{{true}}">
+                <div class="starts">
+                  <button type="button" class="start" onClick="{{askPair}}">
+                    <span class="pairmark" aria-hidden="true"
+                      ><svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <circle cx="6" cy="8" r="3.5" />
+                        <circle cx="10" cy="8" r="3.5" /></svg
+                    ></span>
+                    <span class="tx"
+                      ><span class="l1">Ask Pair to split the brief into tasks</span
+                      ><span class="l2"
+                        >Pair proposes tasks here. Nothing is created until you approve.</span
+                      ></span
+                    >
+                  </button>
+                  <a class="start" href="NewTask.dc.html">
+                    <span class="plusbox" aria-hidden="true"
+                      ><svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <path d="M8 3v10M3 8h10" /></svg
+                    ></span>
+                    <span class="tx"
+                      ><span class="l1">Create the first task</span
+                      ><span class="l2"
+                        >Give it to yourself or a teammate. Theirs waits until they start it.</span
+                      ></span
+                    >
+                  </a>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{asked}}" hint-placeholder-val="{{false}}">
+                <div class="msg">
+                  <span class="av r" aria-hidden="true">R</span>
+                  <div class="head">
+                    <span class="w6">Rutvik</span><span class="t12 muted">09:14</span>
+                  </div>
+                  <div class="body">
+                    <p><span class="mention">@pair</span> split the brief into tasks</p>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{isReplying}}" hint-placeholder-val="{{false}}">
+                <div class="sys replyline" onClick="{{toProposal}}">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-dasharray="2.2 2.2"
+                  >
+                    <circle cx="8" cy="8" r="6" /></svg
+                  >Pair is replying to Rutvik
+                </div>
+              </sc-if>
+
+              <sc-if value="{{hasPairMsg}}" hint-placeholder-val="{{false}}">
+                <div class="msg">
+                  <span class="pairmark" aria-hidden="true"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="6" cy="8" r="3.5" />
+                      <circle cx="10" cy="8" r="3.5" /></svg
+                  ></span>
+                  <div class="head">
+                    <span class="w6">Pair</span><span class="tag">Agent</span
+                    ><a class="t12 muted" href="#rutvik-0914">replying to Rutvik</a
+                    ><span class="t12 muted">09:14</span>
+                  </div>
+                  <div class="body">
+                    <p>
+                      From the brief, I'd start with these three. Kousik's and Hanad's wait until
+                      they start them.
+                    </p>
+
+                    <sc-if value="{{isProposal}}" hint-placeholder-val="{{false}}">
+                      <div class="card prop" role="group" aria-label="Proposed tasks">
+                        <div class="prow {{rowCls1}}">
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><button
+                              type="button"
+                              class="cb"
+                              role="checkbox"
+                              aria-checked="{{chk1}}"
+                              aria-label="Include {{t1}}"
+                              onClick="{{toggle1}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="10"
+                                height="10"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.4"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" />
+                              </svg></button
+                          ></sc-if>
+                          <span class="tx">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input class="ptitle" aria-label="Task title" value="{{t1}}"
+                            /></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="pt ell">{{t1}}</span></sc-if
+                            >
+                            <span class="pdesc ell">{{d1}}</span>
+                          </span>
+                          <span class="owner">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><button
+                                type="button"
+                                class="ownbtn"
+                                aria-haspopup="menu"
+                                aria-expanded="{{pick1}}"
+                                aria-label="Owner: {{own1}}. Change owner"
+                                onClick="{{togglePick1}}"
+                              >
+                                <span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
+                                >{{forName1}}<svg
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="var(--muted-foreground)"
+                                  stroke-width="1.6"
+                                >
+                                  <path d="M4 6l4 4 4-4" />
+                                </svg></button
+                            ></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="ownstatic"
+                                ><span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
+                                >{{forName1}}</span
+                              ></sc-if
+                            >
+                            <sc-if value="{{pick1}}" hint-placeholder-val="{{false}}">
+                              <div class="menu" role="menu" aria-label="Owner">
+                                <div class="mh">Owner</div>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is1r}}"
+                                  onClick="{{set1r}}"
+                                >
+                                  <span class="av xs r" aria-hidden="true">R</span
+                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is1k}}"
+                                  onClick="{{set1k}}"
+                                >
+                                  <span class="av xs k" aria-hidden="true">K</span
+                                  ><span class="grow">Kousik</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is1h}}"
+                                  onClick="{{set1h}}"
+                                >
+                                  <span class="av xs h" aria-hidden="true">H</span
+                                  ><span class="grow">Hanad</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is1a}}"
+                                  onClick="{{set1a}}"
+                                >
+                                  <span class="av xs a" aria-hidden="true">A</span
+                                  ><span class="grow">Ankur</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </sc-if>
+                          </span>
+                        </div>
+
+                        <div class="prow {{rowCls2}}">
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><button
+                              type="button"
+                              class="cb"
+                              role="checkbox"
+                              aria-checked="{{chk2}}"
+                              aria-label="Include {{t2}}"
+                              onClick="{{toggle2}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="10"
+                                height="10"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.4"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" />
+                              </svg></button
+                          ></sc-if>
+                          <span class="tx">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input class="ptitle" aria-label="Task title" value="{{t2}}"
+                            /></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="pt ell">{{t2}}</span></sc-if
+                            >
+                            <span class="pdesc ell">{{d2}}</span>
+                          </span>
+                          <span class="owner">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><button
+                                type="button"
+                                class="ownbtn"
+                                aria-haspopup="menu"
+                                aria-expanded="{{pick2}}"
+                                aria-label="Owner: {{own2}}. Change owner"
+                                onClick="{{togglePick2}}"
+                              >
+                                <span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
+                                >{{forName2}}<svg
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="var(--muted-foreground)"
+                                  stroke-width="1.6"
+                                >
+                                  <path d="M4 6l4 4 4-4" />
+                                </svg></button
+                            ></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="ownstatic"
+                                ><span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
+                                >{{forName2}}</span
+                              ></sc-if
+                            >
+                            <sc-if value="{{pick2}}" hint-placeholder-val="{{false}}">
+                              <div class="menu" role="menu" aria-label="Owner">
+                                <div class="mh">Owner</div>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is2r}}"
+                                  onClick="{{set2r}}"
+                                >
+                                  <span class="av xs r" aria-hidden="true">R</span
+                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is2k}}"
+                                  onClick="{{set2k}}"
+                                >
+                                  <span class="av xs k" aria-hidden="true">K</span
+                                  ><span class="grow">Kousik</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is2h}}"
+                                  onClick="{{set2h}}"
+                                >
+                                  <span class="av xs h" aria-hidden="true">H</span
+                                  ><span class="grow">Hanad</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is2a}}"
+                                  onClick="{{set2a}}"
+                                >
+                                  <span class="av xs a" aria-hidden="true">A</span
+                                  ><span class="grow">Ankur</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </sc-if>
+                          </span>
+                        </div>
+
+                        <div class="prow {{rowCls3}}">
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                            ><button
+                              type="button"
+                              class="cb"
+                              role="checkbox"
+                              aria-checked="{{chk3}}"
+                              aria-label="Include {{t3}}"
+                              onClick="{{toggle3}}"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="10"
+                                height="10"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.4"
+                              >
+                                <path d="M3.5 8.5l3 3 6-7" />
+                              </svg></button
+                          ></sc-if>
+                          <span class="tx">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><input class="ptitle" aria-label="Task title" value="{{t3}}"
+                            /></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="pt ell">{{t3}}</span></sc-if
+                            >
+                            <span class="pdesc ell">{{d3}}</span>
+                          </span>
+                          <span class="owner">
+                            <sc-if value="{{rw}}" hint-placeholder-val="{{true}}"
+                              ><button
+                                type="button"
+                                class="ownbtn"
+                                aria-haspopup="menu"
+                                aria-expanded="{{pick3}}"
+                                aria-label="Owner: {{own3}}. Change owner"
+                                onClick="{{togglePick3}}"
+                              >
+                                <span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
+                                >{{forName3}}<svg
+                                  aria-hidden="true"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="var(--muted-foreground)"
+                                  stroke-width="1.6"
+                                >
+                                  <path d="M4 6l4 4 4-4" />
+                                </svg></button
+                            ></sc-if>
+                            <sc-if value="{{ro}}" hint-placeholder-val="{{false}}"
+                              ><span class="ownstatic"
+                                ><span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
+                                >{{forName3}}</span
+                              ></sc-if
+                            >
+                            <sc-if value="{{pick3}}" hint-placeholder-val="{{false}}">
+                              <div class="menu" role="menu" aria-label="Owner">
+                                <div class="mh">Owner</div>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is3r}}"
+                                  onClick="{{set3r}}"
+                                >
+                                  <span class="av xs r" aria-hidden="true">R</span
+                                  ><span class="grow">Rutvik</span><span class="t12 muted">you</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is3k}}"
+                                  onClick="{{set3k}}"
+                                >
+                                  <span class="av xs k" aria-hidden="true">K</span
+                                  ><span class="grow">Kousik</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is3h}}"
+                                  onClick="{{set3h}}"
+                                >
+                                  <span class="av xs h" aria-hidden="true">H</span
+                                  ><span class="grow">Hanad</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  class="mi"
+                                  role="menuitemradio"
+                                  aria-checked="{{is3a}}"
+                                  onClick="{{set3a}}"
+                                >
+                                  <span class="av xs a" aria-hidden="true">A</span
+                                  ><span class="grow">Ankur</span
+                                  ><svg
+                                    class="ck"
+                                    aria-hidden="true"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="1.8"
+                                  >
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </sc-if>
+                          </span>
+                        </div>
+
+                        <div class="pfoot">
+                          <sc-if value="{{rw}}" hint-placeholder-val="{{true}}">
+                            <button
+                              type="button"
+                              class="btn primary"
+                              disabled="{{noneChecked}}"
+                              onClick="{{create}}"
+                            >
+                              {{createLabel}}
+                            </button>
+                            <button type="button" class="btn" onClick="{{dismiss}}">Dismiss</button>
+                            <span class="grow"></span>
+                            <span class="t12 muted">Only you can answer this</span>
+                          </sc-if>
+                          <sc-if value="{{ro}}" hint-placeholder-val="{{false}}">
+                            <span class="row t12 muted" style="gap: 6px"
+                              ><svg
+                                aria-hidden="true"
+                                width="12"
+                                height="12"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                              >
+                                <circle cx="8" cy="8" r="6" />
+                                <path d="M8 4.8V8l2.2 1.4" /></svg
+                              >Waiting for Rutvik</span
+                            >
+                          </sc-if>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{isCreated}}" hint-placeholder-val="{{false}}">
+                <div class="recs">
+                  <sc-if value="{{rec1}}" hint-placeholder-val="{{true}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M8 3v10M3 8h10" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">Pair created</span
+                        ><a class="chip" href="TaskUnstarted.dc.html"
+                          ><svg
+                            aria-hidden="true"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="var(--muted-foreground)"
+                            stroke-width="1.6"
+                          >
+                            <circle cx="8" cy="8" r="6" /></svg
+                          ><span class="ell">{{t1}}</span></a
+                        ><span class="rm"
+                          >for {{forName1}} · asked by {{askedBy}} · 2m<sc-if
+                            value="{{canUndo1}}"
+                            hint-placeholder-val="{{true}}"
+                          >
+                            ·
+                            <button
+                              type="button"
+                              class="linkbtn"
+                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              onClick="{{undo1}}"
+                            >
+                              Undo
+                            </button></sc-if
+                          ></span
+                        ></span
+                      >
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{undone1}}" hint-placeholder-val="{{false}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M5.5 4L3 6.5 5.5 9" />
+                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">{{undoer1}} undid creating</span
+                        ><span class="rt ell">{{t1}}</span><span class="rm">· 1m</span></span
+                      >
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{rec2}}" hint-placeholder-val="{{true}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M8 3v10M3 8h10" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">Pair created</span
+                        ><a class="chip" href="TaskUnstarted.dc.html"
+                          ><svg
+                            aria-hidden="true"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="var(--muted-foreground)"
+                            stroke-width="1.6"
+                          >
+                            <circle cx="8" cy="8" r="6" /></svg
+                          ><span class="ell">{{t2}}</span></a
+                        ><span class="rm"
+                          >for {{forName2}} · asked by {{askedBy}} · 2m<sc-if
+                            value="{{canUndo2}}"
+                            hint-placeholder-val="{{true}}"
+                          >
+                            ·
+                            <button
+                              type="button"
+                              class="linkbtn"
+                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              onClick="{{undo2}}"
+                            >
+                              Undo
+                            </button></sc-if
+                          ></span
+                        ></span
+                      >
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{undone2}}" hint-placeholder-val="{{false}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M5.5 4L3 6.5 5.5 9" />
+                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">{{undoer2}} undid creating</span
+                        ><span class="rt ell">{{t2}}</span><span class="rm">· 1m</span></span
+                      >
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{rec3}}" hint-placeholder-val="{{true}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M8 3v10M3 8h10" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">Pair created</span
+                        ><a class="chip" href="TaskUnstarted.dc.html"
+                          ><svg
+                            aria-hidden="true"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="var(--muted-foreground)"
+                            stroke-width="1.6"
+                          >
+                            <circle cx="8" cy="8" r="6" /></svg
+                          ><span class="ell">{{t3}}</span></a
+                        ><span class="rm"
+                          >for {{forName3}} · asked by {{askedBy}} · 2m<sc-if
+                            value="{{canUndo3}}"
+                            hint-placeholder-val="{{true}}"
+                          >
+                            ·
+                            <button
+                              type="button"
+                              class="linkbtn"
+                              title="Removes the task. Shown to whoever asked and the owner until the owner starts it."
+                              onClick="{{undo3}}"
+                            >
+                              Undo
+                            </button></sc-if
+                          ></span
+                        ></span
+                      >
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{undone3}}" hint-placeholder-val="{{false}}">
+                    <div class="rec">
+                      <span class="g"
+                        ><svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M5.5 4L3 6.5 5.5 9" />
+                          <path d="M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7" /></svg></span
+                      ><span class="rl"
+                        ><span class="rx">{{undoer3}} undid creating</span
+                        ><span class="rt ell">{{t3}}</span><span class="rm">· 1m</span></span
+                      >
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{isDismissed}}" hint-placeholder-val="{{false}}">
+                <div class="recs">
+                  <div class="rec">
+                    <span class="g"
+                      ><svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg></span
+                    ><span
+                      >{{dismisser}} dismissed these suggestions<span class="nw">
+                        · 2m<sc-if value="{{rw}}" hint-placeholder-val="{{true}}">
+                          ·
+                          <button type="button" class="linkbtn again" onClick="{{showAgain}}">
+                            Show again
+                          </button></sc-if
+                        ></span
+                      ></span
+                    >
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div class="composer-wrap">
+            <div class="composer">
+              <textarea
+                aria-label="Message Question creation"
+                rows="2"
+                placeholder="Message the space · @ to mention Pair or a teammate"
+                value="{{draft}}"
+                onChange="{{onDraft}}"
+              ></textarea>
+              <div class="foot">
+                <button
+                  type="button"
+                  class="btn ghost"
+                  aria-pressed="{{hasPair}}"
+                  onClick="{{tagPair}}"
+                  style="padding: 0 8px"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--primary)"
+                    stroke-width="1.6"
+                  >
+                    <circle cx="6" cy="8" r="3.5" />
+                    <circle cx="10" cy="8" r="3.5" /></svg
+                  >@pair
+                </button>
+                <span class="grow ell t12 muted" aria-live="polite">{{hint}}</span>
+                <button
+                  type="button"
+                  class="send"
+                  aria-label="Send"
+                  disabled="{{emptyDraft}}"
+                  onClick="{{send}}"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <path d="M8 13V3M4 7l4-4 4 4" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <aside class="panel" aria-label="Space panel">
+          <div class="tabs">
+            <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
+              <button
+                type="button"
+                class="tab"
+                role="tab"
+                aria-selected="{{isTasks}}"
+                onClick="{{showTasks}}"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path
+                    d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
+                  /></svg
+                >Overview
+              </button>
+              <button
+                type="button"
+                class="tab"
+                role="tab"
+                aria-selected="{{isNotes}}"
+                onClick="{{showNotes}}"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                  <path d="M6 8h4M6 10.5h4" /></svg
+                >Notes
+              </button>
+            </div>
+            <button
+              type="button"
+              class="btn ghost icon sm"
+              aria-label="Add: new task, browser, terminal, files"
+              title="New task, or open a surface"
+            >
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <path d="M8 3v10M3 8h10" />
+              </svg>
+            </button>
+            <span class="grow"></span>
+            <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
+              </svg>
+            </button>
+            <button type="button" class="btn ghost icon sm" aria-label="Hide panel">
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              >
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M10 3v10" />
+              </svg>
+            </button>
+          </div>
+
+          <sc-if value="{{isTasks}}" hint-placeholder-val="{{true}}">
+            <div class="scroll ov">
+              <sc-if value="{{noTasks}}" hint-placeholder-val="{{true}}">
+                <p class="empty">No tasks yet. They appear here, grouped by status.</p>
+              </sc-if>
+              <sc-if value="{{hasTasks}}" hint-placeholder-val="{{false}}">
+                <button type="button" class="ghead" aria-expanded="true">
+                  Not started <span class="n">{{taskCount}}</span
+                  ><svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--muted-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <sc-if value="{{rec1}}" hint-placeholder-val="{{true}}">
+                  <a class="trow" href="TaskUnstarted.dc.html">
+                    <svg
+                      class="st"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--muted-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                    </svg>
+                    <span class="tx"
+                      ><span class="l1">{{t1}}</span
+                      ><span class="l2"
+                        >for <span class="av xs {{oc1}}" aria-hidden="true">{{oi1}}</span
+                        ><span class="who">{{forName1}}</span
+                        ><sc-if value="{{assigned1}}" hint-placeholder-val="{{false}}">
+                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
+                        ></span
+                      ></span
+                    >
+                    <span class="rc"><span></span><span class="when">2m</span></span>
+                  </a>
+                </sc-if>
+                <sc-if value="{{rec2}}" hint-placeholder-val="{{true}}">
+                  <a class="trow" href="TaskUnstarted.dc.html">
+                    <svg
+                      class="st"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--muted-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                    </svg>
+                    <span class="tx"
+                      ><span class="l1">{{t2}}</span
+                      ><span class="l2"
+                        >for <span class="av xs {{oc2}}" aria-hidden="true">{{oi2}}</span
+                        ><span class="who">{{forName2}}</span
+                        ><sc-if value="{{assigned2}}" hint-placeholder-val="{{true}}">
+                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
+                        ></span
+                      ></span
+                    >
+                    <span class="rc"><span></span><span class="when">2m</span></span>
+                  </a>
+                </sc-if>
+                <sc-if value="{{rec3}}" hint-placeholder-val="{{true}}">
+                  <a class="trow" href="TaskUnstarted.dc.html">
+                    <svg
+                      class="st"
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--muted-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" />
+                    </svg>
+                    <span class="tx"
+                      ><span class="l1">{{t3}}</span
+                      ><span class="l2"
+                        >for <span class="av xs {{oc3}}" aria-hidden="true">{{oi3}}</span
+                        ><span class="who">{{forName3}}</span
+                        ><sc-if value="{{assigned3}}" hint-placeholder-val="{{true}}">
+                          · <span class="ell">assigned by {{askedBy}}</span></sc-if
+                        ></span
+                      ></span
+                    >
+                    <span class="rc"><span></span><span class="when">2m</span></span>
+                  </a>
+                </sc-if>
+              </sc-if>
+              <a class="newrow" href="NewTask.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+                >New task</a
+              >
+            </div>
+          </sc-if>
+
+          <sc-if value="{{isNotes}}" hint-placeholder-val="{{false}}">
+            <div class="scroll ov">
+              <div class="band">
+                <span class="lbl">Brief</span><span class="t12 muted">Rutvik · Mon</span
+                ><button type="button" class="btn ghost icon sm hov" aria-label="Edit brief">
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                  </svg>
+                </button>
+              </div>
+              <p style="margin: 8px 8px 16px; line-height: 1.5">
+                Let a recruiter describe a role and get interview questions drafted, tagged and
+                previewed. Questions follow schema v2. Out of scope: scoring answers.
+              </p>
+              <div class="band">
+                <span
+                  class="pairmark"
+                  aria-hidden="true"
+                  style="width: 16px; height: 16px; border-radius: 4px"
+                  ><svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <circle cx="6" cy="8" r="3.5" />
+                    <circle cx="10" cy="8" r="3.5" /></svg></span
+                ><span class="lbl">Pair's notes</span>
+                <button
+                  type="button"
+                  class="btn ghost icon sm"
+                  aria-label="What Pair reads"
+                  title="On every reply Pair reads the brief, these notes, the task list and recent messages. It searches older messages when it needs them."
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <circle cx="8" cy="8" r="6" />
+                    <path d="M8 7.2V11M8 5h.01" />
+                  </svg>
+                </button>
+                <button type="button" class="btn ghost icon sm hov" aria-label="Add a note">
+                  <svg
+                    aria-hidden="true"
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+                  </svg>
+                </button>
+              </div>
+              <p class="empty" style="padding: 8px 8px 0">
+                Pair adds decisions here as the room talks. You can edit or remove any of them.
+              </p>
+            </div>
+          </sc-if>
+        </aside>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+      // state keys: phase ('empty' first run with two start rows | 'replying' Rutvik asked, "Pair is replying" | 'proposal' Pair's task card | 'created' card collapsed to records, tasks in the panel | 'dismissed'),
+      // viewer ('rutvik' the tagger | 'kousik' a non-tagger and owner of task 2: read-only card, "you" for himself in owner, "for" and "asked by" text, Undo only on his task), tab ('tasks'|'notes'), draft (composer text; drives the hint),
+      // off ({"2":true} unticks proposed row 2), own ({"2":"a"} changes row 2's owner: r k h a), pick (1|2|3 opens that row's owner menu), undone ({"3":"r"} task 3 was undone by r, k, h or a; the record says "You undid" only to that person)
+      class Component extends DCLogic {
+      renderVals() {
+      const s = this.state || {};
+      const phase = s.phase || 'empty';
+      const tab = s.tab || 'tasks';
+      const draft = s.draft || '';
+      const lower = draft.toLowerCase();
+      const hasPair = lower.indexOf('@pair') !== -1;
+      const named = ['kousik', 'hanad', 'ankur'].filter((p) => lower.indexOf('@' + p) !== -1).map((p) => p[0].toUpperCase() + p.slice(1));
+      let hint = '';
+      if (hasPair) hint = 'Pair replies here · Team Claude key';
+      else if (named.length) hint = named.join(' and ') + ' will be notified';
+      const ro = (s.viewer || 'rutvik') !== 'rutvik';
+      const me = ro ? 'k' : 'r';
+      const names = { r: 'Rutvik', k: 'Kousik', h: 'Hanad', a: 'Ankur' };
+      const T = [
+      { t: 'Question schema v2', d: 'Define the v2 question fields and migrate stored questions', o: 'r' },
+      { t: 'Generate question from prompt', d: 'Draft interview questions from a role description', o: 'k' },
+      { t: 'Difficulty tagging', d: 'Tag each question easy, medium or hard after review', o: 'h' }
+      ];
+      const off = s.off || {};
+      const own = s.own || {};
+      const undone = s.undone || {};
+      const created = phase === 'created';
+      const v = {};
+      let checked = 0;
+      let made = 0;
+      let mineTitle = '';
+      let mine = 0;
+      T.forEach((task, idx) => {
+      const i = idx + 1;
+      const on = !off[i];
+      const o = own[i] || task.o;
+      if (on) checked++;
+      const live = created && on && !undone[i];
+      if (live) made++;
+      if (live && o === me) { mine++; if (!mineTitle) mineTitle = task.t; }
+      v['t' + i] = task.t;
+      v['d' + i] = task.d;
+      v['chk' + i] = on;
+      v['rowCls' + i] = on ? '' : 'off';
+      v['own' + i] = names[o];
+      v['oc' + i] = o;
+      v['oi' + i] = names[o][0];
+      v['pick' + i] = !ro && s.pick === i;
+      v['togglePick' + i] = () => this.setState({ pick: s.pick === i ? 0 : i });
+      v['toggle' + i] = () => this.setState({ off: Object.assign({}, off, { [i]: on }) });
+      ['r', 'k', 'h', 'a'].forEach((m) => {
+      v['is' + i + m] = o === m;
+      v['set' + i + m] = () => this.setState({ own: Object.assign({}, own, { [i]: m }), pick: 0 });
+      });
+      v['rec' + i] = live;
+      v['undone' + i] = created && on && !!undone[i];
+      v['undo' + i] = () => this.setState({ undone: Object.assign({}, undone, { [i]: me }) });
+      const by = names[undone[i]] ? undone[i] : 'r';
+      v['undoer' + i] = by === me ? 'You' : names[by];
+      v['forName' + i] = o === me ? 'you' : names[o];
+      v['assigned' + i] = o !== 'r';
+      v['canUndo' + i] = me === 'r' || o === me;
+      });
+      const others = made - (mineTitle ? 1 : 0);
+      return Object.assign(v, {
+      ro: ro,
+      rw: !ro,
+      isEmpty: phase === 'empty',
+      asked: phase !== 'empty',
+      isReplying: phase === 'replying',
+      hasPairMsg: phase === 'proposal' || created || phase === 'dismissed',
+      isProposal: phase === 'proposal',
+      isCreated: created,
+      isDismissed: phase === 'dismissed',
+      toProposal: () => this.setState({ phase: 'proposal' }),
+      noneChecked: checked === 0,
+      createLabel: checked === 0 ? 'Create tasks' : checked === 1 ? 'Create 1 task' : 'Create ' + checked + ' tasks',
+      create: () => this.setState({ phase: 'created', pick: 0 }),
+      dismiss: () => this.setState({ phase: 'dismissed', pick: 0 }),
+      showAgain: () => this.setState({ phase: 'proposal' }),
+      askPair: () => this.setState({ draft: '@pair split the brief into tasks' }),
+      send: () => { if (hasPair && phase === 'empty') this.setState({ phase: 'replying', draft: '' }); },
+      noTasks: made === 0,
+      hasTasks: made > 0,
+      taskCount: made,
+      sideMine: !!mineTitle,
+      mineCount: mine,
+      askedBy: me === 'r' ? 'you' : 'Rutvik',
+      dismisser: me === 'r' ? 'You' : 'Rutvik',
+      sideTitle: mineTitle,
+      sideMore: others > 0,
+      sideMoreLabel: others + ' more',
+      isTasks: tab === 'tasks',
+      isNotes: tab === 'notes',
+      showTasks: () => this.setState({ tab: 'tasks' }),
+      showNotes: () => this.setState({ tab: 'notes' }),
+      draft: draft,
+      hint: hint,
+      hasPair: hasPair,
+      emptyDraft: draft.trim() === '',
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      tagPair: () => this.setState({ draft: hasPair ? draft : '@pair ' + draft })
+      });
+      }
+      }
+    </script>
+  </body>
+</html>

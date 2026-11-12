@@ -1,0 +1,3282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>New task, assigned to a teammate</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <style>
+          /*shared-start*/
+          body {
+            margin: 0;
+          }
+          .pair {
+            --background: #fcfcfc;
+            --foreground: #18181b;
+            --card: #ffffff;
+            --popover: #ffffff;
+            --muted: #fafafa;
+            --muted-foreground: #71717a;
+            --accent: #f4f4f5;
+            --border: #e4e4e7;
+            --input: #d4d4d8;
+            --primary: oklch(0.488 0.217 264);
+            --primary-foreground: #ffffff;
+            --info-foreground: #1d4ed8;
+            --success-foreground: #047857;
+            --warning-foreground: #b45309;
+            --input-foreground: #4f46e5;
+            --warning-surface: rgba(245, 158, 11, 0.08);
+            --error-foreground: #b91c1c;
+            --destructive: #dc2626;
+            --sidebar: #fafafa;
+            --sidebar-row-selected: #ffffff;
+            --overlay: rgba(9, 9, 11, 0.32);
+            --shadow: 0 1px 2px rgba(9, 9, 11, 0.06), 0 4px 12px rgba(9, 9, 11, 0.04);
+            font-family:
+              -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--foreground);
+            background: var(--background);
+            -webkit-font-smoothing: antialiased;
+          }
+          @media (prefers-color-scheme: dark) {
+            .pair:not([data-theme="light"]) {
+              --background: #000000;
+              --foreground: #f1f3f7;
+              --card: #0c0c0d;
+              --popover: #141416;
+              --muted: rgba(255, 255, 255, 0.03);
+              --muted-foreground: #a1a1aa;
+              --accent: rgba(255, 255, 255, 0.06);
+              --border: rgba(255, 255, 255, 0.08);
+              --input: rgba(255, 255, 255, 0.12);
+              --primary: oklch(0.571 0.21 264);
+              --info-foreground: #60a5fa;
+              --success-foreground: #34d399;
+              --warning-foreground: #fbbf24;
+              --input-foreground: #a5b4fc;
+              --warning-surface: rgba(245, 158, 11, 0.16);
+              --error-foreground: #f87171;
+              --destructive: #dc2626;
+              --sidebar: #0c0c0d;
+              --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+              --overlay: rgba(0, 0, 0, 0.6);
+              --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+            }
+          }
+          .pair[data-theme="dark"] {
+            --background: #000000;
+            --foreground: #f1f3f7;
+            --card: #0c0c0d;
+            --popover: #141416;
+            --muted: rgba(255, 255, 255, 0.03);
+            --muted-foreground: #a1a1aa;
+            --accent: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --input: rgba(255, 255, 255, 0.12);
+            --primary: oklch(0.571 0.21 264);
+            --info-foreground: #60a5fa;
+            --success-foreground: #34d399;
+            --warning-foreground: #fbbf24;
+            --input-foreground: #a5b4fc;
+            --warning-surface: rgba(245, 158, 11, 0.16);
+            --error-foreground: #f87171;
+            --destructive: #dc2626;
+            --sidebar: #0c0c0d;
+            --sidebar-row-selected: rgba(255, 255, 255, 0.05);
+            --overlay: rgba(0, 0, 0, 0.6);
+            --shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          }
+          .pair * {
+            box-sizing: border-box;
+          }
+          .pair a {
+            color: inherit;
+            text-decoration: none;
+          }
+          .pair button,
+          .pair input,
+          .pair select,
+          .pair textarea {
+            font: inherit;
+            color: inherit;
+          }
+          .pair :focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 1px;
+            border-radius: 6px;
+          }
+          .pair svg {
+            flex: none;
+          }
+          .shell {
+            display: flex;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+          }
+          .muted {
+            color: var(--muted-foreground);
+          }
+          .t12 {
+            font-size: 12px;
+          }
+          .t11 {
+            font-size: 11px;
+          }
+          .w5 {
+            font-weight: 500;
+          }
+          .w6 {
+            font-weight: 600;
+          }
+          .ell {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .grow {
+            flex: 1;
+            min-width: 0;
+          }
+          .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          /* sidebar */
+          .side {
+            flex: 0 0 260px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+          }
+          .side-top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+          }
+          .side-body {
+            padding: 0 8px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+          }
+          .slabel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 28px;
+            margin-top: 12px;
+            padding: 0 8px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+          }
+          .srow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 32px;
+            padding: 0 8px;
+            border-radius: 6px;
+          }
+          .srow:hover {
+            background: var(--accent);
+          }
+          .srow[aria-current] {
+            background: var(--sidebar-row-selected);
+            font-weight: 500;
+            box-shadow: 0 0 0 1px var(--border);
+          }
+          .srow.sub {
+            padding-left: 36px;
+            min-height: 36px;
+          }
+          .srow.more {
+            padding-left: 56px;
+            min-height: 28px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .srow .meta {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--primary);
+            flex: none;
+          }
+          /* columns */
+          .col {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+          }
+          .top {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px 0 16px;
+            border-bottom: 1px solid var(--border);
+          }
+          .scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+          }
+          .feed {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 24px 24px;
+          }
+          /* buttons */
+          .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--input);
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+          }
+          .btn:hover {
+            background: var(--accent);
+          }
+          .btn.lg {
+            height: 32px;
+            padding: 0 12px;
+            font-size: 13px;
+          }
+          .btn.primary {
+            background: var(--primary);
+            border-color: transparent;
+            color: var(--primary-foreground);
+          }
+          .btn.primary:hover {
+            filter: brightness(1.08);
+          }
+          .btn.ghost {
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted-foreground);
+          }
+          .btn.ghost:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.ghost[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .btn.icon {
+            width: 28px;
+            padding: 0;
+          }
+          .btn.sm {
+            height: 24px;
+            padding: 0 8px;
+          }
+          .btn.icon.sm {
+            width: 24px;
+            padding: 0;
+          }
+          .btn.danger {
+            background: var(--destructive);
+            border-color: transparent;
+            color: #fff;
+          }
+          .btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+          }
+          .linkbtn {
+            border: 0;
+            background: none;
+            padding: 0;
+            cursor: pointer;
+            font: inherit;
+          }
+          .pair .linkbtn {
+            font-weight: 500;
+            color: inherit;
+          }
+          .pair .linkbtn:hover {
+            color: var(--foreground);
+          }
+          /* avatars */
+          .av {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            color: #fff;
+            font-weight: 500;
+            line-height: 1;
+            flex: none;
+            width: 20px;
+            height: 20px;
+            font-size: 10px;
+          }
+          .av.xs {
+            width: 14px;
+            height: 14px;
+            font-size: 8px;
+          }
+          .av.md {
+            width: 32px;
+            height: 32px;
+            font-size: 13px;
+          }
+          .av.r {
+            background: #2563eb;
+          }
+          .av.k {
+            background: #ea580c;
+          }
+          .av.h {
+            background: #059669;
+          }
+          .av.a {
+            background: #7c3aed;
+          }
+          .av.n {
+            background: #71717a;
+          }
+          .stack {
+            display: inline-flex;
+          }
+          .stack .av {
+            box-shadow: 0 0 0 2px var(--background);
+          }
+          .stack .av + .av {
+            margin-left: -4px;
+          }
+          .pairmark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: var(--accent);
+            color: var(--primary);
+            flex: none;
+          }
+          /* chips, mentions, tags */
+          .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 4px;
+            margin: 0 -1px;
+            border-radius: 4px;
+            font-weight: 500;
+            vertical-align: baseline;
+            white-space: nowrap;
+          }
+          .chip svg {
+            position: relative;
+            top: 1px;
+          }
+          .chip:hover {
+            background: var(--accent);
+          }
+          .mention {
+            color: var(--primary);
+            font-weight: 500;
+          }
+          .mention.me {
+            background: var(--warning-surface);
+            border-radius: 4px;
+            padding: 0 2px;
+          }
+          .tag {
+            display: inline-flex;
+            align-items: center;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: var(--muted-foreground);
+            font-size: 11px;
+            font-weight: 500;
+          }
+          /* messages */
+          .daysep {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .daysep::before,
+          .daysep::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+          }
+          .newsep {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 16px 0 0;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--primary);
+          }
+          .newsep::before {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--primary);
+            opacity: 0.4;
+          }
+          .msg {
+            display: grid;
+            grid-template-columns: 20px minmax(0, 1fr);
+            column-gap: 8px;
+            margin-top: 16px;
+          }
+          .msg .head {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-height: 20px;
+            align-self: center;
+          }
+          .msg .body {
+            grid-column: 2;
+            margin-top: 2px;
+          }
+          .msg.cont {
+            margin-top: 4px;
+          }
+          .msg p {
+            margin: 0;
+          }
+          .msg p + p {
+            margin-top: 6px;
+          }
+          .sys {
+            display: block;
+            margin-top: 4px;
+            padding-left: 28px;
+            font-size: 12px;
+            line-height: 22px;
+            color: var(--muted-foreground);
+          }
+          .sys > svg {
+            vertical-align: -2px;
+            margin-right: 4px;
+          }
+          .sys.first {
+            margin-top: 12px;
+          }
+          .sys .chip {
+            font-size: 13px;
+            color: var(--foreground);
+            vertical-align: -1px;
+          }
+          .nw {
+            white-space: nowrap;
+          }
+          .receipt {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 10px 12px;
+          }
+          .card.warn {
+            background: var(--warning-surface);
+            border-color: transparent;
+          }
+          /* composer */
+          .composer-wrap {
+            flex: none;
+            padding: 0 24px 16px;
+          }
+          .composer {
+            max-width: 712px;
+            margin: 0 auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--card);
+            box-shadow: var(--shadow);
+            padding: 10px 10px 8px 14px;
+          }
+          .composer:focus-within {
+            border-color: var(--input);
+          }
+          .composer textarea {
+            display: block;
+            width: 100%;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            padding: 0;
+            min-height: 40px;
+          }
+          .composer textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .composer .foot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+          }
+          .send {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 0;
+            background: var(--primary);
+            color: var(--primary-foreground);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .pair .send {
+            color: var(--primary-foreground);
+          }
+          .pair .send:disabled {
+            background: var(--accent);
+            color: var(--muted-foreground);
+            cursor: default;
+          }
+          /* right panel */
+          .panel {
+            flex: 0 0 360px;
+            min-width: 320px;
+            border-left: 1px solid var(--border);
+            background: var(--card);
+            display: flex;
+            flex-direction: column;
+          }
+          .tabs {
+            height: 52px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px 0 8px;
+            border-bottom: 1px solid var(--border);
+          }
+          .tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 24px;
+            padding: 0 8px 0 6px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+          }
+          .tab:hover {
+            background: var(--accent);
+          }
+          .tab[aria-selected="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .toolbar {
+            height: 40px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 12px;
+          }
+          .seg {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            height: 24px;
+            padding: 0 8px;
+            border-radius: 6px;
+            border: 0;
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+          }
+          .seg[aria-pressed="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+            font-weight: 500;
+          }
+          .seg .n {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .ov {
+            padding: 6px;
+          }
+          .ghead {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            height: 28px;
+            margin: 6px 0 2px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: var(--accent);
+            font-size: 13px;
+            font-weight: 400;
+            text-align: left;
+            cursor: pointer;
+          }
+          .ghead:first-child {
+            margin-top: 0;
+          }
+          .ghead .n {
+            color: var(--muted-foreground);
+            font-variant-numeric: tabular-nums;
+          }
+          .trow {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            min-height: 44px;
+            padding: 6px 8px;
+            border-radius: 8px;
+          }
+          .trow:hover {
+            background: var(--accent);
+          }
+          .trow .st {
+            margin-top: 2px;
+          }
+          .trow .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .trow .l1 {
+            display: block;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .trow .l2 {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            margin-top: 1px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .trow .l2 .who {
+            color: var(--foreground);
+          }
+          .trow .rc {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: space-between;
+            min-width: 32px;
+            align-self: stretch;
+            padding: 5px 0 1px;
+          }
+          .trow .when {
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .newrow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 28px;
+            margin-top: 4px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 8px;
+            background: none;
+            color: var(--muted-foreground);
+            font-size: 12px;
+            cursor: pointer;
+            text-align: left;
+          }
+          .newrow:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .band {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 4px 0 8px;
+            border-radius: 6px;
+            background: var(--accent);
+          }
+          .band .lbl {
+            flex: 1;
+            font-size: 13px;
+          }
+          .needsyou {
+            color: var(--warning-foreground);
+            font-weight: 500;
+          }
+          .add {
+            color: #047857;
+          }
+          .del {
+            color: var(--error-foreground);
+          }
+          .pair .add {
+            color: var(--success-foreground);
+          }
+          /* forms */
+          .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .field > .lbl {
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .input {
+            height: 32px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            padding: 0 10px;
+            width: 100%;
+          }
+          textarea.input {
+            height: auto;
+            padding: 8px 10px;
+            resize: none;
+            line-height: 1.45;
+          }
+          .input:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            border-color: transparent;
+          }
+          .help {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .dialog {
+            background: var(--popover);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(9, 9, 11, 0.16);
+            display: flex;
+            flex-direction: column;
+          }
+          .dialog .dh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 12px 0 20px;
+          }
+          .dialog .db {
+            padding: 12px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .dialog .df {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+          }
+          .propchip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 28px;
+            padding: 0 10px;
+            border: 1px solid var(--input);
+            border-radius: 8px;
+            background: var(--card);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+          }
+          .propchip:hover {
+            background: var(--accent);
+          }
+          .kbd {
+            font-size: 11px;
+            color: inherit;
+            opacity: 0.7;
+          }
+          .backdrop {
+            background: var(--overlay);
+          }
+          /*shared-end*/
+          .msg {
+            position: relative;
+          }
+          .hoverbar {
+            display: none;
+            position: absolute;
+            top: -14px;
+            right: 0;
+            display: flex;
+            gap: 2px;
+            padding: 2px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--popover);
+            box-shadow: var(--shadow);
+          }
+          .quote {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            grid-column: 2;
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            margin-top: 2px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .quote .ell {
+            flex: 1;
+            min-width: 0;
+          }
+          .msg:hover .hoverbar,
+          .msg:focus-within .hoverbar,
+          .msg.hover .hoverbar {
+            display: flex;
+          }
+          .band .hov {
+            visibility: hidden;
+          }
+          .band:hover .hov,
+          .band:focus-within .hov {
+            visibility: visible;
+          }
+          main.col {
+            container-type: inline-size;
+          }
+          .repos {
+            min-width: 0;
+          }
+          @container (max-width:520px) {
+            .repos {
+              display: none;
+            }
+          }
+          .replybar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: -2px -2px 8px -6px;
+            padding: 4px 4px 4px 8px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .note-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 6px 0;
+          }
+          .note-src {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .note-src a:hover {
+            text-decoration: underline;
+          }
+          .sec {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 32px;
+          }
+          /* b-d dialogs: stage, scrim, dialog viewport, popovers, toasts, bottom sheet */
+          .stage {
+            position: relative;
+            height: 100vh;
+            min-height: 560px;
+            overflow: hidden;
+          }
+          .room .hoverbar {
+            display: none;
+          }
+          .room .msg:hover .hoverbar,
+          .room .msg:focus-within .hoverbar {
+            display: flex;
+          }
+          .scrim {
+            position: absolute;
+            inset: 0;
+            z-index: 40;
+          }
+          .vp {
+            position: absolute;
+            inset: 0;
+            z-index: 41;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: 1fr auto 1fr;
+            justify-items: center;
+            padding: 16px;
+          }
+          .vp.upper {
+            grid-template-rows: 15vh auto 1fr;
+          }
+          .vp > .dialog {
+            grid-row: 2;
+            width: 100%;
+            max-width: 512px;
+            position: relative;
+          }
+          .vp > .dialog.alert {
+            max-width: 400px;
+          }
+          .dialog .dh {
+            min-height: 40px;
+          }
+          .dt {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 28px;
+          }
+          .dialog .df {
+            gap: 8px;
+          }
+          .df .note {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .df .note.bad {
+            color: var(--error-foreground);
+          }
+          .pair .field > .lbl {
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .lblrow {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+          }
+          .lblrow .lbl {
+            font-size: 13px;
+            font-weight: 500;
+          }
+          .lblrow .aside {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .input::placeholder,
+          textarea::placeholder {
+            color: var(--muted-foreground);
+          }
+          .input:disabled {
+            opacity: 0.5;
+          }
+          .focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -1px;
+            border-color: transparent;
+          }
+          .input.bad {
+            border-color: var(--error-foreground);
+          }
+          .input.bad.focus {
+            outline-color: var(--error-foreground);
+          }
+          .err {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: var(--error-foreground);
+          }
+          .selbox {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 8px 0 10px;
+          }
+          .selbox select {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+          }
+          .selbox .chev {
+            margin-left: auto;
+            color: var(--muted-foreground);
+          }
+          .anchor {
+            position: relative;
+            display: inline-flex;
+          }
+          /* popovers */
+          .pop {
+            position: absolute;
+            z-index: 50;
+            background: var(--popover);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow:
+              var(--shadow),
+              0 8px 24px var(--overlay);
+            padding: 4px;
+          }
+          .prow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            height: 32px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+            font-size: 13px;
+          }
+          .prow:hover,
+          .prow.active {
+            background: var(--accent);
+          }
+          .prow[aria-disabled="true"] {
+            cursor: default;
+            color: var(--muted-foreground);
+          }
+          .prow[aria-disabled="true"] .av {
+            opacity: 0.5;
+          }
+          .prow[aria-disabled="true"]:hover {
+            background: none;
+          }
+          .prow .rm {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .prow .ck {
+            margin-left: auto;
+            visibility: hidden;
+          }
+          .prow .ck.on {
+            visibility: visible;
+          }
+          .prow.danger {
+            color: var(--error-foreground);
+          }
+          .pempty {
+            padding: 6px 8px 8px;
+          }
+          .pempty .t {
+            color: var(--foreground);
+          }
+          .psearch {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 32px;
+            margin: -4px -4px 4px;
+            padding: 0 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--muted-foreground);
+          }
+          .psearch input {
+            flex: 1;
+            min-width: 0;
+            border: 0;
+            outline: 0;
+            background: none;
+            padding: 0;
+          }
+          .plabel {
+            padding: 6px 8px 2px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .psep {
+            height: 1px;
+            margin: 4px -4px;
+            background: var(--border);
+          }
+          .pfoot {
+            margin: 4px -4px -4px;
+            padding: 8px 10px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          /* toast */
+          .toast {
+            position: absolute;
+            z-index: 60;
+            right: 32px;
+            bottom: 32px;
+            width: 360px;
+            max-width: calc(100% - 32px);
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 10px 8px 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--popover);
+            box-shadow:
+              var(--shadow),
+              0 8px 24px var(--overlay);
+          }
+          .toast > svg {
+            margin-top: 3px;
+          }
+          .toast .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .toast .tt {
+            font-weight: 500;
+          }
+          .toast .td {
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .toast .acts {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            margin-top: -2px;
+          }
+          .av.s16 {
+            width: 16px;
+            height: 16px;
+            font-size: 9px;
+          }
+          .av.ks {
+            background: #db2777;
+          }
+          .fakeph {
+            min-height: 40px;
+            line-height: 20px;
+            color: var(--muted-foreground);
+          }
+          .archbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 712px;
+            height: 32px;
+            margin: 0 auto;
+            padding: 0 4px 0 12px;
+            border-radius: 8px;
+            background: var(--accent);
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .archbar > svg {
+            flex: none;
+          }
+          @media (hover: none) {
+            .hoveronly {
+              visibility: visible !important;
+            }
+          }
+          @media (max-width: 639px) {
+            .room .side,
+            .room .panel,
+            .room .repos {
+              display: none;
+            }
+            .vp,
+            .vp.upper {
+              grid-template-rows: 1fr auto;
+              padding: 48px 0 0;
+            }
+            .vp > .dialog,
+            .vp > .dialog.alert {
+              max-width: none;
+              border-radius: 12px 12px 0 0;
+              border-width: 1px 0 0;
+              box-shadow: none;
+            }
+            .dialog .df {
+              flex-direction: column;
+              align-items: stretch;
+              padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+            }
+            .dialog .df .note {
+              order: 0;
+              padding-bottom: 4px;
+            }
+            .dialog .df .primary,
+            .dialog .df .danger {
+              order: 1;
+            }
+            .dialog .df .cancel {
+              order: 2;
+            }
+            .dialog .df .kbd {
+              display: none;
+            }
+            .dialog .dh {
+              padding-left: 16px;
+            }
+            .dialog .db {
+              padding-left: 16px;
+              padding-right: 16px;
+            }
+            .toast {
+              left: 16px;
+              right: 16px;
+              bottom: 16px;
+              width: auto;
+              max-width: none;
+            }
+            .toast.lift {
+              bottom: 124px;
+            }
+            .toast.lift.low {
+              bottom: 64px;
+            }
+            .phlong {
+              display: none;
+            }
+            .vp > .dialog.ss {
+              max-height: 85dvh;
+              overflow: auto;
+            }
+            .dialog .db:last-child {
+              padding-bottom: calc(20px + env(safe-area-inset-bottom));
+            }
+            .pair.stage .pop.sheetable {
+              position: fixed;
+              left: 8px;
+              right: 8px;
+              bottom: 8px;
+              top: auto;
+              width: auto;
+              z-index: 70;
+            }
+          }
+          .vp > .dialog.nt {
+            max-width: 560px;
+          }
+          .nt-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            height: 40px;
+            padding: 8px 8px 0 20px;
+          }
+          .crumb {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+          }
+          .crumb .here {
+            color: var(--foreground);
+          }
+          .nt-ed {
+            padding: 4px 20px 0;
+          }
+          .nt-ta {
+            display: block;
+            width: 100%;
+            min-height: 120px;
+            border: 0;
+            outline: 0;
+            resize: none;
+            background: transparent;
+            padding: 0;
+            line-height: 1.5;
+          }
+          .reads {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+          }
+          .nt-chips {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            padding: 12px 20px;
+          }
+          .propchip .chev {
+            color: var(--muted-foreground);
+            margin-left: -2px;
+          }
+          .propchip[aria-expanded="true"] {
+            background: var(--accent);
+          }
+          .propchip.bad {
+            border-color: var(--error-foreground);
+          }
+          .propchip .sub {
+            color: var(--muted-foreground);
+            font-weight: 400;
+          }
+          .mchip {
+            display: inline-flex;
+            align-items: center;
+            height: 28px;
+            padding: 0 4px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+            white-space: nowrap;
+          }
+          .pophead {
+            display: none;
+          }
+          .nt-alert {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 20px 12px;
+            padding: 8px 8px 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--muted);
+          }
+          .nt-alert .tx {
+            flex: 1;
+            min-width: 0;
+          }
+          .nt-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            margin: -4px 20px 12px;
+            font-size: 12px;
+            color: var(--muted-foreground);
+          }
+          .nt-note svg {
+            margin-top: 2px;
+          }
+          .nt .df {
+            padding-left: 20px;
+          }
+          .anchor .pop {
+            top: calc(100% + 4px);
+            left: 0;
+          }
+          .pop.owner {
+            width: 240px;
+          }
+          .pop.base {
+            width: 280px;
+          }
+          .pop.model {
+            width: 320px;
+            display: flex;
+            padding: 0;
+            overflow: hidden;
+          }
+          .rail {
+            flex: none;
+            width: 44px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 4px;
+            background: var(--muted);
+            border-right: 1px solid var(--border);
+          }
+          .prov {
+            width: 36px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            border-radius: 6px;
+            background: none;
+            color: var(--muted-foreground);
+            cursor: pointer;
+          }
+          .prov:hover {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .prov[aria-selected="true"] {
+            background: var(--accent);
+            color: var(--foreground);
+          }
+          .mlist {
+            flex: 1;
+            min-width: 0;
+            padding: 4px;
+          }
+          .mlist .psearch {
+            margin: -4px -4px 4px;
+          }
+          .prow .sub {
+            color: var(--muted-foreground);
+            font-size: 12px;
+          }
+          .mlist .pfoot {
+            margin: 4px -4px -4px;
+          }
+          @media (max-width: 499px) {
+            .nt .anchor {
+              position: static;
+            }
+            .pair.stage .nt .pop.sheetable {
+              position: absolute;
+              inset: 0;
+              width: auto;
+              max-height: none;
+              border: 0;
+              border-radius: 12px 12px 0 0;
+              box-shadow: none;
+              z-index: 5;
+              overflow: auto;
+              padding: 0 4px 4px;
+            }
+            .nt .pophead {
+              display: flex;
+              align-items: center;
+              gap: 4px;
+              height: 44px;
+              margin: 0 -4px 4px;
+              padding: 0 8px;
+              border-bottom: 1px solid var(--border);
+            }
+            .nt .pophead + .psearch {
+              margin-top: -4px;
+            }
+            .nt .pop .prow {
+              height: 40px;
+            }
+            .pair.stage .nt .pop.model {
+              flex-wrap: wrap;
+              align-content: flex-start;
+              padding: 0;
+            }
+            .nt .pop.model .pophead {
+              flex-basis: 100%;
+              margin: 0;
+            }
+            .nt .pop.model .rail {
+              align-self: stretch;
+            }
+          }
+          @media (max-width: 639px) {
+            .nt-head {
+              padding-left: 16px;
+            }
+            .nt-ed,
+            .nt-chips {
+              padding-left: 16px;
+              padding-right: 16px;
+            }
+            .nt-alert {
+              margin: 0 16px 12px;
+            }
+            .nt-note {
+              margin: -4px 16px 12px;
+            }
+            .nt .df {
+              padding-left: 16px;
+            }
+            .nt-ta {
+              min-height: 96px;
+            }
+          }
+        </style>
+      </helmet>
+      <div class="pair stage">
+        <div class="shell room" inert aria-hidden="true">
+          <nav class="side" aria-label="Sidebar">
+            <div class="side-top">
+              <span class="w6">Pair</span><span class="t12 muted">Pair Cloud</span>
+            </div>
+            <div class="side-body">
+              <a class="srow" href="#new"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+                >New thread</a
+              >
+              <a class="srow" href="#mine"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <circle cx="8" cy="5.5" r="2.5" />
+                  <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" /></svg
+                ><span class="grow">Assigned to me</span><span class="meta">1</span></a
+              >
+
+              <div class="slabel">
+                <span>Spaces</span
+                ><a class="btn ghost icon sm" href="NewSpace.dc.html" aria-label="New space"
+                  ><svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <path d="M8 3v10M3 8h10" /></svg
+                ></a>
+              </div>
+              <a class="srow" href="#room" aria-current="page"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <circle cx="5.5" cy="6" r="2.5" />
+                  <circle cx="10.5" cy="6" r="2.5" />
+                  <path
+                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                  /></svg
+                ><span class="grow ell">Question creation</span></a
+              >
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--warning-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" /></svg
+                ><span class="grow ell">Seed role catalog</span
+                ><span class="meta" style="color: var(--warning-foreground)">Needs you</span></a
+              >
+              <a class="srow sub" href="Task.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--success-foreground)"
+                  stroke-width="1.7"
+                >
+                  <circle cx="4.5" cy="3.8" r="1.8" />
+                  <circle cx="4.5" cy="12.2" r="1.8" />
+                  <circle cx="11.5" cy="12.2" r="1.8" />
+                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
+                ><span class="grow ell">Question schema v2</span
+                ><span class="meta">In review</span></a
+              >
+              <a class="srow more" href="#room">5 more</a>
+              <a class="srow" href="#space-2"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <circle cx="5.5" cy="6" r="2.5" />
+                  <circle cx="10.5" cy="6" r="2.5" />
+                  <path
+                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                  /></svg
+                ><span class="grow ell">Onboarding revamp</span
+                ><span class="dot" role="img" aria-label="Unread"></span
+              ></a>
+
+              <div class="slabel"><span>Projects</span></div>
+              <a class="srow" href="#p1"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                >pair-fe</a
+              >
+              <a class="srow sub" href="#t1"
+                ><span class="grow ell">Fix sidebar drag flicker</span
+                ><span class="meta">2d</span></a
+              >
+              <a class="srow" href="#p2"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                >pair-be</a
+              >
+              <a class="srow sub" href="#t3"
+                ><span class="grow ell">Bundle upload retries</span><span class="meta">5d</span></a
+              >
+            </div>
+          </nav>
+
+          <main class="col">
+            <header class="top">
+              <svg
+                aria-hidden="true"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="var(--muted-foreground)"
+                stroke-width="1.4"
+              >
+                <circle cx="5.5" cy="6" r="2.5" />
+                <circle cx="10.5" cy="6" r="2.5" />
+                <path
+                  d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                />
+              </svg>
+              <h1
+                class="w6 ell"
+                style="margin: 0; font-size: 13px; flex: 0 0 auto; max-width: 50%"
+                title="Let a recruiter describe a role and get interview questions drafted, tagged and previewed. Repos: pair-fe, pair-be"
+              >
+                Question creation
+              </h1>
+              <span class="row t12 muted repos" style="gap: 4px"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" /></svg
+                ><span class="ell">pair-fe, pair-be</span></span
+              >
+              <span class="grow"></span>
+              <button
+                type="button"
+                class="btn ghost"
+                aria-label="4 members: Rutvik (owner), Kousik, Hanad, Ankur. Manage members"
+                style="padding: 0 6px"
+              >
+                <span class="stack"
+                  ><span class="av r" aria-hidden="true">R</span
+                  ><span class="av k" aria-hidden="true">K</span
+                  ><span class="av h" aria-hidden="true">H</span
+                  ><span class="av a" aria-hidden="true">A</span></span
+                >
+              </button>
+              <a
+                class="btn ghost icon"
+                href="SpaceSettings.dc.html"
+                aria-label="Space settings: rename, brief, members, leave, archive"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <circle cx="3.5" cy="8" r="1.2" />
+                  <circle cx="8" cy="8" r="1.2" />
+                  <circle cx="12.5" cy="8" r="1.2" /></svg
+              ></a>
+            </header>
+
+            <div class="scroll">
+              <div class="feed" role="log" aria-label="Room messages">
+                <div class="daysep">Tuesday 10 November</div>
+
+                <div class="sys first">
+                  Rutvik created
+                  <a class="chip" href="Task.dc.html"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--info-foreground)"
+                      stroke-width="1.6"
+                      stroke-dasharray="2.2 2.2"
+                    >
+                      <circle cx="8" cy="8" r="6" /></svg
+                    >Generate question from prompt</a
+                  >
+                  for Kousik and
+                  <a class="chip" href="TaskUnstarted.dc.html"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--muted-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="8" cy="8" r="6" /></svg
+                    >Difficulty tagging</a
+                  >
+                  for Hanad <span class="nw">· 10:30</span>
+                </div>
+
+                <div class="msg">
+                  <span class="av r" aria-hidden="true">R</span>
+                  <div class="head">
+                    <span class="w6">Rutvik</span><span class="t12 muted">10:31</span>
+                  </div>
+                  <div class="body">
+                    <p>
+                      <span class="mention">@Kousik</span> <span class="mention">@Hanad</span> two
+                      tasks are assigned to you. Can you pick them up?
+                    </p>
+                  </div>
+                </div>
+
+                <div class="msg">
+                  <span class="av a" aria-hidden="true">A</span>
+                  <div class="head">
+                    <span class="w6">Ankur</span><span class="t12 muted">10:34</span>
+                  </div>
+                  <div class="body"><p>I'll take the preview renderer.</p></div>
+                </div>
+                <div class="sys">
+                  Ankur created
+                  <a class="chip" href="Task.dc.html"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--input-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                      <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+                    >Preview renderer</a
+                  ><span class="nw"> · 10:34</span>
+                </div>
+
+                <div class="newsep">New</div>
+
+                <div class="msg" id="kousik-1040">
+                  <span class="av k" aria-hidden="true">K</span>
+                  <div class="head">
+                    <span class="w6">Kousik</span><span class="t12 muted">10:40</span>
+                  </div>
+                  <div class="body">
+                    <p>Do we tag difficulty when the question is generated, or after review?</p>
+                  </div>
+                  <div class="hoverbar" role="toolbar" aria-label="Message actions">
+                    <button type="button" class="btn ghost icon sm" aria-label="Reply">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M6.5 4L3 7.5 6.5 11" />
+                        <path d="M3 7.5h6.5a3.5 3.5 0 0 1 3.5 3.5v1" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn ghost icon sm"
+                      aria-label="Add to Pair's notes"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" />
+                      </svg>
+                    </button>
+                    <button type="button" class="btn ghost icon sm" aria-label="Copy link">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path
+                          d="M7 9a3 3 0 0 0 4.2 0l2-2A3 3 0 0 0 9 2.8l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2A3 3 0 0 0 7 13.2l.8-.8"
+                        />
+                      </svg>
+                    </button>
+                    <button type="button" class="btn ghost icon sm" aria-label="More: edit, delete">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                      >
+                        <circle cx="3.5" cy="8" r="1.1" />
+                        <circle cx="8" cy="8" r="1.1" />
+                        <circle cx="12.5" cy="8" r="1.1" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="msg">
+                  <span class="av h" aria-hidden="true">H</span>
+                  <div class="head">
+                    <span class="w6">Hanad</span><span class="t12 muted">10:42</span>
+                  </div>
+                  <a class="quote" href="#kousik-1040"
+                    ><svg
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M3 3v4.5a2 2 0 0 0 2 2h8M10 6.5l3 3-3 3" /></svg
+                    ><span class="w5" style="color: var(--foreground)">Kousik</span
+                    ><span class="ell"
+                      >Do we tag difficulty when the question is generated, or after review?</span
+                    ></a
+                  >
+                  <div class="body">
+                    <p>After review. The reviewer usually changes it anyway.</p>
+                  </div>
+                </div>
+
+                <div class="sys first">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--input-foreground)"
+                    stroke-width="1.6"
+                  >
+                    <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                    <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+                  ><a class="chip" href="Task.dc.html">Preview renderer</a> needs Ankur: Which image
+                  sizes should the preview support?<span class="nw"> · 10:58</span>
+                </div>
+
+                <div class="msg">
+                  <span class="av r" aria-hidden="true">R</span>
+                  <div class="head">
+                    <span class="w6">Rutvik</span><span class="t12 muted">11:05</span>
+                  </div>
+                  <div class="body">
+                    <p>
+                      <span class="mention">@pair</span> what did we decide on difficulty tagging,
+                      and is anything blocked?
+                    </p>
+                  </div>
+                </div>
+
+                <div class="msg">
+                  <span class="pairmark" aria-hidden="true"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="6" cy="8" r="3.5" />
+                      <circle cx="10" cy="8" r="3.5" /></svg
+                  ></span>
+                  <div class="head">
+                    <span class="w6">Pair</span><span class="tag">Agent</span
+                    ><a class="t12 muted" href="#rutvik-1105">replying to Rutvik</a
+                    ><span class="t12 muted">11:05</span>
+                  </div>
+                  <div class="body">
+                    <p>
+                      Difficulty is tagged after review, not when a question is generated (Hanad,
+                      10:42).
+                    </p>
+                    <p>
+                      One task is blocked:
+                      <a class="chip" href="Task.dc.html"
+                        ><svg
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="var(--input-foreground)"
+                          stroke-width="1.6"
+                        >
+                          <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                          <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" /></svg
+                        >Preview renderer</a
+                      >
+                      is waiting on Ankur to choose image sizes.
+                      <a class="chip" href="Task.dc.html"
+                        ><svg
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="var(--info-foreground)"
+                          stroke-width="1.6"
+                          stroke-dasharray="2.2 2.2"
+                        >
+                          <circle cx="8" cy="8" r="6" /></svg
+                        >Generate question from prompt</a
+                      >
+                      is moving, and
+                      <a class="chip" href="TaskUnstarted.dc.html"
+                        ><svg
+                          aria-hidden="true"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="var(--muted-foreground)"
+                          stroke-width="1.6"
+                        >
+                          <circle cx="8" cy="8" r="6" /></svg
+                        >Difficulty tagging</a
+                      >
+                      hasn't started.
+                    </p>
+                    <div class="receipt">
+                      <svg
+                        aria-hidden="true"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <path d="M4.5 2.5h7v11L8 11l-3.5 2.5z" /></svg
+                      ><span
+                        >Added to <button type="button" class="linkbtn">notes</button>: "Difficulty
+                        is tagged after review" ·
+                        <button type="button" class="linkbtn">Undo</button></span
+                      >
+                    </div>
+                  </div>
+                </div>
+
+                <div class="msg">
+                  <span class="av h" aria-hidden="true">H</span>
+                  <div class="head">
+                    <span class="w6">Hanad</span><span class="t12 muted">11:12</span>
+                  </div>
+                  <div class="body">
+                    <p><span class="mention">@pair</span> which task touches the review list?</p>
+                  </div>
+                </div>
+                <div class="sys">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-dasharray="2.2 2.2"
+                  >
+                    <circle cx="8" cy="8" r="6" /></svg
+                  >Pair is replying to Hanad
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-wrap">
+              <div class="composer">
+                <div class="fakeph" aria-hidden="true">
+                  Message the space<span class="phlong"> · @ to mention Pair or a teammate</span>
+                </div>
+                <div class="foot">
+                  <button
+                    type="button"
+                    class="btn ghost"
+                    aria-pressed="false"
+                    style="padding: 0 8px"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--primary)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="6" cy="8" r="3.5" />
+                      <circle cx="10" cy="8" r="3.5" /></svg
+                    >@pair
+                  </button>
+                  <span class="grow ell t12 muted" aria-live="polite"></span>
+                  <button type="button" class="send" aria-label="Send" disabled="true">
+                    <svg
+                      aria-hidden="true"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    >
+                      <path d="M8 13V3M4 7l4-4 4 4" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </main>
+
+          <aside class="panel" aria-label="Space panel">
+            <div class="tabs">
+              <div role="tablist" aria-label="Space panel" class="row" style="gap: 4px">
+                <button type="button" class="tab" role="tab" aria-selected="true">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  >
+                    <path
+                      d="M2.5 4.2l1.2 1.2 2-2.2M2.5 9.2l1.2 1.2 2-2.2M8 4.5h5.5M8 9.5h5.5M8 13h5.5"
+                    /></svg
+                  >Overview
+                </button>
+                <button type="button" class="tab" role="tab" aria-selected="false">
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                    <path d="M6 8h4M6 10.5h4" /></svg
+                  >Notes
+                </button>
+              </div>
+              <button
+                type="button"
+                class="btn ghost icon sm"
+                aria-label="Add: new task, browser, terminal, files"
+                title="New task, or open a surface"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" />
+                </svg>
+              </button>
+              <span class="grow"></span>
+              <button type="button" class="btn ghost icon sm" aria-label="Expand panel">
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9" />
+                </svg>
+              </button>
+              <button type="button" class="btn ghost icon sm" aria-label="Hide panel">
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                  <path d="M10 3v10" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="scroll ov">
+              <button type="button" class="ghead" aria-expanded="true">
+                Needs you <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--warning-foreground)"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 1.8l5 2v4c0 3.2-2.2 5.4-5 6.4-2.8-1-5-3.2-5-6.4v-4z" />
+                  <path d="M6.6 6.3a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1.1-1.5 2.1M8 10.9h.01" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Seed role catalog</span
+                  ><span class="l2"
+                    >for you · <span class="ell">wants to run pnpm db:migrate</span></span
+                  ></span
+                >
+                <span class="rc"
+                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
+                  ><span class="when">2m</span></span
+                >
+              </a>
+
+              <button type="button" class="ghead" aria-expanded="true">
+                In progress <span class="n">3</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--error-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M8 4.8v3.6M8 11h.01" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Sample role fixtures</span
+                  ><span class="l2"
+                    >for <span class="av xs k" aria-hidden="true">K</span
+                    ><span class="who">Kousik</span> ·
+                    <span class="ell">failed: fixtures.test.ts</span></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">1h</span></span>
+              </a>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--input-foreground)"
+                  stroke-width="1.5"
+                >
+                  <path d="M2.5 3.5h11v7.5H8l-3 2.5V11H2.5z" />
+                  <path d="M6.6 5.8a1.5 1.5 0 0 1 2.9.5c0 1-1.5 1-1.5 1.9M8 9.6h.01" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Preview renderer</span
+                  ><span class="l2"
+                    >for <span class="av xs a" aria-hidden="true">A</span
+                    ><span class="who">Ankur</span> ·
+                    <span class="ell">needs Ankur: Which image sizes…</span></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">12m</span></span>
+              </a>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--info-foreground)"
+                  stroke-width="1.6"
+                  stroke-dasharray="2.2 2.2"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Generate question from prompt</span
+                  ><span class="l2"
+                    >for <span class="av xs k" aria-hidden="true">K</span
+                    ><span class="who">Kousik</span></span
+                  ></span
+                >
+                <span class="rc"
+                  ><span class="dot" role="img" aria-label="Updated since you looked"></span
+                  ><span class="when">4m</span></span
+                >
+              </a>
+
+              <button type="button" class="ghead" aria-expanded="true">
+                Not started <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <a class="trow" href="TaskUnstarted.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1">Difficulty tagging</span
+                  ><span class="l2"
+                    >for <span class="av xs h" aria-hidden="true">H</span
+                    ><span class="who">Hanad</span> ·
+                    <span class="ell">assigned by Rutvik</span></span
+                  ></span
+                >
+                <span class="rc"><span></span><span class="when">34m</span></span>
+              </a>
+
+              <button type="button" class="ghead" aria-expanded="true">
+                In review <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </button>
+              <a class="trow" href="Task.dc.html">
+                <svg
+                  class="st"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--success-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="4.5" cy="3.8" r="1.8" />
+                  <circle cx="4.5" cy="12.2" r="1.8" />
+                  <circle cx="11.5" cy="12.2" r="1.8" />
+                  <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" />
+                </svg>
+                <span class="tx"
+                  ><span class="l1"
+                    ><span
+                      class="muted"
+                      style="font-weight: 400; font-variant-numeric: tabular-nums"
+                      >pair-be#482</span
+                    >
+                    Question schema v2</span
+                  ><span class="l2"
+                    ><span class="ell"
+                      >main ← rutvik/schema-v2 <span class="add">+212</span>
+                      <span class="del">−40</span> · for you</span
+                    ></span
+                  ></span
+                >
+                <span class="rc"
+                  ><svg
+                    role="img"
+                    aria-label="Checks passed"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="var(--success-foreground)"
+                    stroke-width="1.8"
+                  >
+                    <path d="M3.5 8.5l3 3 6-7" /></svg
+                  ><span class="when">20m</span></span
+                >
+              </a>
+
+              <button type="button" class="ghead" aria-expanded="false">
+                Done <span class="n">1</span
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--muted-foreground)"
+                  stroke-width="1.6"
+                >
+                  <path d="M6 4l4 4-4 4" />
+                </svg>
+              </button>
+
+              <a class="newrow" href="NewTask.dc.html"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M8 3v10M3 8h10" /></svg
+                >New task</a
+              >
+            </div>
+          </aside>
+        </div>
+        <div class="scrim backdrop"></div>
+        <div class="vp upper">
+          <form
+            class="dialog nt"
+            role="dialog"
+            aria-modal="true"
+            aria-label="New task in Question creation"
+            onsubmit="return false;"
+          >
+            <div class="nt-head">
+              <span class="crumb t12 muted"
+                ><svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                >
+                  <circle cx="5.5" cy="6" r="2.5" />
+                  <circle cx="10.5" cy="6" r="2.5" />
+                  <path
+                    d="M1.5 13.5c.5-2 2-3 4-3s3.5 1 4 3M8.5 10.8c.6-.2 1.3-.3 2-.3 2 0 3.5 1 4 3"
+                  /></svg
+                ><span class="ell">Question creation</span
+                ><svg
+                  aria-hidden="true"
+                  width="10"
+                  height="10"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path d="M6 4l4 4-4 4" /></svg
+                ><span class="here">New task</span></span
+              >
+              <span class="grow"></span>
+              <a class="btn ghost icon sm" href="Main.dc.html" aria-label="Close"
+                ><svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" /></svg
+              ></a>
+            </div>
+
+            <div class="nt-ed">
+              <textarea
+                class="nt-ta"
+                rows="6"
+                aria-label="What should the agent do?"
+                placeholder="What should the agent do? Type @ to mention a file or a teammate."
+                value="{{desc}}"
+                onChange="{{onDesc}}"
+              ></textarea>
+              <div class="reads t12 muted">
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path d="M4 2.5h5.5L12 5v8.5H4z" />
+                  <path d="M6 8h4M6 10.5h4" /></svg
+                >Also reads the brief and Pair's notes.
+              </div>
+            </div>
+
+            <div class="nt-chips" role="group" aria-label="Task properties">
+              <span class="anchor">
+                <button
+                  type="button"
+                  class="propchip"
+                  aria-haspopup="listbox"
+                  aria-expanded="{{ownerOpen}}"
+                  aria-label="Owner: {{ownerName}}"
+                  title="Owner"
+                  onClick="{{toggleOwner}}"
+                >
+                  <span class="av s16 {{ownerAv}}" aria-hidden="true">{{ownerIni}}</span
+                  >{{ownerLabel}}<svg
+                    class="chev"
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <sc-if value="{{ownerOpen}}" hint-placeholder-val="{{false}}">
+                  <div class="pop owner sheetable" role="listbox" aria-label="Owner">
+                    <div class="pophead">
+                      <button
+                        type="button"
+                        class="btn ghost icon sm"
+                        aria-label="Back"
+                        onClick="{{closePop}}"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                        >
+                          <path d="M10 4L6 8l4 4" />
+                        </svg></button
+                      ><span class="w6">Owner</span>
+                    </div>
+                    <div class="psearch">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <circle cx="7" cy="7" r="4.5" />
+                        <path d="M10.5 10.5l3 3" /></svg
+                      ><input type="text" placeholder="Assign to…" aria-label="Search members" />
+                    </div>
+                    <div
+                      class="prow {{oc_me}}"
+                      role="option"
+                      aria-selected="{{os_me}}"
+                      onClick="{{set_me}}"
+                    >
+                      <span class="av r" aria-hidden="true">R</span><span class="ell">Me</span
+                      ><span class="sub">{{sub_me}}</span
+                      ><svg
+                        class="ck {{ok_me}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{oc_k}}"
+                      role="option"
+                      aria-selected="{{os_k}}"
+                      onClick="{{set_k}}"
+                    >
+                      <span class="av k" aria-hidden="true">K</span><span class="ell">Kousik</span
+                      ><span class="sub">{{sub_k}}</span
+                      ><svg
+                        class="ck {{ok_k}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{oc_h}}"
+                      role="option"
+                      aria-selected="{{os_h}}"
+                      onClick="{{set_h}}"
+                    >
+                      <span class="av h" aria-hidden="true">H</span><span class="ell">Hanad</span
+                      ><span class="sub">{{sub_h}}</span
+                      ><svg
+                        class="ck {{ok_h}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div
+                      class="prow {{oc_a}}"
+                      role="option"
+                      aria-selected="{{os_a}}"
+                      onClick="{{set_a}}"
+                    >
+                      <span class="av a" aria-hidden="true">A</span><span class="ell">Ankur</span
+                      ><span class="sub">{{sub_a}}</span
+                      ><svg
+                        class="ck {{ok_a}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div class="pfoot">
+                      A teammate's task waits until they start it on their account.
+                    </div>
+                  </div>
+                </sc-if>
+              </span>
+
+              <sc-if value="{{isMe}}" hint-placeholder-val="{{true}}">
+                <span class="anchor">
+                  <button
+                    type="button"
+                    class="propchip {{modelCls}}"
+                    aria-haspopup="dialog"
+                    aria-expanded="{{modelOpen}}"
+                    aria-label="Model: {{modelLabel}}"
+                    onClick="{{toggleModel}}"
+                  >
+                    <sc-if value="{{badAccount}}" hint-placeholder-val="{{false}}"
+                      ><svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="var(--error-foreground)"
+                        stroke-width="1.6"
+                      >
+                        <circle cx="8" cy="8" r="6" />
+                        <path d="M8 4.8v3.6M8 11h.01" /></svg></sc-if
+                    ><sc-if value="{{chipClaude}}" hint-placeholder-val="{{true}}"
+                      ><svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                      >
+                        <path d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" /></svg></sc-if
+                    ><sc-if value="{{chipCodex}}" hint-placeholder-val="{{false}}"
+                      ><svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.4"
+                      >
+                        <path d="M8 2l5 3v6l-5 3-5-3V5z" />
+                        <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" /></svg></sc-if
+                    >{{modelLabel}}<svg
+                      class="chev"
+                      aria-hidden="true"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                    >
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </button>
+                  <sc-if value="{{modelOpen}}" hint-placeholder-val="{{false}}">
+                    <div class="pop model sheetable" role="dialog" aria-label="Choose a model">
+                      <div class="pophead">
+                        <button
+                          type="button"
+                          class="btn ghost icon sm"
+                          aria-label="Back"
+                          onClick="{{closePop}}"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                          >
+                            <path d="M10 4L6 8l4 4" />
+                          </svg></button
+                        ><span class="w6">Model</span>
+                      </div>
+                      <div
+                        class="rail"
+                        role="tablist"
+                        aria-orientation="vertical"
+                        aria-label="Provider"
+                      >
+                        <button
+                          type="button"
+                          class="prov"
+                          role="tab"
+                          aria-selected="{{provClaude}}"
+                          aria-label="Claude"
+                          title="Claude"
+                          onClick="{{showClaude}}"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                          >
+                            <path d="M8 2.5v11M3.2 5.2l9.6 5.6M3.2 10.8l9.6-5.6" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="prov"
+                          role="tab"
+                          aria-selected="{{provCodex}}"
+                          aria-label="Codex"
+                          title="Codex"
+                          onClick="{{showCodex}}"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                          >
+                            <path d="M8 2l5 3v6l-5 3-5-3V5z" />
+                            <path d="M6 6.8L7.6 8 6 9.2M8.6 9.4h1.6" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div class="mlist" role="listbox" aria-label="Models">
+                        <div class="psearch">
+                          <svg
+                            aria-hidden="true"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          >
+                            <circle cx="7" cy="7" r="4.5" />
+                            <path d="M10.5 10.5l3 3" /></svg
+                          ><input
+                            type="text"
+                            placeholder="Search {{provName}} models"
+                            aria-label="Search models"
+                          />
+                        </div>
+                        <sc-if value="{{provClaude}}" hint-placeholder-val="{{true}}">
+                          <div
+                            class="prow {{mc_opus}}"
+                            role="option"
+                            aria-selected="{{ms_opus}}"
+                            onClick="{{pick_opus}}"
+                          >
+                            <span class="ell">Opus 5.5</span
+                            ><svg
+                              class="ck {{mk_opus}}"
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          </div>
+                          <div
+                            class="prow {{mc_sonnet}}"
+                            role="option"
+                            aria-selected="{{ms_sonnet}}"
+                            onClick="{{pick_sonnet}}"
+                          >
+                            <span class="ell">Sonnet 5.5</span
+                            ><svg
+                              class="ck {{mk_sonnet}}"
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          </div>
+                          <div
+                            class="prow {{mc_haiku}}"
+                            role="option"
+                            aria-selected="{{ms_haiku}}"
+                            onClick="{{pick_haiku}}"
+                          >
+                            <span class="ell">Haiku 4.5</span
+                            ><svg
+                              class="ck {{mk_haiku}}"
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{provCodex}}" hint-placeholder-val="{{false}}">
+                          <div
+                            class="prow {{mc_gpt}}"
+                            role="option"
+                            aria-selected="{{ms_gpt}}"
+                            onClick="{{pick_gpt}}"
+                          >
+                            <span class="ell">GPT-5.5</span
+                            ><svg
+                              class="ck {{mk_gpt}}"
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          </div>
+                          <div
+                            class="prow {{mc_luna}}"
+                            role="option"
+                            aria-selected="{{ms_luna}}"
+                            onClick="{{pick_luna}}"
+                          >
+                            <span class="ell">Luna</span
+                            ><svg
+                              class="ck {{mk_luna}}"
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.8"
+                            >
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          </div>
+                        </sc-if>
+                        <div class="pfoot">Runs on your {{provName}} account</div>
+                      </div>
+                    </div>
+                  </sc-if>
+                </span>
+              </sc-if>
+              <sc-if value="{{notMe}}" hint-placeholder-val="{{false}}"
+                ><span
+                  class="mchip"
+                  title="The owner chooses the model and account when they start it"
+                  >{{ownerName}} picks the model</span
+                ></sc-if
+              >
+
+              <span class="anchor">
+                <button
+                  type="button"
+                  class="propchip"
+                  aria-haspopup="listbox"
+                  aria-expanded="{{baseOpen}}"
+                  aria-label="Start from: {{baseLabel}}"
+                  title="Start from"
+                  onClick="{{toggleBase}}"
+                >
+                  <sc-if value="{{onMain}}" hint-placeholder-val="{{true}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                    >
+                      <circle cx="4.5" cy="3.5" r="1.6" />
+                      <circle cx="4.5" cy="12.5" r="1.6" />
+                      <circle cx="11.5" cy="5" r="1.6" />
+                      <path d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6" /></svg></sc-if
+                  ><sc-if value="{{onPr}}" hint-placeholder-val="{{false}}"
+                    ><svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="var(--success-foreground)"
+                      stroke-width="1.6"
+                    >
+                      <circle cx="4.5" cy="3.8" r="1.8" />
+                      <circle cx="4.5" cy="12.2" r="1.8" />
+                      <circle cx="11.5" cy="12.2" r="1.8" />
+                      <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg></sc-if
+                  >{{baseLabel}}<svg
+                    class="chev"
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  >
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </button>
+                <sc-if value="{{baseOpen}}" hint-placeholder-val="{{false}}">
+                  <div class="pop base sheetable" role="listbox" aria-label="Start from">
+                    <div class="pophead">
+                      <button
+                        type="button"
+                        class="btn ghost icon sm"
+                        aria-label="Back"
+                        onClick="{{closePop}}"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                        >
+                          <path d="M10 4L6 8l4 4" />
+                        </svg></button
+                      ><span class="w6">Start from</span>
+                    </div>
+                    <div class="psearch">
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <circle cx="7" cy="7" r="4.5" />
+                        <path d="M10.5 10.5l3 3" /></svg
+                      ><input
+                        type="text"
+                        placeholder="Search branches and pull requests"
+                        aria-label="Search branches"
+                      />
+                    </div>
+                    <div class="plabel">Base branch</div>
+                    <div
+                      class="prow {{bc_main}}"
+                      role="option"
+                      aria-selected="{{onMain}}"
+                      onClick="{{pick_main}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="var(--muted-foreground)"
+                        stroke-width="1.4"
+                      >
+                        <circle cx="4.5" cy="3.5" r="1.6" />
+                        <circle cx="4.5" cy="12.5" r="1.6" />
+                        <circle cx="11.5" cy="5" r="1.6" />
+                        <path d="M4.5 5.1v5.8M11.5 6.6c0 3-3.5 2.6-6.4 4.6" /></svg
+                      ><span class="ell">main</span><span class="sub">pair-fe, pair-be</span
+                      ><svg
+                        class="ck {{bk_main}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                    <div class="plabel">Continue a pull request</div>
+                    <div
+                      class="prow {{bc_pr}}"
+                      role="option"
+                      aria-selected="{{onPr}}"
+                      onClick="{{pick_pr}}"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="var(--success-foreground)"
+                        stroke-width="1.6"
+                      >
+                        <circle cx="4.5" cy="3.8" r="1.8" />
+                        <circle cx="4.5" cy="12.2" r="1.8" />
+                        <circle cx="11.5" cy="12.2" r="1.8" />
+                        <path d="M4.5 5.6v4.8M11.5 10.4V7.5a2 2 0 0 0-2-2H8" /></svg
+                      ><span class="ell"
+                        >pair-be#482 <span class="sub">Question schema v2</span></span
+                      ><svg
+                        class="ck {{bk_pr}}"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    </div>
+                  </div>
+                </sc-if>
+              </span>
+            </div>
+
+            <sc-if value="{{badAccount}}" hint-placeholder-val="{{false}}">
+              <div class="nt-alert" role="alert">
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="var(--error-foreground)"
+                  stroke-width="1.6"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M8 4.8v3.6M8 11h.01" /></svg
+                ><span class="tx">Your Claude account isn't connected to Pair Cloud.</span
+                ><button type="button" class="btn">Connect Claude</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{theirAccount}}" hint-placeholder-val="{{false}}">
+              <div class="nt-note">
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <circle cx="8" cy="8" r="6" />
+                  <path d="M8 7.2V11M8 5h.01" /></svg
+                ><span
+                  >{{ownerName}} hasn't connected an account to Pair Cloud yet. They'll be asked to
+                  when they start it.</span
+                >
+              </div>
+            </sc-if>
+
+            <div class="df">
+              <span class="note" aria-live="polite"><span class="ell">{{outcome}}</span></span>
+              <a class="btn lg ghost cancel" href="Main.dc.html">Cancel</a>
+              <button type="submit" class="btn lg primary" disabled="{{cantGo}}" onClick="{{go}}">
+                {{cta}}<span class="kbd" aria-hidden="true">⌘↵</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+      // State keys: owner ('me'|'k'|'h'|'a'; a teammate hides the model chip and changes the copy), desc ('' disables the primary button),
+      // model ('opus'|'sonnet'|'haiku'|'gpt'|'luna'), prov (provider tab in the open model picker: 'claude'|'codex'),
+      // base ('main'|'pr482': base branch, or continue pair-be#482), pop (open popover: 'owner'|'model'|'base'),
+      // err ('account': the owner's account isn't connected; blocks Start for me, a note for a teammate).
+      class Component extends DCLogic {
+      renderVals() {
+      const s = Object.assign({"owner": "h"}, this.state || {});
+      const owner = s.owner || 'me';
+      const desc = s.desc === undefined ? 'Add a difficulty tag (easy, medium, hard) that a reviewer sets after reading a drafted question. Store it on the question in schema v2 and show it in the review list.' : s.desc;
+      const model = s.model || 'opus';
+      const models = { opus: ['claude', 'Opus 5.5'], sonnet: ['claude', 'Sonnet 5.5'], haiku: ['claude', 'Haiku 4.5'], gpt: ['codex', 'GPT-5.5'], luna: ['codex', 'Luna'] };
+      const prov = s.prov || models[model][0];
+      const base = s.base || 'main';
+      const pop = s.pop || '';
+      const people = { me: ['Me', 'Rutvik', 'r', 'R'], k: ['Kousik', 'Kousik', 'k', 'K'], h: ['Hanad', 'Hanad', 'h', 'H'], a: ['Ankur', 'Ankur', 'a', 'A'] };
+      const isMe = owner === 'me';
+      const who = people[owner];
+      const provName = prov === 'claude' ? 'Claude' : 'Codex';
+      const modelProvName = models[model][0] === 'claude' ? 'Claude' : 'Codex';
+      const badAccount = isMe && s.err === 'account';
+      const toggle = (k) => () => this.setState({ pop: pop === k ? '' : k });
+      const v = {};
+      Object.keys(people).forEach((id) => {
+      v['oc_' + id] = owner === id ? 'active' : '';
+      v['os_' + id] = owner === id;
+      v['ok_' + id] = owner === id ? 'on' : '';
+      v['set_' + id] = () => this.setState({ owner: id, pop: '' });
+      const off = s.err === 'account' && owner === id;
+      v['sub_' + id] = id === 'me' ? 'Rutvik' + (off ? ' · Not connected' : '') : off ? 'Not connected' : '';
+      });
+      Object.keys(models).forEach((id) => {
+      v['mc_' + id] = model === id ? 'active' : '';
+      v['ms_' + id] = model === id;
+      v['mk_' + id] = model === id ? 'on' : '';
+      v['pick_' + id] = () => this.setState({ model: id, prov: models[id][0], pop: '' });
+      });
+      let outcome;
+      if (!isMe) outcome = who[1] + ' is notified · waits until they start it';
+      else if (badAccount) outcome = 'Connect Claude to start';
+      else outcome = 'Starts now on a cloud machine · ' + (base === 'pr482' ? 'continues pair-be#482' : 'pair-fe, pair-be');
+      return Object.assign(v, {
+      desc: desc,
+      onDesc: (e) => this.setState({ desc: e.target.value }),
+      ownerOpen: pop === 'owner',
+      modelOpen: pop === 'model' && isMe,
+      baseOpen: pop === 'base',
+      toggleOwner: toggle('owner'),
+      toggleModel: toggle('model'),
+      toggleBase: toggle('base'),
+      closePop: () => this.setState({ pop: '' }),
+      ownerName: who[1],
+      ownerLabel: who[0],
+      ownerAv: who[2],
+      ownerIni: who[3],
+      isMe: isMe,
+      notMe: !isMe,
+      modelLabel: modelProvName + ' · ' + models[model][1],
+      modelCls: badAccount ? 'bad' : '',
+      chipClaude: !badAccount && models[model][0] === 'claude',
+      chipCodex: !badAccount && models[model][0] === 'codex',
+      provClaude: prov === 'claude',
+      provCodex: prov === 'codex',
+      showClaude: () => this.setState({ prov: 'claude' }),
+      showCodex: () => this.setState({ prov: 'codex' }),
+      provName: provName,
+      onMain: base === 'main',
+      onPr: base === 'pr482',
+      baseLabel: base === 'pr482' ? 'pair-be#482' : 'main',
+      bc_main: base === 'main' ? 'active' : '',
+      bc_pr: base === 'pr482' ? 'active' : '',
+      bk_main: base === 'main' ? 'on' : '',
+      bk_pr: base === 'pr482' ? 'on' : '',
+      pick_main: () => this.setState({ base: 'main', pop: '' }),
+      pick_pr: () => this.setState({ base: 'pr482', pop: '' }),
+      badAccount: badAccount,
+      theirAccount: !isMe && s.err === 'account',
+      outcome: outcome,
+      cta: isMe ? 'Start' : 'Assign to ' + who[1],
+      cantGo: desc.trim() === '' || badAccount,
+      go: () => { location.href = isMe ? 'Task.dc.html' : 'Main.dc.html'; }
+      });
+      }
+      }
+    </script>
+  </body>
+</html>
