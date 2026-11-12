@@ -278,6 +278,24 @@ it.layer(layer)("space orchestration", (it) => {
         });
       assert.include(yield* refusal(update(kousik, { type: "remind" })), "not-task-creator");
       yield* update(rutvik, { type: "edit", title: "Preview renderer v2" });
+      const send = (actorId: MemberId | undefined) => {
+        const id = commandId("send");
+        return dispatch({
+          type: "message.dispatch",
+          commandId: id,
+          threadId: taskThreadId,
+          ...(actorId === undefined ? {} : { actorId }),
+          messageId: MessageId.make(`message:${id}`),
+          text: "Start please",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: actorId === undefined ? "agent" : "user",
+          creationSource: actorId === undefined ? "mcp" : "web",
+        });
+      };
+      // Before its first turn only the owner starts a task, from a client or over MCP.
+      assert.include(yield* refusal(send(rutvik)), "not-task-owner");
+      assert.include(yield* refusal(send(undefined)), "not-task-owner");
       const reassign = (ownerId: MemberId) =>
         dispatch({
           type: "thread.owner.set",
@@ -304,6 +322,10 @@ it.layer(layer)("space orchestration", (it) => {
         (entry) => (entry.type === "system" ? [entry.line.type] : []),
       );
       assert.deepStrictEqual(lines.slice(-2), ["task-created", "task-handed-back"]);
+
+      // Its new owner starts it; after that anyone's message queues behind the turn.
+      yield* send(rutvik);
+      yield* send(kousik);
     }),
   );
 
@@ -374,7 +396,10 @@ it.layer(layer)("space orchestration", (it) => {
       assert.match(spaceId, /^spc_[0-9a-f]{20}$/);
 
       const outsider = yield* spaces.get(as(hanad), { spaceId });
-      assert.deepStrictEqual(outsider.type === "not_member" ? outsider.requested : null, false);
+      assert.deepStrictEqual(
+        outsider.type === "not_member" ? [outsider.requested, outsider.memberCount] : null,
+        [false, 2],
+      );
       const denied = yield* Effect.flip(
         spaces.post(as(hanad), {
           spaceId,
@@ -397,7 +422,12 @@ it.layer(layer)("space orchestration", (it) => {
       assert.deepStrictEqual(launched, []);
       const notOwner = yield* Effect.flip(spaces.task(as(rutvik), { type: "start", threadId }));
       assert.strictEqual(notOwner.reason, "not-task-owner");
-      yield* spaces.task(as(kousik), { type: "start", threadId });
+      // The owner may reword the description before it goes out as the first message.
+      yield* spaces.task(as(kousik), {
+        type: "start",
+        threadId,
+        text: "Export invoices as CSV, newest first",
+      });
       assert.deepStrictEqual(
         launched.map((input) => [
           input.threadId,
@@ -406,7 +436,15 @@ it.layer(layer)("space orchestration", (it) => {
           input.initialMessage?.text,
           input.actorId,
         ]),
-        [[threadId, true, { type: "cloud", baseRef: "main" }, "Export invoices as CSV", kousik]],
+        [
+          [
+            threadId,
+            true,
+            { type: "cloud", baseRef: "main" },
+            "Export invoices as CSV, newest first",
+            kousik,
+          ],
+        ],
       );
 
       const view = yield* spaces.get(as(kousik), { spaceId, limit: 1 });

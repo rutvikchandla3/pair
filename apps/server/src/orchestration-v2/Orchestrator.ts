@@ -93,6 +93,7 @@ import { modelSwitchSince } from "./modelSwitch.ts";
 import {
   decideSpaceCommand,
   decideTaskCreate,
+  decideTaskMessage,
   nextTaskPlacement,
   spaceRefusal,
 } from "../space/SpaceDecisions.ts";
@@ -15068,6 +15069,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         yield* refuseLocalThread(command, thread);
+        if (thread.space?.kind === "task") {
+          const shell = yield* projectionStore
+            .getThreadShell(command.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            );
+          const refusal = decideTaskMessage({
+            thread,
+            started: (shell?.latestRunId ?? null) !== null,
+            actorId: command.actorId,
+          });
+          if (refusal !== null) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: spaceRefusal(thread.space.spaceId, command.type, refusal),
+            });
+          }
+        }
         const guestSend =
           command.guestMessageId === undefined
             ? undefined

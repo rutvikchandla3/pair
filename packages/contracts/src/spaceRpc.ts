@@ -74,6 +74,7 @@ export const SpaceView = Schema.Union([
     spaceId: SpaceId,
     name: SpaceName,
     ownerId: MemberId,
+    memberCount: NonNegativeInt,
     requested: Schema.Boolean,
     archived: Schema.Boolean,
   }),
@@ -148,11 +149,12 @@ export const SpaceTaskAction = Schema.Union([
     runtimeMode: Schema.optionalKey(RuntimeMode),
     interactionMode: Schema.optionalKey(ProviderInteractionMode),
   }),
-  /** The owner starts it on their own account, with the model they pick. */
+  /** The owner starts it on their own account, with the model they pick; `text` is the first message, the description by default. */
   Schema.Struct({
     type: Schema.Literal("start"),
     threadId: ThreadId,
     modelSelection: Schema.optionalKey(ModelSelection),
+    text: Schema.optionalKey(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("edit"),

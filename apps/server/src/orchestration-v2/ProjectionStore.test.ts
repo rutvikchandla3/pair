@@ -2251,6 +2251,33 @@ it.effect("SQL list older settled threads below a cursor", () =>
     };
     assert.isTrue(ThreadAccess.threadAllows(roster, task!, undefined, alice));
     assert.isFalse(ThreadAccess.threadAllows(roster, task!, undefined, carol));
+    // A room line is the room's activity: its shell moves, so members' unread dots come back.
+    yield* createThread({
+      name: "space-room",
+      settledDay: null,
+      project: "project:space",
+      space: { kind: "room", spaceId },
+    });
+    const postedAt = at(25);
+    yield* store.apply({
+      id: EventId.make("event:older:space-room:post"),
+      type: "space.room-entry",
+      threadId: id("space-room"),
+      occurredAt: postedAt,
+      payload: {
+        type: "post",
+        id: MessageId.make("message:older:space-room:post"),
+        spaceId,
+        authorId: alice,
+        authorKind: "user",
+        text: "Standup moved",
+        mentions: [],
+        pairRequested: false,
+        createdAt: DateTime.formatIso(postedAt),
+      },
+    });
+    assert.deepEqual((yield* store.getThreadShell(id("space-room")))?.updatedAt, postedAt);
+    assert.deepEqual((yield* store.getThread(id("space-room"))).updatedAt, postedAt);
     // A removed member opens nothing, even a team machine or their own thread.
     yield* sql`UPDATE members SET removed_at = ${DateTime.formatIso(now)} WHERE id = ${bob}`;
     assert.deepEqual(yield* pageIds(bob, null), []);

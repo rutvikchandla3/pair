@@ -87,6 +87,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "projectSearch.toggle",
   "usage.open",
   "chiefOfStaff.toggle",
+  "space.new",
+  "space.newTask",
   "theme.select",
   "appearance.cycle",
   "themeEditor.toggle",

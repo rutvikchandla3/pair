@@ -1118,10 +1118,11 @@ export function applyToProjection(
     case "sandbox.git-credential.issued":
     // The `sandbox.updated` before it carries the record.
     case "sandbox.access-changed":
-    // Spaces project into their own tables.
+    // Spaces project into their own tables; a room line is still its room's activity.
     case "space.updated":
-    case "space.room-entry":
       return projection;
+    case "space.room-entry":
+      return base;
   }
 }
 

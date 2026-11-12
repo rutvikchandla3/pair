@@ -362,6 +362,16 @@ export function nextTaskPlacement(
   }
 }
 
+/** Until its first turn, a task's description is its owner's to send; nobody else starts it. */
+export function decideTaskMessage(input: {
+  readonly thread: Pick<OrchestrationV2AppThread, "ownerId" | "space">;
+  readonly started: boolean;
+  readonly actorId: MemberId | undefined;
+}): SpaceRefusal | null {
+  if (input.thread.space?.kind !== "task" || input.started) return null;
+  return input.actorId === input.thread.ownerId ? null : "not-task-owner";
+}
+
 /** A new task: its creator must be a member of a live space, and so must its owner. */
 export function decideTaskCreate(input: {
   readonly space: Space | null;

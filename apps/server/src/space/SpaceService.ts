@@ -131,6 +131,7 @@ const make = Effect.gen(function* () {
           spaceId: space.id,
           name: space.name,
           ownerId: space.ownerId,
+          memberCount: space.members.filter((member) => member.removedAt === null).length,
           requested: space.joinRequests.some((r) => r.memberId === caller.memberId),
           archived: space.archivedAt !== null,
         };
@@ -223,6 +224,7 @@ const make = Effect.gen(function* () {
     caller: SpaceCaller,
     threadId: ThreadId,
     modelSelection: Extract<SpaceTaskAction, { type: "start" }>["modelSelection"],
+    text?: string,
   ) {
     const { shell, placement } = yield* requireTask(threadId);
     const space = yield* requireSpace(placement.spaceId);
@@ -265,7 +267,7 @@ const make = Effect.gen(function* () {
           ...(placement.base.branch === undefined ? {} : { branch: placement.base.branch }),
           ...(placement.base.existingBranch === true ? { existingBranch: true } : {}),
         },
-        initialMessage: { text: placement.description, attachments: [] },
+        initialMessage: { text: text ?? placement.description, attachments: [] },
         createdBy: caller.authorKind === "user" ? "user" : "agent",
         creationSource: caller.authorKind === "user" ? "web" : "mcp",
         actorId: caller.memberId,
@@ -314,7 +316,7 @@ const make = Effect.gen(function* () {
           return { threadId, started: false, sequence: result.sequence };
         }
         case "start":
-          return yield* startTask(caller, input.threadId, input.modelSelection);
+          return yield* startTask(caller, input.threadId, input.modelSelection, input.text);
         case "reassign": {
           const { shell, placement } = yield* requireTask(input.threadId);
           if (actorId !== placement.createdBy && actorId !== shell.ownerId) {
