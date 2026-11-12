@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import {
   makeTest as makeThreadAccess,
   type SandboxAccessEntry,
+  type ThreadAccessChange,
   type ThreadAccessTarget,
 } from "../team/ThreadAccess.ts";
 import { EMPTY_MEMBER_STATE } from "./MemberThreadState.ts";
@@ -399,7 +400,7 @@ describe("providerStreamForViewer", () => {
         [machine, { ownerMemberId: alice, audience: "members", memberIds: new Set() }],
         [other, { ownerMemberId: bob, audience: "members", memberIds: new Set() }],
       ]);
-      const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+      const changes = yield* PubSub.unbounded<ThreadAccessChange>();
       const access = viewerAccessOf(
         makeThreadAccess({ serverOwnerId: owner, machines, changes }),
         bob,

@@ -36,7 +36,7 @@ const setup = Effect.fnUntraced(function* (options: { readonly enforced?: boolea
     [ThreadId.make("thread-shared"), { ownerId: bob, sandboxId: SHARED_SANDBOX }],
     [ThreadId.make("thread-unassigned"), { ownerId: null }],
   ]);
-  const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+  const changes = yield* PubSub.unbounded<ThreadAccess.ThreadAccessChange>();
   const moves = yield* PubSub.unbounded<ThreadAccess.ThreadAccessMove>();
   /** Commits a thread's new owner or machine, as the index does. */
   const move = (threadId: string, after: ThreadAccess.ThreadAccessTarget) => {

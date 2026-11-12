@@ -2,7 +2,6 @@ import {
   type MemberId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
-  type SandboxAccessChange,
   type SandboxId,
   type SpaceMembershipChange,
   type ServerProvider,
@@ -60,8 +59,8 @@ export interface ViewerAccess {
   /** The thread's machine as the index last saw it. */
   readonly sandboxOf: (threadId: ThreadId) => SandboxId | undefined;
   /** The change may have given or taken this member's access. */
-  readonly affectedBy: (change: SandboxAccessChange) => boolean;
-  /** This member gained or lost, say, a space. */
+  readonly affectedBy: (change: ThreadAccess.ThreadAccessChange) => boolean;
+  /** This member gained or lost a machine or a space. */
   readonly namedIn: (change: SpaceMembershipChange) => boolean;
   /** This event moved the thread from this member's reach to elsewhere. */
   readonly lostAt: (sequence: number, threadId: ThreadId) => boolean;
@@ -72,7 +71,7 @@ export interface ViewerAccess {
     threadId: ThreadId,
   ) => Effect.Effect<void, ProjectionStore.ProjectionStoreV2Error>;
   readonly subscribeChanges: Effect.Effect<
-    PubSub.Subscription<SandboxAccessChange>,
+    PubSub.Subscription<ThreadAccess.ThreadAccessChange>,
     never,
     Scope.Scope
   >;
@@ -98,7 +97,8 @@ export function viewerAccessOf(
       return target === undefined || allows(target);
     },
     sandboxOf: (threadId) => access.threadTarget(threadId)?.sandboxId,
-    affectedBy: (change) => change.audienceChanged || namedIn(change),
+    affectedBy: (change) =>
+      ("audienceChanged" in change && change.audienceChanged) || namedIn(change),
     namedIn,
     lostAt: (sequence, threadId) => {
       const move = access.movedAt(threadId, sequence);

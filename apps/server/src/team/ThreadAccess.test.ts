@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   SandboxId,
+  type Space,
   SpaceId,
   type SandboxAccess,
   type SandboxAccessChange,
@@ -569,6 +570,44 @@ describe("ThreadAccess", () => {
       }
     }).pipe(Effect.provide(makeLayer(published)));
   });
+
+  it.effect("reports who joined or left a space once its room reflects it", () =>
+    Effect.gen(function* () {
+      const access = yield* ThreadAccess.ThreadAccess;
+      const index = yield* ThreadAccess.ThreadAccessIndex;
+      const changes = yield* access.changes.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const update = (sequence: number, removedAt: typeof t0 | null) =>
+        index.observeCommitted([
+          {
+            sequence,
+            commandId: null,
+            event: {
+              ...at(`space:${sequence}`),
+              type: "space.updated",
+              payload: {
+                id: spaceId,
+                members: [{ memberId: bob, joinedAt: t0, addedBy: alice, removedAt }],
+              } as unknown as Space,
+              membership:
+                removedAt === null ? { added: [bob], removed: [] } : { added: [], removed: [bob] },
+            },
+          },
+        ]);
+      const bobInRoom = () => access.allowsThread(bob, { ownerId: alice, space: room });
+      yield* update(1, null);
+      assert.isTrue(bobInRoom());
+      yield* update(2, t0);
+      assert.isFalse(bobInRoom());
+      assert.deepStrictEqual(yield* Fiber.join(changes), [
+        { spaceId, added: [bob], removed: [] },
+        { spaceId, added: [], removed: [bob] },
+      ]);
+    }).pipe(Effect.provide(makeLayer([]))),
+  );
 
   it.effect("waits for a commit its read already saw before checking", () =>
     Effect.gen(function* () {

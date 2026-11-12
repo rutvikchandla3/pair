@@ -10,6 +10,7 @@ import type {
   SandboxAccessChange,
   SandboxId,
   SpaceId,
+  SpaceMembershipChange,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -183,9 +184,9 @@ export class ThreadAccessIndex extends Context.Service<
     readonly observeCommitted: (
       events: ReadonlyArray<OrchestrationV2StoredEvent>,
     ) => Effect.Effect<void>;
-    readonly changes: Stream.Stream<SandboxAccessChange>;
+    readonly changes: Stream.Stream<ThreadAccessChange>;
     readonly subscribeChanges: Effect.Effect<
-      PubSub.Subscription<SandboxAccessChange>,
+      PubSub.Subscription<ThreadAccessChange>,
       never,
       Scope.Scope
     >;
@@ -220,7 +221,7 @@ export const layerIndex = Layer.effect(
     }
     const threads = new Map<ThreadId, ThreadAccessTarget>();
     let tracking = false;
-    const changes = yield* PubSub.unbounded<SandboxAccessChange>();
+    const changes = yield* PubSub.unbounded<ThreadAccessChange>();
     const lastMoves = new Map<ThreadId, ThreadAccessMove>();
     const moves = yield* PubSub.unbounded<ThreadAccessMove>();
     return ThreadAccessIndex.of({
@@ -264,6 +265,9 @@ export const layerIndex = Layer.effect(
             entries.set(event.payload.id, entryOf(event.payload));
           } else if (event.type === "space.updated") {
             spaceMembers.set(event.payload.id, new Set(spaceActiveMemberIds(event.payload)));
+            if (event.membership !== undefined) {
+              yield* PubSub.publish(changes, { spaceId: event.payload.id, ...event.membership });
+            }
           } else if (event.type === "sandbox.access-changed") {
             yield* PubSub.publish(changes, event.payload);
           } else if (tracking && isThreadPayloadEvent(event)) {
@@ -330,10 +334,13 @@ export class ThreadAccess extends Context.Service<
      * the database runs this after reading and before checking what it read.
      */
     readonly caughtUp: Effect.Effect<void>;
-    /** One item per committed `sandbox.access-changed`, after `allowsSandbox` reflects it. */
-    readonly changes: Stream.Stream<SandboxAccessChange>;
+    /**
+     * One item per committed `sandbox.access-changed` or space membership change, after the
+     * checks reflect it.
+     */
+    readonly changes: Stream.Stream<ThreadAccessChange>;
     readonly subscribeChanges: Effect.Effect<
-      PubSub.Subscription<SandboxAccessChange>,
+      PubSub.Subscription<ThreadAccessChange>,
       never,
       Scope.Scope
     >;
@@ -463,12 +470,17 @@ export const resolveThreadTarget = (
     : Effect.succeed(known);
 };
 
+/** Who gained or lost a machine or a space. */
+export type ThreadAccessChange =
+  | SandboxAccessChange
+  | (SpaceMembershipChange & { readonly spaceId: SpaceId });
+
 export interface ThreadAccessTestOptions {
   readonly serverOwnerId: MemberId;
   readonly machines?: ReadonlyMap<SandboxId, SandboxAccessEntry>;
   readonly threads?: ReadonlyMap<ThreadId, ThreadAccessTarget>;
   readonly spaceMembers?: ReadonlyMap<SpaceId, ReadonlySet<MemberId>>;
-  readonly changes?: PubSub.PubSub<SandboxAccessChange>;
+  readonly changes?: PubSub.PubSub<ThreadAccessChange>;
   readonly moves?: PubSub.PubSub<ThreadAccessMove>;
 }
 
@@ -489,7 +501,7 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
       threadTarget: () => undefined,
       caughtUp: Effect.void,
       changes: Stream.empty,
-      subscribeChanges: Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe),
+      subscribeChanges: Effect.flatMap(PubSub.unbounded<ThreadAccessChange>(), PubSub.subscribe),
       movedAt: () => undefined,
       moves: Stream.empty,
       subscribeMoves: Effect.flatMap(PubSub.unbounded<ThreadAccessMove>(), PubSub.subscribe),
@@ -538,7 +550,7 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
     changes: changes === undefined ? Stream.empty : Stream.fromPubSub(changes),
     subscribeChanges:
       changes === undefined
-        ? Effect.flatMap(PubSub.unbounded<SandboxAccessChange>(), PubSub.subscribe)
+        ? Effect.flatMap(PubSub.unbounded<ThreadAccessChange>(), PubSub.subscribe)
         : PubSub.subscribe(changes),
     movedAt: () => undefined,
     moves: moves === undefined ? Stream.empty : Stream.fromPubSub(moves),
