@@ -133,6 +133,7 @@ const accessTo = (opens: ReadonlyArray<SandboxId>): ViewerAccess => {
     mayAllowThreadId: () => true,
     sandboxOf: () => undefined,
     affectedBy: () => true,
+    namedIn: () => true,
     lostAt: () => false,
     accessChanges: Stream.empty,
     caughtUp: Effect.void,

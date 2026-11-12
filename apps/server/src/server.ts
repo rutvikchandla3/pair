@@ -157,6 +157,8 @@ import * as CloudMoveLaunch from "./cloudMove/CloudMoveLaunch.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffHost from "./chiefOfStaff/ChiefOfStaffHost.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
+import * as SpaceService from "./space/SpaceService.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as StagedCloudImports from "./cloudMove/StagedCloudImports.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as MirrorCheckpointReader from "./sandbox/mirror/MirrorCheckpointReader.ts";
@@ -1034,6 +1036,10 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   // One voice session per member, shared by all of a member's connections.
   Layer.provide(ChiefOfStaffVoice.layer.pipe(Layer.provide(ChiefOfStaffHost.layer))),
+  // Spaces for WebSocket clients and /mcp agents.
+  Layer.provide(
+    SpaceService.layer.pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, IdAllocator.layer))),
+  ),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

@@ -73,6 +73,18 @@ import {
   ChiefOfStaffStartResult,
   ChiefOfStaffVoiceList,
 } from "./chiefOfStaff.ts";
+import {
+  SpaceError,
+  SpaceGetInput,
+  SpaceListResult,
+  SpaceMutation,
+  SpaceMutationResult,
+  SpacePostInput,
+  SpacePostResult,
+  SpaceTaskAction,
+  SpaceTaskResult,
+  SpaceView,
+} from "./spaceRpc.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -588,6 +600,11 @@ export const WS_METHODS = {
   chiefOfStaffStop: "chiefOfStaff.stop",
   chiefOfStaffSubscribe: "chiefOfStaff.subscribe",
   chiefOfStaffListVoices: "chiefOfStaff.listVoices",
+  spacesList: "spaces.list",
+  spacesGet: "spaces.get",
+  spacesMutate: "spaces.mutate",
+  spacesPost: "spaces.post",
+  spacesTask: "spaces.task",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -968,6 +985,38 @@ const WsChiefOfStaffSubscribeRpc = Rpc.make(WS_METHODS.chiefOfStaffSubscribe, {
 const WsChiefOfStaffListVoicesRpc = Rpc.make(WS_METHODS.chiefOfStaffListVoices, {
   success: ChiefOfStaffVoiceList,
   error: Schema.Union([ChiefOfStaffError, EnvironmentAuthorizationError]),
+});
+
+const spaceRpcError = Schema.Union([SpaceError, EnvironmentAuthorizationError]);
+
+/** The caller's spaces, archived ones included. */
+const WsSpacesListRpc = Rpc.make(WS_METHODS.spacesList, {
+  success: SpaceListResult,
+  error: spaceRpcError,
+});
+
+const WsSpacesGetRpc = Rpc.make(WS_METHODS.spacesGet, {
+  payload: SpaceGetInput,
+  success: SpaceView,
+  error: spaceRpcError,
+});
+
+const WsSpacesMutateRpc = Rpc.make(WS_METHODS.spacesMutate, {
+  payload: SpaceMutation,
+  success: SpaceMutationResult,
+  error: spaceRpcError,
+});
+
+const WsSpacesPostRpc = Rpc.make(WS_METHODS.spacesPost, {
+  payload: SpacePostInput,
+  success: SpacePostResult,
+  error: spaceRpcError,
+});
+
+const WsSpacesTaskRpc = Rpc.make(WS_METHODS.spacesTask, {
+  payload: SpaceTaskAction,
+  success: SpaceTaskResult,
+  error: spaceRpcError,
 });
 
 const WsPeerLinksLinkRpc = Rpc.make(WS_METHODS.peerLinksLink, {
@@ -2459,6 +2508,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsChiefOfStaffStopRpc,
   WsChiefOfStaffSubscribeRpc,
   WsChiefOfStaffListVoicesRpc,
+  WsSpacesListRpc,
+  WsSpacesGetRpc,
+  WsSpacesMutateRpc,
+  WsSpacesPostRpc,
+  WsSpacesTaskRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

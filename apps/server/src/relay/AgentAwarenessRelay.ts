@@ -139,6 +139,8 @@ function shouldPublishAgentAwarenessEvent(event: OrchestrationV2DomainEvent): bo
     case "sandbox.updated":
     case "sandbox.git-credential.issued":
     case "sandbox.access-changed":
+    case "space.updated":
+    case "space.room-entry":
       return false;
   }
 }

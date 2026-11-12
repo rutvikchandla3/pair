@@ -5,7 +5,14 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { MemberId, ProjectId, ProviderInstanceId, SandboxId, ThreadId } from "@t3tools/contracts";
+import {
+  MemberId,
+  ProjectId,
+  ProviderInstanceId,
+  SandboxId,
+  SpaceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SandboxAccessChange } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -135,7 +142,24 @@ describe("shell events for a member on a cloud-only server", () => {
   // A provider-native subagent: on the machine, but with no machine row.
   const childId = ThreadId.make("child");
   const onMachine = { sandboxId, ownerId: alice };
+  const spaceId = SpaceId.make("spc_0123456789abcdef0123");
+  const roomId = ThreadId.make("room");
+  const bobsTaskId = ThreadId.make("bobs-task");
+  const alicesTaskId = ThreadId.make("alices-task");
+  const inSpace = (kind: "room" | "task", ownerId: MemberId) => ({
+    ownerId,
+    space: { spaceId, kind },
+  });
+  const spaceThreads = [
+    [roomId, inSpace("room", alice)],
+    [bobsTaskId, inSpace("task", bob)],
+    [alicesTaskId, inSpace("task", alice)],
+  ] as const;
   const shells = new Map([
+    ...spaceThreads.map(
+      ([id, target]) =>
+        [id, shellFixture({ id, ...target } as Partial<OrchestrationV2ThreadShell>)] as const,
+    ),
     [ownerId, shellFixture({ id: ownerId, ...onMachine })],
     [forkId, shellFixture({ id: forkId, ...onMachine })],
     [childId, shellFixture({ id: childId, ...onMachine })],
@@ -149,8 +173,14 @@ describe("shell events for a member on a cloud-only server", () => {
     memberIds: ReadonlyArray<MemberId>,
     localOwner: MemberId | null = carol,
     moves: ReadonlyArray<ThreadAccess.ThreadAccessMove> = [],
+    spaceMembers: ReadonlyArray<MemberId> = [],
   ) => {
-    const roster = { cloudOnly: true, serverOwnerId: alice, isActive: () => true };
+    const roster = {
+      cloudOnly: true,
+      serverOwnerId: alice,
+      isActive: () => true,
+      isSpaceMember: (_spaceId: SpaceId, member: MemberId) => spaceMembers.includes(member),
+    };
     const entry = { ownerMemberId: alice, audience, memberIds: new Set(memberIds) };
     const entries = new Map([[sandboxId, entry]]);
     const threads = new Map<ThreadId, ThreadAccess.ThreadAccessTarget>([
@@ -158,6 +188,7 @@ describe("shell events for a member on a cloud-only server", () => {
       [forkId, onMachine],
       [childId, onMachine],
       [localId, { ownerId: localOwner }],
+      ...spaceThreads,
     ]);
     const allowsThread = (member: MemberId, thread: ThreadAccess.ThreadAccessTarget) =>
       ThreadAccess.threadAllows(
@@ -225,6 +256,7 @@ describe("shell events for a member on a cloud-only server", () => {
         ],
       ]),
       (id) => [childId, localId].filter((threadId) => access.sandboxOf(threadId) === id),
+      (id) => (id === spaceId ? [bobsTaskId, alicesTaskId] : []),
     );
     const revocable = accessChangedThreadIds(expanded);
     return coalesceShellApplicationEvents(expanded).flatMap((event) => {
@@ -263,6 +295,30 @@ describe("shell events for a member on a cloud-only server", () => {
     "%s: re-sends or removes the machine's threads",
     (_name, memberId, [audience, members], change, expected) => {
       expect(sent(accessOf(memberId, audience, members), [changed(change)])).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["joins", bob, [alice, bob], { added: [bob], removed: [] }, "updated", "updated"],
+    // A task Bob owns stays his after he leaves.
+    ["leaves", bob, [alice], { added: [], removed: [bob] }, "removed", "updated"],
+    ["someone else joins", carol, [alice, bob], { added: [bob], removed: [] }, null, null],
+  ] as const)(
+    "%s a space: sends or removes its room and tasks",
+    (_name, memberId, members, membership, room, tasks) => {
+      const event = stored(10, {
+        threadId: roomId,
+        type: "space.updated",
+        payload: { id: spaceId, roomThreadId: roomId },
+        membership,
+      });
+      const expected = (kind: "updated" | "removed" | null, threadId: ThreadId) =>
+        kind === null ? [] : [[`thread.${kind}`, threadId]];
+      expect(sent(accessOf(memberId, "members", [], carol, [], members), [event])).toEqual([
+        ...expected(room, roomId),
+        ...expected(tasks, bobsTaskId),
+        ...expected(room, alicesTaskId),
+      ]);
     },
   );
 

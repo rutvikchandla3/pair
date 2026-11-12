@@ -56,6 +56,8 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
       "not_owner",
       "inactive_member",
       "not_owner_to_assign",
+      "space_room",
+      "space_task_owner_only",
     ]),
   },
 ) {
@@ -73,6 +75,10 @@ export class ThreadMessageIntakeForbiddenError extends Schema.TaggedError<Thread
         return "Threads can only be shared with active team members.";
       case "not_owner_to_assign":
         return "Only the owner can assign this thread.";
+      case "space_room":
+        return "A space's room takes posts, not thread commands.";
+      case "space_task_owner_only":
+        return "Only the task's owner can change its model.";
     }
   }
 }
@@ -145,10 +151,52 @@ const assertMayAssign = Effect.fn("ThreadMessageIntake.assertMayAssign")(functio
   });
 });
 
+/** Generic commands that would change a room behind its space, or a task's model. */
+const SPACE_GUARDED_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
+  "message.dispatch",
+  "thread.metadata.update",
+  "thread.owner.set",
+  "thread.archive",
+  "thread.unarchive",
+  "thread.delete",
+  "thread.model-selection.set",
+  "thread.runtime-mode.set",
+  "thread.interaction-mode.set",
+  "provider.switch",
+]);
+
+/**
+ * Spaces' rules for generic commands: a room changes only through space commands, and a task's
+ * model is its owner's. The Orchestrator checks that a task's new owner is in its space.
+ */
+const assertSpaceRules = Effect.fn("ThreadMessageIntake.assertSpaceRules")(function* (
+  command: OrchestrationV2Command,
+) {
+  if (!SPACE_GUARDED_COMMANDS.has(command.type) || !("threadId" in command)) return;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const shell = yield* threads.getThreadShell(command.threadId);
+  const space = shell?.space;
+  if (shell === null || space === undefined) return;
+  const forbid = (reason: ThreadMessageIntakeForbiddenError["reason"], memberId: MemberId) =>
+    new ThreadMessageIntakeForbiddenError({ threadId: command.threadId, memberId, reason });
+  const actorId = "actorId" in command ? command.actorId : undefined;
+  if (space.kind === "room") {
+    return yield* forbid("space_room", actorId ?? shell.ownerId ?? MemberId.make("unknown"));
+  }
+  if (
+    (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+    actorId !== undefined &&
+    actorId !== shell.ownerId
+  ) {
+    return yield* forbid("space_task_owner_only", actorId);
+  }
+});
+
 /** Team permissions the orchestrator cannot see; it only records who acted. */
 const assertTeamPermission = Effect.fn("ThreadMessageIntake.assertTeamPermission")(function* (
   command: OrchestrationV2Command,
 ) {
+  yield* assertSpaceRules(command);
   const team = yield* TeamState.TeamState;
   if (command.type === "thread.owner.set") {
     if (!(yield* team.isActive(command.ownerId))) {

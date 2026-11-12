@@ -165,6 +165,16 @@ describe("RPC authorization scopes", () => {
     expect(MEMBER_SCOPES).not.toContain(AuthSettingsWriteScope);
   });
 
+  it("lets members read spaces and write to them with orchestration operate", () => {
+    for (const method of [WS_METHODS.spacesList, WS_METHODS.spacesGet]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [WS_METHODS.spacesMutate, WS_METHODS.spacesPost, WS_METHODS.spacesTask]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(clientRpcRequiredScopes(method, {})).toEqual([AuthOrchestrationOperateScope]);
+    }
+  });
+
   it("keeps draining, which holds every member's new cloud turns, admin only", () => {
     expect(MEMBER_SCOPES).not.toContain(AuthEnvironmentMaintainScope);
     expect(ADMIN_SCOPES).toContain(AuthEnvironmentMaintainScope);

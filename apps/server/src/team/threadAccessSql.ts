@@ -15,7 +15,11 @@ export const threadAllowsSql = (
   return sql`(EXISTS (
   SELECT 1 FROM members access_reader
   WHERE access_reader.id = ${memberId} AND access_reader.removed_at IS NULL
-) AND CASE
+) AND (EXISTS (
+  SELECT 1 FROM orchestration_v2_projection_space_members access_space
+  WHERE access_space.space_id = json_extract(${t}.payload_json, '$.space.spaceId')
+    AND access_space.member_id = ${memberId}
+) OR (json_extract(${t}.payload_json, '$.space.kind') IS NOT 'room' AND CASE
   WHEN json_extract(${t}.payload_json, '$.sandboxId') IS NULL
     THEN COALESCE(json_extract(${t}.payload_json, '$.ownerId') = ${memberId}, 1)
   ELSE COALESCE(
@@ -33,5 +37,5 @@ export const threadAllowsSql = (
     ),
     COALESCE(json_extract(${t}.payload_json, '$.ownerId'), ${serverOwnerId}) = ${memberId}
   )
-END)`;
+END)))`;
 };

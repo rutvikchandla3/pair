@@ -6,6 +6,7 @@ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as CloudMoves from "./cloudMove/CloudMoves.ts";
 import * as ChiefOfStaffVoice from "./chiefOfStaff/ChiefOfStaffVoice.ts";
+import * as SpaceService from "./space/SpaceService.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1304,9 +1305,30 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       );
     });
 
+    const tasksBySpace = Effect.fn("ws.orchestrationV2.tasksBySpace")(function* (
+      events: ReadonlyArray<ShellApplicationEvent>,
+    ) {
+      const spaceIds = new Set(
+        events.flatMap((stored) =>
+          "aggregateKind" in stored || stored.event.spaceId === undefined
+            ? []
+            : [stored.event.spaceId],
+        ),
+      );
+      return new Map(
+        yield* Effect.forEach(spaceIds, (spaceId) =>
+          projections.listSpaceTaskThreadIds(spaceId).pipe(
+            Effect.orElseSucceed(() => []),
+            Effect.map((threadIds) => [spaceId, threadIds] as const),
+          ),
+        ),
+      );
+    });
+
     const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
       events: ReadonlyArray<ShellApplicationEvent>,
     ) {
+      const spaceTasks = yield* tasksBySpace(events);
       const expanded = expandSandboxShellEvents(
         events,
         yield* threadsBySandbox(events),
@@ -1316,6 +1338,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             : Array.from(subagentThreadIds, (id) => ThreadId.make(id)).filter(
                 (threadId) => access.sandboxOf(threadId) === sandboxId,
               ),
+        (spaceId) => spaceTasks.get(spaceId) ?? [],
       );
       const coalesced = coalesceShellApplicationEvents(expanded);
       const threadIds = coalesced.flatMap((stored) =>
@@ -1681,6 +1704,8 @@ export const layerWsRpc = (
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const cloudMoves = yield* CloudMoves.CloudMoves;
       const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
+      const spaces = yield* SpaceService.SpaceService;
+      const spaceCaller = { memberId: currentSession.memberId, authorKind: "user" as const };
       const chiefOfStaffCaller = {
         memberId: currentSession.memberId,
         scopes: currentSession.scopes,
@@ -3092,6 +3117,11 @@ export const layerWsRpc = (
         [WS_METHODS.chiefOfStaffSubscribe]: (input) =>
           chiefOfStaff.subscribe(chiefOfStaffCaller, input),
         [WS_METHODS.chiefOfStaffListVoices]: () => chiefOfStaff.listVoices,
+        [WS_METHODS.spacesList]: () => spaces.list(spaceCaller),
+        [WS_METHODS.spacesGet]: (input) => spaces.get(spaceCaller, input),
+        [WS_METHODS.spacesMutate]: (input) => spaces.mutate(spaceCaller, input),
+        [WS_METHODS.spacesPost]: (input) => spaces.post(spaceCaller, input),
+        [WS_METHODS.spacesTask]: (input) => spaces.task(spaceCaller, input),
         [WS_METHODS.threadMovePreview]: (input) => cloudMoves.preview(input),
         [WS_METHODS.threadMoveToCloud]: (input) =>
           cloudMoves.continueInCloud({
@@ -4038,6 +4068,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const cloudMoves = yield* CloudMoves.CloudMoves;
     const chiefOfStaff = yield* ChiefOfStaffVoice.ChiefOfStaffVoice;
+    const spaces = yield* SpaceService.SpaceService;
     const projections = yield* ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -4142,6 +4173,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(CloudMoves.CloudMoves, cloudMoves)),
               Layer.provide(Layer.succeed(ChiefOfStaffVoice.ChiefOfStaffVoice, chiefOfStaff)),
+              Layer.provide(Layer.succeed(SpaceService.SpaceService, spaces)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(ProjectionStoreV2, projections)),
               Layer.provide(

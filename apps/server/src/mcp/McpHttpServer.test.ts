@@ -1216,7 +1216,12 @@ it.effect("lets an agent read another session only when everyone who can open it
     Effect.gen(function* () {
       const ada = MemberId.make("member-ada");
       const grace = MemberId.make("member-grace");
-      const roster = { cloudOnly: true, serverOwnerId: ada, isActive: () => true };
+      const roster = {
+        cloudOnly: true,
+        serverOwnerId: ada,
+        isActive: () => true,
+        isSpaceMember: () => false,
+      };
       const machines = new Map<SandboxId, ThreadAccess.SandboxAccessEntry>([
         [
           SandboxId.make("sbx_00000000000000000001"),

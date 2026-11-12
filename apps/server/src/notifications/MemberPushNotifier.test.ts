@@ -13,6 +13,8 @@ import {
   ProviderInstanceId,
   RunId,
   SandboxId,
+  type Space,
+  SpaceId,
   type TeamImageBuild,
   TeamImageBuildId,
   ComputeDriverId,
@@ -45,6 +47,8 @@ const LATER = "2099-01-01T00:00:00.000Z";
 const THREAD_ID = ThreadId.make("thread-1");
 const RUN_ID = RunId.make("run-1");
 const ENVIRONMENT_ID = EnvironmentId.make("env-1");
+const SPACE_ID = SpaceId.make("spc_0123456789abcdef0123");
+const ROOM_ID = ThreadId.make("thread-room");
 const INSTANCE_ID = ProviderInstanceId.make("codex");
 
 const member = (id: string, name: string, isOwner = false): MemberRecord => ({
@@ -409,6 +413,122 @@ describe("MemberPushNotifier", () => {
       assert.deepStrictEqual(harness.recipients(), [token(CAROL)]);
       assert.strictEqual(harness.requests[0]?.[0]?.title, "Assigned to you");
       assert.deepStrictEqual(harness.urls, ["http://127.0.0.1:4010/push"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes a space task's assignment to its owner and a Remind only to them", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({});
+      const task = (change: { readonly remindedAt?: string } = {}) =>
+        appThread({
+          ownerId: CAROL.id,
+          space: {
+            kind: "task",
+            spaceId: SPACE_ID,
+            createdBy: ALICE.id,
+            description: "Fix it",
+            base: { baseRef: "main" },
+            ...change,
+          },
+        });
+      const at = DateTime.makeUnsafe(NOW);
+      yield* harness.emit({
+        id: EventId.make("e-task"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: at,
+        payload: task(),
+      });
+      yield* harness.emit({
+        id: EventId.make("e-remind"),
+        type: "thread.metadata-updated",
+        threadId: THREAD_ID,
+        occurredAt: at,
+        payload: task({ remindedAt: NOW }),
+      });
+      assert.deepStrictEqual(
+        harness.requests.flatMap((batch) => batch.map((m) => [m.to, m.title])),
+        [
+          [token(CAROL), "Assigned to you"],
+          [token(CAROL), "Alice reminded you"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("pushes a new space to its added members and a mention only to the named member", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({});
+      const at = DateTime.makeUnsafe(NOW);
+      const space: Space = {
+        id: SPACE_ID,
+        roomThreadId: ROOM_ID,
+        name: "Billing",
+        brief: "Invoices",
+        projectId: ProjectId.make("project-1"),
+        ownerId: ALICE.id,
+        members: [ALICE, BOB, CAROL].map((record) => ({
+          memberId: record.id,
+          joinedAt: NOW,
+          addedBy: ALICE.id,
+          removedAt: null,
+        })),
+        joinRequests: [],
+        pairBilling: { type: "team" },
+        createdBy: ALICE.id,
+        createdAt: NOW,
+        updatedAt: NOW,
+        archivedAt: null,
+        archivedBy: null,
+      };
+      yield* harness.emit({
+        id: EventId.make("e-space"),
+        type: "space.updated",
+        threadId: ROOM_ID,
+        occurredAt: at,
+        payload: space,
+      });
+      yield* harness.emit({
+        id: EventId.make("e-created"),
+        type: "space.room-entry",
+        threadId: ROOM_ID,
+        occurredAt: at,
+        payload: {
+          type: "system",
+          id: MessageId.make("line-1"),
+          spaceId: SPACE_ID,
+          actorId: ALICE.id,
+          line: { type: "created" },
+          createdAt: NOW,
+        },
+      });
+      yield* harness.emit({
+        id: EventId.make("e-post"),
+        type: "space.room-entry",
+        threadId: ROOM_ID,
+        occurredAt: at,
+        payload: {
+          type: "post",
+          id: MessageId.make("post-1"),
+          spaceId: SPACE_ID,
+          authorId: BOB.id,
+          authorKind: "user",
+          text: "Carol, can you look?",
+          mentions: [{ type: "member", memberId: CAROL.id }, { type: "pair" }],
+          pairRequested: true,
+          createdAt: NOW,
+        },
+      });
+      assert.deepStrictEqual(
+        harness.requests.map((batch) => batch.map((m) => [m.to, m.title, m.data.deepLink])),
+        [
+          [
+            [token(BOB), "Alice added you to Billing", `/spaces/env-1/${SPACE_ID}`],
+            [token(CAROL), "Alice added you to Billing", `/spaces/env-1/${SPACE_ID}`],
+          ],
+          [[token(CAROL), "Bob mentioned you in Billing", `/spaces/env-1/${SPACE_ID}`]],
+        ],
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

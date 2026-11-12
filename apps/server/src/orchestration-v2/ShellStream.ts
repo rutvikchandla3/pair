@@ -11,6 +11,7 @@ import type {
   OrchestrationV2StoredEvent,
   ProjectId,
   SandboxId,
+  SpaceId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -469,6 +470,8 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId"> & {
         /** Set on `sandbox.updated`, whose summary every thread sharing the machine shows. */
         readonly sandboxId?: SandboxId;
+        /** Set on a `space.updated` that adds or removes the viewer; the space's tasks follow. */
+        readonly spaceId?: SpaceId;
         /**
          * Set on `sandbox.access-changed`, on an event naming one member and on a move out of the
          * viewer's reach: a thread the viewer can no longer open is removed.
@@ -524,6 +527,7 @@ export function mayShowShellEvent(stored: ApplicationStoredEvent, access: Viewer
   const { event } = stored;
   if (event.type === "sandbox.access-changed") return access.affectedBy(event.payload);
   if (event.type === "sandbox.updated") return access.allowsSandbox(event.payload.id);
+  if (isMembershipChangeFor(event, access)) return true;
   // Names this viewer (`isOtherMembersShellEvent` drops the rest), who knew the thread: an owner
   // change demotes the old owner this way, and the read removes a thread they lost.
   if (isMemberThreadEvent(event)) return true;
@@ -531,6 +535,17 @@ export function mayShowShellEvent(stored: ApplicationStoredEvent, access: Viewer
   return isThreadPayloadEvent(event)
     ? access.allows(event.payload) || access.lostAt(stored.sequence, event.threadId)
     : access.mayAllowThreadId(event.threadId);
+}
+
+function isMembershipChangeFor(
+  event: OrchestrationV2StoredEvent["event"],
+  access: ViewerAccess | undefined,
+): event is Extract<OrchestrationV2StoredEvent["event"], { readonly type: "space.updated" }> {
+  return (
+    event.type === "space.updated" &&
+    event.membership !== undefined &&
+    access?.namedIn(event.membership) === true
+  );
 }
 
 /** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
@@ -554,24 +569,38 @@ export function toShellApplicationEvent(
         ? { threadId: event.threadId, sandboxId: event.payload.id }
         : event.type === "sandbox.access-changed"
           ? { threadId: event.threadId, sandboxId: event.payload.sandboxId, accessChanged: true }
-          : isMemberThreadEvent(event) || access?.lostAt(stored.sequence, event.threadId) === true
-            ? { threadId: event.threadId, accessChanged: true }
-            : { threadId: event.threadId },
+          : isMembershipChangeFor(event, access)
+            ? { threadId: event.threadId, spaceId: event.payload.id, accessChanged: true }
+            : isMemberThreadEvent(event) || access?.lostAt(stored.sequence, event.threadId) === true
+              ? { threadId: event.threadId, accessChanged: true }
+              : { threadId: event.threadId },
   };
 }
 
 /**
  * A machine change re-sends the shell of every unarchived thread using it: side chats and forks.
  * An access change also re-sends the subscriber's provider-native subagents on that machine, which
- * have no machine row.
+ * have no machine row. Joining or leaving a space re-sends its task threads.
  */
 export function expandSandboxShellEvents(
   events: ReadonlyArray<ShellApplicationEvent>,
   threadsBySandbox: ReadonlyMap<SandboxId, ReadonlyArray<SandboxThreadRow>>,
   subagentsOn: (sandboxId: SandboxId) => ReadonlyArray<ThreadId> = () => [],
+  tasksOf: (spaceId: SpaceId) => ReadonlyArray<ThreadId> = () => [],
 ): ReadonlyArray<ShellApplicationEvent> {
-  return events.flatMap((stored) => {
-    if ("aggregateKind" in stored || stored.event.sandboxId === undefined) return [stored];
+  return events.flatMap((stored): ReadonlyArray<ShellApplicationEvent> => {
+    if ("aggregateKind" in stored) return [stored];
+    const { spaceId } = stored.event;
+    if (spaceId !== undefined) {
+      return [
+        stored,
+        ...tasksOf(spaceId).map((threadId) => ({
+          sequence: stored.sequence,
+          event: { threadId, accessChanged: true as const },
+        })),
+      ];
+    }
+    if (stored.event.sandboxId === undefined) return [stored];
     const accessChanged = stored.event.accessChanged === true;
     const threadIds = (threadsBySandbox.get(stored.event.sandboxId) ?? []).flatMap((row) =>
       row.archived ? [] : [row.threadId],

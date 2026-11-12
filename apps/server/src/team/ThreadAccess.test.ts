@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   SandboxId,
+  SpaceId,
   type SandboxAccess,
   type SandboxAccessChange,
   ThreadId,
@@ -44,10 +45,18 @@ const dave = MemberId.make("member-dave");
 const erin = MemberId.make("member-erin");
 const serverOwner = MemberId.make("member-owner");
 
+// Carol and Dave are in the space; Alice created its room and owns a task, then left.
+const spaceId = SpaceId.make("spc_0123456789abcdef0123");
+const spaceMembers: ReadonlySet<MemberId> = new Set([carol, dave]);
+const isSpaceMember = (id: SpaceId, memberId: MemberId) =>
+  id === spaceId && spaceMembers.has(memberId);
+const room = { kind: "room", spaceId } as const;
+const task = { kind: "task", spaceId } as const;
 const roster = (cloudOnly = true): ThreadAccess.ThreadAccessRoster => ({
   cloudOnly,
   serverOwnerId: serverOwner,
   isActive: (memberId) => memberId !== dave,
+  isSpaceMember,
 });
 const entry = (
   audience: "members" | "team",
@@ -94,6 +103,42 @@ describe("threadAllows", () => {
     ["a local thread's other member", { ownerId: alice }, undefined, bob, false],
     ["an ownerless local thread", { ownerId: null }, undefined, bob, true],
     ["a removed member on an ownerless thread", {}, undefined, dave, false],
+    [
+      "a space member, on another member's private task",
+      { sandboxId, ownerId: alice, space: task },
+      entry("members", []),
+      carol,
+      true,
+    ],
+    [
+      "a task's owner after leaving the space",
+      { sandboxId, ownerId: alice, space: task },
+      entry("members", []),
+      alice,
+      true,
+    ],
+    [
+      "a non-member, on a space's private task",
+      { sandboxId, ownerId: alice, space: task },
+      entry("members", []),
+      bob,
+      false,
+    ],
+    [
+      "a removed team member still in the space",
+      { sandboxId, ownerId: alice, space: task },
+      entry("members", []),
+      dave,
+      false,
+    ],
+    ["a space member, in its room", { ownerId: alice, space: room }, undefined, carol, true],
+    [
+      "the room's holder after leaving the space",
+      { ownerId: alice, space: room },
+      undefined,
+      alice,
+      false,
+    ],
   ] as const)("%s", (_name, thread, sandbox, memberId, allowed) => {
     assert.strictEqual(ThreadAccess.threadAllows(roster(), thread, sandbox, memberId), allowed);
   });
@@ -153,6 +198,32 @@ describe("threadAllowsSql", () => {
     ["an ownerless thread with no machine", { ownerId: null }, undefined, carol],
     ["a removed member, on an ownerless thread", {}, undefined, dave],
     ["a member with no record, on an ownerless thread", {}, undefined, stranger],
+    [
+      "a space member, on a task",
+      { sandboxId, ownerId: alice, space: task },
+      machine("members"),
+      carol,
+    ],
+    [
+      "a task's owner after leaving",
+      { sandboxId, ownerId: alice, space: task },
+      machine("members"),
+      alice,
+    ],
+    [
+      "a non-member, on a task",
+      { sandboxId, ownerId: alice, space: task },
+      machine("members"),
+      erin,
+    ],
+    ["a space member, in the room", { ownerId: alice, space: room }, undefined, carol],
+    ["the room's holder after leaving", { ownerId: alice, space: room }, undefined, alice],
+    [
+      "a removed member in the space, in the room",
+      { ownerId: alice, space: room },
+      undefined,
+      dave,
+    ],
   ] as const;
   it.effect.each(
     cases.map(([name, target, sandbox, memberId]) => ({ name, target, sandbox, memberId })),
@@ -186,6 +257,10 @@ describe("threadAllowsSql", () => {
             VALUES (${sandboxId}, ${listed})`;
         }
       }
+      for (const member of spaceMembers) {
+        yield* sql`INSERT INTO orchestration_v2_projection_space_members (space_id, member_id)
+          VALUES (${spaceId}, ${member})`;
+      }
       const rows = yield* sql<{ readonly allowed: number }>`
         SELECT ${threadAllowsSql(sql, "t", memberId, serverOwner)} AS allowed
         FROM orchestration_v2_projection_threads t`;
@@ -193,6 +268,7 @@ describe("threadAllowsSql", () => {
         cloudOnly: true,
         serverOwnerId: serverOwner,
         isActive: (id) => id !== dave && id !== stranger,
+        isSpaceMember,
       };
       const entry =
         sandbox === undefined

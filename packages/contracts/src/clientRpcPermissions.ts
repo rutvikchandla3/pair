@@ -45,6 +45,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.chiefOfStaffStop]: AuthOrchestrationOperateScope,
   // Listing boots a provider process for the settings page.
   [WS_METHODS.chiefOfStaffListVoices]: AuthSettingsWriteScope,
+  // Space writes dispatch orchestration commands; a task start runs a provider turn.
+  [WS_METHODS.spacesMutate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesPost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.spacesTask]: AuthOrchestrationOperateScope,
   // Draining holds every member's new cloud turns, as an update restarts the server.
   [WS_METHODS.serverDrain]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCancelDrain]: AuthEnvironmentMaintainScope,

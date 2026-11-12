@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- sandbox paths are POSIX on every server.
 import * as NodePath from "node:path";
 
+import { spaceActiveMemberIds } from "@t3tools/contracts";
 import type {
   MemberId,
   OrchestrationV2Sandbox,
@@ -8,6 +9,7 @@ import type {
   SandboxAccessAudience,
   SandboxAccessChange,
   SandboxId,
+  SpaceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -45,11 +47,15 @@ export interface ThreadAccessRoster {
   /** Holds what has no owner (solo servers), as `holderOf` says. */
   readonly serverOwnerId: MemberId;
   readonly isActive: (memberId: MemberId) => boolean;
+  /** An active member of the space, who can open its room and every one of its tasks. */
+  readonly isSpaceMember: (spaceId: SpaceId, memberId: MemberId) => boolean;
 }
 
 export interface ThreadAccessTarget {
   readonly sandboxId?: SandboxId | undefined;
   readonly ownerId?: MemberId | null | undefined;
+  /** Never changes after creation, so a move never involves it. */
+  readonly space?: { readonly spaceId: SpaceId; readonly kind: "room" | "task" } | undefined;
 }
 
 /** A committed thread event that changed the thread's machine or owner. */
@@ -78,7 +84,10 @@ export const sandboxAllows = (
   );
 };
 
-/** A thread with no machine is its owner's alone, and everyone's when it has no owner. */
+/**
+ * A space's members open its room and tasks. Otherwise a thread with no machine is its owner's
+ * alone, and everyone's when it has no owner.
+ */
 export const threadAllows = (
   roster: ThreadAccessRoster,
   thread: ThreadAccessTarget,
@@ -86,6 +95,14 @@ export const threadAllows = (
   memberId: MemberId,
 ): boolean => {
   if (!roster.cloudOnly) return true;
+  if (thread.space !== undefined) {
+    if (roster.isActive(memberId) && roster.isSpaceMember(thread.space.spaceId, memberId)) {
+      return true;
+    }
+    // A room is members-only; a task stays open to whoever its own rule admits, such as its
+    // owner after they leave the space.
+    if (thread.space.kind === "room") return false;
+  }
   if (thread.sandboxId !== undefined && entry !== undefined) {
     return sandboxAllows(roster, entry, memberId);
   }
@@ -151,6 +168,8 @@ export class ThreadAccessIndex extends Context.Service<
   ThreadAccessIndex,
   {
     readonly entries: ReadonlyMap<SandboxId, SandboxAccessEntry>;
+    /** Each space's active members. */
+    readonly spaceMembers: ReadonlyMap<SpaceId, ReadonlySet<MemberId>>;
     /** Each thread's machine and owner, once `trackThreads` has run. Deleted threads stay. */
     readonly threads: ReadonlyMap<ThreadId, ThreadAccessTarget>;
     /** Loads `threads` and keeps it current. Cloud-only servers only; others never read it. */
@@ -189,6 +208,16 @@ export const layerIndex = Layer.effect(
     for (const record of yield* listSandboxes().pipe(Effect.orDie)) {
       entries.set(record.id, entryOf(record));
     }
+    const spaceMembers = new Map<SpaceId, ReadonlySet<MemberId>>();
+    const memberRows = yield* sql<{ readonly space_id: SpaceId; readonly member_id: MemberId }>`
+      SELECT space_id, member_id FROM orchestration_v2_projection_space_members
+    `.pipe(Effect.orDie);
+    for (const row of memberRows) {
+      spaceMembers.set(
+        row.space_id,
+        new Set([...(spaceMembers.get(row.space_id) ?? []), row.member_id]),
+      );
+    }
     const threads = new Map<ThreadId, ThreadAccessTarget>();
     let tracking = false;
     const changes = yield* PubSub.unbounded<SandboxAccessChange>();
@@ -196,6 +225,7 @@ export const layerIndex = Layer.effect(
     const moves = yield* PubSub.unbounded<ThreadAccessMove>();
     return ThreadAccessIndex.of({
       entries,
+      spaceMembers,
       threads,
       trackThreads: Effect.gen(function* () {
         if (tracking) return;
@@ -205,10 +235,14 @@ export const layerIndex = Layer.effect(
           readonly thread_id: ThreadId;
           readonly sandbox_id: SandboxId | null;
           readonly owner_id: MemberId | null;
+          readonly space_id: SpaceId | null;
+          readonly space_kind: "room" | "task" | null;
         }>`
           SELECT thread_id,
             json_extract(payload_json, '$.sandboxId') AS sandbox_id,
-            json_extract(payload_json, '$.ownerId') AS owner_id
+            json_extract(payload_json, '$.ownerId') AS owner_id,
+            json_extract(payload_json, '$.space.spaceId') AS space_id,
+            json_extract(payload_json, '$.space.kind') AS space_kind
           FROM orchestration_v2_projection_threads
         `.pipe(Effect.orDie);
         for (const row of rows) {
@@ -216,6 +250,9 @@ export const layerIndex = Layer.effect(
           threads.set(row.thread_id, {
             ...(row.sandbox_id === null ? {} : { sandboxId: row.sandbox_id }),
             ownerId: row.owner_id,
+            ...(row.space_id === null || row.space_kind === null
+              ? {}
+              : { space: { spaceId: row.space_id, kind: row.space_kind } }),
           });
         }
       }).pipe(Effect.withSpan("ThreadAccessIndex.trackThreads")),
@@ -225,18 +262,29 @@ export const layerIndex = Layer.effect(
         for (const { event, sequence } of events) {
           if (event.type === "sandbox.updated") {
             entries.set(event.payload.id, entryOf(event.payload));
+          } else if (event.type === "space.updated") {
+            spaceMembers.set(event.payload.id, new Set(spaceActiveMemberIds(event.payload)));
           } else if (event.type === "sandbox.access-changed") {
             yield* PubSub.publish(changes, event.payload);
           } else if (tracking && isThreadPayloadEvent(event)) {
             const { id, sandboxId, ownerId } = event.payload;
+            const space =
+              event.payload.space === undefined
+                ? undefined
+                : { spaceId: event.payload.space.spaceId, kind: event.payload.space.kind };
             const known = threads.get(id);
             if (known === undefined) {
-              threads.set(id, { sandboxId, ownerId });
+              threads.set(id, { sandboxId, ownerId, ...(space === undefined ? {} : { space }) });
             } else if (
               known.sandboxId !== sandboxId ||
               (known.ownerId ?? null) !== (ownerId ?? null)
             ) {
-              const move = { sequence, threadId: id, before: known, after: { sandboxId, ownerId } };
+              const after = {
+                sandboxId,
+                ownerId,
+                ...(known.space === undefined ? {} : { space: known.space }),
+              };
+              const move = { sequence, threadId: id, before: known, after };
               threads.set(id, move.after);
               lastMoves.set(id, move);
               yield* PubSub.publish(moves, move);
@@ -326,6 +374,7 @@ export const layer = Layer.effect(
       cloudOnly,
       serverOwnerId: team.ownerId,
       isActive: (memberId) => Ref.getUnsafe(team.members).get(memberId)?.removedAt === null,
+      isSpaceMember: (spaceId, memberId) => index.spaceMembers.get(spaceId)?.has(memberId) === true,
     };
     const caughtUp = index.lane.withPermits(1)(Effect.void);
     const allowsSandbox = (memberId: MemberId, sandboxId: SandboxId) =>
@@ -418,6 +467,7 @@ export interface ThreadAccessTestOptions {
   readonly serverOwnerId: MemberId;
   readonly machines?: ReadonlyMap<SandboxId, SandboxAccessEntry>;
   readonly threads?: ReadonlyMap<ThreadId, ThreadAccessTarget>;
+  readonly spaceMembers?: ReadonlyMap<SpaceId, ReadonlySet<MemberId>>;
   readonly changes?: PubSub.PubSub<SandboxAccessChange>;
   readonly moves?: PubSub.PubSub<ThreadAccessMove>;
 }
@@ -446,10 +496,12 @@ export const makeTest = (options?: ThreadAccessTestOptions): ThreadAccess["Servi
     };
   }
   const { machines = new Map(), threads = new Map(), changes, moves } = options;
+  const spaceMembers = options.spaceMembers ?? new Map<SpaceId, ReadonlySet<MemberId>>();
   const roster: ThreadAccessRoster = {
     cloudOnly: true,
     serverOwnerId: options.serverOwnerId,
     isActive: () => true,
+    isSpaceMember: (spaceId, memberId) => spaceMembers.get(spaceId)?.has(memberId) === true,
   };
   const allowsSandbox = (memberId: MemberId, sandboxId: SandboxId) =>
     sandboxAllows(roster, machines.get(sandboxId), memberId);

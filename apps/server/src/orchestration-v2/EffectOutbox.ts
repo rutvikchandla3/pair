@@ -17,6 +17,8 @@ import {
   RunId,
   RuntimeRequestId,
   SandboxId,
+  SpaceId,
+  MemberId,
   TeamImageBuildId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -159,6 +161,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("sandbox.hand-over"),
     sandboxId: SandboxId,
   }),
+  /** On the room thread's queue, committed with the post that tagged `@pair`. */
+  Schema.Struct({
+    type: Schema.Literal("space.pair-reply.request"),
+    spaceId: SpaceId,
+    postId: MessageId,
+    taggerId: MemberId,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -207,6 +216,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "sandbox.release-waiters",
   "sandbox.request-wake",
   "sandbox.hand-over",
+  "space.pair-reply.request",
   "team-image.build.launch",
   "team-image.build.capture",
   "team-image.build.destroy-machine",

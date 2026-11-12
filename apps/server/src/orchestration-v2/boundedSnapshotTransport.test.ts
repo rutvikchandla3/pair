@@ -703,6 +703,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         mayAllowThreadId: () => state.open,
         sandboxOf: () => undefined,
         affectedBy: (change) => change.removed.includes(member) || change.added.includes(member),
+        namedIn: (change) => change.removed.includes(member) || change.added.includes(member),
         lostAt: () => false,
         accessChanges: Stream.empty,
         caughtUp: Effect.void,

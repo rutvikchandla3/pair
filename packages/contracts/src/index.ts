@@ -44,6 +44,8 @@ export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./sandbox.ts";
 export * from "./sandboxImage.ts";
+export * from "./space.ts";
+export * from "./spaceRpc.ts";
 export * from "./cloudMove.ts";
 export * from "./chiefOfStaff.ts";
 export * from "./guestShare.ts";

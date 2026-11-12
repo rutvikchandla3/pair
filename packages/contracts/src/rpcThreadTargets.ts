@@ -44,6 +44,7 @@ export const RPC_THREAD_TARGETS: {
   [WS_METHODS.threadMovePreview]: thread,
   [WS_METHODS.threadMoveToCloud]: thread,
   [WS_METHODS.sandboxViewing]: thread,
+  [WS_METHODS.spacesTask]: (input) => ("threadId" in input ? [{ threadId: input.threadId }] : []),
   [WS_METHODS.scheduledTasksUpsert]: (input) => [
     ...(input.threadId ? [{ threadId: input.threadId }] : []),
     ...paths(
@@ -260,6 +261,9 @@ export const RPC_OUTPUT_FILTERED: { readonly [M in WsMethod]?: string } = {
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]:
     "orchestration-v2/MemberThreadView.ts olderSettledReaderOf",
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: "orchestration-v2/ShellStream.ts mayShowShellEvent",
+  [WS_METHODS.spacesGet]: "space/SpaceService.ts get: a non-member sees only the space's name",
+  [WS_METHODS.spacesList]: "space/SpaceService.ts list: the caller's spaces, whose rooms they open",
+  [WS_METHODS.spacesMutate]: "space/SpaceService.ts mutate: null once the caller is not a member",
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]:
     "orchestration-v2/MemberThreadView.ts assertViewerThread, makeThreadEventView",
 };
@@ -284,6 +288,8 @@ export const RPC_OUTPUT_EXEMPT: { readonly [M in WsMethod]?: string } = {
   [WS_METHODS.cloudGetRelayClientStatus]: ownBinary,
   [WS_METHODS.cloudInstallRelayClient]: ownBinary,
   [WS_METHODS.threadMoveToLocal]: "`threadId` is the thread this server just made for the caller.",
+  [WS_METHODS.spacesPost]:
+    "The caller's own post, in a room they are a member of; only system lines name tasks.",
   [WS_METHODS.serverListAcpRegistrySessions]: refusedOnCloudOnly,
   [WS_METHODS.serverImportAcpRegistrySession]: refusedOnCloudOnly,
   [WS_METHODS.agentSessionsScan]: refusedOnCloudOnly,

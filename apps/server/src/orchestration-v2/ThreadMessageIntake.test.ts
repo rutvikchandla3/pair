@@ -11,6 +11,7 @@ import {
   GuestMessageId,
   MemberId,
   MessageId,
+  ProviderInstanceId,
   RuntimeRequestId,
   SandboxId,
   ThreadId,
@@ -421,6 +422,7 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     const captured: OrchestrationV2ServerCommand[] = [];
     const layerGuestShare = Layer.mock(ThreadManagementService.ThreadManagementService)({
       dispatch: layerFailingDispatchHandler(captured),
+      getThreadShell: () => Effect.succeed(null),
       // Only the share is read.
       getThreadSnapshotWindow: () =>
         Effect.succeed({
@@ -553,6 +555,65 @@ it.effect(
         threadId,
       );
     }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect.each([
+  // [the thread's place in a space, command, actor, outcome]
+  ["room", "message.dispatch", "member-bob", "space_room"],
+  ["room", "thread.metadata.update", "member-bob", "space_room"],
+  ["room", "thread.visit", "member-carol", "dispatched"],
+  ["task", "thread.model-selection.set", "member-carol", "space_task_owner_only"],
+  ["task", "thread.model-selection.set", "member-bob", "dispatched"],
+  ["task", "message.dispatch", "member-carol", "dispatched"],
+] as const)("a space %s takes %s from %s: %s", ([kind, type, actor, outcome]) =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-space");
+    const actorId = MemberId.make(actor);
+    const commandId = CommandId.make(`space-${type}`);
+    const command: OrchestrationV2Command =
+      type === "message.dispatch"
+        ? {
+            type,
+            commandId,
+            threadId,
+            actorId,
+            messageId: MessageId.make("message-space"),
+            text: "hi",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          }
+        : type === "thread.model-selection.set"
+          ? {
+              type,
+              commandId,
+              threadId,
+              actorId,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            }
+          : type === "thread.visit"
+            ? { type, commandId, threadId, actorId, visitedAt: "2026-11-12T00:00:00.000Z" }
+            : { type, commandId, threadId, actorId, title: "Renamed" };
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const result = yield* dispatchCommand(command).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: layerFailingDispatchHandler(captured),
+          getThreadShell: () =>
+            Effect.succeed({
+              ownerId: MemberId.make("member-bob"),
+              space: { kind, spaceId: "spc_0123456789abcdef0123" },
+            } as never),
+        }),
+      ),
+      Effect.flip,
+      Effect.map((error) =>
+        error._tag === "ThreadMessageIntakeForbiddenError" ? error.reason : "dispatched",
+      ),
+    );
+    expect(result).toBe(outcome);
+  }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect.each([

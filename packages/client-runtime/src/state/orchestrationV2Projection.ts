@@ -422,6 +422,9 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...projection, sandbox: event.payload };
     case "sandbox.git-credential.issued":
     case "sandbox.access-changed":
+    // The room's state lives in its space, not in the thread projection.
+    case "space.updated":
+    case "space.room-entry":
       return projection;
   }
 }

@@ -4,6 +4,7 @@ import {
   type OrchestrationV2DomainEvent,
   type SandboxAccessChange,
   type SandboxId,
+  type SpaceMembershipChange,
   type ServerProvider,
   type TerminalMetadataStreamEvent,
   ThreadId,
@@ -60,6 +61,8 @@ export interface ViewerAccess {
   readonly sandboxOf: (threadId: ThreadId) => SandboxId | undefined;
   /** The change may have given or taken this member's access. */
   readonly affectedBy: (change: SandboxAccessChange) => boolean;
+  /** This member gained or lost, say, a space. */
+  readonly namedIn: (change: SpaceMembershipChange) => boolean;
   /** This event moved the thread from this member's reach to elsewhere. */
   readonly lostAt: (sequence: number, threadId: ThreadId) => boolean;
   /** One item per machine audience change or thread move. */
@@ -81,6 +84,8 @@ export function viewerAccessOf(
 ): ViewerAccess | undefined {
   if (!access.enforced) return undefined;
   const allows = (thread: ThreadAccess.ThreadAccessTarget) => access.allowsThread(memberId, thread);
+  const namedIn = (change: SpaceMembershipChange) =>
+    change.added.includes(memberId) || change.removed.includes(memberId);
   return {
     allows,
     allowsSandbox: (sandboxId) => access.allowsSandbox(memberId, sandboxId),
@@ -93,10 +98,8 @@ export function viewerAccessOf(
       return target === undefined || allows(target);
     },
     sandboxOf: (threadId) => access.threadTarget(threadId)?.sandboxId,
-    affectedBy: (change) =>
-      change.audienceChanged ||
-      change.added.includes(memberId) ||
-      change.removed.includes(memberId),
+    affectedBy: (change) => change.audienceChanged || namedIn(change),
+    namedIn,
     lostAt: (sequence, threadId) => {
       const move = access.movedAt(threadId, sequence);
       return move !== undefined && allows(move.before) && !allows(move.after);

@@ -1,5 +1,6 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { pendingGuestMessageCount, threadHasImportedHistory } from "@t3tools/contracts";
+import type { Space, SpaceId, SpaceRoomEntry } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -105,6 +106,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import * as SandboxProjection from "../sandbox/lifecycle/SandboxProjection.ts";
+import * as SpaceProjection from "../space/SpaceProjection.ts";
 import { threadAllowsSql } from "../team/threadAccessSql.ts";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
@@ -619,6 +621,22 @@ export interface ProjectionStoreV2Shape {
   readonly getSandbox: (
     sandboxId: SandboxId,
   ) => Effect.Effect<OrchestrationV2Sandbox | null, ProjectionStoreV2Error>;
+  readonly getSpace: (spaceId: SpaceId) => Effect.Effect<Space | null, ProjectionStoreV2Error>;
+  /** The member's spaces, or every space for `null`, most recently changed first. */
+  readonly listSpaces: (
+    memberId: MemberId | null,
+  ) => Effect.Effect<ReadonlyArray<Space>, ProjectionStoreV2Error>;
+  readonly listSpaceRoomEntries: (input: {
+    readonly spaceId: SpaceId;
+    readonly limit: number;
+    readonly before?: MessageId | undefined;
+  }) => Effect.Effect<ReadonlyArray<SpaceRoomEntry>, ProjectionStoreV2Error>;
+  readonly getSpaceRoomEntry: (
+    entryId: MessageId,
+  ) => Effect.Effect<SpaceRoomEntry | null, ProjectionStoreV2Error>;
+  readonly listSpaceTaskThreadIds: (
+    spaceId: SpaceId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   /** Live (not deleted) threads using the sandbox, oldest first. */
   readonly listSandboxThreads: (
     sandboxId: SandboxId,
@@ -1098,6 +1116,9 @@ export function applyToProjection(
     case "sandbox.git-credential.issued":
     // The `sandbox.updated` before it carries the record.
     case "sandbox.access-changed":
+    // Spaces project into their own tables.
+    case "space.updated":
+    case "space.room-entry":
       return projection;
   }
 }
@@ -1852,6 +1873,7 @@ export function threadShellFromProjection(
     ...(projection.thread.sandboxId === undefined
       ? {}
       : { sandboxId: projection.thread.sandboxId }),
+    ...(projection.thread.space === undefined ? {} : { space: projection.thread.space }),
     ...(projection.sandbox === undefined
       ? {}
       : { sandbox: SandboxProjection.sandboxShellSummary(projection.sandbox) }),
@@ -2149,6 +2171,7 @@ function shellFromState(input: {
     ...(input.state.thread.sandboxId === undefined
       ? {}
       : { sandboxId: input.state.thread.sandboxId }),
+    ...(input.state.thread.space === undefined ? {} : { space: input.state.thread.space }),
     ...(input.sandbox === undefined
       ? {}
       : { sandbox: SandboxProjection.sandboxShellSummary(input.sandbox) }),
@@ -3100,6 +3123,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "sandbox.updated":
               yield* withSql(SandboxProjection.applySandboxUpdated(event));
               break;
+            case "space.updated":
+              yield* withSql(SpaceProjection.applySpaceUpdated(event));
+              break;
+            case "space.room-entry":
+              yield* withSql(SpaceProjection.applySpaceRoomEntry(event));
+              break;
             case "context-transfer.created":
             case "context-transfer.updated": {
               const payloadJson = yield* encodeContextTransferPayload(event.payload);
@@ -3166,7 +3195,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.guest-share-updated" &&
             // Machine state must not reorder threads.
             event.type !== "sandbox.updated" &&
-            event.type !== "sandbox.access-changed"
+            event.type !== "sandbox.access-changed" &&
+            event.type !== "space.updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -8023,6 +8053,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       withSql(SandboxProjection.getSandbox(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
       );
+    const spaceReadError = (key: string) => (cause: unknown) =>
+      new ProjectionStoreReadError({ threadId: ThreadId.make(`space:${key}`), cause });
+    const getSpace: ProjectionStoreV2Shape["getSpace"] = (spaceId) =>
+      withSql(SpaceProjection.getSpace(spaceId)).pipe(Effect.mapError(spaceReadError(spaceId)));
+    const listSpaces: ProjectionStoreV2Shape["listSpaces"] = (memberId) =>
+      withSql(SpaceProjection.listSpaces(memberId)).pipe(
+        Effect.mapError(spaceReadError(memberId ?? "all")),
+      );
+    const listSpaceRoomEntries: ProjectionStoreV2Shape["listSpaceRoomEntries"] = (input) =>
+      withSql(SpaceProjection.listRoomEntries(input)).pipe(
+        Effect.mapError(spaceReadError(input.spaceId)),
+      );
+    const getSpaceRoomEntry: ProjectionStoreV2Shape["getSpaceRoomEntry"] = (entryId) =>
+      withSql(SpaceProjection.getRoomEntry(entryId)).pipe(Effect.mapError(spaceReadError(entryId)));
+    const listSpaceTaskThreadIds: ProjectionStoreV2Shape["listSpaceTaskThreadIds"] = (spaceId) =>
+      withSql(SpaceProjection.listSpaceTaskThreadIds(spaceId)).pipe(
+        Effect.map((ids) => ids.map((id) => ThreadId.make(id))),
+        Effect.mapError(spaceReadError(spaceId)),
+      );
     const listSandboxThreads: ProjectionStoreV2Shape["listSandboxThreads"] = (sandboxId) =>
       withSql(SandboxProjection.listSandboxThreads(sandboxId)).pipe(
         Effect.mapError(sandboxReadError(sandboxId)),
@@ -8087,6 +8136,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMemberStatesForThreads: readOnReader(getMemberStatesForThreads),
       listFollowedThreadIds: readOnReader(listFollowedThreadIds),
       getSandbox: readOnReader(getSandbox),
+      getSpace: readOnReader(getSpace),
+      listSpaces: readOnReader(listSpaces),
+      listSpaceRoomEntries: readOnReader(listSpaceRoomEntries),
+      getSpaceRoomEntry: readOnReader(getSpaceRoomEntry),
+      listSpaceTaskThreadIds: readOnReader(listSpaceTaskThreadIds),
       listSandboxThreads: readOnReader(listSandboxThreads),
       listSandboxImageBuildIds: readOnReader(listSandboxImageBuildIds),
       countSandboxAdmission: readOnReader(countSandboxAdmission),
