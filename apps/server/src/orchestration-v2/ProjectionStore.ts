@@ -1183,12 +1183,35 @@ export function applyToProjection(
     // The `sandbox.updated` before it carries the record.
     case "sandbox.access-changed":
     // Spaces project into their own tables; a room line is still its room's activity.
-    case "space.updated":
     case "space.action.updated":
     case "space.notes.changed":
       return projection;
+    case "space.updated":
+      return projection.thread.space?.kind === "room"
+        ? {
+            ...projection,
+            thread: {
+              ...projection.thread,
+              space: { ...projection.thread.space, revision: event.payload.updatedAt },
+            },
+          }
+        : projection;
     case "space.room-entry":
-      return base;
+      return base.thread.space?.kind === "room"
+        ? {
+            ...base,
+            thread: {
+              ...base.thread,
+              space: {
+                ...base.thread.space,
+                latestEntry: {
+                  by: spaceEntryWriter(event.payload),
+                  at: DateTime.formatIso(event.occurredAt),
+                },
+              },
+            },
+          }
+        : base;
   }
 }
 
@@ -1331,6 +1354,9 @@ const decodeMemberSnoozes = Schema.decodeUnknownEffect(
     ),
   ),
 );
+const spaceEntryWriter = (entry: SpaceRoomEntry) =>
+  entry.type === "post" ? entry.authorId : entry.actorId;
+
 const encodeThreadUpdatedAt = Schema.encodeEffect(
   OrchestrationV2AppThreadJsonSchema.fields.updatedAt,
 );
@@ -3194,10 +3220,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             case "space.updated":
               yield* withSql(SpaceProjection.applySpaceUpdated(event));
+              yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET payload_json = json_set(payload_json, '$.space.revision', ${event.payload.updatedAt})
+              WHERE thread_id = ${event.threadId}
+                AND json_extract(payload_json, '$.space.kind') = 'room'
+            `;
               break;
-            case "space.room-entry":
+            case "space.room-entry": {
               yield* withSql(SpaceProjection.applySpaceRoomEntry(event));
+              const at = yield* encodeThreadUpdatedAt(event.occurredAt);
+              yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET payload_json = json_set(
+                payload_json,
+                '$.space.latestEntry',
+                json_object('by', ${spaceEntryWriter(event.payload)}, 'at', ${at})
+              )
+              WHERE thread_id = ${event.threadId}
+                AND json_extract(payload_json, '$.space.kind') = 'room'
+            `;
               break;
+            }
             case "space.action.updated":
               yield* withSql(SpaceProjection.applySpaceActionUpdated(event));
               break;

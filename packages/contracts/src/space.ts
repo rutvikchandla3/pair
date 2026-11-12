@@ -97,7 +97,14 @@ export type SpaceTaskHandBack = typeof SpaceTaskHandBack.Type;
 
 /** A thread's place in a space: its room, or one of its tasks. */
 export const ThreadSpace = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("room"), spaceId: SpaceId }),
+  Schema.Struct({
+    kind: Schema.Literal("room"),
+    spaceId: SpaceId,
+    /** The space's `updatedAt`, so a member's shell changes when it is renamed or archived. */
+    revision: Schema.optionalKey(IsoDateTime),
+    /** Who wrote the room's latest line, and when; a member's own line isn't unread. */
+    latestEntry: Schema.optionalKey(Schema.Struct({ by: MemberId, at: IsoDateTime })),
+  }),
   Schema.Struct({
     kind: Schema.Literal("task"),
     spaceId: SpaceId,

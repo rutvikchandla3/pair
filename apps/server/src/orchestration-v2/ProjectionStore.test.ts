@@ -2278,6 +2278,36 @@ it.effect("SQL list older settled threads below a cursor", () =>
     });
     assert.deepEqual((yield* store.getThreadShell(id("space-room")))?.updatedAt, postedAt);
     assert.deepEqual((yield* store.getThread(id("space-room"))).updatedAt, postedAt);
+    // Members' sidebars skip their own lines and refetch the list when the space changes.
+    const renamedAt = DateTime.formatIso(at(26));
+    yield* store.apply({
+      id: EventId.make("event:older:space-room:renamed"),
+      type: "space.updated",
+      threadId: id("space-room"),
+      occurredAt: at(26),
+      payload: {
+        id: spaceId,
+        roomThreadId: id("space-room"),
+        name: "Renamed",
+        brief: "",
+        projectId: ProjectId.make("project:space"),
+        ownerId: alice,
+        members: [],
+        joinRequests: [],
+        pairBilling: { type: "team" },
+        createdBy: alice,
+        createdAt: DateTime.formatIso(now),
+        updatedAt: renamedAt,
+        archivedAt: null,
+        archivedBy: null,
+      },
+    });
+    assert.deepEqual((yield* store.getThreadShell(id("space-room")))?.space, {
+      kind: "room",
+      spaceId,
+      revision: renamedAt,
+      latestEntry: { by: alice, at: DateTime.formatIso(postedAt) },
+    });
     // A removed member opens nothing, even a team machine or their own thread.
     yield* sql`UPDATE members SET removed_at = ${DateTime.formatIso(now)} WHERE id = ${bob}`;
     assert.deepEqual(yield* pageIds(bob, null), []);

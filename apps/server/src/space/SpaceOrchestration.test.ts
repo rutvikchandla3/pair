@@ -161,7 +161,12 @@ it.layer(layer)("space orchestration", (it) => {
       yield* createSpace;
 
       const room = yield* projections.getThread(roomThreadId);
-      assert.deepStrictEqual(room.space, { kind: "room", spaceId });
+      assert.deepStrictEqual(room.space, {
+        kind: "room",
+        spaceId,
+        revision: "1970-01-01T00:00:00.000Z",
+        latestEntry: { by: rutvik, at: "1970-01-01T00:00:00.000Z" },
+      });
       assert.strictEqual(room.ownerId, rutvik);
       const space = yield* projections.getSpace(spaceId);
       assert.deepStrictEqual(
