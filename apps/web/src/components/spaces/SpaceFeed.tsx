@@ -1,17 +1,12 @@
 import { LegendList } from "@legendapp/list/react";
+import type { SpacePairFeedItem } from "@t3tools/client-runtime/spaceAgent";
 import {
   type SpaceViewer,
   spaceSystemLineText,
   spaceTaskStatus,
   splitSpacePostText,
 } from "@t3tools/client-runtime/spaces";
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Space,
-  SpaceRoomEntry,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, Space, SpaceRoomEntry, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { QuoteIcon } from "lucide-react";
 
@@ -20,7 +15,7 @@ import { useTeamMembers } from "../../state/team";
 import { MemberAvatar } from "../team/MemberAvatar";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { type SpacePairFeedItem, SpacePairFeedRow } from "./SpacePairFeed";
+import { type SpacePairFeedContext, SpacePairFeedRow, SpacePairStatus } from "./SpacePairFeed";
 import { SpaceStatusIcon } from "./SpaceStatusIcon";
 
 type SpaceFeedRow =
@@ -107,7 +102,7 @@ export interface SpaceFeedProps {
   readonly space: Space;
   readonly entries: ReadonlyArray<SpaceRoomEntry>;
   readonly pairItems: ReadonlyArray<SpacePairFeedItem>;
-  readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly pairContext: SpacePairFeedContext;
   readonly viewer: SpaceViewer;
   readonly newIndex: number | null;
   readonly canQuote: boolean;
@@ -120,7 +115,7 @@ export interface SpaceFeedProps {
 export function SpaceFeed(props: SpaceFeedProps) {
   const members = useTeamMembers(props.environmentId);
   const rows = buildRows(props.entries, props.pairItems, props.newIndex);
-  const tasksById = new Map(props.tasks.map((task) => [task.id, task] as const));
+  const tasksById = props.pairContext.tasksById;
 
   const renderTaskChip = (threadId: ThreadId) => {
     const task = tasksById.get(threadId);
@@ -217,6 +212,12 @@ export function SpaceFeed(props: SpaceFeedProps) {
               ),
             )}
           </p>
+          {entry.pairRequested ? (
+            <SpacePairStatus
+              reply={props.pairContext.pairRoom.byTrigger.get(entry.id)}
+              context={props.pairContext}
+            />
+          ) : null}
         </div>
         {props.canQuote ? (
           <div className="absolute -top-3 right-4 hidden rounded-md border border-border bg-popover shadow-xs group-focus-within:flex group-hover:flex">
@@ -259,7 +260,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
           </div>
         );
       case "pair":
-        return <SpacePairFeedRow item={item.item} />;
+        return <SpacePairFeedRow item={item.item} context={props.pairContext} />;
       case "entry":
         return renderEntry(item.entry, item.continued);
     }
@@ -291,7 +292,7 @@ export function SpaceFeed(props: SpaceFeedProps) {
   return (
     <LegendList<SpaceFeedRow>
       data={rows}
-      extraData={tasksById}
+      extraData={props.pairContext}
       keyExtractor={(row) => row.key}
       getItemType={(row) => row.type}
       renderItem={renderItem}

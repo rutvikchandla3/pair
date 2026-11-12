@@ -1,5 +1,6 @@
 import { useAtomRefresh } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { spacePairFeedItems, spacePairRoom } from "@t3tools/client-runtime/spaceAgent";
 import {
   type SpaceRoomMemberState,
   type SpaceViewer,
@@ -25,7 +26,7 @@ import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { openSpaceDialog } from "../../spaceDialogStore";
-import { useProject, useThreadShell } from "../../state/entities";
+import { useProject, useQuietThreadProjection, useThreadShell } from "../../state/entities";
 import {
   spaceEnvironment,
   useCanOperateSpaces,
@@ -46,7 +47,6 @@ import { SpaceComposer } from "./SpaceComposer";
 import { SpaceConfirmDialog, type SpaceConfirm } from "./SpaceConfirmDialog";
 import { SpaceFeed } from "./SpaceFeed";
 import { SpaceMembersPopover } from "./SpaceMembersPopover";
-import { spacePairFeedItems } from "./SpacePairFeed";
 import { SpaceRoomPanel } from "./SpaceRoomPanel";
 
 type Post = Extract<SpaceRoomEntry, { type: "post" }>;
@@ -175,10 +175,11 @@ function SpaceRoom(props: {
     useSpaceOlderEntries(environmentId, space.id),
     room.entries,
   );
-  const pairItems = spacePairFeedItems(environmentId, space.id);
   const project = useProject(scopeProjectRef(environmentId, space.projectId));
   const roomRef = scopeThreadRef(environmentId, space.roomThreadId);
   const roomShell = useThreadShell(roomRef);
+  const pairRoom = spacePairRoom(useQuietThreadProjection(roomRef)?.projection ?? null);
+  const pairItems = spacePairFeedItems(pairRoom, room.actions);
   const wide = useMediaQuery("lg");
   const loadOlder = useAtomCommand(spaceEnvironment.loadOlder, "Load earlier messages");
   const mutate = useAtomCommand(spaceEnvironment.mutate, "Update space");
@@ -189,6 +190,8 @@ function SpaceRoom(props: {
   const [panel, setPanel] = useState<"open" | "expanded" | "hidden" | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [confirm, setConfirm] = useState<SpaceConfirm | null>(null);
+  // "Ask again" refills the composer; the count remounts it with the new draft.
+  const [draft, setDraft] = useState<{ readonly n: number; readonly text: string } | null>(null);
   const panelState = panel ?? (wide ? "open" : "hidden");
 
   const entries = older === null ? room.entries : prependSpaceEntries(older.entries, room.entries);
@@ -205,6 +208,15 @@ function SpaceRoom(props: {
   const unarchive = async () => {
     const result = await mutate({ environmentId, input: { type: "unarchive", spaceId: space.id } });
     toastCommandFailure("Could not unarchive", result);
+  };
+  const pairContext = {
+    environmentId,
+    roomRef,
+    space,
+    viewer,
+    pairRoom,
+    tasksById: new Map(tasks.map((task) => [task.id, task])),
+    onAskAgain: (text: string) => setDraft({ n: (draft?.n ?? 0) + 1, text }),
   };
   const newTask = () => openSpaceDialog({ type: "new-task", environmentId, spaceId: space.id });
 
@@ -285,7 +297,7 @@ function SpaceRoom(props: {
             space={space}
             entries={entries}
             pairItems={pairItems}
-            tasks={tasks}
+            pairContext={pairContext}
             viewer={viewer}
             newIndex={newIndex}
             canQuote={controls.canPost}
@@ -313,6 +325,8 @@ function SpaceRoom(props: {
           </div>
         ) : controls.canPost ? (
           <SpaceComposer
+            key={draft?.n ?? 0}
+            initialText={draft?.text}
             environmentId={environmentId}
             space={space}
             viewer={viewer}
@@ -327,6 +341,7 @@ function SpaceRoom(props: {
             environmentId={environmentId}
             space={space}
             tasks={tasks}
+            notes={room.notes}
             viewer={viewer}
             controls={controls}
             expanded={panelState === "expanded"}

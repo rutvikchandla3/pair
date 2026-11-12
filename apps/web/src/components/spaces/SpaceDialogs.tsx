@@ -171,6 +171,7 @@ function BillingSelect(props: {
 function MemberPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly exclude: ReadonlySet<string>;
+  readonly emptyText?: string;
   readonly value: ReadonlySet<MemberId>;
   readonly onChange: (value: ReadonlySet<MemberId>) => void;
 }) {
@@ -178,7 +179,11 @@ function MemberPicker(props: {
     (member) => !props.exclude.has(member.id),
   );
   if (roster.length === 0) {
-    return <p className="text-muted-foreground text-sm">Everyone on the team is already here.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">
+        {props.emptyText ?? "Everyone on the team is already here."}
+      </p>
+    );
   }
   return (
     <div className="flex max-h-48 flex-col gap-1 overflow-y-auto">
@@ -588,6 +593,7 @@ function SpaceSettingsDialog(props: {
                     </div>
                   );
                 })}
+                <p className="text-muted-foreground text-xs">Only members can see this space.</p>
               </div>
             </Field>
             {controls.canManage && space.joinRequests.length > 0 ? (
@@ -620,6 +626,9 @@ function SpaceSettingsDialog(props: {
                       ...space.joinRequests.map((request) => request.memberId),
                     ])
                   }
+                  {...(space.joinRequests.length > 0
+                    ? { emptyText: "Everyone else on the team has asked to join. Add them above." }
+                    : {})}
                   value={adding}
                   onChange={setAdding}
                 />

@@ -1,3 +1,4 @@
+import { groupSpaceNotes, spaceNoteByline } from "@t3tools/client-runtime/spaceAgent";
 import {
   SPACE_OVERVIEW_SECTIONS,
   type SpaceControls,
@@ -6,13 +7,20 @@ import {
   groupSpaceOverview,
   spaceTaskDetail,
 } from "@t3tools/client-runtime/spaces";
-import type { EnvironmentId, OrchestrationV2ThreadShell, Space } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  Space,
+  SpaceNoteChange,
+  SpaceNoteItem,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { Maximize2Icon, Minimize2Icon, PanelRightCloseIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { spaceAgentEnvironment } from "../../state/spaceAgent";
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -131,11 +139,98 @@ function TaskDetailLine(props: {
   );
 }
 
+function SpacePairNote(props: {
+  readonly environmentId: EnvironmentId;
+  readonly space: Space;
+  readonly note: SpaceNoteItem;
+  readonly viewer: SpaceViewer;
+  readonly canEdit: boolean;
+}) {
+  const { note } = props;
+  const change = useAtomCommand(spaceAgentEnvironment.notes, "Edit Pair's notes");
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const send = async (next: SpaceNoteChange, label: string) => {
+    setBusy(true);
+    const result = await change({
+      environmentId: props.environmentId,
+      input: { spaceId: props.space.id, changes: [next] },
+    });
+    setBusy(false);
+    toastCommandFailure(label, result);
+    if (result._tag === "Success") setDraft(null);
+  };
+  const save = () => {
+    const text = draft?.trim() ?? "";
+    if (text === "" || text === note.text) return setDraft(null);
+    void send(
+      { op: "edit", noteId: note.id, version: note.version, text },
+      "Could not save the note",
+    );
+  };
+
+  if (draft !== null) {
+    return (
+      <li className="flex flex-col gap-1.5">
+        <Textarea
+          autoFocus
+          value={draft}
+          aria-label="Note"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setDraft(null);
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
+          }}
+        />
+        <div className="flex justify-end gap-2">
+          <Button size="xs" variant="ghost" onClick={() => setDraft(null)}>
+            Cancel
+          </Button>
+          <Button size="xs" disabled={busy} onClick={save}>
+            Save
+          </Button>
+        </div>
+      </li>
+    );
+  }
+  return (
+    <li className="group/note flex flex-col gap-0.5">
+      <p className="whitespace-pre-wrap text-sm">{note.text}</p>
+      <div className="flex min-h-5 items-center gap-1 text-muted-foreground text-xs">
+        <span className="min-w-0 flex-1 truncate">{spaceNoteByline(note, props.viewer)}</span>
+        {props.canEdit ? (
+          <span className="flex gap-0.5 opacity-0 group-focus-within/note:opacity-100 group-hover/note:opacity-100">
+            <Button size="micro" variant="ghost-muted" onClick={() => setDraft(note.text)}>
+              Edit
+            </Button>
+            <Button
+              size="micro"
+              variant="ghost-destructive"
+              disabled={busy}
+              onClick={() =>
+                void send(
+                  { op: "remove", noteId: note.id, version: note.version },
+                  "Could not remove the note",
+                )
+              }
+            >
+              Remove
+            </Button>
+          </span>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 function SpaceNotes(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
+  readonly notes: ReadonlyArray<SpaceNoteItem>;
+  readonly viewer: SpaceViewer;
   readonly canEdit: boolean;
 }) {
+  const sections = groupSpaceNotes(props.notes);
   const mutate = useAtomCommand(spaceEnvironment.mutate, "Edit brief");
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -201,13 +296,32 @@ function SpaceNotes(props: {
           </>
         )}
       </section>
-      {/* Seam: Pair's notes (edit and remove on hover) arrive with @pair; no contract yet. */}
-      <section className="flex flex-col gap-1.5">
-        <h3 className="font-medium text-muted-foreground text-xs">Pair's notes</h3>
-        <p className="text-muted-foreground text-sm">
-          Pair keeps notes here as it works in this space.
-        </p>
-      </section>
+      {sections.length === 0 ? (
+        <section className="flex flex-col gap-1.5">
+          <h3 className="font-medium text-muted-foreground text-xs">Pair's notes</h3>
+          <p className="text-muted-foreground text-sm">
+            Pair adds decisions here as the room talks. You can edit or remove any of them.
+          </p>
+        </section>
+      ) : (
+        sections.map((section) => (
+          <section key={section.id} className="flex flex-col gap-1.5">
+            <h3 className="font-medium text-muted-foreground text-xs">{section.label}</h3>
+            <ul className="flex flex-col gap-3">
+              {section.notes.map((note) => (
+                <SpacePairNote
+                  key={note.id}
+                  environmentId={props.environmentId}
+                  space={props.space}
+                  note={note}
+                  viewer={props.viewer}
+                  canEdit={props.canEdit}
+                />
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
     </div>
   );
 }
@@ -216,6 +330,7 @@ export function SpaceRoomPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly space: Space;
   readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly notes: ReadonlyArray<SpaceNoteItem>;
   readonly viewer: SpaceViewer;
   readonly controls: SpaceControls;
   readonly expanded: boolean;
@@ -288,6 +403,8 @@ export function SpaceRoomPanel(props: {
           <SpaceNotes
             environmentId={props.environmentId}
             space={props.space}
+            notes={props.notes}
+            viewer={props.viewer}
             canEdit={props.controls.canEditNotes}
           />
         )}

@@ -4,6 +4,8 @@ import type {
   Space,
   SpaceMember,
   SpaceMention,
+  SpaceAction,
+  SpaceNoteItem,
   SpacePairBilling,
   SpaceRoomEntry,
   SpaceSystemLine,
@@ -14,6 +16,8 @@ import {
   spaceTaskState,
 } from "@t3tools/shared/spaceTaskState";
 import * as DateTime from "effect/DateTime";
+
+import { type SpaceAgentEvent, applySpaceAgentEvent, mergeSpaceActions } from "./spaceAgent.ts";
 
 export type { SpaceTaskState };
 
@@ -441,6 +445,8 @@ export type SpaceRoomState =
       readonly entries: ReadonlyArray<SpaceRoomEntry>;
       readonly hasMoreEntries: boolean;
       readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
+      readonly notes: ReadonlyArray<SpaceNoteItem>;
+      readonly actions: ReadonlyArray<SpaceAction>;
     }
   | {
       readonly type: "not_member";
@@ -493,17 +499,22 @@ export function mergeSpaceRoomView(
     ...view,
     space: newerSpace(current.space, view.space),
     entries: newer.length === 0 ? view.entries : sortEntries([...view.entries, ...newer]),
+    actions: mergeSpaceActions(current.actions, view.actions),
   };
 }
 
 export type SpaceRoomEvent =
   | { readonly type: "space.updated"; readonly payload: Space }
-  | { readonly type: "space.room-entry"; readonly payload: SpaceRoomEntry };
+  | { readonly type: "space.room-entry"; readonly payload: SpaceRoomEntry }
+  | SpaceAgentEvent;
 
 export function applySpaceRoomEvent(
   state: SpaceRoomMemberState,
   event: SpaceRoomEvent,
 ): SpaceRoomMemberState {
+  if (event.type === "space.action.updated" || event.type === "space.notes.changed") {
+    return applySpaceAgentEvent(state, event);
+  }
   if (event.type === "space.updated") {
     const space = newerSpace(state.space, event.payload);
     return space === state.space ? state : { ...state, space };
@@ -655,23 +666,33 @@ export function mergeSpaceTasks<T extends { readonly id: string }>(
   return rest.length === 0 ? live : [...live, ...rest];
 }
 
-/** Every unarchived space task, and the rooms with activity since the viewer last opened them. */
-export function spaceSidebarShells<T extends ShellLike>(threads: ReadonlyArray<T>) {
+/**
+ * Every unarchived space task, and the rooms with activity since the viewer last opened them; a
+ * room whose latest activity is the viewer's own line isn't unread.
+ */
+export function spaceSidebarShells<T extends ShellLike>(
+  threads: ReadonlyArray<T>,
+  viewerId: MemberId | null,
+) {
   const tasks: T[] = [];
   const unreadRoomIds = new Set<string>();
   const roomIds: string[] = [];
   for (const thread of threads) {
     if (thread.space?.kind === "task" && thread.archivedAt === null) tasks.push(thread);
     if (thread.space?.kind !== "room") continue;
-    roomIds.push(thread.id);
+    roomIds.push(`${thread.id}@${thread.space.revision ?? ""}`);
+    const updatedAt = DateTime.toEpochMillis(thread.updatedAt);
+    const latest = thread.space.latestEntry;
+    const ownLatest =
+      latest !== undefined && latest.by === viewerId && Date.parse(latest.at) >= updatedAt;
     if (
-      thread.lastVisitedAt == null ||
-      DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(thread.lastVisitedAt)
+      !ownLatest &&
+      (thread.lastVisitedAt == null || updatedAt > DateTime.toEpochMillis(thread.lastVisitedAt))
     ) {
       unreadRoomIds.add(thread.id);
     }
   }
-  // Changes when a space is shared with the viewer or they leave one, so the list can refetch.
+  // Changes when a space is shared, renamed, archived or left, so the list can refetch.
   const roomsKey = roomIds.sort().join(",");
   return { tasks, unreadRoomIds, roomsKey };
 }

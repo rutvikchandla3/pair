@@ -120,7 +120,7 @@ export function useCanOperateSpaces(environmentId: EnvironmentId | null): boolea
 export interface SpaceSidebarShells {
   /** Every unarchived task in any space here. */
   readonly tasks: ReadonlyArray<OrchestrationV2ThreadShell>;
-  /** Rooms with entries since the viewer last opened them. */
+  /** Rooms with others' activity since the viewer last opened them. */
   readonly unreadRoomIds: ReadonlySet<string>;
   readonly roomsKey: string;
 }
@@ -137,6 +137,7 @@ const spaceSidebarShellsFamily = Atom.family((environmentId: EnvironmentId) => {
   return Atom.make((get) => {
     const next = spaceSidebarShells(
       get(environmentThreadShells.environmentThreadsAtom(environmentId)),
+      get(teamEnvironment.currentMemberIdAtom(environmentId)),
     );
     const sameTasks =
       next.tasks.length === previous.tasks.length &&

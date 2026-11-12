@@ -187,6 +187,12 @@ const assignedAtFormat = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 const postedAtFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+// Today reads as a bare time, as in the room feed.
+const formatAssignedAt = (millis: number) =>
+  (new Date(millis).toDateString() === new Date().toDateString()
+    ? postedAtFormat
+    : assignedAtFormat
+  ).format(millis);
 
 function ownerNameOf(task: UnstartedSpaceTask) {
   return task.thread.ownerId == null ? "its owner" : task.viewer.nameOf(task.thread.ownerId);
@@ -268,7 +274,7 @@ export function SpaceTaskIntro(props: {
           <UsersRoundIcon className="size-3.5" />
           {task.space.name}
         </Link>
-        <span>· {assignedAtFormat.format(DateTime.toEpochMillis(task.thread.createdAt))}</span>
+        <span>· {formatAssignedAt(DateTime.toEpochMillis(task.thread.createdAt))}</span>
       </p>
       {isOwner ? null : (
         <div className="flex flex-col items-end gap-1.5 ps-12">
@@ -285,7 +291,7 @@ export function SpaceTaskIntro(props: {
               {postedAtFormat.format(DateTime.toEpochMillis(task.thread.createdAt))}
             </span>
           </div>
-          <p className="whitespace-pre-wrap break-words rounded-xl border border-border border-dashed px-3 py-2 text-sm">
+          <p className="whitespace-pre-wrap break-words rounded-xl border border-input border-dashed px-3 py-2 text-sm">
             {placement.description}
           </p>
           <p className="flex items-center gap-1 text-muted-foreground text-xs">

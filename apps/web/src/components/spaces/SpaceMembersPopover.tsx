@@ -68,6 +68,7 @@ function MemberList(props: {
           ) : null,
         ),
       )}
+      <p className="px-1 text-muted-foreground text-xs">Only members can see this space.</p>
       {requests.length > 0 ? (
         <>
           <p className="px-1 pt-2 font-medium text-muted-foreground text-xs">Asked to join</p>

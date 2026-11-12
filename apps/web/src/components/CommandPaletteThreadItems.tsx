@@ -99,7 +99,8 @@ export function useCommandPaletteThreadItems(input: {
 }) {
   const { activeThread, threadSearchQuery } = input;
   const navigate = useNavigate();
-  const threads = useVisibleThreadShells();
+  // A space's room opens at its space route; its thread route would show it as a plain chat.
+  const threads = useVisibleThreadShells().filter((thread) => thread.source.space?.kind !== "room");
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);

@@ -243,6 +243,8 @@ describe("space room state", () => {
     entries,
     hasMoreEntries: false,
     tasks: [],
+    notes: [],
+    actions: [],
   });
 
   it("appends live entries once and ignores an older space", () => {

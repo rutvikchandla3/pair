@@ -331,6 +331,10 @@
       "types": "./src/state/spaces.ts",
       "default": "./src/state/spaces.ts"
     },
+    "./state/spaceAgent": {
+      "types": "./src/state/spaceAgent.ts",
+      "default": "./src/state/spaceAgent.ts"
+    },
     "./state/team-image": {
       "types": "./src/state/teamImage.ts",
       "default": "./src/state/teamImage.ts"
@@ -490,6 +494,10 @@
     "./spaces": {
       "types": "./src/spaces.ts",
       "default": "./src/spaces.ts"
+    },
+    "./spaceAgent": {
+      "types": "./src/spaceAgent.ts",
+      "default": "./src/spaceAgent.ts"
     },
     "./pull-request-project-filter": {
       "types": "./src/pullRequestProjectFilter.ts",

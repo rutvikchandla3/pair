@@ -1,4 +1,6 @@
+import { SPACE_PAIR_NEEDS_KEY_HINT } from "@t3tools/client-runtime/spaceAgent";
 import {
+  PAIR_MENTION,
   type SpaceMentionQuery,
   type SpaceMentionToken,
   type SpaceViewer,
@@ -20,6 +22,7 @@ import { type KeyboardEvent, useRef, useState } from "react";
 
 import { cn, randomUUID } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSpaceTeamClaudeKey } from "../../state/spaceAgent";
 import { spaceEnvironment } from "../../state/spaces";
 import { useTeamMembers } from "../../state/team";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -35,20 +38,32 @@ export function SpaceComposer(props: {
   readonly viewer: SpaceViewer;
   readonly quote: Post | null;
   readonly onQuoteChange: (quote: Post | null) => void;
+  /** A draft to start from, as "Ask again" fills it; remount the composer to apply another. */
+  readonly initialText?: string | undefined;
 }) {
   const members = useTeamMembers(props.environmentId);
   const narrow = useMediaQuery("max-sm");
   const post = useAtomCommand(spaceEnvironment.post, "Post to space");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [text, setText] = useState("");
-  const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>([]);
+  const pairReady = useSpaceTeamClaudeKey(props.environmentId);
+  const [text, setText] = useState(props.initialText ?? "");
+  const [tokens, setTokens] = useState<ReadonlyArray<SpaceMentionToken>>(() =>
+    props.initialText?.startsWith("@pair ") ? [PAIR_MENTION] : [],
+  );
   const [query, setQuery] = useState<SpaceMentionQuery | null>(null);
   const [highlight, setHighlight] = useState(0);
 
-  const candidates =
-    query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer);
-  const mentions = resolveSpaceMentions(text, tokens);
-  const hint = spaceComposerHint(mentions, props.space, props.viewer);
+  // Without a Team Claude key, @pair isn't offered and a typed one isn't a tag.
+  const candidates = (
+    query === null ? [] : spaceMentionCandidates(query.query, props.space, props.viewer)
+  ).filter((token) => pairReady || token.mention.type !== "pair");
+  const mentions = resolveSpaceMentions(text, tokens).filter(
+    (mention) => pairReady || mention.type !== "pair",
+  );
+  const hint =
+    spaceComposerHint(mentions, props.space, props.viewer) ??
+    (pairReady ? null : SPACE_PAIR_NEEDS_KEY_HINT);
+  const tagsPair = mentions.some((mention) => mention.type === "pair");
   const canSend = text.trim().length > 0;
 
   const readQuery = (element: HTMLTextAreaElement) => {
@@ -62,6 +77,21 @@ export function SpaceComposer(props: {
     setText(next.text);
     setTokens([...tokens, token]);
     setQuery(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const insertPair = () => {
+    const element = textareaRef.current;
+    const caret = element?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    const start = before.length === 0 || /\s$/u.test(before) ? caret : caret + 1;
+    const spaced = start === caret ? text : `${before} ${text.slice(caret)}`;
+    const next = insertSpaceMention(spaced, { start, end: start, query: "" }, PAIR_MENTION);
+    setText(next.text);
+    setTokens([...tokens, PAIR_MENTION]);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(next.caret, next.caret);
@@ -213,12 +243,20 @@ export function SpaceComposer(props: {
           onKeyDown={onKeyDown}
         />
         <div className="flex items-center gap-2 px-3 pb-2">
+          <Button
+            size="xs"
+            variant={tagsPair ? "secondary" : "ghost-muted"}
+            aria-pressed={tagsPair}
+            disabled={!pairReady || tagsPair}
+            onClick={insertPair}
+          >
+            <SparklesIcon />
+            @pair
+          </Button>
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-xs",
-              mentions.some((mention) => mention.type === "pair")
-                ? "text-input-foreground"
-                : "text-muted-foreground",
+              tagsPair ? "text-input-foreground" : "text-muted-foreground",
             )}
           >
             {hint}

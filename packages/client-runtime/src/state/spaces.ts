@@ -38,12 +38,19 @@ function roomStateOf(view: SpaceView): SpaceRoomState {
         entries: view.entries,
         hasMoreEntries: view.hasMoreEntries,
         tasks: view.tasks,
+        notes: view.notes,
+        actions: view.actions,
       }
     : view;
 }
 
 function isRoomEvent(event: { readonly type: string }): event is SpaceRoomEvent {
-  return event.type === "space.updated" || event.type === "space.room-entry";
+  return (
+    event.type === "space.updated" ||
+    event.type === "space.room-entry" ||
+    event.type === "space.action.updated" ||
+    event.type === "space.notes.changed"
+  );
 }
 
 /**
